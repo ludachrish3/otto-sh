@@ -250,9 +250,14 @@ with `set_context` (or use `otto.open_context`, which does both for you).
 `otto test` is a thin CLI wrapper around {func}`~otto.suite.run.run_tests`,
 which runs tests through `pytest.main()` and returns a
 {class}`~otto.suite.run.SuiteRunResult` instead of exiting the process.
-`run_tests` and `RunOptions` are exported at the top level (`otto.run_tests`,
-`otto.RunOptions`); the exceptions below stay one level down, at
-`otto.suite` / `otto.suite.run` / `otto.suite.selection`.
+{func}`~otto.suite.run.run_tests` and {class}`~otto.suite.run.RunOptions` are
+exported at the top level (`otto.run_tests`, `otto.RunOptions`); the
+exceptions below stay one level down, at
+`otto.suite` / `otto.suite.run` / `otto.suite.selection`. `RunOptions` is
+the `otto test` options class itself: what a field implies on the command
+line (`cov_report_dir` implies `cov_report` implies `cov`) it implies for a
+Python caller, and a contradiction (`cov=False` with a destination, a
+`seed` with `random_order=False`) is refused at construction.
 
 ```python
 import otto
@@ -322,17 +327,46 @@ unknown-host error; tests that need lab hosts should run under
 context is already active, it is used as-is (its `output_dir` is only filled
 in, temporarily, when it has none).
 
-### `cov_dir` overwrite guard
+### Preflight
 
-When `RunOptions.cov` is set together with an explicit `cov_dir`,
-`run_tests` validates it up front, the same way the CLI's
-`--cov-dir`/`--overwrite-cov-dir` pair does: a non-empty target raises
-`ValueError` naming the flag (via `otto.coverage.config.prepare_empty_dir`)
-unless `overwrite_cov_dir=True` is also set, in which case its contents are
-cleared before the run starts.
-This runs before the pre-run remote `.gcda` clean, so a bad `cov_dir` fails
-before any host is touched. Leave `cov_dir` unset (the default) to collect
-into `<output_dir>/cov`, which is always fresh.
+`run_tests` calls {func}`~otto.suite.run.prepare_run` right after binding
+the verb options and checking there is something to run — before the
+coverage decision and the instrumentation scan, and before any host is
+touched. It prepares an explicit `cov_dir` and `cov_report_dir` (created,
+or cleared under `overwrite_cov_dir` / `overwrite_cov_report_dir`), proves
+they can be written, and refuses `cov_tickets_json` without a
+`[coverage.tickets]` table. Leave `cov_dir` / `cov_report_dir` unset (the
+default) to collect into `<output_dir>/cov` / `<output_dir>/cov_report`,
+which are always fresh — the default destinations need no check, since
+creating the run's own output directory already was one. A script can call
+`prepare_run` itself before a long run.
+
+A refusal is a {class}`~otto.coverage.config.DestinationError` (names the
+field and the path, and — only when the destination is non-empty — the
+`overwrite_*` field that would clear it) or an
+{class}`~otto.params.OptionsValidationError` (a `cov_tickets_json` with no
+`[coverage.tickets]` table); `otto test` prints the same message spelled as
+flags. Under `overwrite_*`, the clear happens here, inside `prepare_run`,
+before the coverage decision — so a run that gets refused right after, for
+having no `[coverage]` table configured at all, has already cleared its
+destination:
+
+```python
+from pathlib import Path
+
+from otto.coverage import DestinationError
+from otto.suite.run import RunOptions, prepare_run
+
+cov_dir = Path("./coverage-run/cov")
+opts = RunOptions(cov_dir=cov_dir, overwrite_cov_dir=True)
+try:
+    prepare_run(opts)
+except DestinationError as e:
+    raise SystemExit(f"{e.field}: {e}") from e
+```
+
+`prepare_run(opts, dry_run=True)` checks without creating or clearing
+anything.
 
 ### Sync API, async callers
 
@@ -360,6 +394,12 @@ result = await asyncio.to_thread(otto.run_tests, ["TestDevice"])
   against a non-empty test universe. Catch it *before* `NoTestsMatchedError`
   if you handle both — both subclass `ValueError`, and the narrower one needs
   to win.
+- Before any of the above, the {func}`~otto.suite.run.prepare_run` preflight
+  (see [Preflight](#preflight)) can raise
+  {class}`~otto.coverage.config.DestinationError` or
+  {class}`~otto.params.OptionsValidationError` — both are `ValueError`
+  subclasses too, so the same narrower-first ordering applies if you catch
+  `ValueError` broadly.
 
 ```python
 from otto.suite import NoTestsMatchedError, UnknownSelectionError, run_tests
@@ -396,7 +436,8 @@ import asyncio
 from pathlib import Path
 
 import otto
-from otto.coverage import collect_coverage
+from otto.config import get_repos
+from otto.coverage import collect_coverage, resolve_report_inputs
 from otto.coverage.reporter import run_coverage_report
 
 
@@ -412,8 +453,15 @@ async def main():
         for (host_id, product), product_dir in result.product_dirs.items():
             print(host_id, product, product_dir)
 
-        # Render an HTML report from the collected cov/ directory.
-        store = await run_coverage_report([cov_dir], Path("./coverage-run/report"))
+        # Resolve the same [coverage]-derived report inputs `otto cov report`
+        # does, then render an HTML report from the collected cov/ directory.
+        # Pass overwrite=True to re-render into a directory that already
+        # holds a report (it is cleared first); without it, a non-empty
+        # report_dir raises DestinationError.
+        inputs = resolve_report_inputs(get_repos())
+        store = await run_coverage_report(
+            [cov_dir], Path("./coverage-run/report"), inputs, overwrite=True
+        )
         if store is not None:
             print(f"{store.overall_pct():.1f}% overall ({store.file_count()} files)")
 

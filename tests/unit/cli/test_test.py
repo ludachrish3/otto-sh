@@ -12,10 +12,8 @@ a library in ``tests/unit/suite/test_run_api.py``; the command's names, listing
 and dry run in ``tests/unit/cli/test_test_command.py``.
 """
 
-import dataclasses
-from pathlib import Path
 from typing import Annotated
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
@@ -24,44 +22,80 @@ from typer.testing import CliRunner
 from otto import options
 from otto.params import register_options
 from tests._fixtures.gitrepo import TmpGitRepo
+from tests.unit.cli.conftest import _flat, _lib_ok_result, _repo_with_tickets_configured
 
 runner = CliRunner()
 
 
-def _lib_ok_result():
-    """A zero-exit ``SuiteRunResult`` for a faked ``otto.suite.run.run_tests``."""
-    from otto.suite.run import SuiteRunResult
+RULE_TABLE = [
+    # (cli flags, expected fields on the RunOptions handed to run_tests) — one row per rule
+    #
+    # The destination rows target a subdirectory, not tmp_path itself:
+    # otto_test_cli's own output_dir (tmp_path / "otto-out") already lives
+    # under tmp_path, so a bare tmp_path is never an empty destination.
+    (["--cov-report-dir", "{tmp}/report"], {"cov_report": True, "cov": True}),
+    (["--cov-tickets-json", "{tmp}/t.json"], {"cov_report": True, "cov": True}),
+    (["--cov-report"], {"cov": True}),
+    (["--cov-dir", "{tmp}/cov"], {"cov": True}),
+    (["--monitor-output", "{tmp}/m.json"], {"monitor": True}),
+    (["--monitor-hosts", "router"], {"monitor": True}),
+]
 
-    return SuiteRunResult(
-        exit_code=0,
-        junit_paths=[],
-        stability_report=None,
-        stability_unstable=False,
-        output_dir=Path(),
-    )
+CONTRADICTION_TABLE = [
+    (["--no-cov", "--cov-dir", "{tmp}"], "--no-cov cannot be combined with --cov-dir"),
+    (["--no-cov", "--cov-report"], "--no-cov cannot be combined with"),
+    (["--no-random", "--seed", "7"], "--seed cannot be combined with --no-random"),
+]
 
 
-@pytest.fixture
-def capture_cov(otto_test_cli, monkeypatch):
-    """Invoke ``otto test <cli_args> test_x`` with ``run_tests`` faked.
+class TestRulesAreTheLibrarys:
+    @pytest.mark.parametrize(("flags", "expected"), RULE_TABLE)
+    def test_the_cli_hands_run_tests_what_the_class_implies(
+        self, capture_cov, tmp_path, flags, expected, monkeypatch
+    ):
+        monkeypatch.setattr("otto.config.get_repos", lambda: [_repo_with_tickets_configured()])
+        args = [f.format(tmp=tmp_path) for f in flags]
+        exit_code, run_options, output = capture_cov(args)
+        assert exit_code == 0, output
+        for name, value in expected.items():
+            assert run_options[name] == value, name
 
-    Returns ``(exit_code, run_options, output)``; ``run_options`` is the
-    ``RunOptions`` the command handed ``run_tests`` as a dict, or ``{}`` when
-    the command aborted before the run (e.g. during option validation).
-    """
+    @pytest.mark.parametrize(("flags", "message"), CONTRADICTION_TABLE)
+    def test_a_contradiction_exits_2_in_flag_spelling(self, capture_cov, tmp_path, flags, message):
+        args = [f.format(tmp=tmp_path) for f in flags]
+        exit_code, run_options, output = capture_cov(args)
+        assert exit_code == 2
+        assert message in output
+        assert run_options == {}
 
-    def _capture(cli_args: list[str]) -> tuple[int, dict, str]:
-        captured: dict = {}
+    def test_the_leaf_passes_parsed_flags_through_unchanged(
+        self, otto_test_cli, monkeypatch, tmp_path
+    ):
+        """No rule lives in the CLI: the constructor receives exactly the parsed params.
 
-        def fake_run_tests(names, **kw):
-            captured.update(dataclasses.asdict(kw["run_options"]))
-            return _lib_ok_result()
+        Asserts the WHOLE kwargs dict the CLI hands the constructor, not a
+        subset — a subset check would still pass if the CLI started setting
+        an extra field of its own (e.g. ``fields["cov_clean"] = False``),
+        which is exactly the kind of drift this test exists to catch.
+        """
+        from otto.cli.test import _RUN_FIELD_NAMES, _run_params
+        from otto.suite import run as run_module
 
-        monkeypatch.setattr("otto.suite.run.run_tests", fake_run_tests)
-        result = otto_test_cli(["test", *cli_args, "test_x"])
-        return result.exit_code, captured, result.output
+        seen: dict = {}
+        real = run_module.RunOptions
 
-    return _capture
+        def spy(**kw):
+            seen.update(kw)
+            return real(**kw)
+
+        monkeypatch.setattr(run_module, "RunOptions", spy)
+        monkeypatch.setattr("otto.suite.run.run_tests", lambda names, **kw: _lib_ok_result())
+        result = otto_test_cli(
+            ["test", "--cov-report-dir", str(tmp_path / "r"), "--iterations", "2", "test_x"]
+        )
+        assert result.exit_code == 0, result.output
+        defaults = {p.name: p.default for p in _run_params() if p.name in _RUN_FIELD_NAMES}
+        assert seen == defaults | {"cov_report_dir": tmp_path / "r", "iterations": 2}
 
 
 # ── Help behaviour ────────────────────────────────────────────────────────────
@@ -343,7 +377,7 @@ class TestCovDirOption:
         exit_code, ctx_obj, output = capture_cov(["--cov-dir", str(target)])
         assert exit_code != 0
         assert ctx_obj == {}
-        assert "not empty" in output or "--overwrite-cov-dir" in output
+        assert "pass --overwrite-cov-dir to clear it" in _flat(output)
         # Stale file preserved when we refuse to proceed.
         assert (target / "leftover.txt").exists()
 
@@ -377,9 +411,9 @@ class TestInRunReportGeneration:
     """``otto test --cov-report`` renders via the collection-model report path.
 
     The fetch/metadata/capture collection tail itself now lives in
-    ``otto.coverage.collect`` (exercised in ``tests/unit/cov/test_collect.py``);
-    this class covers only the in-run HTML report block of
-    ``otto.suite.run._post_run_coverage``.
+    ``otto.coverage.collect`` (exercised in ``tests/unit/cov/test_collect.py``)
+    and is stubbed out here; this class's subject is the in-run HTML report
+    block of ``otto.suite.run._post_run_coverage``.
     """
 
     @pytest.fixture
@@ -390,7 +424,7 @@ class TestInRunReportGeneration:
         repo.commit("init")
         return repo.root
 
-    def test_in_run_report_uses_configured_tiers(self, tmp_path, sut_repo):
+    def test_in_run_report_uses_configured_tiers(self, tmp_path, sut_repo, monkeypatch):
         """``otto test --cov-report`` must render via the collection-model path,
         not the legacy system-only one: the store.json the in-run report writes
         carries the settings-declared tier precedence."""
@@ -398,6 +432,11 @@ class TestInRunReportGeneration:
         import json
 
         from otto.suite.run import RunOptions, _post_run_coverage
+
+        # cov_dir/cov_report_dir now force cov=True too (construction-time rule),
+        # so the fetch machinery runs; stub it out — this test's subject is the
+        # report block, not collection.
+        monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
 
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
@@ -415,9 +454,7 @@ class TestInRunReportGeneration:
         repo.name = "repo"
         repo.settings = {"coverage": cov_config}
 
-        # cov=False keeps the fetch machinery out; only the report block runs.
         opts = RunOptions(
-            cov=False,
             cov_report=True,
             cov_dir=cov_dir,
             cov_report_dir=report_dir,
@@ -472,8 +509,17 @@ class TestCovReportOption:
         )
         assert exit_code != 0
         assert ctx_obj == {}
-        assert "not empty" in output or "--overwrite-cov-report-dir" in output
+        assert "pass --overwrite-cov-report-dir to clear it" in _flat(output)
         assert (target / "stale.html").exists()
+
+    def test_dry_run_refuses_a_non_empty_report_dir_without_touching_it(
+        self, otto_test_cli, tmp_path
+    ):
+        (tmp_path / "stale.html").write_text("stale")
+        result = otto_test_cli(["-n", "test", "--cov-report-dir", str(tmp_path), "test_x"])
+        assert result.exit_code == 2
+        assert "pass --overwrite-cov-report-dir" in _flat(result.output)
+        assert (tmp_path / "stale.html").read_text() == "stale"
 
     def test_overwrite_cov_report_dir_clears_contents(self, capture_cov, tmp_path):
         target = tmp_path / "to_clear"
@@ -516,18 +562,6 @@ class TestCovReportOption:
 # ── --cov-tickets-json option ─────────────────────────────────────────────────
 
 
-def _repo_with_tickets_configured():
-    """A repo whose settings satisfy the --cov-tickets-json preflight gate."""
-    repo = MagicMock()
-    repo.settings = {
-        "coverage": {
-            "tiers": {"system": {"kind": "e2e", "precedence": 1}},
-            "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
-        }
-    }
-    return repo
-
-
 class TestCovTicketsJsonOption:
     def test_no_flag_leaves_cov_tickets_json_none(self, capture_cov):
         exit_code, ctx_obj, output = capture_cov([])
@@ -562,10 +596,9 @@ class TestCovTicketsJsonOption:
         monkeypatch.setattr("otto.config.get_repos", list)
         target = tmp_path / "tickets.json"
         exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
-        assert exit_code != 0
+        assert exit_code == 2
         assert ctx_obj == {}
-        assert "--cov-tickets-json" in output
-        assert "[coverage.tickets]" in output
+        assert "--cov-tickets-json requires [coverage.tickets] to be configured" in _flat(output)
 
     def test_cov_tickets_json_with_coverage_but_no_tickets_table_fails_fast(
         self, capture_cov, tmp_path, monkeypatch

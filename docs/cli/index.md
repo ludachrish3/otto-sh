@@ -204,6 +204,7 @@ The cached reservation answer is read by tab completion and by nothing else —
 see {doc}`reservation/windows` for what the booking times every backend
 reports are used for.
 
+(invocation-output-directory)=
 ## Output directories
 
 Most commands create a per-invocation output directory under `--xdir`
@@ -225,13 +226,14 @@ written there, and the path is printed at the end of the run
   `write_file`).
 
 Read-only commands create no directory: `otto reservation`, `otto inventory`,
-`otto schema`, and `otto init` opt out entirely, as do `otto cov report` and
-`otto cov clean` and read-only host verbs such as `ls`, `exists`, `read-file`,
-`is-installed`, and `is-uninstalled`.  `otto cov get` is the exception in its
-group — it retrieves counters and stages them, so it takes the standard
-per-invocation directory like any other writing command (`--output/-o`
-overrides it).  Third-party commands control this with the `output_dir=`
-flag at registration — see {doc}`../cookbook/extending/extending-cli`.
+`otto schema`, and `otto init` opt out entirely, as do `otto cov clean` and
+read-only host verbs such as `ls`, `exists`, `read-file`, `is-installed`, and
+`is-uninstalled`.  `otto cov get` and `otto cov report` both write into it —
+`get` retrieves counters and stages them there, and `report` (absent an
+explicit `--dir`) renders its HTML report to `cov_report/` underneath it, the
+same as `otto test --cov-report`.  Third-party commands control this with the
+`output_dir=` flag at registration — see
+{doc}`../cookbook/extending/extending-cli`.
 
 (run-tree)=
 ### Inside a run directory

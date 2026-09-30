@@ -18,7 +18,11 @@ See the :doc:`/cli/cov/index` and :doc:`/cli/host/index` documentation.
 **Options**
 
 ``--dir PATH``
-    Where to place the generated coverage report (default: ``./cov_report``).
+    Where to place the generated coverage report (default: ``cov_report``
+    under this invocation's output directory).
+
+``--overwrite-dir``
+    Allow ``--dir`` to clear an existing non-empty directory.
 
 ``--project-name STR``
     Title shown in the HTML report header.
@@ -115,26 +119,8 @@ if TYPE_CHECKING:
     from typing import Any
 
     from ..config.repo import Repo
-    from ..coverage.exclusions.rules import ExclusionRule
-    from ..coverage.overrides import OverrideConfig
     from ..coverage.reporter import TierSpec
-    from ..coverage.store.model import Thresholds
-    from ..coverage.tickets import TicketSpec
-    from ..coverage.tiers import TierConfig
     from ..host.remote_host import RemoteHost
-
-    # A named alias so _resolve_cov_settings's return annotation is a single
-    # string literal — ty rejects an implicitly-concatenated string type
-    # expression (a bare quoted tuple this wide would need one to fit under
-    # the line-length limit).
-    _CovSettings = tuple[
-        Path | None,
-        list[TierConfig] | None,
-        list[ExclusionRule],
-        Thresholds | None,
-        TicketSpec | None,
-        OverrideConfig | None,
-    ]
 
 logger = logging.getLogger(__name__)
 
@@ -154,9 +140,10 @@ def cov_callback(ctx: typer.Context) -> None:
 
     ``cov report`` is purely local — it reads coverage artifacts and writes an
     HTML report. ``cov get`` and ``cov clean`` reach the lab's coverage hosts
-    (fetching or zeroing remote ``.gcda`` counters). Only ``cov get`` creates
-    a per-invocation output directory (it is where its captures land by
-    default); ``report`` and ``clean`` opt out via their leaf markers.
+    (fetching or zeroing remote ``.gcda`` counters). ``cov get`` and ``cov
+    report`` both create a per-invocation output directory (the report's
+    default destination, absent ``--dir``, is ``cov_report`` under it);
+    ``clean`` opts out via its leaf marker.
     """
     if ctx.resilient_parsing:
         return
@@ -201,70 +188,6 @@ def _parse_tier_specs(raw_tiers: list[str]) -> "list[TierSpec]":
     return specs
 
 
-def _resolve_cov_settings() -> "_CovSettings":
-    """Resolve settings for ``report``.
-
-    Returns ``(repo_root, tier_configs, exclusion_rules, thresholds,
-    ticket_spec, overrides)``.
-
-    Uses the same first-repo-with-``[coverage]`` selection as ``get`` and
-    ``clean`` (via :func:`otto.config.coverage_settings.get_cov_repo`).  Returns
-    ``(None, None, [], None, None, None)`` when no coverage section is
-    configured — the git-less fallback that keeps ``otto cov report``
-    working exactly as before on a tree with no ``[coverage]`` settings.
-
-    ``exclusion_rules`` comes from ``[coverage.exclusions].rules`` — the
-    compiled rules (:func:`otto.coverage.exclusions.rules.load_exclusion_rules`)
-    applied by the reporter's filter stage, which DELETES the lines and
-    branches they name from the merged store. An empty list is not
-    feature-absent: the built-in ``LCOV_EXCL_*`` families always apply on top
-    of whatever is configured here. Raises
-    :class:`~otto.config.coverage_settings.CoverageConfigError` (a :class:`ValueError`)
-    on a malformed rule — caught by ``report``'s existing ``except ValueError``
-    handler, same as ``overrides`` below.
-
-    ``thresholds`` comes from ``[coverage.report]`` — render thresholds
-    forwarded to the reporter/renderer (:func:`otto.coverage.report_config.load_report_thresholds`).
-
-    ``ticket_spec`` comes from ``[coverage.tickets]`` — the compiled
-    commit-message ticket pattern (:func:`otto.coverage.tickets.load_ticket_spec`).
-    ``None`` when the table is absent is the feature-absent signal: the
-    reporter runs no git log walk and the report is unchanged.
-
-    ``overrides`` comes from ``.otto/coverage-overrides.toml`` (or the path
-    named by ``[coverage.overrides].file``) via
-    :func:`otto.coverage.overrides.load_override_config`. ``None`` is the
-    feature-absent signal: no asserted entries fold in and no
-    reattribution reaches ticket attribution.  Raises
-    :class:`~otto.coverage.overrides.OverrideConfigError` (a
-    :class:`ValueError`) on a malformed file — caught by ``report``'s
-    existing ``except ValueError`` handler.
-    """
-    from ..config import get_repos
-    from ..config.coverage_settings import get_cov_config, get_cov_repo
-    from ..coverage.exclusions.rules import load_exclusion_rules
-    from ..coverage.overrides import load_override_config
-    from ..coverage.report_config import load_report_thresholds
-    from ..coverage.tickets import load_ticket_spec
-    from ..coverage.tiers import load_tiers
-
-    repos = get_repos()
-    cov_repo = get_cov_repo(repos)
-    if cov_repo is None:
-        return None, None, [], None, None, None
-    cov_config = get_cov_config(repos)
-    exclusion_rules = load_exclusion_rules(cov_config)
-    tier_cfgs = load_tiers(cov_config)
-    return (
-        cov_repo.sut_dir,
-        tier_cfgs,
-        exclusion_rules,
-        load_report_thresholds(cov_config),
-        load_ticket_spec(cov_config),
-        load_override_config(cov_config, cov_repo.sut_dir, tier_cfgs),
-    )
-
-
 @cov_app.command()
 def report(
     output_dirs: Annotated[
@@ -278,13 +201,16 @@ def report(
         ),
     ] = None,
     report_dir: Annotated[
-        Path,
+        Path | None,
         typer.Option(
             "--dir",
             "-d",
-            help="Where to place the generated coverage report.",
+            help=(
+                "Where to place the generated coverage report "
+                "(default: cov_report under this invocation's output directory)."
+            ),
         ),
-    ] = Path("./cov_report"),
+    ] = None,
     project_name: Annotated[
         str,
         typer.Option(
@@ -327,6 +253,13 @@ def report(
             ),
         ),
     ] = None,
+    overwrite_dir: Annotated[
+        bool,
+        typer.Option(
+            "--overwrite-dir",
+            help="Allow --dir to clear an existing non-empty directory.",
+        ),
+    ] = False,
 ) -> None:
     """Generate a coverage report from otto test --cov output directories."""
     from ..coverage.errors import CoverageDataMismatchError, CoverageToolVersionError
@@ -342,17 +275,14 @@ def report(
 
     # Precedence rule: explicit --tier flags are a git-less escape hatch and
     # take precedence over settings tiers — route them through the legacy
-    # path unchanged (no repo_root / tier_configs resolution, exactly as
-    # before). With no --tier flags, resolve the collection-model inputs
-    # (repo_root + declared tiers) from settings below, inside the try
-    # block; a tree with no [coverage] section falls back to (None, None),
-    # i.e. the legacy behavior.
-    repo_root: Path | None = None
-    tier_configs: "list[TierConfig] | None" = None
-    exclusion_rules: "list[ExclusionRule]" = []
-    thresholds: "Thresholds | None" = None
-    ticket_spec: "TicketSpec | None" = None
-    overrides: "OverrideConfig | None" = None
+    # path unchanged, passing the empty inputs (no repo_root / tier_configs
+    # resolution, exactly as before). With no --tier flags, resolve_report_inputs
+    # (below, inside the try block) reads the collection-model inputs
+    # (repo_root + declared tiers) from settings; a tree with no [coverage]
+    # section falls back to ReportInputs(), i.e. the legacy behavior.
+    from ..coverage.report_inputs import ReportInputs, resolve_report_inputs
+
+    inputs = ReportInputs()
     if tier:
         try:
             tier_specs: "list[TierSpec]" = _parse_tier_specs(tier)
@@ -363,18 +293,30 @@ def report(
             logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: user typo, message names the fix
             raise typer.Exit(1) from e
         # --tier never resolves settings (see precedence rule above), so
-        # thresholds/ticket_spec/overrides stay None here — run_coverage_report
-        # defaults to Thresholds()'s 80.0/70.0 and runs no ticket
-        # attribution (it has no git repo_root to walk).
+        # inputs stays ReportInputs() here — run_coverage_report defaults to
+        # Thresholds()'s 80.0/70.0 and runs no ticket attribution (it has no
+        # git repo_root to walk).
     else:
         tier_specs = [(TIER_SYSTEM, None)]
 
     cov_dirs = [d / "cov" for d in output_dirs]
+
+    if report_dir is None:
+        from ..context import get_context
+
+        base = get_context().output_dir
+        if base is None:
+            raise typer.BadParameter(
+                "no output directory available: pass --dir/-d", param_hint="--dir"
+            )
+        report_dir = base / "cov_report"
     report_dir = report_dir.resolve()
 
     from ..coverage.capture.gitio import GitUnavailableError, NotAGitRepoError
+    from ..coverage.config import DestinationError
     from ..coverage.reporter import run_coverage_report
     from ..lifecycle import run_command
+    from .invoke import usage_error_from
 
     try:
         if not tier:
@@ -383,22 +325,18 @@ def report(
             # ValueError) from load_override_config, and must hit the same
             # clean-message `except ValueError` handler below as every
             # other settings/data ValueError, not propagate as a traceback.
-            repo_root, tier_configs, exclusion_rules, thresholds, ticket_spec, overrides = (
-                _resolve_cov_settings()
-            )
+            from ..config import get_repos
+
+            inputs = resolve_report_inputs(get_repos())
         store = run_command(
             run_coverage_report(
                 cov_dirs,
                 report_dir,
+                inputs,
                 project_name=project_name,
                 tier_specs=tier_specs,
-                repo_root=repo_root,
-                tier_configs=tier_configs,
-                exclusion_rules=exclusion_rules,
-                thresholds=thresholds,
-                ticket_spec=ticket_spec,
-                overrides=overrides,
                 prefix=prefix,
+                overwrite=overwrite_dir,
             )
         )
     except (CoverageDataMismatchError, CoverageToolVersionError, CoverageToolMissingError) as e:
@@ -428,6 +366,13 @@ def report(
         # what git said rather than mislabelling it as "not a git repository".
         logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: git's own message is the cause
         raise typer.Exit(1) from e
+    except DestinationError as e:
+        # --dir named an existing non-empty directory and --overwrite-dir was
+        # not given: a usage error (exit 2), not a data/merge failure — the
+        # fix is a flag, not a rerun. DestinationError is a ValueError
+        # subclass, so this must be caught before the generic handler below.
+        flags = {"output_dir": "--dir", "overwrite": "--overwrite-dir"}
+        raise usage_error_from(e, flags=flags) from e
     except ValueError as e:
         # A malformed committed manual capture (load_manual_captures wraps the
         # parse error with the offending file name), or the no-[coverage]-
@@ -454,8 +399,8 @@ def report(
         # CI-friendly fail. Name every input searched (run cov dirs plus, when
         # a [coverage] repo resolved, its committed manual-capture store).
         searched = [str(d) for d in cov_dirs]
-        if repo_root is not None:
-            searched.append(str(repo_root / ".otto" / "coverage" / "manual"))
+        if inputs.repo_root is not None:
+            searched.append(str(inputs.repo_root / ".otto" / "coverage" / "manual"))
         where = ", ".join(searched) if searched else "the given inputs"
         logger.error("no coverage data found in: %s", where)
         raise typer.Exit(1)
@@ -474,7 +419,7 @@ def report(
         from ..coverage.ticket_export import make_generated_stamp, write_ticket_export
         from ..version import get_version
 
-        if repo_root is None:
+        if inputs.repo_root is None:
             # The --tier legacy path and the no-[coverage]-section fallback
             # both leave repo_root unset here — and both also leave
             # ticket_spec unset, so no attribution ever ran and
@@ -492,7 +437,7 @@ def report(
             write_ticket_export(
                 store,
                 tickets_json,
-                repo_root=repo_root,
+                repo_root=inputs.repo_root,
                 project=project_name,
                 otto_version=get_version(),
                 generated=make_generated_stamp(),
@@ -505,14 +450,6 @@ def report(
             logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
             raise typer.Exit(1) from e
         logger.info("Ticket export: %s", tickets_json)
-
-
-# `report` is purely local and must never create a per-invocation output dir
-# (reporting on yesterday's run leaves no trace of its own — e2e captures are
-# anchored to base_commit). The
-# leaf-invoke preamble reads this marker; `get` (which produces artifacts)
-# keeps the group's standard output-dir handling.
-report.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
 
 
 # ---------------------------------------------------------------------------
@@ -755,7 +692,9 @@ async def _do_get(
     try:
         resolved_tier = resolve_get_tier(tiers, tier_name)
     except ValueError as e:
-        raise _GetError(str(e)) from e
+        from .invoke import spell_flags
+
+        raise _GetError(spell_flags(str(e), {"tier=NAME": "--tier NAME"})) from e
 
     if resolved_tier.kind == "manual" and not ticket:
         raise _GetError(f"tier {resolved_tier.name!r} is a manual-kind tier; requires --ticket")

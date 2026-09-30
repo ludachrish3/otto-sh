@@ -316,10 +316,11 @@ do:
   {mod}`otto.cli.invoke`
 - {mod}`otto.params` — `@options`, `register_options`, the `OPTIONS`
   registry and the per-verb merge
-- `otto.suite` — `run_tests`, name resolution (`otto.suite.selection`),
-  `OttoPlugin`, `OttoFixturesPlugin`, the artifact layout, the per-loop
-  sweep (`otto.suite.loops`), the `monitor` fixture's `MonitorHandle`, and
-  `ExpectCollector`
+- `otto.suite` — `run_tests`, `prepare_run` (the destination/tickets
+  preflight `run_tests` and a script share), name resolution
+  (`otto.suite.selection`), `OttoPlugin`, `OttoFixturesPlugin`, the
+  artifact layout, the per-loop sweep (`otto.suite.loops`), the `monitor`
+  fixture's `MonitorHandle`, and `ExpectCollector`
 - {mod}`otto.cli.test` — the `otto test` command
 - {mod}`otto.result` — the `Result` family that becomes an instruction's
   exit code

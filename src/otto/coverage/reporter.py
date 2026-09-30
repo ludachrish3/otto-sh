@@ -41,6 +41,7 @@ from .merge.paths import (
     discover_from_gcno,
     discover_path_mappings,
 )
+from .report_inputs import ReportInputs
 from .store.model import TIER_SYSTEM, CoverageStore, Thresholds, TicketRecord
 from .tree import iter_product_dirs
 
@@ -935,19 +936,15 @@ def _partition_board_dirs(cov_dirs: list[Path]) -> tuple[list[Path], list[Path]]
     return gcda_dirs, capture_paths
 
 
-async def run_coverage_report(  # noqa: PLR0913 — wide entry point: each kwarg is an independently-optional report input
+async def run_coverage_report(
     cov_dirs: list[Path],
     output_dir: Path,
+    inputs: ReportInputs,
+    *,
     project_name: str = "Coverage Report",
     tier_specs: list[TierSpec] | None = None,
-    *,
-    repo_root: Path | None = None,
-    tier_configs: "list[TierConfig] | None" = None,
-    exclusion_rules: "list[ExclusionRule] | None" = None,
     prefix: Path | None = None,
-    thresholds: "Thresholds | None" = None,
-    ticket_spec: "TicketSpec | None" = None,
-    overrides: "OverrideConfig | None" = None,
+    overwrite: bool = False,
 ) -> CoverageStore | None:
     """Render an HTML coverage report from one or more cov/ directories.
 
@@ -955,79 +952,83 @@ async def run_coverage_report(  # noqa: PLR0913 — wide entry point: each kwarg
     one per run) and ``otto test --cov-report`` (single cov dir produced by
     the test run just completed).
 
-    **Two modes, one precedence rule.**  When neither *repo_root* nor
-    *tier_configs* is given the function runs the **legacy** path unchanged:
-    it reads the source root + per-host toolchains from
+    *overwrite* clears a non-empty *output_dir*; without it a non-empty one
+    raises :class:`~otto.coverage.config.DestinationError` before anything is
+    read.
+
+    **Two modes, one precedence rule.**  When neither ``inputs.repo_root``
+    nor ``inputs.tier_configs`` is given the function runs the **legacy**
+    path unchanged: it reads the source root + per-host toolchains from
     ``.otto_cov_meta.json``, discovers per-host gcda subdirs, and merges
     them with lcov — returning ``None`` (as before) when there is no
     metadata sidecar or no gcda subdirs.
 
-    When *repo_root* or *tier_configs* is given the function runs the
-    **collection-model** path, which additionally consumes, in order:
+    When ``inputs.repo_root`` or ``inputs.tier_configs`` is given the
+    function runs the **collection-model** path, which additionally
+    consumes, in order:
 
     1. **e2e captures** — board dirs holding a ``capture.json`` load under a
        strict HEAD base_commit guard (:class:`~otto.coverage.errors.CoverageDataMismatchError`
        on mismatch); board dirs without one keep the legacy gcda-merge.
     2. **unit harvest** — each ``kind == "unit"`` tier's ``harvest_dirs``.
-    3. **manual store** — every committed capture under *repo_root*'s
-       ``.otto/coverage/manual/`` (with report-time validity states).
+    3. **manual store** — every committed capture under
+       ``inputs.repo_root``'s ``.otto/coverage/manual/`` (with report-time
+       validity states).
 
     Crucially the legacy "no metadata → return ``None``" early-outs do
     **not** fire in this mode: an empty *cov_dirs* plus a non-empty manual
     store still yields a report.  The legacy gcda-merge only targets the
     conventional ``system`` tier via *tier_specs* (default ``[("system",
     None)]``); explicit ``--tier`` specs, being a git-less escape hatch,
-    never reach this mode (the CLI routes them through the legacy path).
+    never reach this mode (the CLI routes them through the legacy path via
+    ``inputs=ReportInputs()``).
 
-    *exclusion_rules* are the compiled ``[coverage.exclusions]`` rules. They
-    reach :class:`CoverageReporter` on the collection-model path only, but the
-    filter stage itself runs on **both** paths, because the built-in
-    ``LCOV_EXCL_*`` families always apply — so the standard markers are now
+    Every other field of *inputs* — ``exclusion_rules``, ``thresholds``,
+    ``ticket_spec``, ``overrides`` — is documented on
+    :class:`~otto.coverage.report_inputs.ReportInputs` itself: what config
+    table it comes from, and what its feature-absent default means. All four
+    reach :class:`CoverageReporter` on the collection-model path; on the
+    legacy path only ``thresholds`` is forwarded (the others need a git
+    *repo_root* to walk or a collection-model store to filter, neither of
+    which the legacy path has) — a caller that supplies them without
+    ``repo_root``/``tier_configs`` falls into the legacy branch and they are
+    silently ignored, mirroring that branch's "byte-for-byte the historical
+    behavior" contract. The one exception is the exclusion filter stage
+    itself, which runs on **both** paths, because the built-in
+    ``LCOV_EXCL_*`` families always apply — so the standard markers are
     honored on harvested tracefiles that ``geninfo`` never saw, not just on
     captures otto ran ``geninfo`` for.
-
-    *thresholds* is the render thresholds from ``[coverage.report]``;
-    ``None`` (the default) selects :class:`~otto.coverage.store.model.Thresholds`'s
-    own 80.0/70.0 defaults. Forwarded unchanged to both the legacy and
-    collection-model paths, which each pass it straight through to
-    :class:`CoverageReporter`.
-
-    *ticket_spec* is the compiled ``[coverage.tickets]`` pattern;
-    ``None`` (the default) is the feature-absent signal — no git log walk
-    runs. Ticket attribution needs a git *repo_root* to walk, which only the
-    collection-model path resolves, so *ticket_spec* is forwarded there only;
-    a caller that supplies it without *repo_root*/*tier_configs* falls into
-    the legacy branch and it is silently ignored (mirroring that branch's
-    "byte-for-byte the historical behavior" contract).
-
-    *overrides* is the parsed ``.otto/coverage-overrides.toml``, as an
-    :class:`~otto.coverage.overrides.OverrideConfig` (overrides spec §2);
-    ``None`` (the default) is the feature-absent signal. Like
-    *ticket_spec*, it only takes effect on the collection-model path — a
-    caller supplying it without *repo_root*/*tier_configs* falls into the
-    legacy branch and it is silently ignored.
 
     Returns:
         The populated :class:`~otto.coverage.store.model.CoverageStore`, or
         ``None`` when the legacy path found no coverage data.
     """
-    if repo_root is None and tier_configs is None:
-        return await _run_legacy_report(
-            cov_dirs, output_dir, project_name, tier_specs, prefix=prefix, thresholds=thresholds
-        )
+    from .config import prepare_destination
 
+    prepare_destination(
+        output_dir, overwrite=overwrite, field="output_dir", remedy_field="overwrite"
+    )
+    if inputs.repo_root is None and inputs.tier_configs is None:
+        return await _run_legacy_report(
+            cov_dirs,
+            output_dir,
+            project_name,
+            tier_specs,
+            prefix=prefix,
+            thresholds=inputs.thresholds,
+        )
     return await _run_collection_report(
         cov_dirs,
         output_dir,
         project_name=project_name,
         tier_specs=tier_specs,
-        repo_root=repo_root,
-        tier_configs=tier_configs,
-        exclusion_rules=exclusion_rules,
+        repo_root=inputs.repo_root,
+        tier_configs=inputs.tier_configs,
+        exclusion_rules=inputs.exclusion_rules,
         prefix=prefix,
-        thresholds=thresholds,
-        ticket_spec=ticket_spec,
-        overrides=overrides,
+        thresholds=inputs.thresholds,
+        ticket_spec=inputs.ticket_spec,
+        overrides=inputs.overrides,
     )
 
 

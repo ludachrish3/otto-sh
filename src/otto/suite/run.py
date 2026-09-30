@@ -2,9 +2,10 @@
 
 This module holds the pytest-driving core behind ``otto test``: the
 run-options record, the inner pytest session, the stability report, and the
-coverage pre/post hooks. :func:`run_tests` runs tests by name and/or marker as
-a plain library call — ``run_tests(["TestDevice"], output_dir=...)`` —
-returning a :class:`SuiteRunResult` instead of raising ``typer.Exit``.
+:func:`prepare_run` preflight plus the coverage post-run hook. :func:`run_tests`
+runs tests by name and/or marker as a plain library call —
+``run_tests(["TestDevice"], output_dir=...)`` — returning a
+:class:`SuiteRunResult` instead of raising ``typer.Exit``.
 
 The CLI (``otto.cli.test``) keeps a thin adapter over :func:`run_tests` and
 imports it at call time.
@@ -31,7 +32,6 @@ if TYPE_CHECKING:
     from ..config.collected_tests import Classification, FileRecord, RepoTable
     from ..config.repo import Repo
     from ..context import OttoContext
-    from ..coverage.exclusions.rules import ExclusionRule
     from ..registry import RegistrationRefused
     from .layout import ArtifactLayout
     from .plugin import SelectedTest, StabilityCollector
@@ -65,19 +65,21 @@ class RunOptions:
 
     The ``otto test`` callback constructs one of these from its CLI flags and
     stores it in Typer ``ctx.meta[RUN_OPTIONS_KEY]``; library callers pass one
-    directly to :func:`run_tests`. Field defaults mirror the ``otto test`` CLI
-    defaults exactly. Which tests run is not a run option: :func:`run_tests`
+    directly to :func:`run_tests`. This class is the ``otto test`` options: the
+    CLI constructs it from parsed flags, and its rules (``__post_init__``) hold
+    for every constructor. Which tests run is not a run option: :func:`run_tests`
     takes the names itself.
     """
 
     markers: str = ""
     random_order: bool = True
     """Shuffle test order (pytest-randomly). ``False`` unregisters the plugin
-    for the session — ``--no-random`` — so order follows the source file."""
+    for the session — ``--no-random`` — so order follows the source file.
+    ``False`` with a ``seed`` is refused at construction."""
     seed: int | None = None
-    """Fixed pytest-randomly seed (``--seed N``); ``None`` draws one. Only
-    meaningful with ``random_order``: the CLI refuses the combination
-    ``--no-random --seed N`` and library callers get the same refusal here."""
+    """Fixed pytest-randomly seed (``--seed N``); ``None`` draws one. A seed
+    with ``random_order=False`` is refused at construction: a seed with
+    nothing to seed."""
     iterations: int = 0
     duration: int = 0
     threshold: float = 100.0
@@ -86,19 +88,63 @@ class RunOptions:
     """Collect coverage after the run. ``None`` = auto: on when an instrumented
     product is detected and ``[coverage]`` is configured; see
     :func:`resolve_coverage`, which turns this into a plain bool before
-    anything executes."""
+    anything executes. Any coverage destination (``cov_dir``, ``cov_report``,
+    ``cov_report_dir``, ``cov_tickets_json``) forces ``True``; ``False`` with
+    one is refused at construction."""
     cov_dir: Path | None = None
+    """Implies ``cov``."""
     overwrite_cov_dir: bool = False
     cov_clean: bool = True  # matches the --cov-clean CLI default
     cov_report: bool = False
+    """Implies ``cov``."""
     cov_report_dir: Path | None = None
+    """Implies ``cov_report``."""
     overwrite_cov_report_dir: bool = False
     project_name: str = "Coverage Report"
     cov_tickets_json: Path | None = None
+    """Implies ``cov_report``."""
     monitor: bool = False
+    """Forced ``True`` by ``monitor_output`` or ``monitor_hosts``."""
     monitor_interval: float = 5.0
     monitor_output: Path | None = None
+    """Implies ``monitor``."""
     monitor_hosts: str | None = None
+    """Implies ``monitor``."""
+
+    def __post_init__(self) -> None:
+        """Apply the implications and refuse the contradictions, for every constructor.
+
+        Pure: no I/O, no repo config. The CLI, a script and a test all
+        construct the same class, so what a destination implies for one it
+        implies for the other. ``dataclasses.replace`` re-runs this, so a
+        copy cannot lose an invariant.
+
+        Raises:
+            otto.params.OptionsValidationError: ``cov=False`` with a
+                coverage destination, or a ``seed`` with ``random_order=False``. Imported
+                inline on each raise branch, not at the top of this method, so the happy
+                path (no contradiction) costs no import.
+        """
+        if self.cov_report_dir is not None or self.cov_tickets_json is not None:
+            object.__setattr__(self, "cov_report", True)
+        destination = self.cov_dir is not None or self.cov_report
+        if destination:
+            if self.cov is False:
+                from ..params import OptionsValidationError
+
+                raise OptionsValidationError(
+                    "cov=False cannot be combined with cov_dir, cov_report, cov_report_dir "
+                    "or cov_tickets_json, which all imply coverage"
+                )
+            object.__setattr__(self, "cov", True)
+        if self.monitor_output is not None or self.monitor_hosts is not None:
+            object.__setattr__(self, "monitor", True)
+        if self.seed is not None and not self.random_order:
+            from ..params import OptionsValidationError
+
+            raise OptionsValidationError(
+                "seed cannot be combined with random_order=False: a seed with nothing to seed"
+            )
 
 
 # Shared default for run_tests(run_options=...). RunOptions is frozen (immutable),
@@ -293,28 +339,63 @@ def _session_context(log_dir: Path) -> "Iterator[OttoContext]":
         active.output_dir, active.cov_decision = prior_output_dir, prior_cov
 
 
-def _pre_run_cov_dir_check(opts: RunOptions) -> None:
-    """Ensure an explicit ``cov_dir`` is empty (or clear it) before a run.
+def prepare_run(opts: RunOptions, *, dry_run: bool = False) -> None:
+    """Refuse a run that cannot save its files, before any host is touched.
 
-    Mirrors the CLI's own preflight: ``otto.cli.test`` calls
-    ``otto.coverage.config.prepare_empty_dir`` on ``--cov-dir`` while
-    building its ``RunOptions``, so a library caller that hands
-    :attr:`RunOptions.cov_dir` straight to :func:`run_tests` (bypassing that
-    callback) gets the identical empty/overwrite guard. On the CLI path this call is a no-op: the
-    callback already cleared ``cov_dir`` before ``RunOptions`` was built, so
-    it is already empty by the time this runs, regardless of
-    ``overwrite_cov_dir``. Raises the neutral ``ValueError``
-    ``prepare_empty_dir`` itself raises — never ``typer`` — matching the
-    library's no-typer contract. Synchronous (no host I/O) and run before
-    ``otto.coverage.collect.clean_remote_gcda``'s network + event-loop work,
-    so a bad ``cov_dir`` fails before any remote is touched. Imported lazily
-    so a non-coverage library run never pulls the coverage stack at load time.
+    The I/O preflights ``otto test`` and :func:`run_tests` share: the
+    explicit ``cov_dir`` and ``cov_report_dir`` destinations are prepared
+    (created, or cleared under ``overwrite_*``) and proven writable, and
+    ``cov_tickets_json`` needs a ``[coverage.tickets]`` table now rather
+    than a warning after the run. Under *dry_run* the destinations are
+    checked but nothing is created or cleared. The default destinations
+    under the run's output directory need no check: creating that
+    directory was the check. A script can call this before a long run.
+
+    Called ahead of :func:`resolve_coverage` in :func:`run_tests`, so an
+    ``overwrite_cov_dir``/``overwrite_cov_report_dir`` clear already
+    happened here, before the coverage decision — a run that
+    :func:`resolve_coverage` then refuses (for example, no ``[coverage]``
+    table configured) has already cleared its destination. That is the
+    ordering this design chose: fail on destinations before touching hosts.
+
+    Raises:
+        otto.coverage.config.DestinationError: a destination is not a
+            directory, cannot be written, or is not empty without
+            ``overwrite_*``.
+        otto.params.OptionsValidationError: ``cov_tickets_json`` is set
+            and no ``[coverage.tickets]`` table is configured.
     """
-    if not (opts.cov and opts.cov_dir is not None):
-        return
-    from ..coverage.config import prepare_empty_dir
+    if opts.cov_dir is not None or opts.cov_report_dir is not None:
+        # Lazy: otto.coverage's package __init__ is the whole collection stack.
+        from ..coverage.config import check_destination, prepare_destination
 
-    prepare_empty_dir(opts.cov_dir, overwrite=opts.overwrite_cov_dir, flag_name="cov_dir")
+        gate = check_destination if dry_run else prepare_destination
+        if opts.cov_dir is not None:
+            gate(
+                opts.cov_dir,
+                overwrite=opts.overwrite_cov_dir,
+                field="cov_dir",
+                remedy_field="overwrite_cov_dir",
+            )
+        if opts.cov_report_dir is not None:
+            gate(
+                opts.cov_report_dir,
+                overwrite=opts.overwrite_cov_report_dir,
+                field="cov_report_dir",
+                remedy_field="overwrite_cov_report_dir",
+            )
+    if opts.cov_tickets_json is not None:
+        # Knowable now, unlike "the git walk matched nothing", which stays a
+        # post-run warning in _post_run_coverage.
+        from ..config import get_repos
+        from ..config.coverage_settings import get_cov_config
+        from ..coverage.tickets import load_ticket_spec
+        from ..params import OptionsValidationError
+
+        if load_ticket_spec(get_cov_config(get_repos())) is None:
+            raise OptionsValidationError(
+                "cov_tickets_json requires [coverage.tickets] to be configured"
+            )
 
 
 def resolve_coverage(opts: RunOptions, repos: "list[Repo]", *, command: str) -> RunOptions:
@@ -435,13 +516,14 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
     Collection runs through :func:`otto.coverage.collect.collect_coverage` (the
     single canonical fetch/metadata/capture workflow), which *fails loud*: the
     never-fail-a-successful-run swallow policy lives here, in the ``try/except``
-    around it. The optional HTML report reuses the config-resolution helpers and
-    the neutral empty/overwrite gate (``prepare_empty_dir``) in
-    ``otto.coverage.config`` — the gate raises a plain ``ValueError`` (never
-    ``typer``), so a report-dir collision on a library re-run is swallowed here
-    like any other report failure. Everything is imported lazily to avoid a
-    load-time cost for non-coverage runs and to keep the existing patch points
-    valid.
+    around it. The optional HTML report resolves its inputs via
+    :func:`otto.coverage.report_inputs.resolve_report_inputs` and calls
+    :func:`otto.coverage.reporter.run_coverage_report`, whose own two-mode
+    destination gate (``prepare_destination``) raises a field-named
+    ``DestinationError`` (never ``typer``), so a report-dir collision on a
+    library re-run is swallowed here like any other report failure.
+    Everything is imported lazily to avoid a load-time cost for non-coverage
+    runs and to keep the existing patch points valid.
     """
     if not (opts.cov or opts.cov_report):
         # Nothing to do — and skipping the lazy import below keeps a
@@ -474,83 +556,66 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
     if opts.cov_report:
         from rich.markup import escape as escape_markup
 
-        from ..config.coverage_settings import get_cov_config, get_cov_repo
-        from ..coverage.config import prepare_empty_dir
-        from ..coverage.exclusions.rules import load_exclusion_rules
-        from ..coverage.overrides import load_override_config
-        from ..coverage.report_config import load_report_thresholds
+        from ..coverage.config import DestinationError
+        from ..coverage.report_inputs import resolve_report_inputs
         from ..coverage.reporter import run_coverage_report
-        from ..coverage.tickets import load_ticket_spec
-        from ..coverage.tiers import load_tiers
 
         cov_dir = opts.cov_dir or log_dir / "cov"
         report_dir = (
             opts.cov_report_dir if opts.cov_report_dir is not None else log_dir / "cov_report"
         )
-        # Resolve the same collection-model inputs `otto cov report` uses
-        # (declared tiers/colors, exclusion rules, report thresholds, the
-        # committed manual store, the [coverage.tickets] pattern), from the
-        # repos already in hand — mirroring cov._resolve_cov_settings but
-        # without re-fetching. A tree with no [coverage] section falls back
-        # to (None, None, [], None, None), i.e. the legacy gcda-only report,
-        # exactly as before.
-        cov_repo = get_cov_repo(repos)
-        repo_root = cov_repo.sut_dir if cov_repo is not None else None
-        cov_config = get_cov_config(repos)
-        tier_configs = load_tiers(cov_config) if cov_repo is not None else None
-        exclusion_rules: "list[ExclusionRule]" = []
-        thresholds = load_report_thresholds(cov_config) if cov_repo is not None else None
-        ticket_spec = load_ticket_spec(cov_config) if cov_repo is not None else None
-        overrides = None
         # Like the capture tail, in-run report generation must never fail an
-        # otherwise-successful test run: the empty/overwrite gate
-        # (prepare_empty_dir, which now raises a neutral ValueError — a report-dir
-        # collision on a library re-run into a reused output_dir warns and skips
-        # rather than raising typer from a public library entrypoint), a non-git
-        # sut, a polluted tree, a malformed manual capture, or a malformed
-        # override file are logged and swallowed, leaving the raw coverage
-        # artifacts on disk. The CLI already validated an explicit
-        # --cov-report-dir up front; the default path lives inside the
-        # freshly-created log_dir and is always empty. load_override_config
-        # lives inside this try (not resolved alongside the other settings
-        # above) so a bad override file can't fail an otherwise-successful
-        # test run — it raises OverrideConfigError (a ValueError), caught
-        # below same as every other report-generation failure.
-        # load_exclusion_rules is inside the try for exactly the same reason:
-        # a bad regex or an unknown rule kind raises CoverageConfigError (also
-        # a ValueError), and a config typo must cost the report, not the run.
+        # otherwise-successful test run: run_coverage_report's own
+        # destination gate (prepare_destination, which raises a field-named
+        # DestinationError — a report-dir collision on a library re-run into
+        # a reused output_dir warns and skips rather than raising typer from
+        # a public library entrypoint), a non-git sut, a polluted tree, a
+        # malformed manual capture, or a malformed override file are logged
+        # and swallowed, leaving the raw coverage artifacts on disk.
+        # resolve_report_inputs lives inside this try (not resolved ahead of
+        # it) so a malformed [coverage.exclusions] rule or override file
+        # raises from resolve_report_inputs inside this try — it raises
+        # CoverageConfigError/OverrideConfigError (both a ValueError), caught
+        # below same as every other report-generation failure, rather than
+        # failing an otherwise-successful test run.
+        inputs = None
         try:
-            prepare_empty_dir(
-                report_dir,
-                overwrite=opts.overwrite_cov_report_dir,
-                flag_name="--cov-report-dir",
-            )
-            if cov_repo is not None:
-                exclusion_rules = load_exclusion_rules(cov_config)
-                overrides = load_override_config(cov_config, cov_repo.sut_dir, tier_configs or [])
+            inputs = resolve_report_inputs(repos)
             store = await run_coverage_report(
                 [cov_dir],
                 report_dir,
+                inputs,
                 project_name=opts.project_name,
-                repo_root=repo_root,
-                tier_configs=tier_configs,
-                exclusion_rules=exclusion_rules,
-                thresholds=thresholds,
-                ticket_spec=ticket_spec,
-                overrides=overrides,
+                overwrite=opts.overwrite_cov_report_dir,
             )
         except (ValueError, RuntimeError, FileNotFoundError) as e:
-            # escape_markup(*e*): the console handler renders log messages as
-            # Rich markup, and this message may echo a literal bracket (e.g.
-            # a no-[coverage]-section ValueError from prepare_empty_dir's
-            # config resolution).
+            # run_coverage_report's own gate speaks in ITS field names
+            # (output_dir/overwrite) — this caller's user set RunOptions
+            # fields (cov_report_dir/overwrite_cov_report_dir), so a
+            # DestinationError from that gate is re-rendered in those names
+            # before it is logged, the same translation
+            # otto.cli.invoke.usage_error_from does for the CLI.
+            from ..coverage.config import destination_message
+
+            message = str(e)
+            if isinstance(e, DestinationError) and e.field == "output_dir":
+                message = destination_message(
+                    e.kind,
+                    e.path,
+                    subject="cov_report_dir",
+                    remedy="set overwrite_cov_report_dir=True",
+                    reason=e.reason,
+                )
+            # escape_markup(*message*): the console handler renders log
+            # messages as Rich markup, and this message may echo a literal
+            # bracket (e.g. a malformed [coverage.exclusions] rule).
             logger.warning(
                 "Coverage report generation failed (%s); raw coverage artifacts remain in %s",
-                escape_markup(str(e)),
+                escape_markup(message),
                 cov_dir,
             )
             store = None
-        if store is not None:
+        if store is not None and inputs is not None:
             logger.info(
                 "Coverage: %.1f%% overall (%d files)", store.overall_pct(), store.file_count()
             )
@@ -568,7 +633,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                 # for the genuinely unknowable case (config present, but the
                 # git walk matched nothing) plus any library caller that
                 # skipped that preflight (e.g. no repo_root at all here).
-                if repo_root is None:
+                if inputs.repo_root is None:
                     logger.warning(
                         "Ticket export skipped (no ticket data in this report — "
                         "[coverage.tickets] must be configured for --cov-tickets-json); "
@@ -583,7 +648,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                         write_ticket_export(
                             store,
                             opts.cov_tickets_json,
-                            repo_root=repo_root,
+                            repo_root=inputs.repo_root,
                             project=opts.project_name,
                             otto_version=get_version(),
                             generated=make_generated_stamp(),
@@ -858,8 +923,6 @@ def _pytest_session(
     # departures are spelled out. `--no-header` above hides the plugin's own
     # "Using --randomly-seed=N" line — OttoPlugin logs the seed instead.
     if not opts.random_order:
-        if opts.seed is not None:
-            raise ValueError("seed requires random_order: a seed with nothing to seed")
         base_args += ["-p", "no:randomly"]
     elif opts.seed is not None:
         base_args.append(f"--randomly-seed={opts.seed}")
@@ -1463,6 +1526,11 @@ def run_tests(
             ``UnknownSelectionError`` first to tell the typo case apart.
         otto.registry.RegistrationRefused: a test file or conftest
             registered something while loading.
+        otto.coverage.config.DestinationError: :func:`prepare_run`'s preflight found a
+            ``cov_dir`` or ``cov_report_dir`` destination that is not a directory,
+            cannot be written, or is not empty without ``overwrite_*``.
+        otto.params.OptionsValidationError: :func:`prepare_run` found ``cov_tickets_json``
+            set with no ``[coverage.tickets]`` table configured.
     """
     names = [n.strip() for n in names or [] if n.strip()]
     if not (names or run_options.markers):
@@ -1490,12 +1558,13 @@ def run_tests(
         if not searched:
             raise NoTestsMatchedError("No tests matched the selection.")
 
-        # The scan needs the session context, and the decision precedes every
-        # side effect. The remote pre-clean waits for the first session that
-        # is committed to running tests (_Sessions._before_tests).
+        # Destination and tickets preflight: local checks only, so they fail
+        # before the instrumentation scan. The remote pre-clean waits for the
+        # first session that is committed to running tests
+        # (_Sessions._before_tests).
+        prepare_run(opts)
         opts = resolve_coverage(opts, repos, command=_cov_command_label(opts, "otto test"))
         session_ctx.cov_decision = bool(opts.cov)
-        _pre_run_cov_dir_check(opts)
         if opts.random_order:
             # One seed for every session of the run, said once: it is what
             # `--seed N` reproduces.

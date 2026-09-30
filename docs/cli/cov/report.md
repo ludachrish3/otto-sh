@@ -41,7 +41,8 @@ otto cov report run1_output/ run2_output/ run3_output/ --dir ./combined_report
 | Option                    | Description                                                          | Default             |
 |---------------------------|----------------------------------------------------------------------|---------------------|
 | `OUTPUT_DIRS`             | `otto test`/`otto cov get` output dirs with `cov/` subdirectories    | none — report is built from the manual store alone |
-| `--dir, -d PATH`          | Where to place the generated coverage report                        | `./cov_report`      |
+| `--dir, -d PATH`          | Where to place the generated coverage report                        | `cov_report/` under {ref}`this invocation's output directory <invocation-output-directory>` |
+| `--overwrite-dir`         | Allow `--dir` to clear an existing non-empty directory               | off                 |
 | `--project-name STR`      | Title shown in the report header                                     | `Coverage Report`   |
 | `--tier NAME[=PATH]`      | Git-less escape hatch (see below); repeatable, order = precedence    | the configured tiers (or `system` with none configured) |
 | `--tickets-json PATH`     | Also write a per-ticket coverage summary (see {ref}`coverage-tickets-json`).  Requires `[coverage.tickets]` to have attributed at least one ticket; fails loud (exit 1) otherwise | not written |
@@ -171,7 +172,8 @@ click away, in the app bar's **⋮** overflow menu present on every page.
 ## Output
 
 `otto cov report` writes a self-contained **single-page app** to the
-`--dir` directory (default: `./cov_report/index.html`) — there is no
+`--dir` directory (default: `cov_report/index.html` under
+{ref}`this invocation's output directory <invocation-output-directory>`) — there is no
 build step and nothing to serve: open `index.html` straight off disk
 (`file://`) or point any static host or CI artifacts browser at the
 directory. Routes are **hash-based** (`#/coverage/...`, `#/runs`), so deep

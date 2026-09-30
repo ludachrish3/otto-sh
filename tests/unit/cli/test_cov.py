@@ -21,7 +21,7 @@ from otto.cli.cov import cov_app
 from otto.coverage import reporter as reporter_module
 from otto.coverage.capture import produce as produce_module
 from otto.coverage.capture.model import Capture
-from otto.coverage.store.model import Thresholds
+from otto.coverage.report_inputs import ReportInputs
 from tests._fixtures.gitrepo import TmpGitRepo
 
 runner = CliRunner()
@@ -119,12 +119,9 @@ class TestCovHelp:
         result = runner.invoke(cov_app, ["clean", "--help"])
         assert result.exit_code == 0
 
-    def test_only_get_wants_the_per_invocation_output_dir(self):
-        """`get` produces artifacts, so it uses the standard per-invocation
-        output dir; `report` (e2e-pinned: creates no output dir) and `clean`
-        (no artifacts) opt out via the leaf marker the preamble reads."""
+    def test_get_and_report_want_the_per_invocation_output_dir_and_clean_does_not(self):
         assert getattr(cov_module.get, "__cli_output_dir__", True) is True
-        assert cov_module.report.__cli_output_dir__ is False
+        assert getattr(cov_module.report, "__cli_output_dir__", True) is True
         assert cov_module.clean.__cli_output_dir__ is False
 
 
@@ -145,12 +142,12 @@ class TestCovReportValidation:
         # legacy no-data path runs and returns None → exit 1. (Without this the
         # outcome would depend on whatever repo bootstrap resolved globally.)
         with (
-            patch.object(
-                cov_module, "_resolve_cov_settings", return_value=(None, None, [], None, None, None)
-            ),
+            patch("otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
-            result = runner.invoke(cov_app, ["report", str(tmp_path)])
+            result = runner.invoke(
+                cov_app, ["report", str(tmp_path), "--dir", str(tmp_path / "report_out")]
+            )
         assert result.exit_code == 1
         assert "not generated" in mock_err.call_args[0][0]
 
@@ -160,12 +157,12 @@ class TestCovReportValidation:
         # Pin the git-less scenario so only the legacy path is exercised.
         (tmp_path / "cov" / "host1").mkdir(parents=True)
         with (
-            patch.object(
-                cov_module, "_resolve_cov_settings", return_value=(None, None, [], None, None, None)
-            ),
+            patch("otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()),
             patch.object(cov_module.logger, "error"),
         ):
-            result = runner.invoke(cov_app, ["report", str(tmp_path)])
+            result = runner.invoke(
+                cov_app, ["report", str(tmp_path), "--dir", str(tmp_path / "report_out")]
+            )
         assert result.exit_code == 1
 
 
@@ -188,7 +185,9 @@ class TestCovReportMergeErrors:
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
-            result = runner.invoke(cov_app, ["report", str(cov_dir)])
+            result = runner.invoke(
+                cov_app, ["report", str(cov_dir), "--dir", str(cov_dir / "report")]
+            )
         assert result.exit_code == 1
         assert "Traceback" not in result.output
         message = mock_err.call_args[0][0]
@@ -208,7 +207,9 @@ class TestCovReportMergeErrors:
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
-            result = runner.invoke(cov_app, ["report", str(cov_dir)])
+            result = runner.invoke(
+                cov_app, ["report", str(cov_dir), "--dir", str(cov_dir / "report")]
+            )
         assert result.exit_code == 1
         assert "Traceback" not in result.output
         message = mock_err.call_args[0][0]
@@ -233,7 +234,9 @@ class TestCovReportMergeErrors:
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
-            result = runner.invoke(cov_app, ["report", str(cov_dir)])
+            result = runner.invoke(
+                cov_app, ["report", str(cov_dir), "--dir", str(cov_dir / "report")]
+            )
         assert result.exit_code == 1
         assert "Traceback" not in result.output
         message = mock_err.call_args[0][0]
@@ -249,7 +252,9 @@ class TestCovReportMergeErrors:
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
-            result = runner.invoke(cov_app, ["report", str(cov_dir)])
+            result = runner.invoke(
+                cov_app, ["report", str(cov_dir), "--dir", str(cov_dir / "report")]
+            )
         assert result.exit_code == 1
         assert "Traceback" not in result.output
         assert "Coverage merge failed" in mock_err.call_args[0][0]
@@ -258,7 +263,10 @@ class TestCovReportMergeErrors:
         with patch.object(
             reporter_module, "run_coverage_report", new=AsyncMock(return_value=None)
         ) as rcr:
-            runner.invoke(cov_app, ["report", str(cov_dir), "--prefix", "/repo"])
+            runner.invoke(
+                cov_app,
+                ["report", str(cov_dir), "--prefix", "/repo", "--dir", str(cov_dir / "report")],
+            )
         assert rcr.call_args.kwargs["prefix"] == Path("/repo")
 
 
@@ -287,16 +295,70 @@ class TestCovReportSuccess:
 
     def test_report_success(self, cov_tree, mock_run_report):
         mock, _ = mock_run_report
-        result = runner.invoke(cov_app, ["report", str(cov_tree)])
+        result = runner.invoke(
+            cov_app, ["report", str(cov_tree), "--dir", str(cov_tree / "report")]
+        )
         assert result.exit_code == 0
         mock.assert_called_once()
 
-    def test_report_default_output_dir(self, cov_tree, mock_run_report):
+    def test_report_defaults_into_the_invocation_output_dir(
+        self, cov_tree, mock_run_report, tmp_path
+    ):
+        from otto.config.lab import Lab
+        from otto.context import OttoContext, reset_context, set_context
+
         mock, _ = mock_run_report
-        result = runner.invoke(cov_app, ["report", str(cov_tree)])
-        assert result.exit_code == 0
-        args, _ = mock.call_args.args, mock.call_args.kwargs
-        assert args[1] == Path("./cov_report").resolve()
+        run_dir = tmp_path / "xdir" / "cov" / "20260703_120000_000_report"
+        run_dir.mkdir(parents=True)
+        token = set_context(OttoContext(lab=Lab(name="t"), output_dir=run_dir))
+        try:
+            result = runner.invoke(cov_app, ["report", str(cov_tree)])
+        finally:
+            reset_context(token)
+        assert result.exit_code == 0, result.output
+        assert mock.call_args.args[1] == run_dir / "cov_report"
+        assert mock.call_args.kwargs["overwrite"] is False
+
+    def test_overwrite_dir_flag_is_passed_through_to_run_coverage_report(
+        self, cov_tree, mock_run_report, tmp_path
+    ):
+        """``--overwrite-dir`` must reach ``run_coverage_report(overwrite=...)``
+        as ``True`` — without this test, wiring it to a hardcoded ``False``
+        (or dropping the flag's effect entirely) would still pass every
+        other test in this file."""
+        mock, _ = mock_run_report
+        result = runner.invoke(
+            cov_app,
+            ["report", str(cov_tree), "--dir", str(tmp_path / "out"), "--overwrite-dir"],
+        )
+        assert result.exit_code == 0, result.output
+        assert mock.call_args.kwargs["overwrite"] is True
+
+    def test_report_without_an_output_dir_or_dir_fails_naming_dir(self, cov_tree, mock_run_report):
+        from otto.config.lab import Lab
+        from otto.context import OttoContext, reset_context, set_context
+
+        mock, _ = mock_run_report
+        token = set_context(OttoContext(lab=Lab(name="t"), output_dir=None))
+        try:
+            result = runner.invoke(cov_app, ["report", str(cov_tree)])
+        finally:
+            reset_context(token)
+        assert result.exit_code == 2
+        assert "--dir" in result.output
+        mock.assert_not_called()
+
+    def test_explicit_dir_is_refused_when_non_empty(self, cov_tree, tmp_path):
+        target = tmp_path / "out"
+        target.mkdir()
+        (target / "stale.html").write_text("stale")
+        with patch(
+            "otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()
+        ):
+            result = runner.invoke(cov_app, ["report", str(cov_tree), "--dir", str(target)])
+        assert result.exit_code == 2
+        assert "pass --overwrite-dir to clear it" in result.output
+        assert (target / "stale.html").exists()
 
     def test_report_custom_report_dir(self, cov_tree, mock_run_report):
         mock, _ = mock_run_report
@@ -322,6 +384,8 @@ class TestCovReportSuccess:
                 str(cov_tree),
                 "--project-name",
                 "My Project",
+                "--dir",
+                str(cov_tree / "report"),
             ],
         )
         assert result.exit_code == 0
@@ -336,7 +400,9 @@ class TestCovReportSuccess:
             host_dir.mkdir(parents=True)
             (host_dir / "main.gcda").write_bytes(b"\x00")
 
-        result = runner.invoke(cov_app, ["report", str(dir1), str(dir2)])
+        result = runner.invoke(
+            cov_app, ["report", str(dir1), str(dir2), "--dir", str(tmp_path / "report")]
+        )
         assert result.exit_code == 0
         mock.assert_called_once()
         # Should have forwarded two cov dirs
@@ -346,7 +412,9 @@ class TestCovReportSuccess:
     def test_report_default_tier_is_system(self, cov_tree, mock_run_report):
         """No --tier → default to system-only."""
         mock, _ = mock_run_report
-        result = runner.invoke(cov_app, ["report", str(cov_tree)])
+        result = runner.invoke(
+            cov_app, ["report", str(cov_tree), "--dir", str(cov_tree / "report")]
+        )
         assert result.exit_code == 0
         assert mock.call_args.kwargs["tier_specs"] == [("system", None)]
 
@@ -361,6 +429,8 @@ class TestCovReportSuccess:
                 "unit=/tmp/u.info",
                 "--tier",
                 "system",
+                "--dir",
+                str(cov_tree / "report"),
             ],
         )
         assert result.exit_code == 0
@@ -385,6 +455,8 @@ class TestCovReportSuccess:
                 "integration=/i.info",
                 "--tier",
                 "manual=/m.info",
+                "--dir",
+                str(cov_tree / "report"),
             ],
         )
         assert result.exit_code == 0
@@ -455,16 +527,17 @@ class TestCovReportTicketsJson:
         repo_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
         spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
-        with patch.object(
-            cov_module,
-            "_resolve_cov_settings",
-            return_value=(repo_root, tiers, [], None, spec, None),
+        with patch(
+            "otto.coverage.report_inputs.resolve_report_inputs",
+            return_value=ReportInputs(repo_root=repo_root, tier_configs=tiers, ticket_spec=spec),
         ):
             yield repo_root
 
     def test_no_flag_never_writes_export(self, cov_tree, mock_run_report):
         with patch("otto.coverage.ticket_export.write_ticket_export") as mock_write:
-            result = runner.invoke(cov_app, ["report", str(cov_tree)])
+            result = runner.invoke(
+                cov_app, ["report", str(cov_tree), "--dir", str(cov_tree / "report")]
+            )
         assert result.exit_code == 0
         mock_write.assert_not_called()
 
@@ -484,6 +557,8 @@ class TestCovReportTicketsJson:
                     str(target),
                     "--project-name",
                     "My App",
+                    "--dir",
+                    str(cov_tree / "report"),
                 ],
             )
         assert result.exit_code == 0, result.output
@@ -510,7 +585,15 @@ class TestCovReportTicketsJson:
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(
-                cov_app, ["report", str(cov_tree), "--tickets-json", str(target)]
+                cov_app,
+                [
+                    "report",
+                    str(cov_tree),
+                    "--tickets-json",
+                    str(target),
+                    "--dir",
+                    str(cov_tree / "report"),
+                ],
             )
         assert result.exit_code == 1
         assert "Traceback" not in result.output
@@ -525,7 +608,16 @@ class TestCovReportTicketsJson:
         with patch.object(cov_module.logger, "error") as mock_err:
             result = runner.invoke(
                 cov_app,
-                ["report", str(cov_tree), "--tickets-json", str(target), "--tier", "system"],
+                [
+                    "report",
+                    str(cov_tree),
+                    "--tickets-json",
+                    str(target),
+                    "--tier",
+                    "system",
+                    "--dir",
+                    str(cov_tree / "report"),
+                ],
             )
         assert result.exit_code == 1
         assert "Traceback" not in result.output
@@ -557,21 +649,22 @@ class TestCovReportCollectionModel:
 
         repo_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
-        with patch.object(
-            cov_module,
-            "_resolve_cov_settings",
-            return_value=(repo_root, tiers, [], None, None, None),
+        with patch(
+            "otto.coverage.report_inputs.resolve_report_inputs",
+            return_value=ReportInputs(repo_root=repo_root, tier_configs=tiers),
         ):
-            result = runner.invoke(cov_app, ["report", str(tmp_path)])
+            result = runner.invoke(
+                cov_app, ["report", str(tmp_path), "--dir", str(tmp_path / "report")]
+            )
 
         assert result.exit_code == 0
-        kwargs = mock_run_report.call_args.kwargs
-        assert kwargs["repo_root"] == repo_root
-        assert kwargs["tier_configs"] == tiers
-        assert kwargs["tier_specs"] == [("system", None)]
+        inputs = mock_run_report.call_args.args[2]
+        assert inputs.repo_root == repo_root
+        assert inputs.tier_configs == tiers
+        assert mock_run_report.call_args.kwargs["tier_specs"] == [("system", None)]
 
     def test_ticket_spec_threaded_from_settings(self, tmp_path, mock_run_report):
-        """[coverage.tickets] (via _resolve_cov_settings) reaches run_coverage_report."""
+        """[coverage.tickets] (via resolve_report_inputs) reaches run_coverage_report."""
         from otto.coverage.tickets import build_ticket_spec
         from otto.coverage.tiers import TierConfig
 
@@ -582,15 +675,16 @@ class TestCovReportCollectionModel:
         repo_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
         spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
-        with patch.object(
-            cov_module,
-            "_resolve_cov_settings",
-            return_value=(repo_root, tiers, [], None, spec, None),
+        with patch(
+            "otto.coverage.report_inputs.resolve_report_inputs",
+            return_value=ReportInputs(repo_root=repo_root, tier_configs=tiers, ticket_spec=spec),
         ):
-            result = runner.invoke(cov_app, ["report", str(tmp_path)])
+            result = runner.invoke(
+                cov_app, ["report", str(tmp_path), "--dir", str(tmp_path / "report")]
+            )
 
         assert result.exit_code == 0
-        assert mock_run_report.call_args.kwargs["ticket_spec"] is spec
+        assert mock_run_report.call_args.args[2].ticket_spec is spec
 
     def test_explicit_tier_flags_never_thread_ticket_spec(self, tmp_path, mock_run_report):
         """--tier bypasses settings resolution entirely, so ticket_spec stays None
@@ -599,15 +693,26 @@ class TestCovReportCollectionModel:
         host_dir.mkdir(parents=True)
         (host_dir / "main.gcda").write_bytes(b"\x00")
 
-        with patch.object(
-            cov_module, "_resolve_cov_settings", side_effect=AssertionError("must not resolve")
+        with patch(
+            "otto.coverage.report_inputs.resolve_report_inputs",
+            side_effect=AssertionError("must not resolve"),
         ):
             result = runner.invoke(
-                cov_app, ["report", str(tmp_path), "--tier", "unit=/u.info", "--tier", "system"]
+                cov_app,
+                [
+                    "report",
+                    str(tmp_path),
+                    "--tier",
+                    "unit=/u.info",
+                    "--tier",
+                    "system",
+                    "--dir",
+                    str(tmp_path / "report"),
+                ],
             )
 
         assert result.exit_code == 0
-        assert mock_run_report.call_args.kwargs["ticket_spec"] is None
+        assert mock_run_report.call_args.args[2].ticket_spec is None
 
     def test_exclusion_rules_threaded_from_settings(self, tmp_path, mock_run_report):
         """[coverage.exclusions].rules reach run_coverage_report as compiled rules."""
@@ -621,15 +726,18 @@ class TestCovReportCollectionModel:
         repo_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
         rules = [MarkerRule(stat="line", name="MYPROJ_NO_COV")]
-        with patch.object(
-            cov_module,
-            "_resolve_cov_settings",
-            return_value=(repo_root, tiers, rules, None, None, None),
+        with patch(
+            "otto.coverage.report_inputs.resolve_report_inputs",
+            return_value=ReportInputs(
+                repo_root=repo_root, tier_configs=tiers, exclusion_rules=rules
+            ),
         ):
-            result = runner.invoke(cov_app, ["report", str(tmp_path)])
+            result = runner.invoke(
+                cov_app, ["report", str(tmp_path), "--dir", str(tmp_path / "report")]
+            )
 
         assert result.exit_code == 0
-        threaded = mock_run_report.call_args.kwargs["exclusion_rules"]
+        threaded = mock_run_report.call_args.args[2].exclusion_rules
         assert [r.name for r in threaded] == ["MYPROJ_NO_COV"]
 
     def test_explicit_tier_flags_bypass_settings(self, tmp_path, mock_run_report):
@@ -638,33 +746,46 @@ class TestCovReportCollectionModel:
         host_dir.mkdir(parents=True)
         (host_dir / "main.gcda").write_bytes(b"\x00")
 
-        with patch.object(
-            cov_module, "_resolve_cov_settings", side_effect=AssertionError("must not resolve")
+        with patch(
+            "otto.coverage.report_inputs.resolve_report_inputs",
+            side_effect=AssertionError("must not resolve"),
         ):
             result = runner.invoke(
-                cov_app, ["report", str(tmp_path), "--tier", "unit=/u.info", "--tier", "system"]
+                cov_app,
+                [
+                    "report",
+                    str(tmp_path),
+                    "--tier",
+                    "unit=/u.info",
+                    "--tier",
+                    "system",
+                    "--dir",
+                    str(tmp_path / "report"),
+                ],
             )
 
         assert result.exit_code == 0
-        kwargs = mock_run_report.call_args.kwargs
-        assert kwargs["repo_root"] is None
-        assert kwargs["tier_configs"] is None
-        assert kwargs["tier_specs"] == [("unit", Path("/u.info")), ("system", None)]
+        inputs = mock_run_report.call_args.args[2]
+        assert inputs.repo_root is None
+        assert inputs.tier_configs is None
+        assert mock_run_report.call_args.kwargs["tier_specs"] == [
+            ("unit", Path("/u.info")),
+            ("system", None),
+        ]
 
-    def test_no_output_dirs_allowed_for_manual_only_report(self, mock_run_report):
+    def test_no_output_dirs_allowed_for_manual_only_report(self, mock_run_report, tmp_path):
         """output_dirs is optional: a manual-store-only report needs no run dirs."""
         repo_root = Path("/some/repo")
-        with patch.object(
-            cov_module,
-            "_resolve_cov_settings",
-            return_value=(repo_root, None, [], None, None, None),
+        with patch(
+            "otto.coverage.report_inputs.resolve_report_inputs",
+            return_value=ReportInputs(repo_root=repo_root),
         ):
-            result = runner.invoke(cov_app, ["report"])
+            result = runner.invoke(cov_app, ["report", "--dir", str(tmp_path / "report")])
 
         assert result.exit_code == 0
         args = mock_run_report.call_args.args
         assert args[0] == []  # no cov dirs
-        assert mock_run_report.call_args.kwargs["repo_root"] == repo_root
+        assert args[2].repo_root == repo_root
 
 
 # ── report command — collection-model failure modes & empty-report contract ──
@@ -686,10 +807,9 @@ class TestCovReportCollectionModelErrors:
         (manual / "bad.json").write_text("{nope")
 
         with (
-            patch.object(
-                cov_module,
-                "_resolve_cov_settings",
-                return_value=(repo_root, self._tiers(), [], None, None, None),
+            patch(
+                "otto.coverage.report_inputs.resolve_report_inputs",
+                return_value=ReportInputs(repo_root=repo_root, tier_configs=self._tiers()),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -705,10 +825,9 @@ class TestCovReportCollectionModelErrors:
         repo_root = tmp_path / "sut"
 
         with (
-            patch.object(
-                cov_module,
-                "_resolve_cov_settings",
-                return_value=(repo_root, self._tiers(), [], None, None, None),
+            patch(
+                "otto.coverage.report_inputs.resolve_report_inputs",
+                return_value=ReportInputs(repo_root=repo_root, tier_configs=self._tiers()),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -728,10 +847,9 @@ class TestCovReportCollectionModelErrors:
         (not_git / "cov" / "board1" / "app" / "capture.json").write_text("{}")
 
         with (
-            patch.object(
-                cov_module,
-                "_resolve_cov_settings",
-                return_value=(not_git, self._tiers(), [], None, None, None),
+            patch(
+                "otto.coverage.report_inputs.resolve_report_inputs",
+                return_value=ReportInputs(repo_root=not_git, tier_configs=self._tiers()),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -747,7 +865,7 @@ class TestCovReportCollectionModelErrors:
 
     def test_malformed_overrides_file_exits_1_no_traceback(self, tmp_path):
         """A settings tree with [coverage.tickets] and a malformed override
-        file: _resolve_cov_settings's real load_override_config call raises
+        file: resolve_report_inputs's real load_override_config call raises
         OverrideConfigError (a ValueError), which report's existing
         `except ValueError` handler must print clean — no traceback."""
         repo = MagicMock()
@@ -772,105 +890,6 @@ class TestCovReportCollectionModelErrors:
         assert result.exit_code == 1
         assert "Traceback" not in result.output
         assert "not valid TOML" in mock_err.call_args[0][0]
-
-
-# ── _resolve_cov_settings — [coverage.exclusions].rules wiring ─────────────
-
-
-class TestResolveCovSettingsExclusionRules:
-    @staticmethod
-    def _repo(coverage_cfg, sut_dir=None):
-        repo = MagicMock()
-        repo.settings = {"coverage": coverage_cfg} if coverage_cfg is not None else {}
-        repo.sut_dir = sut_dir or Path("/sut")
-        return repo
-
-    def test_reads_exclusion_rules_from_settings(self):
-        repo = self._repo(
-            {
-                "tiers": {"system": {"kind": "e2e", "precedence": 1}},
-                "exclusions": {"rules": [{"kind": "marker", "name": "MYPROJ_NO_COV"}]},
-            }
-        )
-        with patch("otto.config.get_repos", return_value=[repo]):
-            repo_root, tier_configs, exclusion_rules, thresholds, ticket_spec, _overrides = (
-                cov_module._resolve_cov_settings()
-            )
-        assert repo_root == repo.sut_dir
-        assert tier_configs is not None
-        assert [r.name for r in exclusion_rules] == ["MYPROJ_NO_COV"]
-        assert thresholds == Thresholds()
-        assert ticket_spec is None
-
-    def test_no_exclusions_table_yields_no_rules(self):
-        repo = self._repo({"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
-        with patch("otto.config.get_repos", return_value=[repo]):
-            _repo_root, _tier_configs, exclusion_rules, _, _ticket_spec, _overrides = (
-                cov_module._resolve_cov_settings()
-            )
-        assert exclusion_rules == []
-
-    def test_no_cov_repo_yields_no_rules(self):
-        with patch("otto.config.get_repos", return_value=[]):
-            repo_root, tier_configs, exclusion_rules, thresholds, ticket_spec, _overrides = (
-                cov_module._resolve_cov_settings()
-            )
-        assert repo_root is None
-        assert tier_configs is None
-        assert exclusion_rules == []
-        assert thresholds is None
-        assert ticket_spec is None
-
-    def test_reads_ticket_spec_from_settings(self):
-        """[coverage.tickets] (via load_ticket_spec) reaches _resolve_cov_settings's
-        return tuple — the feature-absent None default is exercised above."""
-        repo = self._repo(
-            {
-                "tiers": {"system": {"kind": "e2e", "precedence": 1}},
-                "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
-            }
-        )
-        with patch("otto.config.get_repos", return_value=[repo]):
-            _repo_root, _tier_configs, _exclusion_rules, _thresholds, ticket_spec, _overrides = (
-                cov_module._resolve_cov_settings()
-            )
-        assert ticket_spec is not None
-        assert ticket_spec.extract("fix PROJ-7") == ["PROJ-7"]
-
-    def test_reads_overrides_from_settings_with_matching_manual_tier(self, tmp_path):
-        """[coverage.overrides] must resolve using the SAME tier list
-        load_tiers produced for this settings tree, not an empty or wrong
-        one — load_override_config rejects a top-level table whose name
-        isn't a declared kind="manual" tier, so passing the wrong list here
-        would make a well-formed [[bench]] entry look like an unknown
-        table."""
-        sut = TmpGitRepo(tmp_path / "sut")
-        sut_dir = sut.root
-        sut.write("f.c", "int a;\n")
-        sha = sut.commit("work")
-
-        (sut_dir / ".otto").mkdir()
-        (sut_dir / ".otto" / "coverage-overrides.toml").write_text(
-            f'[[bench]]\ncommit = "{sha}"\nreason = "manual pass"\n'
-        )
-
-        repo = self._repo(
-            {
-                "tiers": {
-                    "system": {"kind": "e2e", "precedence": 1},
-                    "bench": {"kind": "manual", "precedence": 2},
-                },
-                "tickets": {"pattern": "#(?P<n>[0-9]+)"},
-            },
-            sut_dir=sut_dir,
-        )
-        with patch("otto.config.get_repos", return_value=[repo]):
-            _repo_root, _tier_configs, _exclusion_rules, _thresholds, _ticket_spec, overrides = (
-                cov_module._resolve_cov_settings()
-            )
-        assert overrides is not None
-        assert [e.key for e in overrides.asserted] == [f"commit:{sha}"]
-        assert overrides.asserted[0].tier == "bench"
 
 
 # ── _resolve_tester — identity defaults (spec decision 15) ──────────────────
@@ -1049,6 +1068,27 @@ class TestCovGetValidation:
         message = mock_err.call_args[0][0]
         assert "sys_a" in message
         assert "sys_b" in message
+
+    def test_ambiguous_default_tier_spells_the_remedy_as_a_flag(self):
+        """The library message says "tier=NAME"; the CLI spells it as the
+        flag the user actually has: --tier NAME."""
+        repo = self._repo(
+            {
+                "tiers": {
+                    "sys_a": {"kind": "e2e", "precedence": 1},
+                    "sys_b": {"kind": "e2e", "precedence": 2},
+                }
+            }
+        )
+        with (
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["get"])
+        assert result.exit_code == 1
+        message = mock_err.call_args[0][0]
+        assert "--tier NAME" in message
+        assert "tier=NAME" not in message
 
     def test_get_with_no_instrumented_product_exits_1_showing_the_verdict_table(self, git_sut):
         """``otto cov get`` is a forced-on retrieval: a lab whose products are

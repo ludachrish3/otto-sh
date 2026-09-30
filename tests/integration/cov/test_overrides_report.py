@@ -10,6 +10,7 @@ from otto.coverage.capture.gitio import blob_sha, head_commit
 from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.capture.store_dir import write_manual_capture
 from otto.coverage.overrides import DEFAULT_OVERRIDES_RELPATH, load_override_config
+from otto.coverage.report_inputs import ReportInputs
 from otto.coverage.reporter import run_coverage_report
 from otto.coverage.store.model import STORE_FORMAT_VERSION
 from otto.coverage.ticket_export import build_ticket_export
@@ -60,10 +61,12 @@ async def _report(repo: Path, out: Path):
     return await run_coverage_report(
         [],
         out,
-        repo_root=repo,
-        tier_configs=tier_configs,
-        ticket_spec=SPEC,
-        overrides=load_override_config(COV, repo, tier_configs),
+        ReportInputs(
+            repo_root=repo,
+            tier_configs=tier_configs,
+            ticket_spec=SPEC,
+            overrides=load_override_config(COV, repo, tier_configs),
+        ),
     )
 
 
@@ -180,9 +183,7 @@ async def test_absent_file_and_key_is_identical(tmp_path):
     s2 = await run_coverage_report(  # overrides never resolved at all
         [],
         tmp_path / "r2",
-        repo_root=repo,
-        tier_configs=load_tiers(COV),
-        ticket_spec=SPEC,
+        ReportInputs(repo_root=repo, tier_configs=load_tiers(COV), ticket_spec=SPEC),
     )
     d1 = json.loads((tmp_path / "r1" / "store.json").read_text())
     d2 = json.loads((tmp_path / "r2" / "store.json").read_text())

@@ -114,10 +114,11 @@ git add .otto/coverage/manual/
 git commit -m "cov: manual verification for PROJ-123"
 ```
 
-Then generate a single report covering all three:
+Then generate a single report covering all three — `--overwrite-dir` because
+the getting-started walkthrough already left a report at `./cov_report`:
 
 ```bash
-otto cov report path/to/e2e_run_output/ --dir ./cov_report
+otto cov report path/to/e2e_run_output/ --dir ./cov_report --overwrite-dir
 ```
 
 `otto cov report` reads the e2e capture(s) from the given output

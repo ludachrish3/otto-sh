@@ -23,9 +23,12 @@ if TYPE_CHECKING:
     from .collect import CollectResult as CollectResult
     from .collect import clean_remote_gcda as clean_remote_gcda
     from .collect import collect_coverage as collect_coverage
+    from .config import DestinationError as DestinationError
     from .errors import CoverageNotInstrumentedError as CoverageNotInstrumentedError
     from .errors import NoCoverageDataError as NoCoverageDataError
     from .fetcher.remote import GcdaFetcher as GcdaFetcher
+    from .report_inputs import ReportInputs as ReportInputs
+    from .report_inputs import resolve_report_inputs as resolve_report_inputs
     from .reporter import CoverageReporter as CoverageReporter
     from .store.model import CoverageStore as CoverageStore
 
@@ -36,10 +39,13 @@ _LAZY_ATTRS: dict[str, str] = {
     "CoverageNotInstrumentedError": "otto.coverage.errors",
     "CoverageReporter": "otto.coverage.reporter",
     "CoverageStore": "otto.coverage.store.model",
+    "DestinationError": "otto.coverage.config",
     "GcdaFetcher": "otto.coverage.fetcher.remote",
     "NoCoverageDataError": "otto.coverage.errors",
+    "ReportInputs": "otto.coverage.report_inputs",
     "clean_remote_gcda": "otto.coverage.collect",
     "collect_coverage": "otto.coverage.collect",
+    "resolve_report_inputs": "otto.coverage.report_inputs",
 }
 
 
@@ -63,8 +69,11 @@ __all__ = [
     "CoverageNotInstrumentedError",
     "CoverageReporter",
     "CoverageStore",
+    "DestinationError",
     "GcdaFetcher",
     "NoCoverageDataError",
+    "ReportInputs",
     "clean_remote_gcda",
     "collect_coverage",
+    "resolve_report_inputs",
 ]

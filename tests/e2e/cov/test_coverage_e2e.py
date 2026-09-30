@@ -203,9 +203,14 @@ def coverage_run(tmp_path_factory):
     assert store_path.is_file(), f"CoverageReporter did not write {store_path}"
     store = CoverageStore.load(store_path)
 
-    # `otto cov report` touches no remote host: its report goes to --dir, so it
-    # must create NO per-invocation output dir. Only stage-1's `test` dir exists.
-    assert not output_dirs(xdir, "cov"), "cov report must not create an output dir"
+    # `otto cov report` takes the standard per-invocation output dir like
+    # every other writing verb now, even though its real artifacts go to
+    # --dir: exactly one `cov/<timestamp>_report` dir from this invocation,
+    # alongside stage 1's `test` dir.
+    report_output_dirs = output_dirs(xdir, "cov")
+    assert len(report_output_dirs) == 1, (
+        f"expected exactly one cov output dir from `cov report`, found: {report_output_dirs}"
+    )
 
     return store, report_dir, cov_dir
 

@@ -84,6 +84,6 @@ def resolve_get_tier(tiers: list[TierConfig], name: str | None) -> TierConfig:
         raise ValueError(
             "cannot pick a default tier: "
             f"{len(e2e)} e2e-kind tiers configured ({', '.join(t.name for t in e2e)}); "
-            "pass --tier NAME"
+            "choose one with tier=NAME"
         )
     return e2e[0]

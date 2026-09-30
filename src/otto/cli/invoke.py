@@ -33,12 +33,15 @@ from ..params import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from _typeshed import DataclassInstance
     from typer.core import TyperGroup
 
     from ..config.lab import Lab
     from ..config.repo import Repo
     from ..context import OttoContext
+    from ..coverage.config import DestinationError
     from ..registry import Registry
     from ..result import Result
     from .registry import CommandSpec
@@ -77,15 +80,88 @@ def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
     return wrapper
 
 
-def usage_error_from(exc: OptionsValidationError) -> typer.BadParameter:
-    """Translate a library options failure into click's exit-2 usage error.
+def spell_flags(text: str, flags: "Mapping[str, str]") -> str:
+    """Rewrite a library message's field names as the flags this command exposes.
 
-    The one place this translation happens.
+    Keys that carry a value (``cov=False``) are replaced first, then
+    ``set <field>=True`` becomes ``pass <flag>``, then bare field names as
+    whole words, longest first, so ``cov_report`` never matches inside
+    ``cov_report_dir`` and no field matches inside a flag already spelled.
+    """
+    import re
+
+    for key, flag in flags.items():
+        if "=" in key:
+            text = text.replace(key, flag)
+    for key, flag in flags.items():
+        if "=" not in key:
+            text = text.replace(f"set {key}=True", f"pass {flag}")
+    for key in sorted((k for k in flags if "=" not in k), key=len, reverse=True):
+        # Not `\b`: a hyphen is a word boundary, so `cov` would match inside
+        # the `--no-cov` the first pass just wrote.
+        #
+        # The replacement is a FUNCTION, not the flag string itself: `re.sub`
+        # treats a string replacement as a template, where a backslash (or
+        # `\1`) in the flag's own spelling would be read as a backreference
+        # and either corrupt the output or raise `re.error`. A lambda's
+        # return value is inserted literally, no template parsing at all.
+        flag = flags[key]
+        text = re.sub(rf"(?<![\w-]){re.escape(key)}(?![\w-])", lambda _m, flag=flag: flag, text)
+    return text
+
+
+def usage_error_from(
+    exc: "OptionsValidationError | DestinationError",
+    *,
+    flags: "Mapping[str, str] | None" = None,
+) -> typer.BadParameter:
+    """Translate a library options or destination failure into click's exit-2 usage error.
+
+    The one place this translation happens. With *flags* (field name to
+    flag) the message is spelled in the command's flags and ``param_hint``
+    names the offending one; without, the message passes through.
+
+    A :class:`~otto.coverage.config.DestinationError`'s message embeds the
+    user's own filesystem path verbatim (``exc.path``), which must never be
+    rewritten — a path that happens to contain a field name as a substring
+    (``cov`` inside ``cov_dir``) is not the field, and text-rewriting the
+    rendered message would corrupt it either way. So a ``DestinationError``
+    is never spelled by rewriting its text: its message is rebuilt from
+    scratch via :func:`~otto.coverage.config.destination_message`, passing
+    the flag spellings in as the subject/remedy instead of the field names.
+    Anything else (an :class:`~otto.params.OptionsValidationError`) still
+    goes through :func:`spell_flags`, which is a pure text-rewriting helper.
+
+    When the spelled message already leads with the flag ``param_hint``
+    would name (every real destination message does: ``"cov_dir target ..."``
+    spells to ``"--cov-dir target ..."``), the hint is dropped — click
+    prefixes a param hint as ``"Invalid value for --cov-dir: "``, so keeping
+    it would repeat the flag the message already opens with
+    (``"Invalid value for --cov-dir: --cov-dir target ..."``).
 
     ``typer.BadParameter``, not ``click.BadParameter``: typer >= 0.26 vendors
     click, and only its own class is caught by its exception handling.
     """
-    return typer.BadParameter(str(exc))
+    message = str(exc)
+    hint = None
+    if flags:
+        from ..coverage.config import DestinationError, destination_message
+
+        if isinstance(exc, DestinationError):
+            message = destination_message(
+                exc.kind,
+                exc.path,
+                subject=flags.get(exc.field, exc.field),
+                remedy=f"pass {flags.get(exc.remedy_field, exc.remedy_field)}",
+                reason=exc.reason,
+            )
+        else:
+            message = spell_flags(message, flags)
+        field = getattr(exc, "field", None)
+        hint = flags.get(field) if field else None
+        if hint is not None and message.startswith(hint):
+            hint = None
+    return typer.BadParameter(message, param_hint=hint)
 
 
 def _bind_and_build_own(

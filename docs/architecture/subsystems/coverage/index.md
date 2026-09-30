@@ -120,6 +120,10 @@ a kind whose counters live in the kernel or behind a daemon overrides them.
   (file transfer on Unix and containers, console extraction on embedded)
 - `otto.coverage.instrumentation` — the local per-product instrumentation
   scan and the `--cov`/auto/`--no-cov` decision table
+- `otto.coverage.config` — `check_destination`/`prepare_destination`: the
+  check-only / create-or-clear destination gate every `cov_dir` /
+  `cov_report_dir` / report `output_dir` preflight shares, raising a
+  field-named `DestinationError`
 - `otto.coverage.merge` — pairs counters to the `.gcno` build graph and
   merges hosts and runs
 - `otto.coverage.capture` — freezes a merge into a per-(host, product)
@@ -133,6 +137,9 @@ a kind whose counters live in the kernel or behind a daemon overrides them.
 - `otto.coverage.report_config` — resolves `[coverage.report]`'s raw
   settings dict into render `Thresholds` at report time; also re-exports
   `[coverage.tickets]`'s loader (`otto.coverage.tickets`, below)
+- `otto.coverage.report_inputs` — `resolve_report_inputs`: turns
+  `[coverage]` into the `ReportInputs` bundle `otto cov report` and the
+  post-run `otto test --cov-report` share, so the two cannot drift
 - `otto.coverage.tickets` — `TicketSpec`: compiles `[coverage.tickets]`'s
   `pattern`/`url`, extracts ticket ids from commit messages ({doc}`attribution`)
 - `otto.coverage.attribution` — the bounded git log walk and backward

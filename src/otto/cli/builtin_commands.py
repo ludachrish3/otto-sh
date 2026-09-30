@@ -126,9 +126,9 @@ def register_builtin_commands() -> None:
         "cov",
         "otto.cli.cov:cov_app",
         help="Generate coverage reports from otto test --cov output.",
-        # Standard per-invocation output dirs apply to `cov get` (it produces
-        # captures + debug artifacts); `report` and `clean` opt out per-leaf
-        # via their `__cli_output_dir__` markers in otto/cli/cov.py.
+        # Standard per-invocation output dirs apply to `cov get` and `cov
+        # report`; `clean` opts out per-leaf via its `__cli_output_dir__`
+        # marker in otto/cli/cov.py.
         gate=False,
     )
     register_cli_command(

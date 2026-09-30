@@ -8,6 +8,7 @@ import pytest
 from otto.coverage.capture.gitio import blob_sha, head_commit
 from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.capture.store_dir import write_manual_capture
+from otto.coverage.report_inputs import ReportInputs
 from otto.coverage.reporter import run_coverage_report
 from otto.coverage.tiers import load_tiers
 from tests._fixtures.gitrepo import TmpGitRepo
@@ -68,7 +69,9 @@ async def test_manual_survives_unrelated_commit_and_stales_on_edit(tmp_path: Pat
     git("commit", "-qm", "unrelated")
 
     report1 = tmp_path / "r1"
-    store = await run_coverage_report([], report1, repo_root=repo, tier_configs=load_tiers(COV))
+    store = await run_coverage_report(
+        [], report1, ReportInputs(repo_root=repo, tier_configs=load_tiers(COV))
+    )
     (frec,) = [f for f in store.files() if f.path.name == "f.c"]
     assert frec.lines[2].hits.for_tier("manual") == 4
     assert frec.lines[2].state is None
@@ -78,7 +81,9 @@ async def test_manual_survives_unrelated_commit_and_stales_on_edit(tmp_path: Pat
     git("commit", "-aqm", "edit line 2")
 
     report2 = tmp_path / "r2"
-    store2 = await run_coverage_report([], report2, repo_root=repo, tier_configs=load_tiers(COV))
+    store2 = await run_coverage_report(
+        [], report2, ReportInputs(repo_root=repo, tier_configs=load_tiers(COV))
+    )
     (frec2,) = [f for f in store2.files() if f.path.name == "f.c"]
     assert frec2.lines[2].hits.for_tier("manual") == 0
     assert frec2.lines[2].state == "stale"
@@ -121,7 +126,9 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
     git("commit", "-aqm", "edit line 1")
 
     report = tmp_path / "r"
-    store = await run_coverage_report([], report, repo_root=repo, tier_configs=load_tiers(COV))
+    store = await run_coverage_report(
+        [], report, ReportInputs(repo_root=repo, tier_configs=load_tiers(COV))
+    )
 
     by_ticket = {c.ticket: c for c in store.runs}
     assert by_ticket["T-1"].label == "Rack 2 Slot 4"

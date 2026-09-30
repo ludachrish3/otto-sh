@@ -5,6 +5,7 @@ import json
 import pytest
 
 from otto.coverage.report_config import load_report_thresholds
+from otto.coverage.report_inputs import ReportInputs
 from otto.coverage.reporter import run_coverage_report
 from otto.coverage.store.model import Thresholds
 from otto.coverage.tiers import load_tiers
@@ -30,8 +31,7 @@ async def test_run_coverage_report_stamps_thresholds_into_store_json(tmp_path) -
     store = await run_coverage_report(
         [],
         out,
-        tier_configs=tier_configs,
-        thresholds=Thresholds(high=90.0, medium=75.0),
+        ReportInputs(tier_configs=tier_configs, thresholds=Thresholds(high=90.0, medium=75.0)),
     )
     assert store is not None
     raw = json.loads((out / "store.json").read_text())

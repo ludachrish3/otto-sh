@@ -12,6 +12,7 @@ from otto.config.coverage_settings import CoverageConfigError
 from otto.coverage.capture.gitio import head_commit
 from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.errors import CoverageDataMismatchError
+from otto.coverage.report_inputs import ReportInputs
 from otto.coverage.reporter import (
     CollectionInputs,
     CoverageReporter,
@@ -462,8 +463,7 @@ class TestE2eBaseCommitGuard:
             await run_coverage_report(
                 [cov],
                 tmp_path / "report",
-                repo_root=repo,
-                tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV),
+                ReportInputs(repo_root=repo, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
             )
 
         message = str(excinfo.value)
@@ -488,8 +488,7 @@ class TestE2eBaseCommitGuard:
         store = await run_coverage_report(
             [cov],
             tmp_path / "report",
-            repo_root=repo,
-            tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV),
+            ReportInputs(repo_root=repo, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -529,8 +528,7 @@ class TestE2eDirtyTreeRemap:
             store = await run_coverage_report(
                 [cov],
                 tmp_path / "report",
-                repo_root=repo,
-                tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV),
+                ReportInputs(repo_root=repo, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
             )
 
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -578,8 +576,7 @@ class TestUnitHarvest:
         store = await run_coverage_report(
             [],
             tmp_path / "report",
-            repo_root=repo,
-            tier_configs=load_tiers(cov_config),
+            ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -633,8 +630,7 @@ class TestUnitHarvest:
         store = await run_coverage_report(
             [],
             tmp_path / "report",
-            repo_root=repo,
-            tier_configs=load_tiers(cov_config),
+            ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
         )
         assert store is not None
         assert {r.product for r in store.runs} == {"app", "agent", ""}
@@ -672,8 +668,7 @@ class TestUnitHarvest:
             store = await run_coverage_report(
                 [],
                 tmp_path / "report",
-                repo_root=repo,
-                tier_configs=load_tiers(cov_config),
+                ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
             )
         assert store is not None
         assert any("does not exist" in rec.message for rec in caplog.records)
@@ -708,8 +703,7 @@ class TestUnitHarvest:
             store = await run_coverage_report(
                 [],
                 tmp_path / "report",
-                repo_root=repo,
-                tier_configs=load_tiers(cov_config),
+                ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
             )
         assert store is not None
         assert any("no .gcda files" in rec.message for rec in caplog.records)
@@ -750,8 +744,7 @@ class TestUnitHarvest:
             store = await run_coverage_report(
                 [],
                 tmp_path / "report",
-                repo_root=repo,
-                tier_configs=load_tiers(cov_config),
+                ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
             )
         assert store is not None
         assert any(
@@ -798,8 +791,7 @@ class TestUnitHarvest:
         store = await run_coverage_report(
             [],
             tmp_path / "report",
-            repo_root=repo,
-            tier_configs=load_tiers(cov_config),
+            ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -844,8 +836,7 @@ class TestUnitHarvest:
         store = await run_coverage_report(
             [],
             tmp_path / "report",
-            repo_root=repo,
-            tier_configs=load_tiers(cov_config),
+            ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]

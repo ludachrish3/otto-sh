@@ -57,6 +57,32 @@ traceback before argv parsing. A deterministic import-budget guard in the
 test suite keeps startup cost from regressing. ({doc}`subsystems/registries`,
 {doc}`lifecycle`)
 
+## Input rules live in the library entry point
+
+Every rule about a verb's inputs lives in the library entry point that
+takes them: in the class's `__post_init__` (or validators) when the inputs
+are an options class, and as leading validation when they are parameters.
+That `__post_init__`/validator hook is pure: no I/O, no repo config.
+Preflights that need the filesystem or the configuration live in a library
+`prepare_*` function with a check-only mode the CLI's `--dry-run` uses. The
+CLI parses, completes, constructs the library's object directly from parsed
+flags, calls, and translates the library's field-named errors into flag
+spellings at one site ({func}`~otto.cli.invoke.usage_error_from`). It holds
+no rule of its own.
+
+The container follows the existing library API, never the verb: a bundle
+that is stored or passed around with cross-field rules is a class
+({class}`~otto.suite.run.RunOptions`, the `@otto.options` classes); a
+function with a handful of arguments keeps keyword arguments and validates
+first. A dataclass invented only to host a hook is a smell.
+
+A verb that composes another library composes it inside its own library
+function ({func}`~otto.suite.run.run_tests` calls the public coverage
+functions), never in the CLI leaf, or a Python caller loses the step; the
+other verb's CLI becomes a short sequence of the same public calls.
+({func}`~otto.suite.run.prepare_run` is the preflight example; see the
+cookbook's {doc}`../cookbook/python-library` "Preflight" section.)
+
 ## Fail loud, fail framed
 
 No silent fallbacks: unknown registry names error with suggestions rather

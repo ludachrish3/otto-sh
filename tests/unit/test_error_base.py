@@ -44,6 +44,7 @@ from otto.coverage.capture.gitio import (
     GitUnavailableError,
     NotAGitRepoError,
 )
+from otto.coverage.config import DestinationError
 from otto.coverage.errors import (
     CoverageDataMismatchError,
     CoverageNotInstrumentedError,
@@ -113,6 +114,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (OptionsCollisionError, Exception),
     (OptionsRegistrationError, ValueError),
     (OptionsValidationError, ValueError),
+    (DestinationError, ValueError),
     (OptionsNotAvailableError, LookupError),
     (EmptySelectionError, ValueError),
     (BackendUnavailableError, RuntimeError),

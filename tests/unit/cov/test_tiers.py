@@ -74,6 +74,17 @@ def test_resolve_unknown_name_raises() -> None:
         resolve_get_tier(load_tiers({}), "nope")
 
 
+def test_ambiguous_get_tier_names_the_library_remedy() -> None:
+    cov = {
+        "tiers": {
+            "sys_a": {"kind": "e2e", "precedence": 1},
+            "sys_b": {"kind": "e2e", "precedence": 2},
+        }
+    }
+    with pytest.raises(ValueError, match="choose one with tier=NAME"):
+        resolve_get_tier(load_tiers(cov), None)
+
+
 def test_harvest_dirs_are_carried_through_verbatim() -> None:
     """``load_tiers`` substitutes nothing — even a former template variable
     survives as a literal path segment, for the reporter to anchor later."""

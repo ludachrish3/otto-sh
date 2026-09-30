@@ -208,7 +208,8 @@ otto cov report path/to/run_output/ --dir ./cov_report
 
 That writes a self-contained HTML report into `./cov_report`. Open
 `cov_report/index.html` in a browser — there is no server to start, and the
-whole directory can be copied or published as it is.
+whole directory can be copied or published as it is. A second run into the
+same `--dir` is refused unless you pass `--overwrite-dir`.
 
 Every run in the report carries its product: the runs page lists them as
 `host · product`, so a lab with two products says which one each number came

@@ -32,10 +32,20 @@ def _lines(output: str) -> list[str]:
 
 @pytest.fixture
 def captured_run(monkeypatch):
-    """Replace ``run_tests`` with a recorder; return what each call received."""
+    """Replace ``run_tests`` with a recorder; return what each call received.
+
+    Stands in for ``run_tests`` from its first act, exactly as
+    ``tests/unit/cli/test_test.py``'s ``capture_cov`` does: the real preflight
+    (:func:`otto.suite.run.prepare_run`) lives inside ``run_tests``, so a test
+    asserting on its side effect (e.g. ``--overwrite-cov-dir`` actually
+    clearing a directory) needs it to run even with ``run_tests`` faked.
+    """
     calls: list[dict] = []
 
     def fake(names, **kw):
+        from otto.suite.run import prepare_run
+
+        prepare_run(kw["run_options"])
         calls.append({"names": list(names), **kw})
         return _ok()
 

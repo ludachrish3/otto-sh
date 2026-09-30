@@ -17,10 +17,11 @@ Litmus test: "If the function I am patching had a bug, would my test
 catch it?"  If no, move the mock boundary closer to I/O.
 """
 
+import dataclasses
 import logging
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -349,3 +350,77 @@ def otto_test_cli(tmp_path):
                 reset_context(token)
 
     return _invoke
+
+
+# ── otto test's run-flag fixtures ────────────────────────────────────────────
+# Shared by tests/unit/cli/test_test.py and tests/unit/cli/test_test_differential.py:
+# both exercise `otto test`'s run flags against the SAME faked `run_tests`, so the
+# fixture and its helpers live here rather than being duplicated or imported
+# cross-test-module.
+
+
+def _flat(output: str) -> str:
+    """Collapse a CLI result's output to single-spaced text, panel borders stripped.
+
+    Rich's error panel wraps a long message across lines at its fixed width,
+    bordering each with ``│`` — a literal ``in output`` substring check can
+    land across that wrap (or a border character) and false-negative on a
+    message that is otherwise present. Where the panel wraps depends on the
+    absolute path length (``tmp_path``/``--basetemp``), so this normalization
+    is not optional cosmetics: without it, a substring check that passes here
+    can fail under a longer basetemp.
+    """
+    return " ".join(output.replace("│", " ").split())
+
+
+def _lib_ok_result():
+    """A zero-exit ``SuiteRunResult`` for a faked ``otto.suite.run.run_tests``."""
+    from otto.suite.run import SuiteRunResult
+
+    return SuiteRunResult(
+        exit_code=0,
+        junit_paths=[],
+        stability_report=None,
+        stability_unstable=False,
+        output_dir=Path(),
+    )
+
+
+def _repo_with_tickets_configured():
+    """A repo whose settings satisfy the --cov-tickets-json preflight gate."""
+    repo = MagicMock()
+    repo.settings = {
+        "coverage": {
+            "tiers": {"system": {"kind": "e2e", "precedence": 1}},
+            "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
+        }
+    }
+    return repo
+
+
+@pytest.fixture
+def capture_cov(otto_test_cli, monkeypatch):
+    """Invoke ``otto test <cli_args> test_x`` with ``run_tests`` faked.
+
+    Returns ``(exit_code, run_options, output)``; ``run_options`` is the
+    ``RunOptions`` the command handed ``run_tests`` as a dict, or ``{}`` when
+    the command aborted before the run (e.g. during option validation).
+    """
+
+    def _capture(cli_args: list[str]) -> tuple[int, dict, str]:
+        captured: dict = {}
+
+        def fake_run_tests(names, **kw):
+            # Stand in for run_tests from its first act: the preflight is
+            # real, so the CLI's translation of its errors is exercised.
+            from otto.suite.run import prepare_run
+
+            prepare_run(kw["run_options"])
+            captured.update(dataclasses.asdict(kw["run_options"]))
+            return _lib_ok_result()
+
+        monkeypatch.setattr("otto.suite.run.run_tests", fake_run_tests)
+        result = otto_test_cli(["test", *cli_args, "test_x"])
+        return result.exit_code, captured, result.output
+
+    return _capture

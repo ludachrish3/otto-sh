@@ -162,7 +162,7 @@ files it collects and runs no test, so parametrizations are expanded and
 
 import inspect
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Optional, cast
+from typing import TYPE_CHECKING, Annotated, Any, Optional, cast, get_args, get_origin
 
 import typer
 from rich import print as rprint
@@ -575,7 +575,8 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
             metavar="PATH",
             help=(
                 "Override the destination for monitor data. Format inferred from "
-                "suffix (.json or .db). Default: <output_dir>/monitor.json."
+                "suffix (.json or .db). Implies --monitor. "
+                "Default: <output_dir>/monitor.json."
             ),
         ),
     ] = None,
@@ -586,7 +587,7 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
             metavar="REGEX",
             help=(
                 "Regex matched against whole host IDs (fullmatch) to restrict --monitor: "
-                "'sensor' does not select 'sensor-1' — write 'sensor.*'."
+                "'sensor' does not select 'sensor-1' — write 'sensor.*'. Implies --monitor."
             ),
         ),
     ] = None,
@@ -617,37 +618,39 @@ def _flag_name(param: inspect.Parameter) -> str:
     return f"--{param.name.replace('_', '-')}"
 
 
-def _check_selection(params: "dict[str, Any]") -> None:
+def _check_selection(ctx: Any, params: "dict[str, Any]") -> None:
     """Refuse a contradiction in the parsed arguments alone: no lab, no side effect.
 
-    Run at parse time (``_OttoTestCommand``), before the invoke
-    preamble loads a lab or creates a run directory, so a usage error costs
-    neither — like click's own missing-argument error.
+    Run at parse time (``_OttoTestCommand``), before the invoke preamble
+    loads a lab or creates a run directory, so a usage error costs neither.
+    The names-or-``-m`` requirement is an argument rule; every rule between
+    the run flags is the library's (``RunOptions``), constructed here once
+    and stored on the context for the leaf.
     """
     from typer._click.exceptions import UsageError
 
+    from ..params import OptionsValidationError
+    from ..suite.run import RUN_OPTIONS_KEY, RunOptions
+    from .invoke import usage_error_from
+
     if not params.get("names") and not params.get("markers"):
         raise UsageError("otto test needs at least one test name or -m EXPR (see otto test --help)")
-    if params.get("seed") is not None and not params.get("random_order", True):
-        # A seed with nothing to seed is a contradiction — refuse rather than
-        # guess which of the two flags the user meant.
-        raise typer.BadParameter(
-            "--seed fixes the random test order, so it cannot be combined with --no-random",
-            param_hint="--seed",
-        )
-    # --cov/--no-cov is tri-state: None is auto (the run decides from the
-    # lab's instrumentation). Every destination flag implies coverage, so
-    # pairing one with an explicit --no-cov is a contradiction, not a
-    # precedence puzzle — refuse it by name rather than silently picking one.
-    implied_on = any(
-        params.get(name) for name in ("cov_dir", "cov_report", "cov_report_dir", "cov_tickets_json")
-    )
-    if params.get("cov") is False and implied_on:
-        raise typer.BadParameter(
-            "--no-cov cannot be combined with --cov-dir, --cov-report, --cov-report-dir or "
-            "--cov-tickets-json, which all imply coverage",
-            param_hint="--no-cov",
-        )
+    fields = {name: params[name] for name in _RUN_FIELD_NAMES if name in params}
+    for name in _PATH_FIELD_NAMES:
+        # ctx.params still holds click's raw string for a Path flag: Typer's
+        # own convertor (string -> pathlib.Path) runs only when it calls the
+        # leaf, but RunOptions is built here, at parse time, on every run —
+        # not just when a usage error fires. _run reads the instance off
+        # ctx.meta rather than the leaf's own (converted) kwargs, so this is
+        # the only place that conversion happens; without it, RunOptions
+        # would carry a plain str for every real invocation with a
+        # destination flag.
+        if fields.get(name) is not None:
+            fields[name] = Path(fields[name])
+    try:
+        ctx.meta[RUN_OPTIONS_KEY] = RunOptions(**fields)
+    except OptionsValidationError as e:
+        raise usage_error_from(e, flags=RUN_FLAGS) from e
 
 
 class _OttoTestCommand(TyperCommand):
@@ -671,7 +674,7 @@ class _OttoTestCommand(TyperCommand):
                 listing = _selected_tests(names, params.get("markers") or "")
                 _print_trees(listing)
                 ctx.exit(listing.exit_code)
-            _check_selection(params)
+            _check_selection(ctx, params)
         except UsageError as e:
             # Raised with no context, click would print the error panel alone;
             # with this command's, it adds the Usage line and the Try-help hint,
@@ -682,116 +685,11 @@ class _OttoTestCommand(TyperCommand):
         return rest
 
 
-def _prepare_run_options(  # noqa: PLR0913 — one parameter per run flag, by design
-    *,
-    list_markers: bool,  # noqa: ARG001 — eager; handled by its callback
-    list_tests: bool,  # noqa: ARG001 — handled at parse time by _OttoTestCommand
-    markers: str,
-    random_order: bool,
-    seed: int | None,
-    iterations: int,
-    duration: int,
-    threshold: float,
-    results: str,
-    cov: bool | None,
-    cov_dir: Path | None,
-    overwrite_cov_dir: bool,
-    cov_clean: bool,
-    cov_report: bool,
-    cov_report_dir: Path | None,
-    overwrite_cov_report_dir: bool,
-    project_name: str,
-    cov_tickets_json: Path | None,
-    monitor: bool,
-    monitor_interval: float,
-    monitor_output: Path | None,
-    monitor_hosts: str | None,
-    dry_run: bool = False,
-) -> Any:
-    """Validate the coverage destinations and build the run's ``RunOptions``.
+def _run(ctx: typer.Context, names: "list[str]", verb_kwargs: "dict[str, Any]") -> None:
+    """Run (or dry-run) ``otto test``: bind the verb's options, preflight or run.
 
-    The destination checks prepare the directories they name (created, or
-    cleared under ``--overwrite-*``); under *dry_run* they refuse exactly the
-    same destinations but create and clear nothing. ``--cov-tickets-json`` refuses an
-    unconfigured ``[coverage.tickets]`` now, before a long run, rather than
-    warning after it.
-    """
-    from ..suite.run import RunOptions
-
-    if cov_dir is not None:
-        # Lazy: pulling otto.coverage runs its package __init__ (the whole
-        # collection stack), so a plain `otto test` without --cov-dir/-report-dir
-        # never loads it. The gate raises ValueError; the CLI surfaces it as a
-        # BadParameter naming the flag.
-        from ..coverage.config import check_empty_dir, prepare_empty_dir
-
-        gate = check_empty_dir if dry_run else prepare_empty_dir
-        try:
-            gate(cov_dir, overwrite=overwrite_cov_dir, flag_name="--cov-dir")
-        except ValueError as e:
-            raise typer.BadParameter(str(e), param_hint="--cov-dir") from e
-
-    cov_report_effective = cov_report or cov_report_dir is not None or cov_tickets_json is not None
-    if cov_report_dir is not None:
-        from ..coverage.config import check_empty_dir, prepare_empty_dir
-
-        gate = check_empty_dir if dry_run else prepare_empty_dir
-        try:
-            gate(cov_report_dir, overwrite=overwrite_cov_report_dir, flag_name="--cov-report-dir")
-        except ValueError as e:
-            raise typer.BadParameter(str(e), param_hint="--cov-report-dir") from e
-
-    if cov_tickets_json is not None:
-        # Fail fast, before the (possibly long) test run starts: an
-        # unconfigured [coverage.tickets] is a misconfiguration knowable right
-        # now, unlike "the git walk found no matching commits" (only knowable
-        # after the report runs, so that case stays a post-run warning in
-        # otto.suite.run._post_run_coverage). Without this, --cov-tickets-json
-        # would run every test, warn once in an unread log, exit 0, and never
-        # write the file -- a silently broken CI pipeline.
-        from ..config import get_repos
-        from ..config.coverage_settings import get_cov_config
-        from ..coverage.tickets import load_ticket_spec
-
-        if load_ticket_spec(get_cov_config(get_repos())) is None:
-            raise typer.BadParameter(
-                "--cov-tickets-json requires [coverage.tickets] to be configured",
-                param_hint="--cov-tickets-json",
-            )
-
-    implied_on = cov_dir is not None or cov_report_effective
-    return RunOptions(
-        markers=markers,
-        random_order=random_order,
-        seed=seed,
-        iterations=iterations,
-        duration=duration,
-        threshold=threshold,
-        results=results,
-        cov=True if implied_on else cov,
-        cov_dir=cov_dir,
-        overwrite_cov_dir=overwrite_cov_dir,
-        cov_clean=cov_clean,
-        cov_report=cov_report_effective,
-        cov_report_dir=cov_report_dir,
-        overwrite_cov_report_dir=overwrite_cov_report_dir,
-        project_name=project_name,
-        cov_tickets_json=cov_tickets_json,
-        monitor=monitor or monitor_output is not None or monitor_hosts is not None,
-        monitor_interval=monitor_interval,
-        monitor_output=monitor_output,
-        monitor_hosts=monitor_hosts,
-    )
-
-
-def _run(
-    ctx: typer.Context, names: "list[str]", verb_kwargs: "dict[str, Any]", **run_kwargs: Any
-) -> None:
-    """Run (or dry-run) ``otto test``: build the run options, bind the verb's, run.
-
-    The name/``-m`` requirement and the flag contradictions were already
-    checked at parse time (:func:`_check_selection`).
-
+    The run options were constructed and checked at parse time
+    (:func:`_check_selection`); every rule between them is the library's.
     ``CoverageNotInstrumentedError`` is deliberately NOT caught here: its
     per-product verdict table is rendered once, on the top-level boundary in
     :mod:`otto.cli.main` (:func:`~otto.cli.invoke.render_instrumentation_refusal`).
@@ -800,14 +698,13 @@ def _run(
         return
 
     from ..context import get_context
+    from ..coverage.config import DestinationError
     from ..params import OptionsValidationError, verb_option_classes
+    from ..suite.run import RUN_OPTIONS_KEY
     from .invoke import dry_run_requested, usage_error_from
 
-    run_options = _prepare_run_options(**run_kwargs, dry_run=dry_run_requested(ctx))
+    run_options = ctx.meta[RUN_OPTIONS_KEY]
     otto_ctx = get_context()
-    # A bad value is a usage error (exit 2) here, before anything is collected:
-    # bind_verb_options raises the library's OptionsValidationError, translated
-    # to typer's usage error at this CLI boundary.
     try:
         otto_ctx.bind_verb_options("test", verb_kwargs)
         instances = [otto_ctx.options(origin.cls) for origin in verb_option_classes("test")]
@@ -815,12 +712,16 @@ def _run(
         raise usage_error_from(e) from e
 
     if dry_run_requested(ctx):
+        from ..suite.run import prepare_run
         from .invoke import print_preview_dry_run
 
+        try:
+            prepare_run(run_options, dry_run=True)
+        except (OptionsValidationError, DestinationError) as e:
+            raise usage_error_from(e, flags=RUN_FLAGS) from e
         print_preview_dry_run(ctx, instances)
         listing = _selected_tests(names, run_options.markers)
         if not listing.exit_code and not any(listing.tests.values()):
-            # As the run would: -m excluded every named test, or matched none.
             rprint("[red]No tests matched the selection.[/red]")
             raise typer.Exit(code=1)
         rprint(f"[magenta]{DRY_RUN_TESTS_HEADLINE}[/magenta]")
@@ -834,11 +735,10 @@ def _run(
 
     try:
         result = run_tests(
-            names,
-            run_options=run_options,
-            options=instances,
-            output_dir=otto_ctx.output_dir,
+            names, run_options=run_options, options=instances, output_dir=otto_ctx.output_dir
         )
+    except (OptionsValidationError, DestinationError) as e:
+        raise usage_error_from(e, flags=RUN_FLAGS) from e
     except UnknownSelectionError as e:
         raise typer.BadParameter(str(e), param_hint="NAMES") from None
     except NoTestsMatchedError:
@@ -855,6 +755,48 @@ def _run_params() -> "list[inspect.Parameter]":
         p.replace(kind=inspect.Parameter.KEYWORD_ONLY)
         for p in inspect.signature(_run_flags).parameters.values()
     ]
+
+
+def _run_flag_map() -> "dict[str, str]":
+    """Field name to flag for every run flag, plus the value spellings library messages use."""
+    flags = {p.name: _flag_name(p) for p in _run_params()}
+    flags.update({"cov=False": "--no-cov", "random_order=False": "--no-random"})
+    flags["cov"] = "--cov"
+    flags["random_order"] = "--random"
+    return flags
+
+
+RUN_FLAGS: "dict[str, str]" = _run_flag_map()
+"""Field name to flag, built from the run-flag signature so a rename cannot drift."""
+
+# The run flags that are RunOptions fields (the two --list-* flags are not).
+_RUN_FIELD_NAMES = frozenset(
+    p.name for p in _run_params() if p.name not in {"list_markers", "list_tests"}
+)
+
+
+def _is_path_annotation(annotation: object) -> bool:
+    """Report whether *annotation* is a ``Path`` (or subclass), plain, unioned or ``Annotated``.
+
+    Unwraps one layer of ``Annotated`` (a run flag's is always
+    ``Annotated[X, typer.Option(...)]``) to reach ``X``, then checks ``X``
+    itself and, when ``X`` is a union (``Path | None``), each of its members
+    — so a bare ``Annotated[Path, ...]`` (no ``__args__`` on ``Path`` itself)
+    and a ``Path`` subclass both match, not just the ``Path | None`` shape
+    every current run flag happens to use.
+    """
+    if hasattr(annotation, "__metadata__"):
+        annotation = getattr(annotation, "__origin__", annotation)  # Annotated[X, ...] -> X
+    candidates = get_args(annotation) if get_origin(annotation) is not None else (annotation,)
+    return any(isinstance(t, type) and issubclass(t, Path) for t in candidates)
+
+
+# The run flags typed as an optional Path (Typer's own leaf wrapper converts
+# these from the string ``ctx.params`` holds to ``pathlib.Path`` before
+# calling the leaf, via its `determine_type_convertor`; ``_check_selection``
+# runs at parse time, before that wrapper ever sees them, so it applies the
+# same conversion itself — see the loop in `_check_selection`).
+_PATH_FIELD_NAMES = frozenset(p.name for p in _run_params() if _is_path_annotation(p.annotation))
 
 
 def test_verb_params() -> "list[inspect.Parameter]":
@@ -933,7 +875,7 @@ def _build_test_app(verb_params: "list[inspect.Parameter] | None" = None) -> typ
         ctx = cast("typer.Context", get_current_context())
         names = list(kw.pop("names", None) or [])
         verb_kwargs = {name: kw.pop(name) for name in verb_names}
-        _run(ctx, names, verb_kwargs, **kw)
+        _run(ctx, names, verb_kwargs)
 
     params = [names_param, *run_params, *verb_params]
     # Both, not just the signature: the completion cache serialises a command

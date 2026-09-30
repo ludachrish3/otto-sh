@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from otto.coverage.config import DestinationError
 from otto.suite.run import (
     NoTestsMatchedError,
     RunOptions,
@@ -333,11 +334,11 @@ def test_resolve_coverage_returns_a_copy_keeping_every_other_field(monkeypatch):
     monkeypatch.setattr(
         "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ".*"}
     )
-    opts = RunOptions(markers="smoke", cov_report=True, project_name="P")
+    opts = RunOptions(markers="smoke", project_name="P")
     resolved = resolve_coverage(opts, [], command="otto test")
     assert opts.cov is None
     assert resolved.cov is True
-    assert (resolved.markers, resolved.cov_report, resolved.project_name) == ("smoke", True, "P")
+    assert (resolved.markers, resolved.cov_report, resolved.project_name) == ("smoke", False, "P")
 
 
 def test_run_tests_forced_cov_with_nothing_instrumented_raises(tmp_path, monkeypatch):
@@ -568,7 +569,10 @@ def test_run_tests_default_report_dir_under_output_dir(tmp_path, monkeypatch):
     args = mock.call_args.args
     assert args[0] == [log_dir / "cov"]
     assert args[1] == log_dir / "cov_report"
-    assert (log_dir / "cov_report").is_dir()
+    # Directory creation is run_coverage_report's own prepare_destination
+    # call; it is mocked out here, so it is proven directly in
+    # tests/unit/cov/test_report_inputs.py::test_run_coverage_report_creates_a_missing_output_dir
+    # instead.
 
 
 def test_run_tests_explicit_report_dir_and_project_name(tmp_path, monkeypatch):
@@ -598,10 +602,16 @@ def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
     """A library run_tests(cov_report=True) into a pre-populated report dir warns and skips.
 
     Regression: _post_run_coverage's report-dir emptiness check used the CLI's
-    typer-raising _prepare_empty_dir OUTSIDE the swallow, so a library run into a
+    typer-raising equivalent OUTSIDE the swallow, so a library run into a
     reused output_dir raised typer.BadParameter from a public library entrypoint.
-    It now calls the neutral prepare_empty_dir INSIDE the swallow: a collision
-    warns and skips the report, matching never-fail-a-successful-run.
+    It now proves the swallow around a DestinationError from
+    run_coverage_report itself (whose own prepare_destination call is the
+    gate, given the pre-populated default report dir): a collision warns and
+    skips the report, matching never-fail-a-successful-run. The warning
+    speaks in RunOptions field names (cov_report_dir/overwrite_cov_report_dir),
+    not run_coverage_report's own (output_dir/overwrite) — _post_run_coverage
+    rebuilds the DestinationError in the caller's field names before logging
+    it, the same translation the CLI does for its own flags.
     """
     log_dir = tmp_path / "log"
     log_dir.mkdir()
@@ -613,21 +623,32 @@ def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
-    mock_report = AsyncMock()
-    monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_report)
+    # cov_report=True now forces cov=True too (construction-time rule), so the
+    # fetch machinery runs; stub it out — this test's subject is the report path.
+    monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
+    # run_coverage_report itself is NOT mocked: its own prepare_destination
+    # call is the gate under test. _run_legacy_report is mocked only to prove
+    # it is never reached (the gate raises before it).
+    mock_legacy = AsyncMock()
+    monkeypatch.setattr("otto.coverage.reporter._run_legacy_report", mock_legacy)
 
     with caplog.at_level("WARNING"):
         result = run_tests(
             [_ALPHA],
-            run_options=RunOptions(cov=False, cov_clean=False, cov_report=True),
+            run_options=RunOptions(cov_clean=False, cov_report=True),
             output_dir=log_dir,
         )
     # Completed with a result — no typer exception escaped.
     assert isinstance(result, SuiteRunResult)
     assert result.passed
     # The report was skipped: the dir collision was swallowed before rendering.
-    mock_report.assert_not_called()
-    assert any("not empty" in r.getMessage() for r in caplog.records)
+    mock_legacy.assert_not_called()
+    assert any(
+        "Coverage report generation failed" in r.getMessage()
+        and "cov_report_dir target" in r.getMessage()
+        and "overwrite_cov_report_dir" in r.getMessage()
+        for r in caplog.records
+    )
     # We refused to clear — the stale artifact is preserved.
     assert (report_dir / "stale.html").exists()
 
@@ -650,23 +671,23 @@ def test_run_tests_cov_dir_override_used_as_report_source(tmp_path, monkeypatch)
 
 # ── run_tests / _post_run_coverage: [coverage.tickets] wiring ───────────────
 #
-# Task 7 wired ticket_spec only into `otto cov report`'s path
-# (cov._resolve_cov_settings); `otto test --cov-report` went through
-# _post_run_coverage, which never called load_ticket_spec, so its store
-# never carried ticket data no matter what [coverage.tickets] said — and
-# --cov-tickets-json there would have hit build_ticket_export's own
-# loud-fail. These two tests close that gap: one pins the settings ->
-# run_coverage_report(ticket_spec=...) wiring (mirrors
-# TestCovReportCollectionModel.test_ticket_spec_threaded_from_settings in
-# tests/unit/cli/test_cov.py); the other proves it end to end with a real
+# Task 7 wired ticket_spec only into `otto cov report`'s path (resolved via
+# resolve_report_inputs); `otto test --cov-report` went through
+# _post_run_coverage, which never
+# called load_ticket_spec, so its store never carried ticket data no matter
+# what [coverage.tickets] said — and --cov-tickets-json there would have hit
+# build_ticket_export's own loud-fail. These two tests close that gap: one
+# pins the settings -> run_coverage_report(inputs.ticket_spec) wiring
+# (mirrors TestCovReportCollectionModel.test_ticket_spec_threaded_from_settings
+# in tests/unit/cli/test_cov.py); the other proves it end to end with a real
 # git commit, a real (non-mocked) run_coverage_report, and a real
 # --cov-tickets-json write.
 
 
 def test_run_tests_ticket_spec_threaded_from_settings(tmp_path, monkeypatch):
     """[coverage.tickets] on the repo's settings must reach
-    run_coverage_report's ticket_spec kwarg via the otto-test path, exactly
-    as it already does via otto cov report's _resolve_cov_settings."""
+    run_coverage_report's ReportInputs.ticket_spec via the otto-test path,
+    exactly as it already does via otto cov report's resolve_report_inputs."""
     log_dir = tmp_path / "log"
     log_dir.mkdir()
 
@@ -697,7 +718,7 @@ def test_run_tests_ticket_spec_threaded_from_settings(tmp_path, monkeypatch):
     )
 
     mock_run_report.assert_called_once()
-    ticket_spec = mock_run_report.call_args.kwargs["ticket_spec"]
+    ticket_spec = mock_run_report.call_args.args[2].ticket_spec
     assert ticket_spec is not None
     assert ticket_spec.extract("fix PROJ-7") == ["PROJ-7"]
 
@@ -714,7 +735,7 @@ def test_run_tests_no_coverage_section_leaves_ticket_spec_none(tmp_path, monkeyp
         run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
         log_dir=log_dir,
     )
-    assert mock.call_args.kwargs["ticket_spec"] is None
+    assert mock.call_args.args[2].ticket_spec is None
 
 
 def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatch):
@@ -743,6 +764,10 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
         return output
 
     monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+    # cov_tickets_json now forces cov=True too (construction-time rule), so the
+    # fetch machinery runs; stub it out — this test's subject is ticket harvesting
+    # from the report path, not collection.
+    monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
 
     repo = MagicMock()
     repo.sut_dir = repo_root
@@ -759,7 +784,6 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     tickets_json = tmp_path / "tickets.json"
 
     opts = RunOptions(
-        cov=False,
         cov_clean=False,
         cov_report=True,
         cov_tickets_json=tickets_json,
@@ -776,21 +800,22 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
 
 # ── run_tests / _post_run_coverage: overrides wiring ─────────────────────────
 #
-# Task 7 wired the override file into `otto cov report`'s path
-# (cov._resolve_cov_settings) and into `otto test --cov-report`'s
-# _post_run_coverage — but that second wiring had no dedicated test, exactly
-# the gap the [coverage.tickets] comment block above once described for
-# ticket_spec. These two mirror that pair: one pins the settings ->
-# run_coverage_report(overrides=...) wiring for a well-formed file; the
-# other proves a malformed file logs a warning and never fails an
-# otherwise-successful run — the entire reason load_override_config was
-# placed inside _post_run_coverage's existing try/except swallow.
+# Task 7 wired the override file into `otto cov report`'s path (resolved via
+# resolve_report_inputs) and into `otto test --cov-report`'s
+# _post_run_coverage — but that second wiring had
+# no dedicated test, exactly the gap the [coverage.tickets] comment block
+# above once described for ticket_spec. These two mirror that pair: one pins
+# the settings -> run_coverage_report(inputs.overrides) wiring for a
+# well-formed file; the other proves a malformed file logs a warning and
+# never fails an otherwise-successful run — the entire reason
+# resolve_report_inputs was placed inside _post_run_coverage's existing
+# try/except swallow.
 
 
 def test_run_tests_overrides_threaded_from_settings(tmp_path, monkeypatch):
     """A well-formed override file on the repo's settings must reach
-    run_coverage_report's overrides kwarg via the otto-test path, exactly
-    as it already does via otto cov report's _resolve_cov_settings."""
+    run_coverage_report's ReportInputs.overrides via the otto-test path,
+    exactly as it already does via otto cov report's resolve_report_inputs."""
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     sut = TmpGitRepo(tmp_path / "sut")
@@ -834,7 +859,7 @@ def test_run_tests_overrides_threaded_from_settings(tmp_path, monkeypatch):
     )
 
     mock_run_report.assert_called_once()
-    overrides = mock_run_report.call_args.kwargs["overrides"]
+    overrides = mock_run_report.call_args.args[2].overrides
     assert overrides is not None
     assert [e.key for e in overrides.asserted] == [f"commit:{sha}"]
 
@@ -1298,12 +1323,41 @@ def test_run_tests_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypat
     monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", clean_mock)
     _stub_instrumented_lab(monkeypatch)
 
-    with pytest.raises(ValueError, match="cov_dir"):
+    with pytest.raises(DestinationError, match="cov_dir target"):
         run_tests([_ALPHA], run_options=RunOptions(cov=True, cov_dir=cov_dir), output_dir=log_dir)
     # Failed before the pre-run remote clean ever ran, and the stale contents
     # were never touched.
     clean_mock.assert_not_awaited()
     assert (cov_dir / "stale.txt").exists()
+
+
+def test_run_tests_refuses_a_bad_report_dir_before_the_instrumentation_scan(tmp_path, monkeypatch):
+    """``prepare_run`` runs ahead of ``resolve_coverage`` in ``run_tests``: a bad
+    ``cov_report_dir`` must fail before the instrumentation scan, not after it.
+
+    The repo double is given a real ``[coverage]`` table so ``resolve_coverage``
+    would genuinely reach ``detect_for_lab`` next (rather than refusing earlier
+    on its own "no [coverage] table" guard) — otherwise the scan mock would be
+    unreachable for a reason that has nothing to do with preflight ordering,
+    and ``scan.assert_not_called()`` could never fail even if the order regressed.
+    """
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+    (report_dir / "stale.html").write_text("stale")
+    _use_repo(
+        monkeypatch,
+        _stub_repo(
+            tmp_path,
+            settings={"coverage": {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}},
+        ),
+    )
+    scan = MagicMock(side_effect=AssertionError("the scan must not run"))
+    monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", scan)
+    with pytest.raises(DestinationError, match="cov_report_dir target"):
+        run_tests(["test_x"], run_options=RunOptions(cov_report_dir=report_dir), output_dir=log_dir)
+    scan.assert_not_called()
 
 
 def test_run_tests_overwrite_cov_dir_true_clears_and_proceeds(tmp_path, monkeypatch):

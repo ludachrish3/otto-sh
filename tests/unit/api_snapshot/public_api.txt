@@ -28,13 +28,16 @@ otto.config:all_hosts
 otto.config:do_for_all_hosts
 otto.config:get_host
 otto.config:get_lab
+otto.config:get_repos
 otto.config:load_lab
 otto.config:run_on_all_hosts
 otto.context:OttoContext
 otto.context:reset_context
 otto.context:set_context
 otto.coverage.reporter:run_coverage_report
+otto.coverage:DestinationError
 otto.coverage:collect_coverage
+otto.coverage:resolve_report_inputs
 otto.creds:register_creds_backend
 otto.docker.compose:get_container_host
 otto.docker:AdapterResult
@@ -155,6 +158,8 @@ otto.reservations:resolve_username
 otto.result:CommandNotRunError
 otto.result:Result
 otto.suite.expect:ExpectCollector
+otto.suite.run:RunOptions
+otto.suite.run:prepare_run
 otto.suite:NoTestsMatchedError
 otto.suite:UnknownSelectionError
 otto.suite:run_tests

@@ -112,8 +112,11 @@ in the Cookbook.
 | `--cov-tickets-json PATH` | not written | Also write a per-ticket coverage summary after the run (implies `--cov-report`; see {ref}`coverage-tickets-json`) |
 | `--monitor / --no-monitor` | off | Collect host performance metrics for the entire run |
 | `--monitor-interval SECONDS` | `5.0` | Sampling interval for `--monitor` (minimum 1.0) |
-| `--monitor-output PATH` | `<run dir>/monitor.json` | Override monitor data destination (`.json` or `.db`) |
-| `--monitor-hosts REGEX` | all hosts | Regex FULLY matched against host IDs (`re.fullmatch`) restricting which hosts `--monitor` samples — `sensor` does not select `sensor-1`; write `sensor.*` |
+| `--monitor-output PATH` | `<run dir>/monitor.json` | Override monitor data destination (`.json` or `.db`; implies `--monitor`) |
+| `--monitor-hosts REGEX` | all hosts | Regex FULLY matched against host IDs (`re.fullmatch`) restricting which hosts `--monitor` samples — `sensor` does not select `sensor-1`; write `sensor.*` (implies `--monitor`) |
+
+The implications in this table are the library's:
+{class}`~otto.suite.run.RunOptions` applies them for `otto.run_tests` too.
 
 `otto test` also takes the flags of every options class a repo registers for
 the `test` verb, and `otto test --help` lists them with the rest. A test

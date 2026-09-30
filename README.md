@@ -195,7 +195,7 @@ into a single per-line view:
 
 ```bash
 otto -l my_lab test TestDevice --cov   # collect coverage during a test run
-otto cov report                        # render the multi-tier HTML report
+otto cov report                        # renders under this invocation's output dir (path printed)
 ```
 
 This works for GCC- and clang-built products on Unix hosts (`.gcda`

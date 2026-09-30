@@ -192,6 +192,7 @@ class TestExcludedLinesRoundTripThroughReporter:
         entry point, through ``CoverageReporter.run()``, must land on the SPA
         artifacts (not the retired Jinja ones) and still save store.json last."""
         from otto.coverage.merge import merger as merger_mod
+        from otto.coverage.report_inputs import ReportInputs
         from otto.coverage.reporter import run_coverage_report
         from otto.coverage.tiers import load_tiers
 
@@ -215,7 +216,7 @@ class TestExcludedLinesRoundTripThroughReporter:
         }
         out = tmp_path / "report"
         store = await run_coverage_report(
-            [], out, repo_root=repo, tier_configs=load_tiers(cov_config)
+            [], out, ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config))
         )
 
         assert store is not None
