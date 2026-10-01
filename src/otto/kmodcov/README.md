@@ -6,11 +6,12 @@ on a stock kernel built without `CONFIG_GCOV_KERNEL` or
 provides the runtime symbols those constructors and objects reference (gcc's
 `__gcov_*` or clang's `llvm_gcov_*`/`llvm_gcda_*`, whichever compiler built
 the library), keeps an accumulator per instrumented object (a dump never
-double counts, and two dumps of the same run add correctly), and exposes a
-debugfs control file per registered module. It builds with any gcc from 4.7
-to 15, or clang 11 and newer. It builds against every kernel from 2.6.32 on,
-proven through 6.17. The 2.6.39 to 3.5 window builds from arms no kernel in
-the proof set has run; `kmodcov_compat.h` marks them UNTESTED beside the code.
+double counts, and two dumps of the same run add correctly), and exposes two
+sysfs control files, `dump` and `reset`, per registered module. It builds
+with any gcc from 4.7 to 15, or clang 11 and newer. It builds against every
+kernel from 2.6.32 on, proven through 6.17. The 2.6.39 to 3.5 window builds
+from arms no kernel in the proof set has run; `kmodcov_compat.h` marks them
+UNTESTED beside the code.
 Every kernel-facing call goes through a `KMODCOV_` name whose default
 `kmodcov_compat.h` chooses by kernel version, and the library and its
 consumers must be built by the same compiler family, and for gcc by the
@@ -24,13 +25,13 @@ vendors it (default `third_party/otto_kmodcov`) alongside a commented
 otto ships (exit 0 current, 1 differs, 2 absent) and `otto init` reports
 the same drift as a warning. Every build reports a `MODULE_VERSION` of
 `<otto version>+kmodcov<n>`, `n` being the interface number
-(`KMODCOV_INTERFACE` in `kmodcov.h`) this build implements — the debugfs
+(`KMODCOV_INTERFACE` in `kmodcov.h`) this build implements — the sysfs
 layout, the `cov_dir` parameter and the consumer macros below all move
 together with it, and otto refuses to load a `.ko` whose `n` does not match
 its own. A `kmodcov_local.h` beside the sources, never exported nor compared,
 lets a build replace, one name at a time, any of the kernel-facing names
-`kmodcov_compat.h` isolates for it — mkdir, file write, fops, the
-module-address range, allocation, the lock and debugfs — the same header
+`kmodcov_compat.h` isolates for it — mkdir, file write, the module-address
+range, allocation, the lock and the sysfs control files — the same header
 that holds the kernel version ladder; the supported range, the full name
 list and the override contract are on the kernel-modules guide page's
 [Kernel versions](../../../docs/cli/cov/instrumenting/kernel-modules.md#kernel-versions)
@@ -58,17 +59,23 @@ A consumer becomes coverage-instrumented in three steps:
    `.ctors`-convention toolchain's constructors too.
 3. **Macros.** Call `KMODCOV_DECLARE()` at file scope, `KMODCOV_INIT()` as the
    first statement of the module's init routine, and `KMODCOV_EXIT()` as the
-   last statement of its exit routine.
+   last statement of its exit routine. Every error return of the init routine
+   after a successful `KMODCOV_INIT()` must call `KMODCOV_EXIT()` first: the
+   registration holds the module's own sysfs directory, and a module that
+   leaves it held cannot be freed — `insmod` or `rmmod` waits forever.
+   `tests/repo5/kmod/demo/demo_main.c` shows the shape.
 
-Once registered, a write to
-`/sys/kernel/debug/otto_kmodcov/<module>/dump` writes each instrumented
-object's `.gcda` file under the module's `cov_dir` parameter; a write to
-`.../reset` zeroes the accumulated counters. The exit routine's own
-coverage is captured by the dump `KMODCOV_EXIT()` performs on unregister.
+Once registered, a write to `/sys/module/<module>/kmodcov/dump` writes each
+instrumented object's `.gcda` file under the module's `cov_dir` parameter; a
+write to `.../reset` zeroes the accumulated counters. The two files are
+sysfs, beside the `parameters/` directory the loader gives every module, so
+no `CONFIG_DEBUG_FS` is needed. The exit routine's own coverage is captured
+by the dump `KMODCOV_EXIT()` performs on unregister.
 
 A worked consumer following these three steps lives at
 [`tests/repo5/kmod/demo/`](../../../tests/repo5/kmod/demo/) — a bounded
-queue driven from debugfs, built in place by `tests/repo5/kmod/build.sh`
+queue driven from a control file of its own, built in place by
+`tests/repo5/kmod/build.sh`
 against the library this directory's own `build.sh` builds out of tree. It
 lives in the SUT repo rather than here because otto's coverage capture
 anchors every measured file to a committed git blob under the repo that

@@ -14,8 +14,9 @@ chosen per entry by ``coverage``:
     its host as a ``kmodcov`` dev tool (:mod:`otto.host.kmod_tool_kind`) that
     ``install`` loads on demand when it is not already resident: otto then
     passes ``cov_dir=<cov_dir>`` to ``insmod``, ``prepare_coverage`` asks the
-    library to dump through debugfs while the module is loaded (an unloaded
-    module already dumped at exit), and ``reset_coverage`` zeroes it there.
+    library to dump through its sysfs control file while the module is loaded
+    (an unloaded module already dumped at exit), and ``reset_coverage`` zeroes
+    it there.
 ``kernel``
     the kernel itself has ``CONFIG_GCOV_KERNEL``: counters live under
     ``/sys/kernel/debug/gcov/`` and ``prepare_coverage`` copies the module's
@@ -53,8 +54,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-KMODCOV_DEBUGFS = "/sys/kernel/debug/otto_kmodcov"
-"""Where ``otto_kmodcov`` exposes ``<module>/dump`` and ``<module>/reset``."""
+KMODCOV_SYSFS_ROOT = "/sys/module"
+"""Under which ``otto_kmodcov`` exposes ``<module>/kmodcov/dump`` and ``<module>/kmodcov/reset``.
+
+sysfs, a child of the module's own directory: no ``CONFIG_DEBUG_FS`` is needed.
+"""
 
 KERNEL_GCOV_DEBUGFS = "/sys/kernel/debug/gcov"
 """The in-kernel gcov tree (``CONFIG_GCOV_KERNEL``); ``gcov_path`` lives under it."""
@@ -251,7 +255,7 @@ class KmodProduct(ShellProduct):
         return await sudo_gcda_delete(self, host)
 
     def _kmodcov_file(self, name: str) -> str:
-        return f"{KMODCOV_DEBUGFS}/{self.module_name}/{name}"
+        return f"{KMODCOV_SYSFS_ROOT}/{self.module_name}/kmodcov/{name}"
 
     def _kernel_gcov_error(self, result: Result) -> Result:
         """Build the friendly ``Error`` naming :attr:`gcov_path` for a failed kernel-gcov script.
@@ -311,7 +315,7 @@ class KmodProduct(ShellProduct):
                 # Unloaded: otto_kmodcov dumped at KMODCOV_EXIT(); the files are already there.
                 return Result(Status.Success)
         # lsmod declined (dry run) or the module is loaded: announce the
-        # debugfs write either way — a decline here becomes the session's own
+        # sysfs write either way — a decline here becomes the session's own
         # [DRY RUN] line, and the overall result mirrors it (Status.NotRun).
         dump = self._kmodcov_file("dump")
         result = await self._run_sudo(host, f"echo 1 > {shlex.quote(dump)}")

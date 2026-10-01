@@ -18,10 +18,12 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/fs.h>
+#include <linux/kobject.h>
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/string.h>
+#include <linux/sysfs.h>
 
 #include "kmodcov.h"
 #include "kmodcov_gcov.h"
@@ -40,12 +42,11 @@ struct kmodcov_client {
 	struct kmodcov_object *objs;
 	size_t cap; /* objs' capacity: one per constructor between the sentinels */
 	int err; /* first failure while the constructors ran */
-	struct dentry *dent;
+	struct kobject *kobj; /* /sys/module/<mod>/kmodcov; set under kmodcov_lock when published */
 };
 
 static LIST_HEAD(kmodcov_clients);
 KMODCOV_DEFINE_LOCK(kmodcov_lock);
-static struct dentry *kmodcov_root;
 static unsigned int kmodcov_version; /* gcov format of the first consumer; 0 = none yet */
 
 /* The registration in progress and the thread running it: set under kmodcov_lock for the walk's duration. */
@@ -175,43 +176,60 @@ static void kmodcov_free_client(struct kmodcov_client *c)
 	KMODCOV_FREE(c);
 }
 
-/* ---- debugfs: /sys/kernel/debug/otto_kmodcov/<module>/{dump,reset} -------- */
+/* ---- sysfs: /sys/module/<module>/kmodcov/{dump,reset} -------------------- */
 
-static ssize_t kmodcov_dump_write(struct file *f, const char __user *ubuf, size_t n,
-				loff_t *off)
+/*
+ * The client whose directory is KOBJ, or NULL once unregister has unlisted
+ * it. Caller holds kmodcov_lock.
+ */
+static struct kmodcov_client *kmodcov_client_of(struct kobject *kobj)
 {
-	struct kmodcov_client *c = f->private_data;
+	struct kmodcov_client *c;
+
+	list_for_each_entry(c, &kmodcov_clients, node)
+		if (c->kobj == kobj)
+			return c;
+	return NULL;
+}
+
+static ssize_t kmodcov_dump_store(struct kobject *kobj, struct kobj_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct kmodcov_client *c;
 	int err;
 
 	KMODCOV_LOCK(&kmodcov_lock);
-	err = kmodcov_dump_client(c);
+	c = kmodcov_client_of(kobj);
+	err = c ? kmodcov_dump_client(c) : -ENODEV;
 	KMODCOV_UNLOCK(&kmodcov_lock);
-	return err ? err : n;
+	return err ? err : count;
 }
 
-static ssize_t kmodcov_reset_write(struct file *f, const char __user *ubuf, size_t n,
-				 loff_t *off)
+static ssize_t kmodcov_reset_store(struct kobject *kobj, struct kobj_attribute *attr,
+				   const char *buf, size_t count)
 {
-	struct kmodcov_client *c = f->private_data;
+	struct kmodcov_client *c;
 
 	KMODCOV_LOCK(&kmodcov_lock);
-	kmodcov_reset_client(c);
+	c = kmodcov_client_of(kobj);
+	if (c)
+		kmodcov_reset_client(c);
 	KMODCOV_UNLOCK(&kmodcov_lock);
-	return n;
+	return c ? count : -ENODEV;
 }
 
-static const struct file_operations kmodcov_dump_fops = {
-	.owner = THIS_MODULE,
-	.open = KMODCOV_FOPS_OPEN,
-	.write = kmodcov_dump_write,
-	.llseek = KMODCOV_LLSEEK,
+/* __ATTR rather than __ATTR_WO: 2.6.32 has only the former. */
+static struct kobj_attribute kmodcov_dump_attr = __ATTR(dump, 0200, NULL, kmodcov_dump_store);
+static struct kobj_attribute kmodcov_reset_attr = __ATTR(reset, 0200, NULL, kmodcov_reset_store);
+
+static struct attribute *kmodcov_attrs[] = {
+	&kmodcov_dump_attr.attr,
+	&kmodcov_reset_attr.attr,
+	NULL,
 };
 
-static const struct file_operations kmodcov_reset_fops = {
-	.owner = THIS_MODULE,
-	.open = KMODCOV_FOPS_OPEN,
-	.write = kmodcov_reset_write,
-	.llseek = KMODCOV_LLSEEK,
+static const struct attribute_group kmodcov_group = {
+	.attrs = kmodcov_attrs,
 };
 
 /* ---- the API ------------------------------------------------------------ */
@@ -279,7 +297,7 @@ void kmodcov_ctor_info(struct gcov_info *info)
 int kmodcov_register(struct module *mod, const kmodcov_ctor_fn *begin,
 		   const kmodcov_ctor_fn *end, const char *dir)
 {
-	struct kmodcov_client *c;
+	struct kmodcov_client *c, *other;
 	const kmodcov_ctor_fn *p;
 	int err;
 
@@ -305,6 +323,15 @@ int kmodcov_register(struct module *mod, const kmodcov_ctor_fn *begin,
 		goto fail;
 	}
 	KMODCOV_LOCK(&kmodcov_lock);
+	list_for_each_entry(other, &kmodcov_clients, node) {
+		if (other->mod == mod) {
+			KMODCOV_UNLOCK(&kmodcov_lock);
+			pr_err("%s: already registered — KMODCOV_INIT() runs once per load\n",
+			       mod->name);
+			err = -EBUSY;
+			goto fail;
+		}
+	}
 	kmodcov_registering = c;
 	kmodcov_registering_task = current;
 	for (p = begin; p < end; p++)
@@ -325,11 +352,23 @@ int kmodcov_register(struct module *mod, const kmodcov_ctor_fn *begin,
 	if (!kmodcov_version)
 		kmodcov_version = gcov_info_version(c->objs[0].live);
 	list_add(&c->node, &kmodcov_clients);
+	/*
+	 * Published and given its files under the lock, so a store finds a
+	 * fully built client or none. The module kobject exists: the loader
+	 * sets it up before the init routine that brought us here.
+	 */
+	c->kobj = KMODCOV_SYSFS_DIR("kmodcov", &mod->mkobj.kobj);
+	err = c->kobj ? KMODCOV_SYSFS_GROUP(c->kobj, &kmodcov_group) : -ENOMEM;
+	if (err) {
+		list_del(&c->node);
+		KMODCOV_UNLOCK(&kmodcov_lock);
+		pr_err("%s: cannot create /sys/module/%s/kmodcov (%d)\n", mod->name, mod->name,
+		       err);
+		if (c->kobj)
+			KMODCOV_SYSFS_DIR_PUT(c->kobj);
+		goto fail;
+	}
 	KMODCOV_UNLOCK(&kmodcov_lock);
-
-	c->dent = KMODCOV_DEBUGFS_DIR(mod->name, kmodcov_root);
-	KMODCOV_DEBUGFS_FILE("dump", 0200, c->dent, c, &kmodcov_dump_fops);
-	KMODCOV_DEBUGFS_FILE("reset", 0200, c->dent, c, &kmodcov_reset_fops);
 	pr_info("%s: %zu instrumented object(s), .gcda under %s\n", mod->name, c->n_objs, dir);
 	return 0;
 fail:
@@ -357,26 +396,16 @@ void kmodcov_unregister(struct module *mod)
 	KMODCOV_UNLOCK(&kmodcov_lock);
 	if (!found)
 		return;
-	/* Outside the lock: a writer blocked on the lock must be able to finish. */
-	KMODCOV_DEBUGFS_REMOVE(found->dent);
+	/*
+	 * Outside the lock: sysfs waits here for a store in flight, and that
+	 * store may be waiting for the lock. It then finds no client (-ENODEV).
+	 */
+	KMODCOV_SYSFS_GROUP_REMOVE(found->kobj, &kmodcov_group);
+	KMODCOV_SYSFS_DIR_PUT(found->kobj);
 	kmodcov_free_client(found);
 }
 EXPORT_SYMBOL_GPL(kmodcov_unregister);
 
-static int __init kmodcov_init(void)
-{
-	kmodcov_root = KMODCOV_DEBUGFS_DIR("otto_kmodcov", NULL);
-	return 0;
-}
-
-static void __exit kmodcov_exit(void)
-{
-	/* No client can be left: every consumer holds a reference to this module. */
-	KMODCOV_DEBUGFS_REMOVE(kmodcov_root);
-}
-
-module_init(kmodcov_init);
-module_exit(kmodcov_exit);
 #define KMODCOV_STR_(x) #x
 #define KMODCOV_STR(x) KMODCOV_STR_(x)
 MODULE_LICENSE("GPL");

@@ -237,7 +237,8 @@ products. The consumer module, `otto_kmod_demo`, sets `coverage = "module"`
 and a `cov_dir`: on install, otto appends
 `cov_dir=<cov_dir>` to *its own* `insmod` line — the parameter
 `KMODCOV_DECLARE()` declares on the module — and the module hands that value
-to the `otto_kmodcov` runtime at `KMODCOV_INIT()`. A debugfs write then dumps
+to the `otto_kmodcov` runtime at `KMODCOV_INIT()`. A write to the module's
+sysfs control file (`/sys/module/otto_kmod_demo/kmodcov/dump`) then dumps
 its counters there as ordinary `.gcda` files, fetched exactly like any
 other product's.
 

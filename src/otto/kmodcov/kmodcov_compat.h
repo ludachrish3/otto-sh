@@ -50,10 +50,11 @@
  */
 #include <linux/mm.h>
 #include <linux/mutex.h>
-#include <linux/debugfs.h>
+#include <linux/kobject.h>
+#include <linux/sysfs.h>
 #include <linux/list.h>
 
-/* ---- allocation, locks, debugfs: one arm each, except the big pair ----- */
+/* ---- allocation, locks, sysfs: one arm each, except the big pair ------- */
 
 #ifndef KMODCOV_ALLOC
 #define KMODCOV_ALLOC(size) kzalloc((size), GFP_KERNEL)
@@ -97,15 +98,25 @@
 #ifndef KMODCOV_UNLOCK
 #define KMODCOV_UNLOCK(l) mutex_unlock(l)
 #endif
-#ifndef KMODCOV_DEBUGFS_DIR
-#define KMODCOV_DEBUGFS_DIR(name, parent) debugfs_create_dir((name), (parent))
+/*
+ * The control files: /sys/module/<module>/kmodcov/{dump,reset}, a child of
+ * the consumer's own module kobject. These four signatures are the same from
+ * 2.6.32 through 6.17, so no arm; the names exist for the override contract.
+ * KMODCOV_SYSFS_DIR returns NULL on failure; KMODCOV_SYSFS_GROUP returns 0
+ * or a negative errno; KMODCOV_SYSFS_GROUP_REMOVE must wait for a store in
+ * flight before it returns, as the default does.
+ */
+#ifndef KMODCOV_SYSFS_DIR
+#define KMODCOV_SYSFS_DIR(name, parent) kobject_create_and_add((name), (parent))
 #endif
-#ifndef KMODCOV_DEBUGFS_FILE
-#define KMODCOV_DEBUGFS_FILE(name, mode, parent, data, fops)                     \
-	debugfs_create_file((name), (mode), (parent), (data), (fops))
+#ifndef KMODCOV_SYSFS_DIR_PUT
+#define KMODCOV_SYSFS_DIR_PUT(kobj) kobject_put(kobj)
 #endif
-#ifndef KMODCOV_DEBUGFS_REMOVE
-#define KMODCOV_DEBUGFS_REMOVE(d) debugfs_remove_recursive(d)
+#ifndef KMODCOV_SYSFS_GROUP
+#define KMODCOV_SYSFS_GROUP(kobj, group) sysfs_create_group((kobj), (group))
+#endif
+#ifndef KMODCOV_SYSFS_GROUP_REMOVE
+#define KMODCOV_SYSFS_GROUP_REMOVE(kobj, group) sysfs_remove_group((kobj), (group))
 #endif
 
 /* ---- the version ladder ------------------------------------------------ */
@@ -245,30 +256,6 @@ static inline ssize_t kmodcov_compat_file_write(struct file *file, const char *b
 {
 	return kernel_write(file, buf, len, ppos);
 }
-#endif
-#endif
-
-/* KMODCOV_FOPS_OPEN: a file_operations.open storing the inode's i_private on the file. */
-#ifndef KMODCOV_FOPS_OPEN
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 5, 0)
-#define KMODCOV_FOPS_OPEN kmodcov_compat_simple_open
-static inline int kmodcov_compat_simple_open(struct inode *inode, struct file *file)
-{
-	if (inode->i_private)
-		file->private_data = inode->i_private;
-	return 0;
-}
-#else
-#define KMODCOV_FOPS_OPEN simple_open
-#endif
-#endif
-
-/* KMODCOV_LLSEEK: a file_operations.llseek for a write-only control file. */
-#ifndef KMODCOV_LLSEEK
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 35)
-#define KMODCOV_LLSEEK no_llseek
-#else
-#define KMODCOV_LLSEEK noop_llseek
 #endif
 #endif
 

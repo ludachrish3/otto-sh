@@ -6,8 +6,8 @@ so a wheel carries them: ``otto cov kmodcov export`` copies
 user's build system builds the ``.ko``), and ``check`` compares such a copy
 with what is shipped here.
 
-The library and otto agree on an INTERFACE NUMBER: the debugfs layout
-(``/sys/kernel/debug/otto_kmodcov/<module>/{dump,reset}``), the ``cov_dir``
+The library and otto agree on an INTERFACE NUMBER: the sysfs layout
+(``/sys/module/<module>/kmodcov/{dump,reset}``), the ``cov_dir``
 module parameter and the consumer macros. It is ``KMODCOV_INTERFACE`` in
 ``kmodcov.h`` and :data:`INTERFACE` here (a guard holds the two equal), and a
 built module reports it through ``MODULE_VERSION`` as
@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-INTERFACE = 1
+INTERFACE = 2
 """The library interface this otto drives; equals ``KMODCOV_INTERFACE`` in ``kmodcov.h``."""
 
 SHIPPED_FILES = (

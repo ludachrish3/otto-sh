@@ -9,8 +9,8 @@
  * call __gcov_init(), clang's llvm_gcov_init(), both exported by this
  * module — which is how each translation unit's counters reach the
  * library. Counters are written as .gcda files under the `cov_dir` module
- * parameter on a write to /sys/kernel/debug/otto_kmodcov/<module>/dump, and
- * once more at KMODCOV_EXIT() — so the exit routine's own coverage is kept.
+ * parameter on a write to /sys/module/<module>/kmodcov/dump, and once more
+ * at KMODCOV_EXIT() — so the exit routine's own coverage is kept.
  */
 #ifndef OTTO_KMODCOV_H
 #define OTTO_KMODCOV_H
@@ -19,12 +19,14 @@
 #include <linux/moduleparam.h>
 
 /*
- * The library interface otto drives: the debugfs layout, the cov_dir
- * parameter and the macros below. otto reads it back off a built module's
- * MODULE_VERSION ("<otto version>+kmodcov<n>") and refuses a library whose
- * number is not the one it expects. Bump it only when one of those changes.
+ * The library interface otto drives: the sysfs layout
+ * (/sys/module/<module>/kmodcov/{dump,reset}), the cov_dir parameter and the
+ * macros below. otto reads it back off a built module's MODULE_VERSION
+ * ("<otto version>+kmodcov<n>") and refuses a library whose number is not
+ * the one it expects. Bump it only when one of those changes; 2 is the
+ * move of the control files into sysfs.
  */
-#define KMODCOV_INTERFACE 1
+#define KMODCOV_INTERFACE 2
 
 typedef void (*kmodcov_ctor_fn)(void);
 
@@ -70,11 +72,18 @@ extern const kmodcov_ctor_fn __kmodcov_ctors_end;
 	module_param(cov_dir, charp, 0444);                                   \
 	MODULE_PARM_DESC(cov_dir, "absolute directory the module's coverage files are written under")
 
-/* First statement of the init routine: 0, or a negative errno to return. */
+/*
+ * First statement of the init routine: 0, or a negative errno to return.
+ * Once it has returned 0, every error return of the init routine must call
+ * KMODCOV_EXIT() first, and the exit routine must always call it: the
+ * registration holds the module's own sysfs directory, and a module that
+ * leaves it held cannot be freed — insmod or rmmod waits forever.
+ * tests/repo5/kmod/demo/demo_main.c shows the shape.
+ */
 #define KMODCOV_INIT()                                                           \
 	kmodcov_register(THIS_MODULE, &__kmodcov_ctors_begin + 1, &__kmodcov_ctors_end, cov_dir)
 
-/* Last statement of the exit routine. */
+/* Last statement of the exit routine, and of every init error path after KMODCOV_INIT(). */
 #define KMODCOV_EXIT() kmodcov_unregister(THIS_MODULE)
 
 #endif /* OTTO_KMODCOV_H */

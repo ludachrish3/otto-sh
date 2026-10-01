@@ -29,7 +29,7 @@ from otto.config.fleet import all_hosts, do_for_all_hosts
 from otto.host.unix_host import UnixHost
 
 CTL = "/sys/kernel/debug/otto_kmod_demo/ctl"
-DUMP = "/sys/kernel/debug/otto_kmodcov/otto_kmod_demo/dump"
+DUMP = "/sys/module/otto_kmod_demo/kmodcov/dump"
 _HOSTS = re.compile(r"test[12]")
 
 COMMON = [

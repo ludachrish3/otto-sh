@@ -11,7 +11,7 @@ import pytest
 from otto.declared import DeclaredEntry
 from otto.host import kmod_kind  # noqa: F401 — import registers the kind
 from otto.host import product as product_mod
-from otto.host.kmod_kind import KMODCOV_DEBUGFS, KmodProduct
+from otto.host.kmod_kind import KMODCOV_SYSFS_ROOT, KmodProduct
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
 
@@ -113,7 +113,7 @@ def _expected_kernel_prepare_cmd(gcov_path: str, cov_dir: str) -> str:
 
 def _expected_module_write_cmd(module_name: str, action: str) -> str:
     """Independently reconstruct the exact ``sh -c`` command for a module dump/reset write."""
-    script = f"echo 1 > {KMODCOV_DEBUGFS}/{module_name}/{action}"
+    script = f"echo 1 > {KMODCOV_SYSFS_ROOT}/{module_name}/kmodcov/{action}"
     return f"sh -c {shlex.quote(script)}"
 
 
@@ -412,6 +412,18 @@ async def test_kmod_module_prepare_writes_dump_while_loaded_under_sudo():
 
 
 @pytest.mark.asyncio
+async def test_kmod_module_dump_is_written_under_the_modules_own_sysfs_directory():
+    # A literal, not the constant: this is the path otto_kmodcov creates
+    # (kmodcov_register, a child of /sys/module/<module>/), so a change to
+    # either side shows here.
+    host = _KmodHost(loaded=["otto_kmod_demo"])
+    p = _build(host, coverage="module")
+    assert (await p.prepare_coverage(host)).is_ok
+    ((cmd, _),) = host.run_calls
+    assert cmd == "sh -c 'echo 1 > /sys/module/otto_kmod_demo/kmodcov/dump'"
+
+
+@pytest.mark.asyncio
 async def test_kmod_module_prepare_is_a_noop_success_when_unloaded():
     host = _KmodHost(loaded=[])
     p = _build(host, coverage="module")
@@ -420,12 +432,12 @@ async def test_kmod_module_prepare_is_a_noop_success_when_unloaded():
 
 
 @pytest.mark.asyncio
-async def test_kmod_module_prepare_failure_names_the_debugfs_path():
+async def test_kmod_module_prepare_failure_names_the_sysfs_path():
     host = _KmodHost(loaded=["otto_kmod_demo"], run_status=Status.Error)
     p = _build(host, coverage="module")
     result = await p.prepare_coverage(host)
     assert not result.is_ok
-    assert "/sys/kernel/debug/otto_kmodcov/otto_kmod_demo/dump" in result.msg
+    assert "/sys/module/otto_kmod_demo/kmodcov/dump" in result.msg
     assert "otto_kmodcov" in result.msg
 
 
@@ -528,7 +540,7 @@ async def test_kmod_module_reset_fails_when_lsmod_itself_fails():
     assert not result.is_ok
     assert result.status is not Status.NotRun
     assert "lsmod" in result.msg
-    assert host.run_calls == []  # neither the debugfs write nor the delete
+    assert host.run_calls == []  # neither the sysfs write nor the delete
 
 
 @pytest.mark.asyncio
@@ -541,12 +553,12 @@ async def test_kmod_module_reset_failure_names_the_kmodcov_tool_and_its_residenc
     result = await p.reset_coverage(host)
     assert result.status is Status.Error
     assert "otto_kmodcov: 'kmodcov-6.8' dev tool, resident" in result.msg
-    assert f"{KMODCOV_DEBUGFS}/otto_kmod_demo/reset" in result.msg
+    assert f"{KMODCOV_SYSFS_ROOT}/otto_kmod_demo/kmodcov/reset" in result.msg
     assert len(host.run_calls) == 1  # the failed write; no delete followed
 
 
 @pytest.mark.asyncio
-async def test_kmod_module_reset_skips_the_debugfs_write_when_unloaded():
+async def test_kmod_module_reset_skips_the_sysfs_write_when_unloaded():
     host = _KmodHost(loaded=[])
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
     await p.reset_coverage(host)
@@ -555,7 +567,7 @@ async def test_kmod_module_reset_skips_the_debugfs_write_when_unloaded():
 
 @pytest.mark.asyncio
 async def test_kmod_module_reset_propagates_a_dry_run_decline_with_no_delete_following():
-    # The reset hook's debugfs write can also be declined under --dry-run
+    # The reset hook's sysfs write can also be declined under --dry-run
     # (lsmod itself still succeeding); the result must be Status.NotRun, and
     # the delete `run` call that would normally follow must not happen.
     # `run()` always answers a `Results`, so the double wraps its

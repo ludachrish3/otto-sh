@@ -27,7 +27,7 @@ from tests.e2e.cov._kmod_assertions import (
     assert_store_has_the_three_demo_files,
     assert_three_gcda_per_host,
 )
-from tests.e2e.cov._repo5_build import DEMO_SRC, _line_of, _record, ensure_kmod_artifacts
+from tests.e2e.cov._repo5_build import BUILD, DEMO_SRC, _line_of, _record, ensure_kmod_artifacts
 
 _LAB = "unix"
 
@@ -44,6 +44,17 @@ def built_modules(tmp_path_factory):
         ["modinfo", "-F", "vermagic", str(demo_ko)], check=True, capture_output=True, text=True
     ).stdout
     assert vermagic.startswith(release + " "), f"demo built for {vermagic!r}, dev VM runs {release}"
+    # Interface 2's structural proof: the control files are sysfs, so the
+    # built library imports no debugfs symbol. No bed lacks debugfs, which is
+    # why the proof is the import table rather than a run without it.
+    undefined = subprocess.run(
+        ["nm", "--undefined-only", str(BUILD / "lib" / "otto_kmodcov.ko")],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    debugfs = [line for line in undefined.splitlines() if "debugfs" in line]
+    assert debugfs == [], f"otto_kmodcov.ko imports debugfs symbols: {debugfs}"
 
 
 def _run_otto(argv, *, xdir, timeout):

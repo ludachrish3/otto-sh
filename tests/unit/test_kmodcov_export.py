@@ -58,13 +58,12 @@ OVERRIDE_NAMES = (
     "KMODCOV_DEFINE_LOCK",
     "KMODCOV_LOCK",
     "KMODCOV_UNLOCK",
-    "KMODCOV_DEBUGFS_DIR",
-    "KMODCOV_DEBUGFS_FILE",
-    "KMODCOV_DEBUGFS_REMOVE",
+    "KMODCOV_SYSFS_DIR",
+    "KMODCOV_SYSFS_DIR_PUT",
+    "KMODCOV_SYSFS_GROUP",
+    "KMODCOV_SYSFS_GROUP_REMOVE",
     "KMODCOV_MKDIR",
     "KMODCOV_FILE_WRITE",
-    "KMODCOV_FOPS_OPEN",
-    "KMODCOV_LLSEEK",
     "KMODCOV_WITHIN_MODULE",
 )
 
@@ -100,16 +99,15 @@ BARE_KERNEL_CALLS = (
     "DEFINE_MUTEX(",
     "mutex_lock(",
     "mutex_unlock(",
-    "debugfs_create_dir(",
-    "debugfs_create_file(",
-    "debugfs_remove_recursive(",
+    "kobject_create_and_add(",
+    "kobject_put(",
+    "sysfs_create_group(",
+    "sysfs_remove_group(",
     "within_module(",
     "kernel_write(",
     "kern_path_create(",
     "done_path_create(",
     "vfs_mkdir(",
-    "simple_open",
-    "noop_llseek",
     "mnt_idmap(",
     "d_inode(",
 )
@@ -123,14 +121,32 @@ def test_the_library_calls_no_kernel_helper_the_ladder_owns_directly(name):
     for bare in BARE_KERNEL_CALLS:
         # A no-preceding-word-char anchor, not a bare substring: a vendored
         # identifier like gcov_info_within_module() must not trip on the
-        # "within_module(" it contains as a tail. simple_open/noop_llseek
-        # have no "(" of their own, so they need a trailing \b too.
-        pattern = rf"(?<!\w){re.escape(bare)}"
-        if bare in ("simple_open", "noop_llseek"):
-            pattern += r"\b"
-        assert not re.search(pattern, source), (
+        # "within_module(" it contains as a tail.
+        assert not re.search(rf"(?<!\w){re.escape(bare)}", source), (
             f"{name} calls {bare} directly; use the KMODCOV_ macro"
         )
+
+
+def test_the_consumer_contract_requires_exit_on_every_init_error_path():
+    """A registration holds the consumer's own sysfs directory, so a forgotten KMODCOV_EXIT() on an
+    init error path leaves the module unfreeable (insmod waits forever on 3.x+). The header and the
+    README must say so where they state the macro contract."""
+    for name in ("kmodcov.h", "README.md"):
+        text = (PACKAGE / name).read_text()
+        assert "KMODCOV_EXIT()" in text, name
+        assert "error return" in text, f"{name} does not say KMODCOV_EXIT() is required there"
+
+
+@pytest.mark.parametrize("name", kmodcov.SHIPPED_FILES)
+def test_no_shipped_file_names_debugfs(name):
+    """The control files live in sysfs: a kernel without CONFIG_DEBUG_FS runs the library whole.
+
+    The structural half of the proof (the bed's kernels all have debugfs, so
+    no lane can show its absence); the kmod coverage e2e adds the built
+    module's import table.
+    """
+    text = (PACKAGE / name).read_text()
+    assert "debugfs" not in text.lower(), f"{name} names debugfs"
 
 
 def test_every_error_directive_in_the_ladder_sits_inside_an_override_guard():

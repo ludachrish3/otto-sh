@@ -48,15 +48,19 @@ object links, plus the two calls a consumer actually drives:
 :end-at: "void kmodcov_unregister(struct module *mod);"
 ```
 
-Registering creates `/sys/kernel/debug/otto_kmodcov/<module>/dump` and
-`.../reset`, and gives the module a private **accumulator** — a copy of
-each instrumented object's counters. Writing to `dump` adds the live
-counters into the accumulator, zeroes the live ones, and writes the
-accumulator out as `<cov_dir>/<absolute object path>.gcda`; because the
-accumulator holds the running total and the live counters start over every
-time, two dumps in one run add correctly instead of double-counting.
-Writing to `reset` zeroes both. `otto_kmodcov` never parses a `.gcda` itself
-— it only ever writes one.
+Registering creates `/sys/module/<module>/kmodcov/dump` and `.../reset` —
+two write-only sysfs files beside the `parameters/` directory the loader
+gives every module, so the module method needs no `CONFIG_DEBUG_FS` — and
+gives the module a private **accumulator** — a copy of each instrumented
+object's counters. Writing to `dump` adds the live counters into the
+accumulator, zeroes the live ones, and writes the accumulator out as
+`<cov_dir>/<absolute object path>.gcda`; because the accumulator holds the
+running total and the live counters start over every time, two dumps in
+one run add correctly instead of double-counting. Writing to `reset` zeroes
+both. `otto_kmodcov` never parses a `.gcda` itself — it only ever writes one.
+A module registered twice without an unregister between is refused
+(`-EBUSY`), and a control file that cannot be created fails the
+registration, so an `insmod` that succeeds has both files.
 
 ## Getting the library
 
@@ -139,7 +143,11 @@ defined by the library's own Kbuild fragment:
 ```
 
 **3. Macros.** Call `KMODCOV_DECLARE()` at file scope, `KMODCOV_INIT()` first in
-the module's init routine, and `KMODCOV_EXIT()` last in its exit routine:
+the module's init routine, and `KMODCOV_EXIT()` last in its exit routine — and
+first on every error return of the init routine after `KMODCOV_INIT()` has
+succeeded, the way the demo's `demo_init` does below. The registration holds
+the module's own sysfs directory; a module that leaves it held cannot be
+freed, and `insmod` or `rmmod` waits forever:
 
 ```{literalinclude} ../../../../src/otto/kmodcov/kmodcov.h
 :language: c
@@ -411,11 +419,9 @@ two untested arms are proven by nothing yet.
 | `KMODCOV_MKDIR(path)` | create the last component of an absolute path whose parents exist; `-EEXIST` counts as success | below 2.6.39 `path_lookup` + `lookup_create`; 2.6.39–3.0 the same with `kern_path_parent` (untested); 3.1–3.5 `kern_path_create` with `done_path_create` written out (untested); 3.6–4.0 `kern_path_create` with `->d_inode`; 4.1–5.11 `d_inode()`; 5.12–6.2 `mnt_user_ns`; 6.3–6.14 `mnt_idmap`; 6.15+ `vfs_mkdir` returns the dentry | `2.6.32`, `3.13`, `4.4`, `5.15`, the beds' 6.8 live, and the 6.8 tree (`x86_64-cross`), `6.17`, the untested arms: none |
 | `KMODCOV_FILE_WRITE(file, buf, len, ppos)` | write a kernel buffer at `*ppos`, advancing it | below 3.9 `vfs_write` under `set_fs`; 3.9–4.13 `kernel_write` with the offset by value; 4.14+ `kernel_write` by pointer | `2.6.32`, `3.13`, `5.4` |
 | `KMODCOV_BIG_ALLOC` / `KMODCOV_BIG_FREE` | the `.gcda` image buffer | below 4.12 `vmalloc`/`vfree`; 4.12+ `kvmalloc`/`kvfree` | `4.4`, `5.4` |
-| `KMODCOV_FOPS_OPEN` | the debugfs files' `open` | below 3.5 a local open storing `i_private`; 3.5+ `simple_open` | `2.6.32`, `3.13` |
-| `KMODCOV_LLSEEK` | the debugfs files' `llseek` | below 2.6.35 `no_llseek`; 2.6.35+ `noop_llseek` | `2.6.32`, `3.13` |
 | `KMODCOV_WITHIN_MODULE(addr, mod)` | whether an address is the module's | below 3.17 `within_module_core` or `within_module_init`; 3.17+ `within_module` | `3.13`, `4.4` |
 | `list_first_entry_or_null`, `list_last_entry`, `list_next_entry`, `__list_del_entry` | the list helpers the clang backend uses | provided below 3.10, 3.13, 3.13 and 2.6.38 | `2.6.32`, `3.13` (the "build: the clang backend's unit compiles with the column's gcc" row) |
-| `KMODCOV_ALLOC`, `KMODCOV_ALLOC_ARRAY`, `KMODCOV_STRDUP`, `KMODCOV_MEMDUP`, `KMODCOV_ASPRINTF`, `KMODCOV_FREE`, `KMODCOV_DEFINE_LOCK`, `KMODCOV_LOCK`, `KMODCOV_UNLOCK`, `KMODCOV_DEBUGFS_DIR`, `KMODCOV_DEBUGFS_FILE`, `KMODCOV_DEBUGFS_REMOVE` | allocation, the lock, debugfs | one default each, unchanged since 2.6.32 | every column |
+| `KMODCOV_ALLOC`, `KMODCOV_ALLOC_ARRAY`, `KMODCOV_STRDUP`, `KMODCOV_MEMDUP`, `KMODCOV_ASPRINTF`, `KMODCOV_FREE`, `KMODCOV_DEFINE_LOCK`, `KMODCOV_LOCK`, `KMODCOV_UNLOCK`, `KMODCOV_SYSFS_DIR`, `KMODCOV_SYSFS_DIR_PUT`, `KMODCOV_SYSFS_GROUP`, `KMODCOV_SYSFS_GROUP_REMOVE` | allocation, the lock, the sysfs control files | one default each, unchanged since 2.6.32 | every column |
 
 On the two columns whose kbuild compiles every object as `.tmp_<unit>.o`
 before deciding whether to relink or rename it (3.13 and 4.4,
