@@ -38,7 +38,7 @@ SUBCOMMAND_HELP = [
     ["test", "TestE2EFixture", "--help"],
     ["host", "local", "exists", "--help"],
     ["cov", "report", "--help"],
-    ["docker", "up", "--help"],
+    ["docker", "compose", "up", "--help"],
     ["reservation", "check", "--help"],
     ["cache", "info", "--help"],
     ["env", "create", "--help"],

@@ -294,7 +294,7 @@ class TestContainerLiveness:
         ctr = _real_placeholder(running_cid="")
         lab, parent, other = self._lab_with(ctr)
 
-        with pytest.raises(ValueError, match="otto docker up"):
+        with pytest.raises(ValueError, match="otto docker compose up"):
             asyncio.run(resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)]))
         compose_up.assert_not_awaited()
 

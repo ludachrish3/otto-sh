@@ -55,7 +55,8 @@ host each one lands on), and env assembly (the three channels merged into one
 mapping). Purity is the design constraint, not an accident: it is what lets
 `otto docker use-cases` render an inventory without contacting a device, and
 what lets `--dry-run` print the *exact* compose command rather than a
-description of one.
+description of one. Placement has one owner: `deployment._resolve`, shared
+by `compose build`, `compose up` and `compose down`.
 
 Resolution refuses rather than guesses. An ambiguous role, a provider tie, a
 pin naming a host this lab does not have — each is a configuration error
@@ -127,7 +128,7 @@ is removed; it is not evidence the rule above is broken.
 
 Do **not** read that prefix as "this repo declares no use-cases". A repo with
 no `[[docker.use_cases]]` cannot reach the per-repo path without an explicit
-`on=`: `_resolve_parent` has nothing to resolve and raises. In practice an
+`on=`: `compose._repo_parent_host` has nothing to resolve and raises. In practice an
 `otto-<repo>-<suffix>` project belongs to a repo that *does* declare
 fragments and was reached through a primitive rather than through
 `deploy` — so the fragment a maintainer would go hunting for is already
@@ -151,7 +152,7 @@ lab. This walks each repo's `[docker]` settings and registers
    ids nothing registers; both take the same branch, and the divergence is
    pinned by `tests/unit/config/test_completion_container_ids.py`.
 2. Operations against a not-yet-up container produce a clear "run
-   `otto docker up` first" error rather than a confusing "no such
+   `otto docker compose up` first" error rather than a confusing "no such
    host."
 
 When `compose_up()` runs (from CLI or directly from an instruction),

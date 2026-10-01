@@ -73,6 +73,14 @@ def test_a_lazy_export_never_degrades_into_its_own_submodule():
         "composed",
         "get_container_host",
         "get_user_compose_project",
+        "DockerBuildError",
+        "build_on",
+        "compose_build",
+        "BuildReport",
+        "FailedImage",
+        "HostReport",
+        "RepoBuild",
+        "TeardownReport",
     }
     for name in docker_mod._LAZY_ATTRS:
         first = getattr(docker_mod, name)

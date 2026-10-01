@@ -137,7 +137,7 @@ class Lab:
             host._lab = self  # noqa: SLF001 — intra-package back-link set by Lab at host registration
 
         # Attribution backstop for hosts built outside the loader: container
-        # hosts registered by `otto docker up` and the built-in `local` never
+        # hosts registered by `otto docker compose up` and the built-in `local` never
         # pass through the factory's ``lab_name``. ``or`` so an existing stamp
         # always wins — a host declared in lab "a" keeps saying "a" even when
         # some other lab registers it. Pre-merge, ``self.name`` IS the component

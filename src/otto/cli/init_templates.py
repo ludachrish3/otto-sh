@@ -187,7 +187,7 @@ path = "lab_data/creds.json"
 #[[docker.composes]]
 #path = "docker/compose.yaml"
 #services = ["{name}-svc"]
-## Use-case fragments: what `otto docker up` deploys. See
+## Use-case fragments: what `otto docker compose up` deploys. See
 ## docs/cli/docker/use-cases.md for provider competition (provides,
 ## priority), placement (role, placement) and env templating (env, pass_env).
 #[[docker.use_cases]]

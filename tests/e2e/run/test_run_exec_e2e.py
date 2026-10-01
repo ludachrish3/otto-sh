@@ -86,7 +86,7 @@ def docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
 
 # The use-case repo1 declares for its own stack (spec §14: naming the
 # fragment after the repo keeps container ids literally unchanged). repo1 now
-# declares two use-cases, so a bare `otto docker up` is ambiguous and refuses.
+# declares two use-cases, so a bare `otto docker compose up` is ambiguous and refuses.
 _REPO1_USE_CASE = "repo1"
 
 
@@ -104,10 +104,12 @@ def fresh_suffix() -> str:
 
 @pytest.fixture
 def teardown_after(fresh_suffix, docker_host, tmp_path):
-    """Yield the compose suffix; run ``otto docker down`` on exit even if the test failed."""
+    """Yield the compose suffix; run ``otto docker compose down`` on exit even if
+    the test failed."""
     yield fresh_suffix
     _run_otto(
         "docker",
+        "compose",
         "down",
         _REPO1_USE_CASE,
         "--on",
@@ -131,14 +133,21 @@ def test_run_instruction_on_container(teardown_after, docker_host, tmp_path):
     2. Run the ``run-on-container`` instruction targeting the api container.
     3. Assert exit 0 and that ``"repo1-fixture"`` appears in stdout (the
        instruction prints the raw ``cat /etc/repo1-marker.txt`` output).
-    4. The ``teardown_after`` fixture runs ``otto docker down`` on exit.
+    4. The ``teardown_after`` fixture runs ``otto docker compose down`` on exit.
     """
     suffix = teardown_after
     container_id = f"{docker_host}.repo1.api"
 
     # Step 1: bring the stack up.
     up = _run_otto(
-        "docker", "up", _REPO1_USE_CASE, "--on", docker_host, xdir=tmp_path, compose_suffix=suffix
+        "docker",
+        "compose",
+        "up",
+        _REPO1_USE_CASE,
+        "--on",
+        docker_host,
+        xdir=tmp_path,
+        compose_suffix=suffix,
     )
     assert up.returncode == 0, (
         f"`docker up` failed — cannot proceed with run test\n"

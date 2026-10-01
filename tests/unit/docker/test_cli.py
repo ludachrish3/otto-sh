@@ -14,8 +14,10 @@ from otto.cli import docker as docker_cli
 from otto.config import fleet as fleet_mod
 from otto.config.lab import Lab
 from otto.config.repo import DockerUseCase, Repo
+from otto.docker.build_verbs import DockerBuildError
 from otto.docker.deployment import UseCaseStack
-from otto.docker.resolve import Displacement, SelectedFragment, Selection
+from otto.docker.reports import BuildReport, RepoBuild, TeardownReport
+from otto.docker.resolve import Displacement, Selection
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult
@@ -78,7 +80,7 @@ def _make_repo_with_image(tmp: Path, *, name: str, host: str) -> Repo:
 
 def _make_repo_images_only(tmp: Path, *, name: str) -> Repo:
     """A repo declaring [[docker.images]] but no [[docker.composes]] at all —
-    the mirror image of ``_make_repo``. Used to prove ``_up``/``_down`` now
+    the mirror image of ``_make_repo``. Used to prove ``_compose_up``/``_compose_down`` now
     print a loud notice (and fail if it's all they were given) instead of
     silently doing nothing for a build-only repo."""
     sut = make_sut_repo(
@@ -95,435 +97,237 @@ def _make_repo_images_only(tmp: Path, *, name: str) -> Repo:
     return Repo(sut_dir=sut)
 
 
-def test_select_repos_filters_by_lab_applicability(tmp_path):
-    """A repo whose committed placement pin isn't in the active lab is silently skipped.
-
-    Reproduces the bug from `otto docker down` against a multi-repo workspace
-    where one repo targets a host that lives in a different lab.
-    """
-    repo_in_lab = _make_repo(tmp_path, name="repo1", host="test3")
-    repo_out_of_lab = _make_repo(tmp_path, name="repo2", host="alt3")
-
-    lab = Lab(name="unix")
-    lab.hosts["test3"] = MagicMock()  # only test3 is in the lab
-
-    fake_cfg = MagicMock()
-    fake_cfg.lab = lab
-
-    with (
-        patch.object(docker_cli, "get_repos", return_value=[repo_in_lab, repo_out_of_lab]),
-        patch.object(fleet_mod, "get_lab", return_value=fake_cfg.lab),
-    ):
-        selected = docker_cli._select_repos(repo_name=None)
-
-    names = [r.name for r in selected]
-    assert names == ["repo1"], f"repo2 (alt3) must be skipped, got {names}"
-
-
-def test_select_repos_on_does_not_override_lab_filter(tmp_path, capsys):
-    """--on chooses where to deploy, not which repos belong to the active lab.
-
-    A repo whose declared placement pin lives in another lab must still be
-    skipped even when --on names an in-lab host — otherwise multi-repo
-    workspaces would bring up stacks for unrelated labs (see
-    test_e2e_multi_repo_only_active_lab_runs). With no other repo to fall
-    back on, the exclusion empties the selection entirely — which is now a
-    loud exit(1), not the silent empty list this used to return (the exact
-    demo failure this task pins: a declared host outside the active lab used
-    to exit 0 having printed nothing).
-    """
-    repo = _make_repo(tmp_path, name="repo2", host="alt3")
-
-    lab = Lab(name="unix")
-    lab.hosts["test3"] = MagicMock()
-
-    fake_cfg = MagicMock()
-    fake_cfg.lab = lab
-
-    with (
-        patch.object(docker_cli, "get_repos", return_value=[repo]),
-        patch.object(fleet_mod, "get_lab", return_value=fake_cfg.lab),
-        pytest.raises(typer.Exit) as excinfo,
-    ):
-        docker_cli._select_repos(repo_name=None, on="test3")
-
-    assert excinfo.value.exit_code == 1
-    out = capsys.readouterr().out
-    assert "repo2" in out
-    assert "alt3" in out
-
-
-def test_select_repos_skip_notice_survives_rich_markup(tmp_path, capsys):
-    """The exclusion notice must reach the terminal whole, brackets included.
-
-    Same class as the ``use-cases`` table's fragment cell: this line is the
-    only thing that tells a user WHY their repo was skipped, and rich deletes
-    any bracketed span that parses as a style tag. The hostile condition is
-    INJECTED (a repo whose name contains ``[bold]``) rather than inherited —
-    the notice's own ``['alt3']`` candidate list happens to be tag-safe,
-    because the quotes inside a Python list repr keep rich's tag pattern from
-    matching, so inheriting it would prove nothing. A repo name is user data
-    and reaches the message through ``!r``, where its brackets are bare.
-    """
-    repo = _make_repo(tmp_path, name="[bold]repo2", host="alt3")
-
-    lab = Lab(name="unix")
-    lab.hosts["test3"] = MagicMock()
-
-    with (
-        patch.object(docker_cli, "get_repos", return_value=[repo]),
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-        pytest.raises(typer.Exit) as excinfo,
-    ):
-        docker_cli._select_repos(repo_name=None)
-
-    assert excinfo.value.exit_code == 1
-    out = " ".join(capsys.readouterr().out.split())
-    assert "[bold]repo2" in out, (
-        "rich ate the bracketed span — the skipped repo is misnamed in the one "
-        "message that explains the skip"
-    )
-
-
-# ---------------------------------------------------------------------------
-# _select_repos — additional coverage: name-filter, no-match exit, bad-on exit
-# ---------------------------------------------------------------------------
-
-
-def test_select_repos_filters_by_repo_name(tmp_path):
-    """_select_repos(repo_name=…) keeps only the repo whose name matches."""
-    repo1 = _make_repo(tmp_path / "r1", name="repo1", host="test3")
-    repo2 = _make_repo(tmp_path / "r2", name="repo2", host="test3")
-
-    lab = Lab(name="unix")
-    lab.hosts["test3"] = MagicMock()
-
-    with (
-        patch.object(docker_cli, "get_repos", return_value=[repo1, repo2]),
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-    ):
-        result = docker_cli._select_repos(repo_name="repo2")
-
-    assert [r.name for r in result] == ["repo2"]
-
-
-def test_select_repos_no_match_exits(tmp_path):
-    """_select_repos raises Exit(1) when repo_name matches nothing."""
-    repo1 = _make_repo(tmp_path / "r1", name="repo1", host="test3")
-
-    lab = Lab(name="unix")
-    lab.hosts["test3"] = MagicMock()
-
-    with (
-        patch.object(docker_cli, "get_repos", return_value=[repo1]),
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch.object(docker_cli, "rprint"),
-        pytest.raises(typer.Exit) as exc,
-    ):
-        docker_cli._select_repos(repo_name="nope")
-
-    assert exc.value.exit_code == 1
-
-
-def test_select_repos_bad_on_exits(tmp_path):
-    """_select_repos raises Exit(1) when --on names a host not in the lab."""
-    repo1 = _make_repo(tmp_path / "r1", name="repo1", host="test3")
-
-    lab = Lab(name="unix")
-    lab.hosts["test3"] = MagicMock()
-
-    with (
-        patch.object(docker_cli, "get_repos", return_value=[repo1]),
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch.object(docker_cli, "rprint"),
-        pytest.raises(typer.Exit) as exc,
-    ):
-        docker_cli._select_repos(repo_name=None, on="ghost")
-
-    assert exc.value.exit_code == 1
-
-
-def test_select_repos_is_blind_to_debris_deploy_time_still_refuses_it(tmp_path):
-    """_select_repos harvests a pin's VALUE blindly, without validating that
-    its KEY even addresses the fragment's own role (T14 review I1): a
-    fragment declaring ``role = "docker"`` but ``placement = { web = ... }``
-    is config debris ``_place_fragment`` refuses outright, but this coarse
-    lab-applicability filter has no way to see that -- it only reads
-    ``uc.placement.values()``.
-
-    This is not a hole: the case selection no longer surfaces is caught
-    later, once and specifically, at RESOLVE time -- the same
-    ``_resolve_parent`` a bare ``otto docker build``/``up`` without --on
-    would call next. Proving both halves is the point: selection stays
-    silent about the debris (it neither excludes for the "right" reason nor
-    raises), and resolution refuses it with the exact, actionable phrase.
-    """
-    from otto.docker.compose import _resolve_parent
-
-    sut = make_sut_repo(
-        tmp_path / "r1",
-        name="repo1",
-        extra=(
-            "[[docker.composes]]\n"
-            'name = "core"\n'
-            'path = "docker/compose.yml"\n'
-            'services = ["svc"]\n'
-            "\n[[docker.use_cases]]\n"
-            'name = "repo1"\n'
-            'composes = ["core"]\n'
-            'role = "docker"\n'
-            'placement = { web = "test3" }\n'  # mis-keyed: role is "docker", not "web"
-        ),
-        files=_DOCKER_FILES,
-    )
-    repo1 = Repo(sut_dir=sut)
-
-    lab = Lab(name="unix")
-    lab.hosts["test3"] = MagicMock()
-
-    # Half 1: selection harvests the pin's value blindly and keeps the repo
-    # (test3 IS in the active lab) -- it never even looks at the key.
-    with (
-        patch.object(docker_cli, "get_repos", return_value=[repo1]),
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-    ):
-        selected = docker_cli._select_repos(repo_name=None)
-    assert [r.name for r in selected] == ["repo1"]
-
-    # Half 2: the SAME repo, resolved for real, refuses -- with the specific
-    # config-debris phrase, not a generic "not in lab" message.
-    with pytest.raises(ValueError, match="the pin can never apply to this fragment in any lab"):
-        _resolve_parent(repo1, lab, on=None)
-
-
 # ---------------------------------------------------------------------------
 # _build command
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_build_success(tmp_path):
-    """_build prints a green 'built' line when build_images returns Success."""
-    repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", host="test3")
-
-    mock_rprint = MagicMock()
-    mock_build = AsyncMock(
-        return_value={
-            "myimage": CommandResult(
-                Status.Success,
-                value="sha256:abc",
-                msg="sha256:abc",
-                command="docker build",
-                retcode=0,
-            )
-        }
-    )
-
-    with (
-        patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
-        patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
-        patch.object(docker_pkg, "build_images", mock_build),
-        patch.object(docker_cli, "rprint", mock_rprint),
-    ):
-        await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
-
-    all_calls = " ".join(str(c) for c in mock_rprint.call_args_list)
-    assert "[green]" in all_calls
-    assert "built" in all_calls
+def _report(*entries, displaced=()):
+    return BuildReport(repos=list(entries), displaced=list(displaced))
 
 
 @pytest.mark.asyncio
-async def test_build_skipped(tmp_path):
-    """_build prints a dim 'cached' line when build_images returns Skipped."""
-    repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", host="test3")
-
-    mock_rprint = MagicMock()
-    mock_build = AsyncMock(
-        return_value={
-            "myimage": CommandResult(
-                Status.Skipped, value="already exists", msg="already exists", command="", retcode=-1
-            )
-        }
-    )
-
+async def test_build_hands_the_library_exactly_its_flags():
+    build_on = AsyncMock(return_value=_report())
     with (
-        patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
-        patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
-        patch.object(docker_pkg, "build_images", mock_build),
-        patch.object(docker_cli, "rprint", mock_rprint),
-    ):
-        await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
-
-    all_calls = " ".join(str(c) for c in mock_rprint.call_args_list)
-    assert "[dim]" in all_calls
-    assert "cached" in all_calls
-
-
-@pytest.mark.asyncio
-async def test_build_failed_exits(tmp_path):
-    """_build raises Exit(1) when build_images returns Failed for an image."""
-    repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", host="test3")
-
-    mock_build = AsyncMock(
-        return_value={
-            "myimage": CommandResult(
-                Status.Failed, value="build error", command="docker build", retcode=1
-            )
-        }
-    )
-
-    with (
-        patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
-        patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
-        patch.object(docker_pkg, "build_images", mock_build),
+        patch("otto.docker.build_verbs.build_on", build_on),
         patch.object(docker_cli, "rprint", MagicMock()),
-        pytest.raises(typer.Exit) as exc,
     ):
-        await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
-
-    assert exc.value.exit_code == 1
+        await docker_cli._build(on="test3", repo="r1", image=["api"], rebuild=True)
+    build_on.assert_awaited_once_with("test3", repo="r1", images=["api"], rebuild=True)
 
 
 @pytest.mark.asyncio
-async def test_build_skips_repo_with_no_images(tmp_path):
-    """_build prints a notice (not silence) for a repo with no docker.images,
-    and — being the ONLY selected repo — acted on nothing, so it fails loud."""
-    # _make_repo produces a repo with composes but no images
-    repo = _make_repo(tmp_path / "r1", name="myrepo", host="test3")
-    mock_build = AsyncMock()
-
+async def test_build_renders_cached_built_and_failed_and_exits_1_on_a_failure():
+    report = _report(
+        RepoBuild(
+            "r1",
+            "test3",
+            "built",
+            {
+                "api": CommandResult(Status.Skipped, value="r1-api:abc", command="", retcode=0),
+                "w": CommandResult(
+                    Status.Success, value="r1-w:abc", command="docker build", retcode=0
+                ),
+            },
+        ),
+        RepoBuild("r2", "test3", "no_images"),
+        RepoBuild(
+            "r3",
+            "test3",
+            "built",
+            {
+                "db": CommandResult(
+                    Status.Failed, value="syntax error", command="docker build", retcode=1
+                )
+            },
+        ),
+    )
+    out, err = MagicMock(), MagicMock()
     with (
-        patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
-        patch.object(docker_pkg, "build_images", mock_build),
-        pytest.raises(typer.Exit) as excinfo,
+        patch("otto.docker.build_verbs.build_on", AsyncMock(return_value=report)),
+        patch.object(docker_cli, "rprint", out),
+        patch.object(docker_cli, "print_error", err),
+        pytest.raises(typer.Exit) as e,
     ):
-        await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
+        await docker_cli._build(on="test3", repo=None, image=None, rebuild=False)
+    printed = " ".join(str(c) for c in out.call_args_list)
+    # Status.Skipped means a cache hit: pinned on the producer side by
+    # tests/unit/docker/test_build.py::test_build_one_skipped_when_image_exists.
+    assert "r1/api: cached → r1-api:abc" in printed
+    assert "r1/w: built → r1-w:abc" in printed
+    # `str(call(...))` reprs the arg, doubling rich.markup.escape()'s own
+    # backslash-escape of the second '['; match around the bracket run rather
+    # than reconstruct that double-escaping here.
+    assert "r2 declares no" in printed
+    assert "docker.images" in printed
+    assert "nothing to build on test3" in printed
+    assert "r3/db: FAILED" in str(err.call_args)
+    assert "syntax error" in str(err.call_args)
+    assert e.value.exit_code == 1
 
-    # build_images must NOT be called when images is empty
-    mock_build.assert_not_called()
-    assert excinfo.value.exit_code == 1
 
-
-@pytest.mark.asyncio
-async def test_build_composes_only_workspace_fails_loud(tmp_path, capsys):
-    """A composes-only workspace running `otto docker build` must not exit 0
-    having silently built nothing — the same failure class `_select_repos`
-    was fixed for, one layer down (spec §13)."""
-    repo = _make_repo(tmp_path / "r1", name="repo1", host="test3")
-
-    with (
-        patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
-        patch.object(docker_pkg, "build_images", AsyncMock()),
-        pytest.raises(typer.Exit) as excinfo,
-    ):
-        await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
-
-    assert excinfo.value.exit_code == 1
+def test_render_build_report_prints_literal_brackets_with_the_real_rprint(capsys):
+    """Against the real `rprint` (no mock, no `str(call(...))` repr in the way):
+    a repo name that looks like a rich style tag survives, and so does the
+    literal `[[docker.images]]` run -- the previous test's loosened substring
+    checks were working around `str(call(...))` double-reprring
+    `rich.markup.escape()`'s own backslash escape, not around anything rich
+    actually does to the rendered text.
+    """
+    report = _report(
+        RepoBuild("[bold]r", "test3", "no_images"),
+        RepoBuild(
+            "[bold]r",
+            "test3",
+            "built",
+            {"api": CommandResult(Status.Skipped, value="r-api:abc", command="", retcode=0)},
+        ),
+    )
+    docker_cli._render_build_report(report)
     out = capsys.readouterr().out
-    assert "repo1" in out
-    assert "declares no" in out
+    assert "[bold]r" in out, "rich ate the bracketed repo name"
+    assert "[[docker.images]]" in out, "the docker.images key must reach the terminal literally"
+
+
+def test_build_without_on_is_a_usage_error_spelled_as_the_flag():
+    """The rule is the library's; the CLI only spells it.
+
+    ``usage_error_from`` does not run ``spell_flags`` on a ``DockerBuildError``
+    (its message can embed user text, e.g. a repo or image name) -- the
+    message passes through byte-identical and only ``param_hint`` carries the
+    flag, so click renders ``Invalid value for --on: <message verbatim>``.
+
+    A plain ``def`` (no ``@pytest.mark.asyncio``): ``DispatchRunner`` bridges
+    the async leaf itself via the production lifecycle, and running the test
+    function ITSELF inside a pytest-asyncio event loop would collide with
+    that bridge's own ``asyncio.run()`` (``RuntimeError: asyncio.run() cannot
+    be called from a running event loop``) — the same reason
+    ``test_a_malformed_provide_is_a_usage_error_through_the_dispatch`` above
+    is sync despite dispatching an ``async def`` leaf.
+    """
+    from otto.cli.docker import docker_app
+    from tests._fixtures.dispatch import DispatchRunner
+
+    err = DockerBuildError(
+        "host is required; docker-capable hosts in lab 'unix': ['test3']", field="host"
+    )
+    with patch("otto.docker.build_verbs.build_on", AsyncMock(side_effect=err)):
+        result = DispatchRunner().invoke(docker_app, ["build"], spec_name="docker")
+    assert result.exit_code == 2
+    assert "Invalid value for --on: host is required" in result.output
+
+
+def test_build_unknown_image_is_spelled_as_IMAGE():  # noqa: N802 — IMAGE is the flag's own spelling
+    from otto.cli.docker import docker_app
+    from tests._fixtures.dispatch import DispatchRunner
+
+    err = DockerBuildError(
+        "no selected repo declares an image named 'apo'; declared: ['api']", field="images"
+    )
+    with patch("otto.docker.build_verbs.build_on", AsyncMock(side_effect=err)):
+        result = DispatchRunner().invoke(
+            docker_app, ["build", "--on", "test3", "apo"], spec_name="docker"
+        )
+    assert result.exit_code == 2
+    assert "Invalid value for IMAGE" in result.output
+    assert "'apo'" in result.output
 
 
 @pytest.mark.asyncio
-async def test_build_mixed_workspace_acts_on_one_prints_notice_for_other(tmp_path, capsys):
-    """When at least one selected repo declares images, `_build` exits
-    normally even though a composes-only sibling is skipped — but the skip
-    must still be printed, not silently dropped."""
-    acted = _make_repo_with_image(tmp_path / "r1", name="acted", host="test3")
-    skipped = _make_repo(tmp_path / "r2", name="skipped", host="test3")
-    mock_build = AsyncMock(
-        return_value={
-            "myimage": CommandResult(
-                Status.Success,
-                value="sha256:abc",
-                msg="sha256:abc",
-                command="docker build",
-                retcode=0,
-            )
-        }
+async def test_compose_build_defaults_the_use_case_and_hands_the_flags():
+    compose_build = AsyncMock(return_value=_report())
+    with (
+        patch("otto.docker.build_verbs.compose_build", compose_build),
+        patch.object(docker_cli, "_default_use_case", return_value="integration"),
+        patch.object(docker_cli, "rprint", MagicMock()),
+    ):
+        await docker_cli._compose_build(
+            use_case=None, image=None, on="test3", provide=["db=r2"], rebuild=False
+        )
+    compose_build.assert_awaited_once_with(
+        "integration", on="test3", provide={"db": "r2"}, images=None, rebuild=False
     )
 
+
+@pytest.mark.asyncio
+async def test_compose_build_prints_displacements_then_images():
+    report = _report(
+        RepoBuild(
+            "real",
+            "alt2",
+            "built",
+            {
+                "db": CommandResult(
+                    Status.Success, value="real-db:1", command="docker build", retcode=0
+                )
+            },
+        ),
+        displaced=[Displacement("db", "mock", 0, "real", 1)],
+    )
+    out = MagicMock()
     with (
-        patch.object(docker_cli, "_select_repos", return_value=[acted, skipped]),
-        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
-        patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
-        patch.object(docker_pkg, "build_images", mock_build),
+        patch("otto.docker.build_verbs.compose_build", AsyncMock(return_value=report)),
+        patch.object(docker_cli, "_default_use_case", return_value="integration"),
+        patch.object(docker_cli, "rprint", out),
     ):
-        await docker_cli._build(repo=None, on=None, rebuild=False, image=None)  # must not raise
-
-    out = capsys.readouterr().out
-    assert "skipped" in out
-    assert "declares no" in out
-
-
-# ---------------------------------------------------------------------------
-# _up command
-# ---------------------------------------------------------------------------
-
-
-class TestGenuineSkipsStayedSkipped:
-    """The dry-run contract's ``Status.NotRun`` sweep must not have touched these.
-
-    ``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md`` section 4
-    introduced ``Status.NotRun`` for "a dry run declined this" and left
-    ``Status.Skipped`` (whose ``is_ok`` is True) for genuine skips. Two
-    genuine skips live in this package -- a build-cache hit and a repo with no
-    ``[[docker.composes]]`` -- and ``otto/cli/docker.py`` branches on
-    ``Status.Skipped`` to print ``cached`` and ``nothing to tear down``. Flip
-    either producer and those two lines print the wrong thing.
-
-    The mocked ``test_build_skipped`` / ``test_down_skipped`` above cannot
-    catch that: they HARDCODE ``Status.Skipped`` in the double, so they stay
-    green against a producer that stopped emitting it. These run the REAL
-    producer and feed its own result to the real CLI branch, so the two ends
-    are pinned together.
-    """
-
-    @pytest.mark.asyncio
-    async def test_a_cache_hit_is_a_genuine_skip_and_still_prints_cached(self, tmp_path):
-        from otto.docker.build import _build_one
-
-        repo = _make_repo_with_image(tmp_path / "r1", name="myrepo", host="test3")
-        settings = repo.docker_settings
-
-        class _CachedParent:
-            """A parent on which ``docker image inspect`` and ``docker tag`` succeed.
-
-            That IS the cache hit -- the condition is injected here rather than
-            inherited from a canned Result, so the Skipped under assertion is
-            ``_build_one``'s own.
-            """
-
-            async def exec(self, cmd, **_kw):
-                return CommandResult(Status.Success, value="", command=cmd, retcode=0)
-
-        cached = await _build_one(
-            _CachedParent(), "myrepo", settings, settings.images[0], rebuild=False
+        await docker_cli._compose_build(
+            use_case=None, image=None, on=None, provide=None, rebuild=False
         )
-        assert cached.status is Status.Skipped, (
-            "a build-cache hit is a genuine skip -- nothing was declined, the "
-            "image is already there"
+    calls = [str(c) for c in out.call_args_list]
+    assert any("mock" in c and "real" in c for c in calls[:1]), "displacement notice comes first"
+    assert any("real/db: built → real-db:1" in c for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_compose_build_with_no_declared_use_case_is_the_existing_refusal():
+    """Review focus: zero declared use-cases exits 1 through _default_use_case, no traceback."""
+    with (
+        patch.object(docker_cli, "get_repos", return_value=[]),
+        pytest.raises(typer.Exit) as e,
+    ):
+        await docker_cli._compose_build(
+            use_case=None, image=None, on=None, provide=None, rebuild=False
         )
-        assert cached.is_ok is True
+    assert e.value.exit_code == 1
 
-        mock_rprint = MagicMock()
-        with (
-            patch.object(docker_cli, "_select_repos", return_value=[repo]),
-            patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
-            patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
-            patch.object(docker_pkg, "build_images", AsyncMock(return_value={"myimage": cached})),
-            patch.object(docker_cli, "rprint", mock_rprint),
-        ):
-            await docker_cli._build(repo=None, on=None, rebuild=False, image=None)
 
-        printed = " ".join(str(c) for c in mock_rprint.call_args_list)
-        assert "cached" in printed, f"the cache-hit line stopped saying 'cached': {printed}"
-        assert "FAILED" not in printed
+@pytest.mark.parametrize(
+    ("message", "field", "hint"),
+    [
+        ("host is required; docker-capable hosts in lab 'unix': ['test3']", "host", "--on"),
+        (
+            "repo 'c' is not a loaded repo with a [docker] section; docker repos: ['a']",
+            "repo",
+            "--repo",
+        ),
+        (
+            "no selected repo declares an image named 'apo'; declared: ['api']",
+            "images",
+            "IMAGE",
+        ),
+        ("nothing to build: none of ['a'] declares [[docker.images]]", None, None),
+    ],
+)
+def test_a_docker_build_error_is_never_rewritten_only_hinted(message, field, hint):
+    """The message embeds user text and the words host/repo/images; it must pass through
+    byte-identical."""
+    from otto.cli.invoke import usage_error_from
+
+    exc = DockerBuildError(message, field=field)
+    err = usage_error_from(exc, flags=docker_cli._BUILD_FLAGS)
+    assert err.message == message
+    assert err.param_hint == hint
+
+
+def test_the_retired_cli_rules_are_gone():
+    for name in (
+        "_select_repos",
+        "_narrow_to_use_case",
+        "_resolve_parent_for_repo",
+        "_canonicalize_on",
+    ):
+        assert not hasattr(docker_cli, name), name
 
 
 # ---------------------------------------------------------------------------
@@ -620,7 +424,7 @@ def test_parse_env_refuses_a_value_with_no_equals_naming_the_form():
 
 
 # ---------------------------------------------------------------------------
-# _up / _down — the use-case verbs
+# _compose_up / _compose_down — the use-case verbs
 # ---------------------------------------------------------------------------
 
 
@@ -646,7 +450,7 @@ async def test_up_deploys_the_named_use_case_and_reports_it(tmp_path):
         patch("otto.docker.deployment.deploy", deploy),
         patch.object(docker_cli, "rprint", mock_rprint),
     ):
-        await docker_cli._up(use_case="integration", service=None)
+        await docker_cli._compose_up(use_case="integration", service=None)
 
     assert deploy.call_args.args == ("integration",)
     assert deploy.call_args.kwargs["services"] is None
@@ -662,7 +466,7 @@ async def test_up_narrows_to_the_named_services():
     """MUTATION PROBE: service narrowing reaches the library through the CLI."""
     deploy = AsyncMock(return_value=_stub_stack())
     with patch("otto.docker.deployment.deploy", deploy), patch.object(docker_cli, "rprint"):
-        await docker_cli._up(use_case="integration", service=["api", "db"])
+        await docker_cli._compose_up(use_case="integration", service=["api", "db"])
 
     assert deploy.call_args.kwargs["services"] == ["api", "db"]
 
@@ -675,7 +479,7 @@ async def test_up_deploys_the_only_declared_use_case_when_bare():
         patch.object(docker_cli, "get_repos", return_value=[_uc_repo("a", _uc())]),
         patch.object(docker_cli, "rprint"),
     ):
-        await docker_cli._up()
+        await docker_cli._compose_up()
 
     assert deploy.call_args.args == ("integration",)
 
@@ -689,7 +493,7 @@ async def test_up_bare_refuses_when_two_use_cases_are_declared(capsys):
         patch.object(docker_cli, "get_repos", return_value=repos),
         pytest.raises(typer.Exit) as excinfo,
     ):
-        await docker_cli._up()
+        await docker_cli._compose_up()
 
     deploy.assert_not_called()
     assert excinfo.value.exit_code == 1
@@ -708,7 +512,7 @@ async def test_up_forwards_provide_env_and_env_files(tmp_path):
     env_file.write_text("K=V\n")
     deploy = AsyncMock(return_value=_stub_stack())
     with patch("otto.docker.deployment.deploy", deploy), patch.object(docker_cli, "rprint"):
-        await docker_cli._up(
+        await docker_cli._compose_up(
             use_case="integration",
             service=None,
             on="test3",
@@ -745,7 +549,7 @@ async def test_up_prints_displacements_as_they_are():
         patch("otto.docker.deployment.deploy", deploy),
         patch.object(docker_cli, "rprint", mock_rprint),
     ):
-        await docker_cli._up(use_case="integration", service=None)
+        await docker_cli._compose_up(use_case="integration", service=None)
 
     printed = " ".join(str(c) for c in mock_rprint.call_args_list)
     assert "edge" in printed
@@ -771,7 +575,7 @@ async def test_up_surfaces_the_librarys_on_refusal_verbatim(capsys):
         patch("otto.docker.deployment.get_lab", return_value=lab),
         pytest.raises(typer.Exit) as excinfo,
     ):
-        await docker_cli._up(use_case="integration", service=None, on="ghost")
+        await docker_cli._compose_up(use_case="integration", service=None, on="ghost")
 
     assert excinfo.value.exit_code == 1
     out = " ".join(capsys.readouterr().out.split())
@@ -785,7 +589,7 @@ async def test_up_renders_a_dry_run_decline_and_exits_zero():
 
     ``active_context(dry_run=True)`` INJECTS the condition rather than letting
     the raised decline stand in for it: exiting 0 here is only correct because
-    this really is a dry run, and `_run_use_case` checks (review M8) instead of
+    this really is a dry run, and `_run_docker` checks (review M8) instead of
     inferring it from the exception class.
     """
     from otto.result import CommandNotRunError
@@ -797,7 +601,7 @@ async def test_up_renders_a_dry_run_decline_and_exits_zero():
         patch("otto.docker.deployment.deploy", AsyncMock(side_effect=decline)),
         patch.object(docker_cli, "rprint", mock_rprint),
     ):
-        await docker_cli._up(use_case="integration", service=None)  # no typer.Exit
+        await docker_cli._compose_up(use_case="integration", service=None)  # no typer.Exit
 
     printed = " ".join(str(c) for c in mock_rprint.call_args_list)
     assert "Resolved plan: test3" in printed
@@ -829,7 +633,7 @@ async def test_a_decline_outside_a_dry_run_is_not_swallowed_into_exit_zero():
         patch.object(docker_cli, "rprint", MagicMock()),
         pytest.raises(CommandNotRunError),
     ):
-        await docker_cli._up(use_case="integration", service=None)
+        await docker_cli._compose_up(use_case="integration", service=None)
 
 
 def test_a_stack_that_registered_nothing_says_so_rather_than_printing_nothing():
@@ -854,20 +658,44 @@ def test_a_stack_that_registered_nothing_says_so_rather_than_printing_nothing():
 
 
 @pytest.mark.asyncio
-async def test_down_tears_down_the_named_use_case_and_services():
-    teardown = AsyncMock(return_value=None)
-    mock_rprint = MagicMock()
+async def test_down_renders_each_host_and_exits_1_when_one_failed():
+    up_ok = CommandResult(Status.Success, value="", command="docker compose -p p down", retcode=0)
+    down_failed = CommandResult(
+        Status.Failed,
+        value="error during connect",
+        command="docker compose -p q down",
+        retcode=1,
+    )
+    report = TeardownReport(hosts={"test3": [up_ok], "alt2": [down_failed]}, use_case="integration")
+    out, err = MagicMock(), MagicMock()
     with (
-        patch("otto.docker.deployment.teardown", teardown),
-        patch.object(docker_cli, "rprint", mock_rprint),
+        patch("otto.docker.deployment.teardown", AsyncMock(return_value=report)),
+        patch.object(docker_cli, "rprint", out),
+        patch.object(docker_cli, "print_error", err),
+        pytest.raises(typer.Exit) as e,
     ):
-        await docker_cli._down(use_case="integration", service=["api"])
+        await docker_cli._compose_down(use_case="integration", service=None, on=None, provide=None)
+    assert "test3: integration torn down" in " ".join(str(c) for c in out.call_args_list)
+    assert "alt2: FAILED" in str(err.call_args)
+    assert "docker compose -p q down" in str(err.call_args)
+    assert e.value.exit_code == 1
 
-    assert teardown.call_args.args == ("integration",)
-    assert teardown.call_args.kwargs["services"] == ["api"]
-    printed = " ".join(str(c) for c in mock_rprint.call_args_list)
-    assert "[green]" in printed
-    assert "integration" in printed
+
+@pytest.mark.asyncio
+async def test_down_partial_names_the_services():
+    report = TeardownReport(
+        hosts={"test3": [CommandResult(Status.Success, value="", command="x", retcode=0)] * 2},
+        use_case="integration",
+    )
+    out = MagicMock()
+    with (
+        patch("otto.docker.deployment.teardown", AsyncMock(return_value=report)),
+        patch.object(docker_cli, "rprint", out),
+    ):
+        await docker_cli._compose_down(
+            use_case="integration", service=["api"], on=None, provide=None
+        )
+    assert "test3: integration (api) torn down" in " ".join(str(c) for c in out.call_args_list)
 
 
 @pytest.mark.asyncio
@@ -881,7 +709,7 @@ async def test_down_renders_a_dry_run_decline_without_claiming_a_teardown():
         patch("otto.docker.deployment.teardown", AsyncMock(side_effect=decline)),
         patch.object(docker_cli, "rprint", mock_rprint),
     ):
-        await docker_cli._down(use_case="integration", service=None)
+        await docker_cli._compose_down(use_case="integration", service=None)
 
     printed = " ".join(str(c) for c in mock_rprint.call_args_list)
     assert "Resolved plan: test3" in printed
@@ -899,89 +727,10 @@ async def test_down_surfaces_a_library_refusal(capsys):
         ),
         pytest.raises(typer.Exit) as excinfo,
     ):
-        await docker_cli._down(use_case="x", service=None)
+        await docker_cli._compose_down(use_case="x", service=None)
 
     assert excinfo.value.exit_code == 1
     assert "no active repo declares use-case 'x'" in capsys.readouterr().out
-
-
-# ---------------------------------------------------------------------------
-# `otto docker build <USE_CASE>` — narrow to the winners
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_build_narrows_to_the_use_case_winners(tmp_path):
-    """`build integration` builds only the repos whose fragments won."""
-    winner = _make_repo_with_image(tmp_path / "r1", name="repo1", host="test3")
-    loser = _make_repo_with_image(tmp_path / "r2", name="repo2", host="test3")
-    selection = Selection(
-        use_case="integration",
-        fragments=[SelectedFragment(repo=winner, fragment=_uc())],
-    )
-    built: list[str] = []
-
-    async def _build_images(repo, _parent, **_kw):
-        built.append(repo.name)
-        return {}
-
-    with (
-        patch.object(docker_cli, "_select_repos", return_value=[winner, loser]),
-        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
-        patch.object(docker_cli, "get_repos", return_value=[winner, loser]),
-        patch.object(docker_cli, "_resolve_parent_for_repo", return_value=MagicMock()),
-        patch("otto.docker.resolve.select_fragments", return_value=selection),
-        patch.object(docker_pkg, "build_images", AsyncMock(side_effect=_build_images)),
-        patch.object(docker_cli, "rprint", MagicMock()),
-    ):
-        await docker_cli._build(use_case="integration")
-
-    assert built == ["repo1"], f"the losing repo's images were built too: {built}"
-
-
-@pytest.mark.asyncio
-async def test_build_use_case_narrowing_to_nothing_fails_loud(tmp_path, capsys):
-    other = _make_repo_with_image(tmp_path / "r1", name="repo1", host="test3")
-    selection = Selection(
-        use_case="integration",
-        fragments=[SelectedFragment(repo=_uc_repo("elsewhere", _uc()), fragment=_uc())],
-    )
-    with (
-        patch.object(docker_cli, "_select_repos", return_value=[other]),
-        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
-        patch.object(docker_cli, "get_repos", return_value=[other]),
-        patch("otto.docker.resolve.select_fragments", return_value=selection),
-        patch.object(docker_pkg, "build_images", AsyncMock()),
-        pytest.raises(typer.Exit) as excinfo,
-    ):
-        await docker_cli._build(use_case="integration")
-
-    assert excinfo.value.exit_code == 1
-    out = " ".join(capsys.readouterr().out.split())
-    assert "integration" in out
-    assert "there is nothing to build for it" in out
-
-
-@pytest.mark.asyncio
-async def test_build_surfaces_a_use_case_resolution_refusal(tmp_path, capsys):
-    from otto.docker.resolve import UseCaseResolutionError
-
-    repo = _make_repo_with_image(tmp_path / "r1", name="repo1", host="test3")
-    with (
-        patch.object(docker_cli, "_select_repos", return_value=[repo]),
-        patch.object(fleet_mod, "get_lab", return_value=MagicMock()),
-        patch.object(docker_cli, "get_repos", return_value=[repo]),
-        patch(
-            "otto.docker.resolve.select_fragments",
-            side_effect=UseCaseResolutionError("capability 'edge' is tied at priority 5"),
-        ),
-        patch.object(docker_pkg, "build_images", AsyncMock()),
-        pytest.raises(typer.Exit) as excinfo,
-    ):
-        await docker_cli._build(use_case="integration")
-
-    assert excinfo.value.exit_code == 1
-    assert "tied at priority 5" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -1152,7 +901,7 @@ def test_a_malformed_provide_is_a_usage_error_through_the_dispatch():
     deploy = AsyncMock()
     with patch("otto.docker.deployment.deploy", deploy):
         result = DispatchRunner().invoke(
-            docker_app, ["up", "integration", "--provide", "edge"], spec_name="docker"
+            docker_app, ["compose", "up", "integration", "--provide", "edge"], spec_name="docker"
         )
 
     deploy.assert_not_called()
@@ -1443,60 +1192,3 @@ def test_completer_no_lab_selected_keeps_all_docker_hosts():
         result = docker_cli._docker_host_completer(_ctx_with_labs(None), "")
 
     assert result == ["alt2", "test1"]
-
-
-def test_select_repos_empty_selection_fails_loud(tmp_path, capsys):
-    """Regression for the reported demo failure: a declared host outside the
-    active lab used to be skipped at DEBUG and the command exited 0 silently."""
-    repo = _make_repo(tmp_path, name="repo1", host="not-in-lab")
-    lab = MagicMock(spec=Lab)
-    lab.name = "unix"
-    lab.hosts = {"test3": MagicMock(spec=UnixHost)}
-    with (
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch.object(docker_cli, "get_repos", return_value=[repo]),
-        pytest.raises(typer.Exit) as excinfo,
-    ):
-        docker_cli._select_repos(None)
-    assert excinfo.value.exit_code == 1
-    out = capsys.readouterr().out
-    assert "repo1" in out  # the repo is NAMED
-    assert "not-in-lab" in out  # and so is WHY it was excluded
-
-
-def test_select_repos_prints_exclusions_even_when_others_selected(tmp_path, capsys):
-    kept = _make_repo(tmp_path, name="kept", host="test3")
-    skipped = _make_repo(tmp_path, name="skipped", host="elsewhere")
-    lab = MagicMock(spec=Lab)
-    lab.name = "unix"
-    lab.hosts = {"test3": MagicMock(spec=UnixHost)}
-    with (
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch.object(docker_cli, "get_repos", return_value=[kept, skipped]),
-    ):
-        selected = docker_cli._select_repos(None)
-    assert [r.name for r in selected] == ["kept"]
-    out = capsys.readouterr().out
-    assert "skipped" in out
-    assert "elsewhere" in out
-
-
-def test_select_repos_no_docker_repos_fails_loud(tmp_path, capsys):
-    """A workspace with zero [docker] repos must say so, not exit 0 silently."""
-    lab = MagicMock(spec=Lab)
-    lab.name = "unix"
-    lab.hosts = {"test3": MagicMock(spec=UnixHost)}
-    from otto.config.repo import DockerSettings
-
-    plain = MagicMock(spec=Repo)
-    plain.name = "plain"
-    plain.docker_settings = DockerSettings()  # real empty settings — Mock attrs are
-    # truthy and would defeat the `if not ... composes` guards
-    with (
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch.object(docker_cli, "get_repos", return_value=[plain]),
-        pytest.raises(typer.Exit) as excinfo,
-    ):
-        docker_cli._select_repos(None)
-    assert excinfo.value.exit_code == 1
-    assert "no active repo declares a [docker] section" in capsys.readouterr().out.lower()

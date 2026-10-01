@@ -5,50 +5,44 @@ lab's docker-capable hosts. The containers it brings up become first-class lab
 hosts: they appear in `--list-hosts` and accept every `otto host` verb.
 
 A use-case is one named deployment that several active repos contribute
-fragments to; `up`, `down` and `build` all speak it. {doc}`use-cases` is the
-workflow home for that model — start there.
+fragments to; `compose build`, `compose up` and `compose down` all speak it.
+{doc}`use-cases` is the workflow home for that model — start there.
 
 ```{raw} html
 :file: ../../_static/generated/termynal/help-docker.html
 ```
 
+(docker-verbs)=
+## Verbs
+
+| otto | docker analogue | scope | `--on` |
+| --- | --- | --- | --- |
+| `otto docker build --on HOST [--repo NAME] [IMAGE...] [--rebuild]` | `docker build` | the selected repos' images, on one host | required |
+| `otto docker ps [--on HOST]` | `docker ps` | containers per host | optional |
+| `otto docker use-cases [USE_CASE]` | none | declared inventory, config only | none |
+| `otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]... [--rebuild]` | `docker compose build` | the images `up` would deploy, placed by the engine | optional collapse |
+| `otto docker compose up [USE_CASE [SERVICE]...] [--on HOST] [--no-build] [--provide]... [--env]... [--env-file]...` | `docker compose up` | deploy a use-case | optional collapse |
+| `otto docker compose down [USE_CASE [SERVICE]...] [--on HOST] [--provide]...` | `docker compose down` | tear a use-case down | optional collapse |
+
+`build` builds images and nothing else: it needs a host (`--on`), not a
+use-case. Everything use-case-scoped is a `compose` verb, mirroring docker's
+own `docker build` / `docker compose` split.
+
 ## Synopsis
 
 ```text
-otto docker use-cases [USE_CASE]
-otto docker up        [USE_CASE [SERVICE]...] [--on HOST] [--no-build]
-                      [--provide CAP=REPO]... [--env K=V]... [--env-file PATH]...
-otto docker down      [USE_CASE [SERVICE]...] [--on HOST] [--provide CAP=REPO]...
-otto docker build     [USE_CASE [IMAGE]...] [--repo NAME] [--on HOST] [--rebuild]
-                      [--provide CAP=REPO]...
+otto docker build     --on HOST [--repo NAME] [IMAGE...] [--rebuild]
 otto docker ps        [--on HOST]
+otto docker use-cases [USE_CASE]
+otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]... [--rebuild]
+otto docker compose up    [USE_CASE [SERVICE]...] [--on HOST] [--no-build]
+                          [--provide CAP=REPO]... [--env K=V]... [--env-file PATH]...
+otto docker compose down  [USE_CASE [SERVICE]...] [--on HOST] [--provide CAP=REPO]...
 ```
-
-## Options
-
-| Option | Applies to | Description |
-| ------ | ---------- | ----------- |
-| `USE_CASE` (argument) | `use-cases` | Show only this use-case (default: every declared one) |
-| `USE_CASE` (argument) | `up`, `down` | The use-case to deploy or tear down (default: the only one declared) |
-| `USE_CASE` (argument) | `build` | Build only the repos taking part in this use-case (default: every selected repo) |
-| `SERVICE...` (argument) | `up`, `down` | Narrow to these services; requires an explicit `USE_CASE` |
-| `IMAGE...` (argument) | `build` | Image names to build (default: all declared) |
-| `--on HOST` | `up`, `down` | Collapse every fragment of the deployment onto this lab host |
-| `--on HOST` | `build` | Lab host id to build on |
-| `--on HOST` | `ps` | Lab host id to query (default: all docker-capable hosts) |
-| `--provide CAP=REPO` | `up`, `down`, `build` | Break a provider tie for capability `CAP`. Repeatable |
-| `--env K=V` | `up` | Extra env var; wins over every channel. Repeatable |
-| `--env-file PATH` | `up` | Local `KEY=VALUE` file merged under `--env`. Repeatable |
-| `--no-build` | `up` | Skip the implicit build step before `compose up` |
-| `--repo NAME` | `build` | Restrict to a single repo by name |
-| `--rebuild` | `build` | Force rebuild even if a context-hash tag exists |
-
-`--repo` is a `build`-only option: `up` and `down` deploy a merged, cross-repo
-use-case, which is not a per-repo thing to narrow.
 
 ## Container hosts
 
-After `otto docker up`, the resulting containers appear in `--list-hosts`
+After `otto docker compose up`, the resulting containers appear in `--list-hosts`
 under ids of the form `<parent>.<usecase>.<service>` (e.g.
 `test3.integration.api`), where `<parent>` is the lab id of the docker-capable
 host the stack runs on. Use them anywhere a host id is expected:
@@ -61,11 +55,11 @@ otto host test3.integration.api get /etc/os-release ./
 ```
 
 Container ids are also synthesized at lab-load time **before** any
-`otto docker up`, so tab completion works immediately. Accessing a
+`otto docker compose up`, so tab completion works immediately. Accessing a
 declared-but-stopped container auto-starts its compose stack on demand
 (`build=False`, so access never triggers an image rebuild). If the stack
 can't be started — for example its image hasn't been built — the command
-fails fast with a clear "run `otto docker up` first" error.
+fails fast with a clear "run `otto docker compose up` first" error.
 
 See {doc}`../../architecture/subsystems/docker-hosts` for why a container
 delegates to its parent host instead of being a parallel transport stack.
@@ -149,7 +143,7 @@ pointed at the same bytes.
 ### The table is per-process
 
 The mount table is read from the docker daemon (`docker inspect`) when the
-stack comes up, whichever way it came up — `otto docker up`, or a use-case
+stack comes up, whichever way it came up — `otto docker compose up`, or a use-case
 deploy — populates it identically. It is **in-memory state belonging to the
 otto process that ran that bring-up**, and nothing writes it to `lab.json`
 or anywhere else on disk. A *later* otto invocation re-registers each
@@ -179,8 +173,8 @@ Compose lets a service declare a bind source relative to the compose
 file's own directory, e.g. `./data:/var/lib/app`. otto's staging
 relocates the rendered compose file into a directory it deletes and
 recreates on every deploy — so a relative source like this points at a
-directory whose contents are wiped on the *next* `otto docker up`, with
-nothing in the product's compose file hinting at it. When `otto docker up`
+directory whose contents are wiped on the *next* `otto docker compose up`, with
+nothing in the product's compose file hinting at it. When `otto docker compose up`
 stages such a file, it warns, naming the resolved staging path and noting
 that it is wiped per stage. The fix is either an absolute path on the
 parent or a named volume. The warning does not fire under `--dry-run`,
@@ -238,10 +232,17 @@ that caused it. otto does not warn about a missing absolute bind source.
 :caption: Subcommands
 :hidden:
 
-up
-down
 build
 ps
+```
+
+```{toctree}
+:caption: Compose
+:hidden:
+
+compose/build
+compose/up
+compose/down
 ```
 
 ```{toctree}

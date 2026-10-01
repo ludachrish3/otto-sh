@@ -1,9 +1,9 @@
-# otto docker down
+# otto docker compose down
 
 Tear a use-case's stacks down and unregister their container hosts.
 
 ```text
-otto docker down [USE_CASE [SERVICE]...] [--on HOST] [--provide CAP=REPO]...
+otto docker compose down [USE_CASE [SERVICE]...] [--on HOST] [--provide CAP=REPO]...
 ```
 
 | Option | Description |
@@ -13,13 +13,19 @@ otto docker down [USE_CASE [SERVICE]...] [--on HOST] [--provide CAP=REPO]...
 | `--on HOST` | Collapse every fragment of the deployment onto this lab host |
 | `--provide CAP=REPO` | Break a provider tie for capability `CAP`. Repeatable |
 
+Each host's outcome is printed on its own line, `test3: integration torn
+down` or `alt2: FAILED — <command>: <output>`, and the exit code is 1 when
+any host failed. Container hosts are unregistered either way. Library:
+{func}`~otto.docker.teardown`, which returns a
+{class}`~otto.docker.reports.TeardownReport`.
+
 `--on` and `--provide` are resolved exactly as {doc}`up` resolves them, so a
 teardown can never address a different project than the deployment it is
 undoing. Naming services stops and removes just those, leaving the rest of the
 stack and its network standing.
 
 Like `up`, `down` has no `--repo`: narrowing is by use-case and service
-({doc}`use-cases`).
+({doc}`../use-cases`).
 
 The container host ids stay synthesized after `down` — they are derived from
 the lab declaration, not from what is running — so completion keeps offering

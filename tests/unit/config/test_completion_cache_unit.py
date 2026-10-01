@@ -1324,7 +1324,7 @@ def test_write_read_cache_round_trips_docker_use_cases(tmp_path: Path, monkeypat
     against a ``write_cache`` that never writes the key at all. This is the
     half that would notice: collect the names off a repo, write them, read them
     back off DISK, and then feed that exact payload to the completer the way
-    ``otto docker up <TAB>`` does.
+    ``otto docker compose up <TAB>`` does.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     repo = _cache_repo(tmp_path)
@@ -1379,7 +1379,7 @@ def test_a_v13_entry_is_not_served_for_docker_use_cases(tmp_path: Path, monkeypa
     )
 
     assert cc.read_cache([repo]) is None, (
-        "a pre-v14 entry was served, so it would answer `otto docker up <TAB>` "
+        "a pre-v14 entry was served, so it would answer `otto docker compose up <TAB>` "
         "with an empty use-case list"
     )
 

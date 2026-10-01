@@ -40,7 +40,16 @@ otto.coverage:collect_coverage
 otto.coverage:resolve_report_inputs
 otto.creds:register_creds_backend
 otto.docker.compose:get_container_host
+otto.docker:
 otto.docker:AdapterResult
+otto.docker:BuildReport
+otto.docker:DockerBuildError
+otto.docker:FailedImage
+otto.docker:HostReport
+otto.docker:RepoBuild
+otto.docker:TeardownReport
+otto.docker:build_on
+otto.docker:compose_build
 otto.docker:deployed
 otto.docker:register_compose_adapter
 otto.examples.lab_repository:ExampleLabRepository

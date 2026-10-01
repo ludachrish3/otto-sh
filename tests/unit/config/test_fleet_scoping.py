@@ -389,7 +389,7 @@ async def test_late_joining_container_is_scoped_live(tmp_path, scoped_context):
     """A container that joins AFTER context creation is scoped, not frozen out (§5).
 
     The resolver's ``universe`` is a snapshot taken at context creation; a walk
-    that iterated it would miss every ``otto docker up`` container. Both
+    that iterated it would miss every ``otto docker compose up`` container. Both
     containers register the same way after creation, so the pair discriminates
     "scoped live" from "not scoped at all".
     """

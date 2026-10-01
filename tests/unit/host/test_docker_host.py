@@ -2114,7 +2114,7 @@ def test_parent_path_on_a_placeholder_says_the_container_is_not_up():
 
     An empty ``container_id`` is not proof the stack is down -- every new
     ``otto`` invocation re-registers declared container hosts as placeholders,
-    so a reader hitting this message may well have run ``otto docker up``
+    so a reader hitting this message may well have run ``otto docker compose up``
     already. Naming only the not-up cause would send them to repeat it.
     """
     ctr = _make_container(container_id="")

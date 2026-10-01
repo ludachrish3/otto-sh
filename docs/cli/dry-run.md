@@ -290,7 +290,7 @@ the converge directly.
 
 ## `otto docker` previews the exact command
 
-`otto --dry-run docker up <usecase>` is the one place a preview is *more* than
+`otto --dry-run docker compose up <usecase>` is the one place a preview is *more* than
 a description. Selection, placement, env assembly and a repo's compose adapter
 are all pure — they contact no device — so otto runs the whole resolution and
 declines at the first real touch, printing the resolved plan **and the exact

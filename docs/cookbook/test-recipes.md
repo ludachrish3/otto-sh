@@ -156,7 +156,7 @@ async def smoke():
 ```
 
 {func}`~otto.docker.deployment.deployed` is the recommended scope. It deploys
-a **use-case** — the same named, cross-repo deployment `otto docker up` brings
+a **use-case** — the same named, cross-repo deployment `otto docker compose up` brings
 up, with the same provider competition and placement — and hands back a
 {class}`~otto.docker.deployment.UseCaseStack`: `hosts` (service -> container
 host, flattened), `by_host`, the final `env` mapping, and the selection

@@ -120,7 +120,7 @@ def _safe_username() -> str:
         return "anon"
 
 
-def _resolve_parent(repo: Repo, lab: Lab, on: str | None) -> UnixHost:
+def _repo_parent_host(repo: Repo, lab: Lab, on: str | None) -> UnixHost:
     """Pick a parent host for *repo*'s compose stack (spec §14).
 
     Order: explicit *on* > the repo's sole use-case placement > error.
@@ -303,10 +303,10 @@ async def compose_up(
     if not settings.composes:
         raise ValueError(f"Repo {repo.name!r} has no [[docker.composes]] entries; nothing to up.")
 
-    parent = _resolve_parent(repo, lab, on)
+    parent = _repo_parent_host(repo, lab, on)
     proj = project_name or get_user_compose_project(repo.name)
 
-    # Below _resolve_parent, so a dry run still fails on an unknown host, a
+    # Below _repo_parent_host, so a dry run still fails on an unknown host, a
     # non-UnixHost parent or one that is not docker_capable -- those refusals
     # are settled from configuration and must fire identically either way.
     # Above everything else, because everything else is a device touch or a
@@ -335,7 +335,7 @@ async def compose_up(
 
     # Stage under the compose-project key (e.g. ``otto-repo1-vagrant`` or a
     # ``OTTO_COMPOSE_SUFFIX``-suffixed variant) rather than ``repo.name`` so
-    # concurrent ``otto docker up`` invocations with different suffixes
+    # concurrent ``otto docker compose up`` invocations with different suffixes
     # don't ``rm -rf`` each other's compose dir mid-stage.
     remote_files = await stage_compose_files(parent, proj, list(settings.composes))
     remote_file_strs = [str(p) for p in remote_files]
@@ -535,7 +535,7 @@ async def _up_and_register(
     # created container cleanly. A genuine failure fails identically on
     # the retry and propagates, so this never masks a real error.
     #
-    # Follow-up if this single retry doesn't stabilize `otto docker up`:
+    # Follow-up if this single retry doesn't stabilize `otto docker compose up`:
     # the tell is the RuntimeError below STILL reporting "network ... not
     # found" *after* the retry (i.e. attempt 1 raced too). That means the
     # parent daemon is degraded, not merely racing — pull `journalctl -u
@@ -582,7 +582,7 @@ async def _up_and_register(
     else:
         # Nothing declared AND nothing listed: `services` below would be empty,
         # the registration loop would not run, and compose_up would return {} —
-        # which `otto docker up` prints as "0 container(s) registered" in green,
+        # which `otto docker compose up` prints as "0 container(s) registered" in green,
         # exit 0. A stack that is UP and unusable must not report success.
         raise HostCommandError(
             f"listing {proj}'s services on {parent.id} failed and the project declares "
@@ -594,7 +594,7 @@ async def _up_and_register(
     if not services:
         # ValueError, not a host error: nothing on the parent failed. The
         # compose file simply declares no services, which is the same class of
-        # refusal as _resolve_parent's "no docker host specified".
+        # refusal as _repo_parent_host's "no docker host specified".
         raise ValueError(
             f"compose stack {proj} is up on {parent.id} but names no services, so there "
             "is nothing to register — check the compose file's `services:` block"
@@ -651,7 +651,7 @@ async def compose_down(
     if not settings.composes:
         return CommandResult(Status.Skipped, value="", command="", retcode=-1)
 
-    parent = _resolve_parent(repo, lab, on)
+    parent = _repo_parent_host(repo, lab, on)
     proj = project_name or get_user_compose_project(repo.name)
 
     if is_dry_run():
@@ -668,7 +668,7 @@ async def compose_down(
     #
     # Caught, not propagated: staging now raises when it cannot prepare its
     # dirs, and this function's contract is that a failed tear-down is
-    # RETURNED. Letting it raise would stop `otto docker down` mid-sweep with
+    # RETURNED. Letting it raise would stop `otto docker compose down` mid-sweep with
     # repos 2..n still up, and inside `composed()`'s finally it would replace
     # the body's real exception with teardown noise — the thing compensate()
     # exists to prevent.
@@ -833,7 +833,7 @@ async def composed(
             the ``finally`` exists, so no teardown is armed for a stack that
             was never brought up.
     """
-    parent = _resolve_parent(repo, lab, on)
+    parent = _repo_parent_host(repo, lab, on)
     proj = project_name or get_user_compose_project(repo.name)
 
     if is_dry_run():
@@ -924,7 +924,7 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
     """Pre-register *placeholder* container hosts in *lab* for every declared service triple.
 
     The placeholders carry an empty ``container_id`` so that any operation
-    against a not-yet-up container fails with a clear "run `otto docker up`"
+    against a not-yet-up container fails with a clear "run `otto docker compose up`"
     message rather than a confusing not-found error. Once :func:`compose_up`
     (legacy repos) or :func:`~otto.docker.deployment.deploy` (use-case repos)
     runs, it overwrites the placeholder with a real entry containing the
@@ -1089,6 +1089,6 @@ def get_container_host(host_id: str) -> DockerContainerHost:
     if not isinstance(host, DockerContainerHost):
         raise KeyError(
             f"No container host registered with id {host_id!r}. "
-            f"Did you call `otto docker up` (or `compose_up`) first?"
+            f"Did you call `otto docker compose up` (or `compose_up`) first?"
         )
     return host

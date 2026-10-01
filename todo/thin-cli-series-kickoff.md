@@ -100,7 +100,7 @@ Check whether `otto.coverage.tiers` and the tier-name spelling
 `_do_get`) can become a field-named error instead of a text rewrite.
 
 **Likely scope creep to refuse:** the coverage report's own behaviour
-(done), kgcov export/check verbs (own series).
+(done), kmodcov export/check verbs (own series).
 
 ---
 
@@ -144,7 +144,7 @@ scaffolder are CLI-only), `otto.config.repo`, `otto.cli.init_templates`.
 - #499: detect and validate disagree on single-file init modules;
   `--all` scaffolds a duplicate.
 - #500: `otto init --tests` overwrites an existing `tests/conftest.py`;
-  `_scaffold_kgcov` appends to settings; a scaffolder prints.
+  `_scaffold_kmodcov` appends to settings; a scaffolder prints.
 
 **Shape to aim for.** A library module (e.g. `otto.init` or
 `otto.project.init`) with a side-effect-free `validate_settings(root) ->
@@ -156,7 +156,7 @@ return notices. The doctor and the scaffolder each return a report the CLI
 renders. Note the item-3 lesson: `otto init`'s scaffold text names other
 verbs (`otto docker compose up` after item 3), so rebase before gating.
 
-**Likely scope creep to refuse:** the kgcov scaffold's content (own series).
+**Likely scope creep to refuse:** the kmodcov scaffold's content (own series).
 
 ---
 

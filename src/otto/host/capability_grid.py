@@ -250,7 +250,7 @@ def shipped_host_families() -> list[HostFamily]:
         HostFamily(
             name="container",
             cls=DockerContainerHost,
-            selector="a `[docker]` service, started by `otto docker up`",
+            selector="a `[docker]` service, started by `otto docker compose up`",
         )
     )
     families.append(

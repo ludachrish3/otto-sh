@@ -1,28 +1,35 @@
 # otto docker build
 
-Build the container images declared by the selected repos.
+Build the container images the selected repos declare, on one lab host.
 
 ```text
-otto docker build [USE_CASE [IMAGE]...] [--repo NAME] [--on HOST] [--rebuild]
-                  [--provide CAP=REPO]...
+otto docker build --on HOST [--repo NAME] [IMAGE...] [--rebuild]
 ```
 
 | Option | Description |
 | ------ | ----------- |
-| `USE_CASE` (argument) | Build only the repos taking part in this use-case (default: every selected repo) |
-| `IMAGE...` (argument) | Image names to build (default: all declared images) |
+| `--on HOST` | The docker-capable lab host to build on. Required |
 | `--repo NAME` | Restrict to a single repo by name |
-| `--on HOST` | Lab host id to build on |
+| `IMAGE...` (argument) | Declared `[[docker.images]]` names to build (default: every declared image) |
 | `--rebuild` | Force a rebuild even when a context-hash tag already exists |
-| `--provide CAP=REPO` | Break a provider tie while narrowing to `USE_CASE`. Repeatable |
 
-With a `USE_CASE`, `build` runs the **same** provider competition
-{doc}`up` runs and builds only the winners' images — so the images that get
-built are the ones a deployment would actually use, and a displaced mock's
-image is not built for nothing. Bare `build` keeps its per-repo meaning across
-every selected repo. See {doc}`use-cases` for the competition and for
-`--provide`.
+`build` builds images and nothing else. Like `docker build`, it knows nothing
+about a composition: the context of each `[[docker.images]]` entry is staged
+onto `HOST` and `docker build` runs on that host's daemon, tagging the result
+`<repo>-<name>:<context-hash>` with `:latest` re-pointed at it. Because an image has
+to land on the daemon that will run it, the host is the one thing this verb
+needs, so `--on` is required. To build the images a deployment would use, on
+the hosts it would use, run {doc}`compose/build` instead.
+
+`IMAGE` is the `name` of a `[[docker.images]]` entry in a repo's
+`settings.toml`, never a file path or a registry name. A name no selected
+repo declares is refused; with several repos selected, each builds the
+subset it declares. A repo that declares no images is reported and skipped;
+if no selected repo declares any, the command refuses.
+
+Every line of output is one image: `cached → <tag>`, `built → <tag>`, or
+`FAILED` with the build output. The exit code is 1 when any image failed.
+Library: {func}`~otto.docker.build_on`.
 
 Builds are skipped when an image tagged with the current context hash already
-exists — see {doc}`rebuild-policy` for exactly what counts as a change and how
-to force one.
+exists; see {doc}`rebuild-policy`.

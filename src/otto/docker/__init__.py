@@ -17,9 +17,12 @@ See the design notes in ``docs/design/docker_hosts.md`` for the full
 architecture (parent-delegation pattern, hop inheritance, naming scheme).
 
 Every name is exported lazily (PEP 562), including ``AdapterResult`` /
-``register_compose_adapter`` (repo-registered compose adapters, spec §7) and
+``register_compose_adapter`` (repo-registered compose adapters, spec §7),
 ``deploy`` / ``teardown`` / ``deployed`` / ``UseCaseStack`` (the use-case
-deploy pipeline, spec §8/§11): a caller pays for the one module that defines
+deploy pipeline, spec §8/§11), and ``build_on`` / ``compose_build`` /
+``DockerBuildError`` with the report types they and ``teardown`` return
+(``BuildReport``, ``RepoBuild``, ``FailedImage``, ``HostReport``,
+``TeardownReport``): a caller pays for the one module that defines
 the name it asks for. Every command that loads a lab imports ``.compose`` to
 place the declared container hosts, and must not pay for ``.build`` and its
 build-context staging with it.
@@ -43,6 +46,9 @@ if TYPE_CHECKING:
     from .build import build_images as build_images
     from .build import image_full_tag as image_full_tag
     from .build import image_latest_tag as image_latest_tag
+    from .build_verbs import DockerBuildError as DockerBuildError
+    from .build_verbs import build_on as build_on
+    from .build_verbs import compose_build as compose_build
     from .compose import compose_down as compose_down
     from .compose import compose_ps as compose_ps
     from .compose import compose_up as compose_up
@@ -53,6 +59,11 @@ if TYPE_CHECKING:
     from .deployment import deploy as deploy
     from .deployment import deployed as deployed
     from .deployment import teardown as teardown
+    from .reports import BuildReport as BuildReport
+    from .reports import FailedImage as FailedImage
+    from .reports import HostReport as HostReport
+    from .reports import RepoBuild as RepoBuild
+    from .reports import TeardownReport as TeardownReport
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
@@ -62,6 +73,9 @@ _LAZY_ATTRS: dict[str, str] = {
     "build_images": "otto.docker.build",
     "image_full_tag": "otto.docker.build",
     "image_latest_tag": "otto.docker.build",
+    "DockerBuildError": "otto.docker.build_verbs",
+    "build_on": "otto.docker.build_verbs",
+    "compose_build": "otto.docker.build_verbs",
     "compose_down": "otto.docker.compose",
     "compose_ps": "otto.docker.compose",
     "compose_up": "otto.docker.compose",
@@ -72,6 +86,11 @@ _LAZY_ATTRS: dict[str, str] = {
     "deploy": "otto.docker.deployment",
     "deployed": "otto.docker.deployment",
     "teardown": "otto.docker.deployment",
+    "BuildReport": "otto.docker.reports",
+    "FailedImage": "otto.docker.reports",
+    "HostReport": "otto.docker.reports",
+    "RepoBuild": "otto.docker.reports",
+    "TeardownReport": "otto.docker.reports",
 }
 
 
@@ -91,8 +110,16 @@ def __dir__() -> list[str]:
 
 __all__ = [
     "AdapterResult",
+    "BuildReport",
+    "DockerBuildError",
+    "FailedImage",
+    "HostReport",
+    "RepoBuild",
+    "TeardownReport",
     "UseCaseStack",
     "build_images",
+    "build_on",
+    "compose_build",
     "compose_down",
     "compose_ps",
     "compose_up",

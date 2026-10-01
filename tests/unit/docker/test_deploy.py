@@ -22,6 +22,7 @@ from otto.docker import deployment as deploy_mod
 from otto.docker import resolve as resolve_mod
 from otto.docker.adapter import AdapterResult
 from otto.docker.deployment import UseCaseStack, deploy, deployed, teardown
+from otto.docker.reports import TeardownReport
 from otto.docker.resolve import UseCaseResolutionError
 from otto.host.element import Element
 from otto.host.errors import HostCommandError
@@ -39,12 +40,12 @@ from .test_resolve_select import _frag  # reuse the fragment table builder
 _COMPOSE_YAML = "services:\n  api:\n    image: alpine\n"
 
 
-def _ok(out: str = "") -> CommandResult:
-    return CommandResult(Status.Success, value=out, command="", retcode=0)
+def _ok(out: str = "", command: str = "") -> CommandResult:
+    return CommandResult(Status.Success, value=out, command=command, retcode=0)
 
 
-def _fail(out: str = "boom") -> CommandResult:
-    return CommandResult(Status.Failed, value=out, command="", retcode=1)
+def _fail(out: str = "boom", command: str = "") -> CommandResult:
+    return CommandResult(Status.Failed, value=out, command=command, retcode=1)
 
 
 def _compose_file(
@@ -56,13 +57,20 @@ def _compose_file(
 
 
 def _repo(name, *fragments, composes=(), images=()):
-    """A repo table with docker settings, in the shape resolve/deploy read."""
+    """A repo table with docker settings, in the shape resolve/deploy read.
+
+    ``images`` names are wrapped as ``SimpleNamespace(name=...)`` (not bare
+    strings): ``deploy`` only ever checks the tuple's truthiness, but
+    ``compose_build``'s ``_names_for`` (the placement differential pins the
+    two verbs against each other) reads ``.name`` off each declared image,
+    the same shape ``DockerImage`` carries.
+    """
     return SimpleNamespace(
         name=name,
         docker_settings=SimpleNamespace(
             use_cases=tuple(fragments),
             composes=tuple(composes),
-            images=tuple(images),
+            images=tuple(SimpleNamespace(name=n) for n in images),
         ),
     )
 
@@ -93,7 +101,7 @@ def _wire(host: UnixHost, *, already_up: bool = False, cid: str = "cid1") -> Uni
             return _ok(cid)
         if "docker ps -q --filter label=com.docker.compose.project=" in cmd:
             return _ok("running-cid" if already_up else "")
-        return _ok()
+        return _ok(command=cmd)
 
     async def _put(paths, dest):
         staged.extend((Path(p).name, str(dest), Path(p).read_text()) for p in paths)
@@ -1431,3 +1439,137 @@ async def test_teardown_and_deployed_dry_runs_carry_the_same_plan(single, verb):
     # was the one that described the ABSENCE as a shortfall.
     assert "the exact compose command cannot be shown" not in message
     assert "docker compose -p" not in message
+
+
+# ---------------------------------------------------------------------------
+# teardown / deployed() report
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_full_teardown_returns_one_down_result_per_host(single):
+    with _install(single.lab, [single.repo]):
+        report = await teardown("integration")
+    assert isinstance(report, TeardownReport)
+    assert report.use_case == "integration"
+    assert list(report.hosts) == [single.host.id]
+    (result,) = report.hosts[single.host.id]
+    assert " down --remove-orphans" in result.command
+    assert report.ok
+
+
+@pytest.mark.asyncio
+async def test_full_teardown_reports_a_failed_down_and_still_unregisters(single):
+    with _install(single.lab, [single.repo]):
+        await deploy("integration", on="test3")
+    assert "test3.integration.api" in single.lab.hosts
+
+    async def _exec(cmd, *_a, **_kw):
+        if " down --remove-orphans" in cmd:
+            return _fail("error during connect", command=cmd)
+        return _ok(command=cmd)
+
+    single.host.exec = AsyncMock(side_effect=_exec)
+    with _install(single.lab, [single.repo]):
+        report = await teardown("integration")
+    assert not report.ok
+    (result,) = report.failed[single.host.id]
+    assert "error during connect" in result.value
+    # the hosts were unregistered regardless: a stale registration is the worse outcome
+    assert "test3.integration.api" not in single.lab.hosts
+
+
+@pytest.mark.asyncio
+async def test_partial_teardown_reports_stop_and_rm_per_acting_host(tmp_path):
+    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core", services=("api", "db"))])
+    host = _wire(_host("test3", "10.10.200.13"))
+    lab = _lab(host)
+    with _install(lab, [repo]):
+        report = await teardown("integration", services=["api"], on="test3")
+    stop, rm = report.hosts["test3"]
+    assert stop.command.endswith("stop -t 1 api")
+    assert rm.command.endswith("rm -f api")
+    assert report.ok
+
+
+@pytest.mark.asyncio
+async def test_partial_teardown_skips_a_host_that_carries_none_of_the_services(tmp_path):
+    """A host with nothing wanted is absent from the report; ok is decided by the acting hosts."""
+    b_dir = tmp_path / "b"
+    b_dir.mkdir()
+    a = _repo(
+        "a", _frag(role="edge"), composes=[_compose_file(tmp_path, "core", services=("api",))]
+    )
+    b = _repo("b", _frag(role="data"), composes=[_compose_file(b_dir, "core", services=("db",))])
+    edge = _wire(_host("test3", "10.10.200.13", roles=("edge",)))
+    data = _wire(_host("alt2", "10.10.200.22", roles=("data",)))
+    lab = _lab(edge, data)
+    with _install(lab, [a, b]):
+        report = await teardown("integration", services=["api"])
+    assert list(report.hosts) == ["test3"]
+    assert report.ok
+
+
+@pytest.mark.asyncio
+async def test_partial_teardown_reports_a_failed_stop_in_the_report(tmp_path):
+    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core", services=("api",))])
+    host = _wire(_host("test3", "10.10.200.13"))
+
+    async def _exec(cmd, *_a, **_kw):
+        if cmd.endswith("stop -t 1 api"):
+            return _fail("no such container")
+        return _ok()
+
+    host.exec = AsyncMock(side_effect=_exec)
+    lab = _lab(host)
+    with _install(lab, [repo]):
+        report = await teardown("integration", services=["api"], on="test3")
+    assert not report.ok
+    assert [r.value for r in report.failed["test3"]] == ["no such container"]
+    assert len(report.hosts["test3"]) == 2, "rm still ran after the failed stop"
+
+
+@pytest.mark.asyncio
+async def test_deployed_raises_when_its_teardown_fails(single):
+    async def _exec(cmd, *_a, **_kw):
+        if " down --remove-orphans" in cmd:
+            return _fail("error during connect", command=cmd)
+        if "com.docker.compose.service=" in cmd:
+            return _ok("cid1")
+        return _ok()
+
+    single.host.exec = AsyncMock(side_effect=_exec)
+    with (
+        _install(single.lab, [single.repo]),
+        patch.object(deploy_mod, "build_images", AsyncMock(return_value={})),
+        pytest.raises(
+            HostCommandError,
+            match=(
+                r"teardown of integration failed on test3.*"
+                r"down --remove-orphans.*error during connect"
+            ),
+        ),
+    ):
+        async with deployed("integration", own=True):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_deployed_body_exception_wins_over_a_failed_teardown(single, caplog):
+    async def _exec(cmd, *_a, **_kw):
+        if " down --remove-orphans" in cmd:
+            return _fail("error during connect")
+        if "com.docker.compose.service=" in cmd:
+            return _ok("cid1")
+        return _ok()
+
+    single.host.exec = AsyncMock(side_effect=_exec)
+    with (
+        _install(single.lab, [single.repo]),
+        patch.object(deploy_mod, "build_images", AsyncMock(return_value={})),
+        caplog.at_level(logging.ERROR),
+        pytest.raises(ValueError, match="body failed"),
+    ):
+        async with deployed("integration", own=True):
+            raise ValueError("body failed")
+    assert "teardown of integration failed on test3" in caplog.text

@@ -531,3 +531,34 @@ lab. To zero the counters *before* a run instead, call `clean_remote_gcda()`.
 
 See {doc}`../cli/cov/index` for the full CLI workflow, tier configuration, and
 the report format.
+
+## Docker: build, deploy, tear down
+
+The docker verbs are library functions first; `otto docker ...` calls them.
+
+```python
+import otto.docker
+
+report = await otto.docker.compose_build("integration", provide={"db": "real"})
+for failed in report.failed:
+    print(failed.repo, failed.image, failed.result.value)
+
+stack = await otto.docker.deploy("integration", build=False)
+await stack.hosts["api"].run("./run-tests")
+
+torn = await otto.docker.teardown("integration")
+if not torn.ok:
+    for host, results in torn.failed.items():
+        print(host, [r.command for r in results])
+```
+
+`build_on("test3", images=["api"])` builds one host's images without a
+use-case, the way `otto docker build --on test3 api` does. Every input rule
+is the library's: a missing host, an unknown repo or image name raises
+{class}`~otto.docker.build_verbs.DockerBuildError` with a `field`, and a
+placement refusal is {class}`~otto.docker.resolve.UseCaseResolutionError`,
+identical to `deploy`'s.
+
+As a fixture, {func}`~otto.docker.deployed` deploys on entry and tears down
+on exit; a failed teardown raises `HostCommandError` naming the host, so a
+stack cannot be left standing silently.

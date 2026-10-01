@@ -43,7 +43,7 @@ tree's ``cov/<host>/<product>/`` segment and each capture's ``product`` by."""
 # dotted ``<parent>.<project>.<service>`` ids of DockerContainerHost
 # placeholders that ``register_declared_container_hosts`` synthesizes
 # at lab-load time. Coverage runs target compile-and-run hosts only —
-# placeholders fail exec until ``otto docker up`` populates them.
+# placeholders fail exec until ``otto docker compose up`` populates them.
 _REAL_HOSTS = re.compile(r"^[^.]+$")
 
 

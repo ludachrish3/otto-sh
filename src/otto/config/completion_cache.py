@@ -162,7 +162,8 @@ CACHE_FILENAME = "completion_cache.json"
 #      served.
 # v13: host summaries may carry an inventory-supplied ip (spec 2026-08-28
 #      host-inventory §11); the digest now includes the inventory fingerprint.
-# v14: added "docker_use_cases" (source for `otto docker up|down|build <TAB>`).
+# v14: added "docker_use_cases" (source for `otto docker compose
+#      build|up|down <TAB>`).
 #      The bump is REQUIRED, not cosmetic: `read_cache` defaults the key with
 #      `.get("docker_use_cases", [])`, so a surviving v13 entry would validate
 #      as an empty list, `_use_case_completer`'s `isinstance(..., list)` guard
@@ -1789,7 +1790,7 @@ def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
 def collect_docker_use_case_names(repos: list["Repo"]) -> list[str]:
     """Enumerate every ``[[docker.use_cases]]`` name the active repos declare.
 
-    The completion source for ``otto docker up|down|build <TAB>``. Read
+    The completion source for ``otto docker compose build|up|down <TAB>``. Read
     straight off parsed settings — no lab, no host source, no
     :func:`otto.bootstrap.bootstrap` call — so it is safe in the completion
     fast path, the same property :func:`collect_docker_capable_host_ids` has.

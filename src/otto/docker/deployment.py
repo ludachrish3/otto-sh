@@ -39,6 +39,7 @@ from .compose import (
     unregister_container_hosts,
     use_case_project,
 )
+from .reports import TeardownReport
 from .resolve import (
     Selection,
     UseCaseResolutionError,
@@ -57,6 +58,7 @@ from .staging import (
 if TYPE_CHECKING:
     from ..config.lab import Lab
     from ..config.repo import DockerCompose, Repo
+    from ..result import CommandResult
     from .resolve import SelectedFragment
 
 logger = logging.getLogger(__name__)
@@ -887,7 +889,7 @@ async def teardown(
     provide: "Mapping[str, str] | None" = None,
     stop_timeout: int = 1,
     project_name: "str | None" = None,
-) -> None:
+) -> "TeardownReport":
     """Tear *use_case* down and unregister its container hosts (spec §8).
 
     Full teardown is ``docker compose -p <proj> down`` with NO ``-f``: the
@@ -900,6 +902,12 @@ async def teardown(
     *on* and *provide* are accepted (and resolved) exactly as :func:`deploy`
     resolves them, so the two verbs always agree on which hosts and which
     project a deployment lives in.
+
+    Returns:
+        ~otto.docker.reports.TeardownReport: the commands run per host;
+            ``ok`` is false when any failed. Container hosts are
+            unregistered either way — a stale registration is the worse
+            outcome.
 
     Raises:
         ~otto.docker.resolve.UseCaseResolutionError: a configuration refusal,
@@ -919,6 +927,7 @@ async def teardown(
             f"unregistered from the lab.",
         )
 
+    hosts: "dict[str, list[CommandResult]]" = {}
     for host_id, host_frags in placed.items():
         parent = _parent_for(lab, host_id)
         proj = project_name or use_case_project(parent.source_lab, use_case)
@@ -927,9 +936,11 @@ async def teardown(
             # No -f, and no render either: the project label is the whole
             # input, so a full teardown never re-reads a compose file (and so
             # cannot be blocked by one that has since been edited away).
-            await compose_down_project(
-                parent, proj, lab=lab, remove_ids_under=prefix, stop_timeout=stop_timeout
-            )
+            hosts[host_id] = [
+                await compose_down_project(
+                    parent, proj, lab=lab, remove_ids_under=prefix, stop_timeout=stop_timeout
+                )
+            ]
             continue
         declared = _declared_services(_ordered(host_frags, order), report=False)
         wanted = [s for s in declared if s in services_filter]
@@ -937,14 +948,18 @@ async def teardown(
             continue
         names = " ".join(shlex.quote(s) for s in wanted)
         quoted = shlex.quote(proj)
+        ran: "list[CommandResult]" = []
         for action in (f"stop -t {int(stop_timeout)} {names}", f"rm -f {names}"):
             result = await parent.exec(f"docker compose -p {quoted} {action}")
+            ran.append(result)
             if not result.is_ok:
                 logger.error(
                     rf"\[docker] `{action.split()[0]}` failed for {proj} on "
                     f"{parent.id}: {result.value}"
                 )
         await unregister_container_hosts(lab, prefix, services=wanted)
+        hosts[host_id] = ran
+    return TeardownReport(hosts=hosts, use_case=use_case)
 
 
 @asynccontextmanager
@@ -971,6 +986,10 @@ async def deployed(
         ~otto.result.CommandNotRunError: this is a dry run. Its own arm, for
             ``composed()``'s reason: the decline would otherwise come from
             one of two different callees depending on ``own``.
+        ~otto.host.errors.HostCommandError: this call's own teardown (the one
+            it owes on exit) failed and the body did not already raise — a
+            compensating action never masks the real failure, so a body
+            exception always wins and the teardown failure is logged instead.
     """
     lab, selection, placed, order = _resolve(use_case, on=kw.get("on"), provide=kw.get("provide"))
     services_filter = _validated_services(selection, kw.get("services"))
@@ -1003,8 +1022,12 @@ async def deployed(
 
     deploy_kw = {k: v for k, v in kw.items() if k != "stop_timeout"}
     stack = await deploy(use_case, **deploy_kw)
+    body_failed = False
     try:
         yield stack
+    except BaseException:
+        body_failed = True
+        raise
     finally:
         if own or not was_up:
             # Teardown is a compensating action: an interrupt landing while it
@@ -1018,7 +1041,18 @@ async def deployed(
                 for k, v in kw.items()
                 if k in ("services", "on", "provide", "stop_timeout", "project_name")
             }
-            await compensate(
+            report = await compensate(
                 teardown(use_case, **teardown_kw),
                 what=f"docker use-case teardown {use_case}",
             )
+            if report is not None and not report.ok:
+                detail = "; ".join(
+                    f"{host}: " + " | ".join(f"{r.command}: {r.value}" for r in results)
+                    for host, results in report.failed.items()
+                )
+                message = f"teardown of {use_case} failed on {', '.join(report.failed)}: {detail}"
+                if body_failed:
+                    # A compensating action never masks the real failure.
+                    logger.error(rf"\[docker] {message}")
+                else:
+                    raise HostCommandError(message)

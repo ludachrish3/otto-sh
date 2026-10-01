@@ -26,7 +26,7 @@ from otto.config.repo import (
 from otto.config.scope import ProjectScopeConfig
 from otto.declared import DeclaredEntry
 from otto.docker.compose import (
-    _resolve_parent,
+    _repo_parent_host,
     _safe_username,
     _stack_already_up,
     compose_down,
@@ -391,26 +391,26 @@ async def test_unregister_container_hosts_pops_a_host_that_fails_to_close():
 
 
 # ---------------------------------------------------------------------------
-# _resolve_parent
+# _repo_parent_host
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_parent_prefers_explicit_on(tmp_path):
+def test_repo_parent_host_prefers_explicit_on(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = _resolve_parent(repo, lab, on="test3")
+    parent = _repo_parent_host(repo, lab, on="test3")
     assert parent.id == "test3"
 
 
-def test_resolve_parent_falls_back_to_use_case_placement(tmp_path):
+def test_repo_parent_host_falls_back_to_use_case_placement(tmp_path):
     """No --on: the repo's sole use-case fragment's placement pin wins."""
     repo = _make_repo(tmp_path, host="test3")
     lab = _make_lab()
-    parent = _resolve_parent(repo, lab, on=None)
+    parent = _repo_parent_host(repo, lab, on=None)
     assert parent.id == "test3"
 
 
-def test_resolve_parent_rejects_non_capable(tmp_path):
+def test_repo_parent_host_rejects_non_capable(tmp_path):
     """Explicit --on still enforces docker_capable, regardless of how it got here."""
     repo = _make_repo(tmp_path)
     lab = _make_lab()
@@ -426,14 +426,14 @@ def test_resolve_parent_rejects_non_capable(tmp_path):
     )
     lab.hosts[other.id] = other
     with pytest.raises(ValueError, match="not docker_capable"):
-        _resolve_parent(repo, lab, on=other.id)
+        _repo_parent_host(repo, lab, on=other.id)
 
 
-def test_resolve_parent_falls_back_to_a_non_capable_pin_still_refuses(tmp_path):
+def test_repo_parent_host_falls_back_to_a_non_capable_pin_still_refuses(tmp_path):
     """The fallback path enforces docker_capable too (T14 review M3) — via a
     DIFFERENT message than the ``--on`` path, because a committed placement
     pin validates capability itself, inside ``_place_fragment``, before
-    ``_resolve_parent``'s own tail check is ever reached. The scenario the
+    ``_repo_parent_host``'s own tail check is ever reached. The scenario the
     old ``on=None`` test asserted (a *resolved* candidate turning out
     non-capable) is not gone with the fallback rewrite — it just now raises
     from the pin's own validation, with its own wording.
@@ -451,18 +451,18 @@ def test_resolve_parent_falls_back_to_a_non_capable_pin_still_refuses(tmp_path):
     lab = Lab(name="test")
     lab.hosts[other.id] = other
     with pytest.raises(ValueError, match="must name a docker-capable unix host"):
-        _resolve_parent(repo, lab, on=None)
+        _repo_parent_host(repo, lab, on=None)
 
 
-def test_resolve_parent_errors_when_no_host(tmp_path):
+def test_repo_parent_host_errors_when_no_host(tmp_path):
     repo = _make_repo(tmp_path, host="test3")
     lab = _make_lab()
     # Use a wholly unknown host.
     with pytest.raises(ValueError, match="not in lab"):
-        _resolve_parent(repo, lab, on="nobody")
+        _repo_parent_host(repo, lab, on="nobody")
 
 
-def test_resolve_parent_refuses_use_cases_split_across_hosts(tmp_path):
+def test_repo_parent_host_refuses_use_cases_split_across_hosts(tmp_path):
     """A repo declaring TWO use-case fragments that each resolve cleanly but
     to DIFFERENT hosts is ambiguous for a per-repo verb — a bare
     ``compose_up``/``build`` cannot guess which one the caller means, so it
@@ -499,10 +499,10 @@ def test_resolve_parent_refuses_use_cases_split_across_hosts(tmp_path):
         lab.hosts[ne] = _wire_parent_mock(_capable_host(ne, ne=ne))
 
     with pytest.raises(ValueError, match="ambiguous for a per-repo verb"):
-        _resolve_parent(repo, lab, on=None)
+        _repo_parent_host(repo, lab, on=None)
 
     # Load-bearing, not decorative: --on sidesteps the ambiguity entirely.
-    assert _resolve_parent(repo, lab, on="test1").id == "test1"
+    assert _repo_parent_host(repo, lab, on="test1").id == "test1"
 
 
 # ---------------------------------------------------------------------------
@@ -810,7 +810,7 @@ async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeyp
 
     The bounded-poll count is the subject; the raise is the point. A stack
     that came up but registered no host used to return {}, which
-    `otto docker up` printed as "0 container(s) registered" in green, exit 0.
+    `otto docker compose up` printed as "0 container(s) registered" in green, exit 0.
     """
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 3, raising=False)
@@ -846,7 +846,7 @@ async def test_compose_up_still_skips_one_unresolvable_service_among_several(tmp
     The counterpart to the test above, and the line between them: registering
     SOME hosts is a usable stack, registering NONE is not. Without this, the
     "no hosts" guard could be satisfied by making any unresolved service fatal,
-    which would turn a one-shot sidecar into a broken `otto docker up`.
+    which would turn a one-shot sidecar into a broken `otto docker compose up`.
     """
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 2, raising=False)
@@ -1813,11 +1813,11 @@ async def test_compose_up_build_failure_raises(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _resolve_parent — error branches
+# _repo_parent_host — error branches
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_parent_no_candidate_raises(tmp_path):
+def test_repo_parent_host_no_candidate_raises(tmp_path):
     """Raises ValueError when no on= and no [[docker.use_cases]] is declared."""
     # Build a repo with a compose entry but NO use-case fragments.
     sut = make_sut_repo(
@@ -1836,10 +1836,10 @@ def test_resolve_parent_no_candidate_raises(tmp_path):
     lab = _make_lab()
 
     with pytest.raises(ValueError, match="No docker host"):
-        _resolve_parent(repo, lab, on=None)
+        _repo_parent_host(repo, lab, on=None)
 
 
-def test_resolve_parent_non_unixhost_raises(tmp_path):
+def test_repo_parent_host_non_unixhost_raises(tmp_path):
     """Raises TypeError when the resolved host is not a UnixHost."""
     repo = _make_repo(tmp_path)
     lab = _make_lab()
@@ -1850,7 +1850,7 @@ def test_resolve_parent_non_unixhost_raises(tmp_path):
     lab.hosts["weird"] = weird
 
     with pytest.raises(TypeError, match="must be a UnixHost"):
-        _resolve_parent(repo, lab, on="weird")
+        _repo_parent_host(repo, lab, on="weird")
 
 
 # ---------------------------------------------------------------------------
@@ -1943,7 +1943,7 @@ async def test_compose_up_fails_when_services_cannot_be_listed_and_none_declared
 
     With no declared services, a failed `config --services` left `services`
     empty, the registration loop never ran, and compose_up returned {} —
-    which `otto docker up` prints as "0 container(s) registered", exit 0.
+    which `otto docker compose up` prints as "0 container(s) registered", exit 0.
     """
     repo = _make_repo(tmp_path, services=())
     lab = _make_lab()
@@ -2245,7 +2245,7 @@ async def test_compose_up_fails_when_the_stack_names_no_services_at_all(tmp_path
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     # ValueError: nothing on the parent failed — the compose file declares no
-    # services, the same class of refusal as _resolve_parent's own raises.
+    # services, the same class of refusal as _repo_parent_host's own raises.
     with pytest.raises(ValueError, match="names no services"):
         await compose_up(repo, lab)
 
@@ -2255,7 +2255,7 @@ async def test_compose_down_returns_a_failure_when_staging_cannot_be_prepared(tm
     """compose_down's contract is that a failed tear-down is RETURNED.
 
     Staging now raises, and letting that propagate would stop
-    `otto docker down` mid-sweep with the remaining repos still up — and,
+    `otto docker compose down` mid-sweep with the remaining repos still up — and,
     inside `composed()`'s finally, replace the body's real exception with
     teardown noise.
     """

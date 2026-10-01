@@ -1,7 +1,7 @@
 # Image rebuild policy
 
-When `otto docker build` decides to rebuild, and what container shell state
-survives between calls.
+When {doc}`build` or {doc}`compose/build` decides to rebuild, and what
+container shell state survives between calls.
 
 ## Image rebuild policy
 

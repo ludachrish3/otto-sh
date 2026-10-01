@@ -2473,7 +2473,7 @@ class TestADeclineNeverResurfacesAsAFabricatedFailure:
 
         Without the second half the guard is satisfied by an `_auto_up` whose
         wide arm simply re-raises everything -- which would delete the
-        actionable "run `otto docker up`" message the real failure path exists
+        actionable "run `otto docker compose up`" message the real failure path exists
         to produce. The two halves discriminate the named arm from no arm.
         """
         host = self._host()
@@ -2523,7 +2523,7 @@ class TestADeclineNeverResurfacesAsAFabricatedFailure:
         assert "no such image" in str(real.value), (
             f"the wide arm lost the underlying cause: {real.value}"
         )
-        assert "otto docker up" in str(real.value)
+        assert "otto docker compose up" in str(real.value)
 
 
 class TestTheDryRunLabelFollowsTheInvocationNotTheFile:

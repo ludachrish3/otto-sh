@@ -10,7 +10,7 @@ parent it expected.
 
 Docker is a **testing aid, never a requirement**: no tunnel command ever
 starts a container. `add` requires a container endpoint to already be
-running (start it with `otto docker up` first) and fails loudly when it
+running (start it with `otto docker compose up` first) and fails loudly when it
 isn't; `list` and `remove` probe a declared-but-down container read-only
 and treat it as carrying no tunnel processes — scanning a lab never
 composes a docker stack as a side effect.

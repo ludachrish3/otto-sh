@@ -2,8 +2,8 @@
 
 A **use-case** is a named, cross-repo deployment: "bring up `integration`" is
 one command whatever combination of projects is currently active. `otto docker
-up`, `down` and `build` all speak use-cases, and so does the library API that
-instructions and tests import.
+compose up`, `compose down` and `compose build` all speak use-cases, and so
+does the library API that instructions and tests import.
 
 The unit a repo declares is not the whole use-case — it is a **fragment** of
 one. Every active repo contributes the fragments it declares under the name,
@@ -24,7 +24,7 @@ composes = ["core"]                   # handles from above
 role = "edge"                         # which lab host it wants (below)
 ```
 
-`otto docker up integration` now deploys it, and the container comes back as
+`otto docker compose up integration` now deploys it, and the container comes back as
 the lab host `<parent>.integration.api` — see
 [Container hosts](index.md#container-hosts).
 
@@ -266,7 +266,7 @@ and it is the one carrying `provides = "edge"`. Deployed normally, repo1 wins
 and both of its files are in the merged stack:
 
 ```console
-$ otto --lab unix --dry-run docker up integration
+$ otto --lab unix --dry-run docker compose up integration
 … Resolved plan: test3 <- repo1[core,edge], repo2[core].
   Displaced: edge -> repo1 (priority 10), repo2 (priority 0) stands down. …
 ```
@@ -274,7 +274,7 @@ $ otto --lab unix --dry-run docker up integration
 Now hand the capability to the mock:
 
 ```console
-$ otto --lab unix --dry-run docker up integration --provide edge=repo2
+$ otto --lab unix --dry-run docker compose up integration --provide edge=repo2
 … Resolved plan: test3 <- repo2[core], repo2[mock-edge].
   Displaced: edge -> repo2 (priority 0), repo1 (priority 10) stands down. …
 ```
@@ -415,10 +415,10 @@ See {mod}`otto.docker.adapter` for the API.
 ## Deploying, narrowing, and tearing down
 
 ```console
-$ otto docker up integration                 # every service, every resolved host
-$ otto docker up integration api db          # just these services
-$ otto docker down integration api           # stop and remove just api
-$ otto docker down integration               # the whole deployment
+$ otto docker compose up integration                 # every service, every resolved host
+$ otto docker compose up integration api db          # just these services
+$ otto docker compose down integration api           # stop and remove just api
+$ otto docker compose down integration               # the whole deployment
 ```
 
 Trailing service names are allowed only after an explicit use-case name, so
@@ -428,9 +428,9 @@ removes just their containers, leaving the rest of the stack and its network
 standing. Registration and unregistration scope to the named services too.
 
 With no use-case named at all, `up` and `down` pick the only declared one.
-Zero or several is a hard error listing them — never a quiet no-op. Bare
-`build` is different: it has a per-repo meaning of its own and builds every
-selected repo's images without resolving a use-case at all (see {doc}`build`).
+Zero or several is a hard error listing them — never a quiet no-op.
+`compose build` defaults the same way; bare {doc}`build` takes no use-case at
+all: it builds images on the one host `--on` names.
 
 ### `up` is convergent
 
@@ -447,13 +447,13 @@ not a teardown plus a deploy.
 
 ### Dry run
 
-`otto --dry-run docker up <usecase>` prints the resolved plan and declines at
+`otto --dry-run docker compose up <usecase>` prints the resolved plan and declines at
 the first device touch — see {doc}`../dry-run` for the contract. Because
 selection, placement, env assembly and the adapters are all pure, the preview
 includes the **exact** per-host compose command, not a description of one:
 
 ```console
-$ otto --lab unix --dry-run docker up integration
+$ otto --lab unix --dry-run docker compose up integration
 'deploy(integration)' was not run on host 'test3': this is a dry run, which
 contacts no device. … Resolved plan: test3 <- repo1[core,edge], repo2[core].
 Displaced: edge -> repo1 (priority 10), repo2 (priority 0) stands down.

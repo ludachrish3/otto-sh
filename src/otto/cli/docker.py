@@ -3,18 +3,20 @@ otto docker — build images and deploy use-case stacks on lab hosts.
 
 Subcommands::
 
-    otto docker use-cases [USE_CASE]
-    otto docker up    [USE_CASE [SERVICE...]] [--on H] [--no-build]
-                      [--provide CAP=REPO] [--env K=V] [--env-file FILE]
-    otto docker down  [USE_CASE [SERVICE...]] [--on H] [--provide CAP=REPO]
-    otto docker build [USE_CASE [IMAGE...]] [--repo NAME] [--on H] [--rebuild]
-    otto docker ps    [--on H]
+    otto docker use-cases       [USE_CASE]
+    otto docker build           [IMAGE...] --on H [--repo NAME] [--rebuild]
+    otto docker compose build   [USE_CASE [IMAGE...]] [--on H] [--provide CAP=REPO] [--rebuild]
+    otto docker compose up      [USE_CASE [SERVICE...]] [--on H] [--no-build]
+                                 [--provide CAP=REPO] [--env K=V] [--env-file FILE]
+    otto docker compose down    [USE_CASE [SERVICE...]] [--on H] [--provide CAP=REPO]
+    otto docker ps              [--on H]
 
-``up``/``down`` speak USE-CASES (spec §10): one named, cross-repo deployment
-resolved by the provider competition (§4) and placed by role (§5), not a
-per-repo loop over ``[[docker.composes]]``. ``build`` still has its bare
-per-repo mode and additionally accepts a use-case to narrow to the winners;
-``ps`` is unchanged.
+``compose build``/``compose up``/``compose down`` speak USE-CASES (spec §10): one named,
+cross-repo deployment resolved by the provider competition (§4) and placed by
+role (§5), not a per-repo loop over ``[[docker.composes]]``. ``build`` builds
+images only: it stages a repo's declared images onto one lab host and knows
+nothing about a composition, so it takes ``--on`` (required), never a
+use-case; ``ps`` is unchanged.
 
 Every leaf is a thin wrapper around the library API in :mod:`otto.docker`,
 which is also what instructions and suites import directly.
@@ -25,8 +27,10 @@ would put the compose and build machinery and the whole Unix host stack on the
 ``otto docker --help`` path, which ``tests/unit/import_budget`` gates.
 """
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 
 import typer
 from rich import print as rprint
@@ -40,41 +44,36 @@ from .invoke import fail, print_error
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 
-    from ..config.lab import Lab
-    from ..config.repo import DockerUseCase, Repo
+    from ..config.repo import DockerUseCase
     from ..docker.deployment import UseCaseStack
+    from ..docker.reports import BuildReport, HostReport
     from ..docker.resolve import Displacement
-    from ..host.unix_host import UnixHost
 
 _T = TypeVar("_T")
 
 docker_app = typer.Typer(
     name="docker",
-    help="Build images and deploy use-case stacks on docker-capable lab hosts.",
+    help=(
+        "Build images (`build`), inspect (`ps`, `use-cases`) and run use-case stacks (`compose`)."
+    ),
     no_args_is_help=True,
     context_settings={
         "help_option_names": ["-h", "--help"],
     },
 )
 
-
-# Read-only docker subcommands that produce no artifacts → no output dir.
-_NO_OUTPUT_DIR_SUBCOMMANDS = frozenset({"ps", "use-cases"})
-
-# Subcommands that own their own ``--dry-run`` preview and so opt OUT of the
-# seam default (``otto.cli.invoke.stop_at_dry_run_seam``, which otherwise
-# prints a generic block and exits 0 ABOVE the leaf body). ``deploy`` and
-# ``teardown`` resolve the whole pure half of the pipeline under a dry run and
-# decline with spec §12's plan — the exact compose command included — so
-# stopping at the seam would delete the preview this workstream exists to
-# ship. ``build``/``ps`` keep the safe default; ``use-cases`` is read-only and
-# behaves identically either way, so it needs no opt-in.
-_DRY_RUN_PREVIEW_SUBCOMMANDS = frozenset({"up", "down"})
+compose_app = typer.Typer(
+    name="compose",
+    help="Build, deploy and tear down use-case stacks (docker compose, one layer up).",
+    no_args_is_help=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+docker_app.add_typer(compose_app, name="compose")
 
 
 @docker_app.callback()
 def docker_callback(ctx: typer.Context) -> None:
-    """Build images and deploy use-case stacks on docker-capable lab hosts.
+    """Build images, inspect, and run use-case stacks via ``compose``.
 
     Output-dir creation moved to the shared leaf-invoke
     :func:`~otto.cli.invoke.command_preamble`; the read-only ``ps`` leaf opts
@@ -147,7 +146,8 @@ def _default_use_case(use_case: str | None) -> str:
 
     Omitting it is only unambiguous when exactly one use-case is declared.
     Zero and many are both hard errors (exit 1) rather than a quiet no-op —
-    the same loudness contract ``_select_repos`` carries one layer down.
+    the same loudness contract every build verb's refusal carries one layer
+    down (:class:`~otto.docker.build_verbs.DockerBuildError`).
     """
     if use_case is not None:
         return use_case
@@ -165,7 +165,7 @@ def _default_use_case(use_case: str | None) -> str:
     if len(names) > 1:
         fail(
             f"otto docker: {len(names)} use-cases are declared ({', '.join(names)}) — "
-            f"name the one you mean, e.g. `otto docker up {names[0]}`."
+            f"name the one you mean, e.g. `otto docker compose up {names[0]}`."
         )
     return names[0]
 
@@ -251,11 +251,14 @@ _DECLINED = _Declined()
 """Sentinel distinguishing "a dry run declined" from a verb that returns None."""
 
 
-async def _run_use_case(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
-    """Await a use-case library call, rendering its two refusal shapes.
+_BUILD_FLAGS: "dict[str, str]" = {"host": "--on", "repo": "--repo", "images": "IMAGE"}
 
-    ``deploy``/``teardown`` refuse in exactly two ways, and they mean opposite
-    things to the process:
+
+async def _run_docker(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
+    """Await a docker library call, rendering its three refusal shapes.
+
+    ``deploy``/``teardown``/the build verbs refuse in exactly three ways, and
+    they mean different things to the process:
 
     * :class:`~otto.result.CommandNotRunError` — a dry run's decline. It is the
       ANSWER the user asked for (it carries spec §12's resolved plan and, for
@@ -266,15 +269,21 @@ async def _run_use_case(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
       refusal (an ``--on`` naming no lab host, a provider tie, an unresolvable
       role). The LIBRARY's phrase is what reaches the user, verbatim: this
       layer keeps no second copy that could drift from it.
+    * :class:`~otto.docker.build_verbs.DockerBuildError` — a build verb's
+      input refusal, field-named. Spelled in this command's flags at this one
+      site via :func:`~otto.cli.invoke.usage_error_from` (exit 2), the way
+      ``otto test`` spells a bad ``--cov-dir``.
 
     Returns the call's value, or :data:`_DECLINED` when it declined. A
-    sentinel and not ``None``, because ``None`` is ``teardown``'s own successful
-    return value — reading it as "declined" would make every real teardown
-    print nothing.
+    sentinel, not a bare ``object()`` or ``None``, so a caller's
+    ``isinstance(report, _Declined)`` narrowing is unambiguous regardless of
+    what the library call itself returns on success.
     """
+    from ..docker.build_verbs import DockerBuildError
     from ..docker.resolve import UseCaseResolutionError
     from ..host.host import is_dry_run
     from ..result import CommandNotRunError
+    from .invoke import usage_error_from
 
     try:
         return await action
@@ -290,251 +299,130 @@ async def _run_use_case(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
         return _DECLINED
     except UseCaseResolutionError as e:
         fail(e)
+    except DockerBuildError as e:
+        raise usage_error_from(e, flags=_BUILD_FLAGS) from e
 
 
-def _select_repos(repo_name: str | None, on: str | None = None) -> "list[Repo]":
-    """Filter loaded repos by name AND by lab applicability.
-
-    A repo is "applicable" if either:
-      - none of its [[docker.use_cases]] fragments commit a placement pin
-        (there is nothing to check against the active lab — a later step
-        surfaces its own clear error if that turns out to matter), or
-      - at least one pinned host names a host in the active lab.
-
-    Only committed pins are consulted here, never full placement resolution
-    (role matching, scope, or the config-debris checks `_place_fragment`
-    performs): this filter is a coarse, non-authoritative pre-check, and the
-    LOUD authority over whether a fragment's placement is even well-formed is
-    `_resolve_parent`/`resolve_placement`, run later at actual resolve time
-    for the repos that survive here. Running full resolution here too would
-    double-refuse — a mis-keyed `placement` table (e.g. a role that names a
-    key the fragment doesn't carry) is `_place_fragment`'s specific, actionable
-    refusal, and catching it here would either swallow it into this filter's
-    generic "not in active lab" exclusion or race it against a second,
-    differently-worded refusal depending on which check runs first. A repo
-    whose fragments carry only a role (no pin) has nothing concrete for this
-    coarse filter to check, so it is kept — same as a repo with no
-    candidates at all — and the resolve-time step still catches every real
-    problem, once, in one voice.
-
-    --on is a runtime override of *where* to deploy, never a signal of
-    *which* repos belong to the active lab, so it plays no part in this
-    filter (see the loop below) — only in the earlier "does --on itself
-    name a host in this lab" check.
-
-    A multi-repo workspace can declare docker stacks on hosts that belong to
-    different labs (e.g. repo1 → unix/test3, repo2 → unix_alt/alt3).
-    Only one lab is active per `otto` invocation, so iterating over a repo
-    whose target host isn't loaded would yield a confusing "not in lab"
-    error. Every excluded repo is printed (yellow) with its reason instead.
-
-    If *on* is explicitly provided but does not name a host in the active
-    lab, that's a user error — fail fast rather than silently skipping
-    every repo and exiting 0. Likewise, an empty selection after filtering —
-    whether because no active repo declares a [docker] section at all, or
-    every candidate was excluded above — is a hard error (exit 1), never a
-    silent no-op.
-    """
-    from ..config.fleet import get_lab
-
-    lab = get_lab()
-
-    if on is not None and on not in lab.hosts:
-        fail(
-            f"--on {on!r} is not a host in the active lab {lab.name!r}. "
-            f"Available hosts: {sorted(lab.hosts)}"
-        )
-
-    docker_repos = [
-        r for r in get_repos() if r.docker_settings.composes or r.docker_settings.images
-    ]
-    if not docker_repos:
-        fail(
-            "otto docker: no active repo declares a [docker] section — nothing to act on. "
-            "Add [docker] to a repo's .otto/settings.toml (see the settings guide)."
-        )
-    if repo_name is not None:
-        matches = [r for r in docker_repos if r.name == repo_name]
-        if not matches:
-            fail(f"No loaded repo named {repo_name!r} with a [docker] section.")
-        docker_repos = matches
-
-    applicable: list[Repo] = []
-    excluded: list[tuple[str, str]] = []  # (repo name, reason)
-    for r in docker_repos:
-        # Lab applicability is determined by the repo's committed placement
-        # pins, not by --on. --on is a runtime override of where to deploy, not
-        # a signal of which repos belong to the active lab — using [on] here
-        # would incorrectly keep every repo whenever the override is in lab.
-        # Pins only, never resolve_placement: this is a coarse pre-check, and
-        # _resolve_parent is the loud authority that actually validates a
-        # fragment's placement later — running full resolution here would
-        # double-refuse the same config debris in two different voices.
-        # A lab-qualified pin ("unix_alt:alt3") is stripped to its host id —
-        # this filter only asks "is the host reachable from here", the same
-        # question a bare pin answers by direct membership.
-        candidates: list[str] = [
-            pin.rpartition(":")[2]
-            for uc in r.docker_settings.use_cases
-            for pin in uc.placement.values()
-        ]
-        # A repo with no pinned candidates at all (role-only, or no
-        # use-cases) is kept — _resolve_parent will surface a clear error of
-        # its own.
-        if not candidates or any(c in lab.hosts for c in candidates):
-            applicable.append(r)
-        else:
-            excluded.append(
-                (r.name, f"its docker hosts {candidates} are not in active lab {lab.name!r}")
+def _render_build_report(report: "BuildReport") -> None:
+    """Print a build report one image per line; exit 1 when any image failed."""
+    _print_displacements(report.displaced)
+    for entry in report.repos:
+        if entry.kind == "no_images":
+            msg = (
+                f"docker: {entry.repo} declares no [[docker.images]] — "
+                f"nothing to build on {entry.host}"
             )
-    for name, reason in excluded:
-        # escape()d for the same reason the use-cases table's fragment cell is:
-        # `reason` embeds a Python list ("its docker hosts ['test3'] are not
-        # ..."), and rich reads `['test3']` as a style tag and deletes it —
-        # from the one message whose entire job is naming WHICH hosts were
-        # unreachable.
-        rprint(f"[yellow]{escape(f'docker: skipping repo {name!r} — {reason}')}")
-    if not applicable:
-        fail(
-            "otto docker: every candidate repo was excluded (see the reasons above). "
-            "Load the lab the repo targets, or pass --on with a host in this lab "
-            "after fixing the repo's [docker] declaration."
-        )
-    return applicable
+            rprint(f"[yellow]{escape(msg)}")
+            continue
+        for name, res in entry.images.items():
+            # `value` on every branch: the tag on ok, the captured build output
+            # on failure. Never `msg` — an exec-produced CommandResult leaves it
+            # empty, so reading it here would print nothing at all.
+            if res.status is Status.Skipped:
+                line = escape(f"{entry.repo}/{name}: cached → {res.value}")
+                rprint(f"[dim]{line} ({entry.host})")
+            elif res.status is Status.Success:
+                line = escape(f"{entry.repo}/{name}: built → {res.value}")
+                rprint(f"[green]{line} ({entry.host})")
+            else:
+                print_error(f"{entry.repo}/{name}: FAILED on {entry.host}\n{res.value}")
+    if not report.ok:
+        raise typer.Exit(1)
 
 
-def _resolve_parent_for_repo(repo: "Repo", lab: "Lab", on: str | None) -> "UnixHost":
-    """Reuse compose._resolve_parent — public via private import to avoid duplicate logic."""
-    from ..docker.compose import _resolve_parent
-
-    return _resolve_parent(repo, lab, on)
-
-
-def _canonicalize_on(lab: "Lab", on: str | None) -> str | None:
-    """Validate a ``--on`` CLI value against the active lab, returning the host id.
-
-    ``--on`` is a CLI host-id INPUT — like the ``otto host`` positional and
-    ``--hop`` — checked here, once, at the CLI boundary so downstream
-    (``_select_repos``'s ``lab.hosts`` membership check, ``_resolve_parent``'s
-    ``lab.hosts[...]`` lookup) can trust the id is real instead of failing
-    later with a less specific message.
-    """
-    if on is None:
-        return None
-    host = lab.hosts.get(on)
-    if host is None:
-        fail(
-            f"--on {on!r} is not a host in the active lab {lab.name!r}. "
-            f"Available hosts: {sorted(lab.hosts)}"
-        )
-    return host.id
-
-
-def _narrow_to_use_case(
-    repos: "list[Repo]", use_case: str, provide: "dict[str, str]"
-) -> "list[Repo]":
-    """Keep only the repos whose fragments WON the competition for *use_case*.
-
-    ``build <USE_CASE>`` exists so a deploy's image work can be done ahead of
-    time without also building the images of every repo the provider
-    competition (spec §4) just excluded. The competition runs over every active
-    repo — that is what makes it the same competition ``up`` runs — and the
-    result is intersected with the lab-applicable selection ``_select_repos``
-    already made.
-    """
-    from ..docker.resolve import UseCaseResolutionError, select_fragments
-
-    try:
-        selection = select_fragments(use_case, get_repos(), provide=provide)
-    except UseCaseResolutionError as e:
-        fail(e)
-    _print_displacements(selection.displaced)
-    winners = {sf.repo.name for sf in selection.fragments}
-    narrowed = [r for r in repos if r.name in winners]
-    if not narrowed:
-        fail(
-            f"otto docker build {use_case}: the repos participating in use-case "
-            f"{use_case!r} ({sorted(winners)}) are not in this lab's selection "
-            f"({sorted(r.name for r in repos)}) — there is nothing to build for it."
-        )
-    return narrowed
+def _render_host_report(report: "HostReport", *, done: str) -> None:
+    """Print one line per host: ``<host>: <done>`` or its first failed command; exit 1 on any."""
+    for host, results in report.hosts.items():
+        bad = [r for r in results if not r.is_ok]
+        if bad:
+            print_error(f"{host}: FAILED — {bad[0].command}: {bad[0].value}")
+        else:
+            rprint(f"[green]{escape(f'{host}: {done}')}")
+    if not report.ok:
+        raise typer.Exit(1)
 
 
 async def _build(
-    use_case: Annotated[
-        str | None,
-        typer.Argument(
-            help="Build only the repos participating in this use-case (default: all selected).",
-            autocompletion=_use_case_completer,
-        ),
-    ] = None,
     image: Annotated[
-        list[str] | None, typer.Argument(help="Image names to build (default: all).")
-    ] = None,
-    repo: Annotated[
-        str | None, typer.Option("--repo", help="Restrict to a single repo by name.")
+        list[str] | None, typer.Argument(help="Declared image names to build (default: all).")
     ] = None,
     on: Annotated[
         str | None,
         typer.Option(
-            "--on", help="Lab host id to build on.", autocompletion=_docker_host_completer
+            "--on",
+            help="The docker-capable lab host to build on. Required.",
+            autocompletion=_docker_host_completer,
         ),
     ] = None,
+    repo: Annotated[
+        str | None, typer.Option("--repo", help="Restrict to a single repo by name.")
+    ] = None,
     rebuild: Annotated[
-        bool, typer.Option("--rebuild", help="Force rebuild even if context-hash tag exists.")
+        bool, typer.Option("--rebuild", help="Force rebuild even if a context-hash tag exists.")
     ] = False,
+) -> None:
+    """Build the selected repos' declared images on one lab host.
+
+    Like `docker build`, this knows nothing about a composition: it needs a
+    host, not a use-case, so --on is required. To build the images a
+    deployment would use, on the hosts it would use, run
+    `otto docker compose build`.
+    """
+    from ..docker.build_verbs import build_on
+
+    report = await _run_docker(build_on(on, repo=repo, images=image, rebuild=rebuild))
+    if not isinstance(report, _Declined):
+        _render_build_report(report)
+
+
+async def _compose_build(
+    use_case: Annotated[
+        str | None,
+        typer.Argument(
+            help="Use-case whose images to build (default: the only one declared).",
+            autocompletion=_use_case_completer,
+        ),
+    ] = None,
+    image: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Declared image names to build, over the use-case's winners (default: all)."
+        ),
+    ] = None,
+    on: Annotated[
+        str | None,
+        typer.Option(
+            "--on",
+            help="Collapse every fragment onto this lab host, as `compose up` does.",
+            autocompletion=_docker_host_completer,
+        ),
+    ] = None,
     provide: Annotated[
         list[str] | None,
         typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
     ] = None,
+    rebuild: Annotated[
+        bool, typer.Option("--rebuild", help="Force rebuild even if a context-hash tag exists.")
+    ] = False,
 ) -> None:
-    """Build docker images declared in selected repos.
+    """Build the images a deployment of a use-case would use, where it would use them.
 
-    With a USE_CASE, only the repos taking part in it are built — the same
-    provider competition `otto docker up` runs, so the images that get built
-    are the ones that deployment would actually use.
+    The same provider competition and placement `otto docker compose up` runs,
+    so the images that get built are the ones deployment would use, on the
+    hosts it would use.
     """
-    from ..config.fleet import get_lab
-    from ..docker import build_images
+    from ..docker.build_verbs import compose_build
 
     provide_map = _parse_provide(provide)
-    lab = get_lab()
-    on = _canonicalize_on(lab, on)
-    selected_repos = _select_repos(repo, on=on)
-    if use_case is not None:
-        selected_repos = _narrow_to_use_case(selected_repos, use_case, provide_map)
-    any_failed = False
-    acted = False
-    for r in selected_repos:
-        if not r.docker_settings.images:
-            msg = escape(f"docker: {r.name} declares no [[docker.images]] — nothing to build")
-            rprint(f"[yellow]{msg}")
-            continue
-        acted = True
-        parent = _resolve_parent_for_repo(r, lab, on)
-        results = await build_images(r, parent, image_names=image, rebuild=rebuild)
-        for name, res in results.items():
-            # `value` on every branch: the tag on ok, the captured build output
-            # on failure. Never `msg` — an exec-produced CommandResult leaves
-            # it empty, so reading it here would print nothing at all.
-            if res.status is Status.Skipped:
-                rprint(f"[dim]{r.name}/{name}: cached → {res.value}")
-            elif res.status is Status.Success:
-                rprint(f"[green]{r.name}/{name}: built → {res.value}")
-            else:
-                any_failed = True
-                print_error(f"{r.name}/{name}: FAILED\n{res.value}")
-    if not acted:
-        fail(
-            "otto docker build: no selected repo declares [[docker.images]] — nothing to "
-            "build (see the notices above). Add [[docker.images]] to a repo's "
-            ".otto/settings.toml (see the settings guide)."
-        )
-    if any_failed:
-        raise typer.Exit(1)
+    name = _default_use_case(use_case)
+    report = await _run_docker(
+        compose_build(name, on=on, provide=provide_map, images=image, rebuild=rebuild)
+    )
+    if not isinstance(report, _Declined):
+        _render_build_report(report)
 
 
-async def _up(
+async def _compose_up(
     use_case: Annotated[
         str | None,
         typer.Argument(
@@ -587,13 +475,13 @@ async def _up(
     # itself (it shares one pure prefix with `teardown`, so the two verbs
     # cannot disagree about where a deployment lives), and it owns the refusal
     # — so a host this lab does not have is named once, in one sentence,
-    # however the deployment was reached (T7 review I3).
+    # however the deployment was reached.
     from ..docker.deployment import deploy
 
     provide_map = _parse_provide(provide)
     env_map = _parse_env(env)
     name = _default_use_case(use_case)
-    stack = await _run_use_case(
+    stack = await _run_docker(
         deploy(
             name,
             services=service or None,
@@ -608,7 +496,7 @@ async def _up(
         _print_stack_report(stack)
 
 
-async def _down(
+async def _compose_down(
     use_case: Annotated[
         str | None,
         typer.Argument(
@@ -635,7 +523,7 @@ async def _down(
 ) -> None:
     """Tear a use-case's stacks down and unregister their container hosts.
 
-    --on and --provide are resolved exactly as `otto docker up` resolves them,
+    --on and --provide are resolved exactly as `otto docker compose up` resolves them,
     so a teardown can never address a different project than the deployment it
     is undoing. Naming SERVICEs stops and removes just those, leaving the rest
     of the stack and its network standing.
@@ -644,13 +532,11 @@ async def _down(
 
     provide_map = _parse_provide(provide)
     name = _default_use_case(use_case)
-    outcome = await _run_use_case(
-        teardown(name, services=service or None, on=on, provide=provide_map)
-    )
-    if isinstance(outcome, _Declined):
+    report = await _run_docker(teardown(name, services=service or None, on=on, provide=provide_map))
+    if isinstance(report, _Declined):
         return
     scope = f" ({', '.join(service)})" if service else ""
-    rprint(f"[green]{escape(f'{name}{scope}: torn down.')}")
+    _render_host_report(report, done=f"{name}{scope} torn down")
 
 
 def _use_cases(
@@ -817,27 +703,42 @@ async def _ps(
     rprint(table)
 
 
-# Read-only docker subcommands (`ps`, `use-cases`) produce no artifacts → opt them out of
-# the per-command output dir. The leaf-invoke preamble reads `__cli_output_dir__`
-# off the command callback (default True); typer's own callback shim
-# functools-wraps the registered function, carrying the marker through. This
-# keeps `_NO_OUTPUT_DIR_SUBCOMMANDS` the single source of truth for the policy.
-# The async bodies run under the command lifecycle via the leaf-invoke
-# wrapper's coroutine bridge (cli/invoke._wrap_invoke) at dispatch.
-_DOCKER_SUBCOMMANDS: dict[str, Any] = {
-    "build": _build,
-    "up": _up,
-    "down": _down,
-    "ps": _ps,
-    "use-cases": _use_cases,
-}
-for _sub_name, _sub_fn in _DOCKER_SUBCOMMANDS.items():
-    if _sub_name in _NO_OUTPUT_DIR_SUBCOMMANDS:
-        _sub_fn.__cli_output_dir__ = False
-    if _sub_name in _DRY_RUN_PREVIEW_SUBCOMMANDS:
-        # Read by `otto.cli.invoke._leaf_declares_preview` off the RESOLVED
-        # command's callback — the same mechanism `@cli_exposed(
-        # dry_run_preview=True)` stamps for host verbs, reached here without a
-        # decorator because these leaves are registered from a table.
-        _sub_fn.__cli_dry_run_preview__ = True
-    docker_app.command(name=_sub_name)(_sub_fn)
+@dataclass(frozen=True)
+class _Verb:
+    """One registered docker verb: its group, leaf and the policies the preamble reads."""
+
+    name: str
+    group: Literal["docker", "compose"]
+    leaf: "Callable[..., Any]"
+    output_dir: bool = True
+    """False: read-only, no per-invocation output directory."""
+    dry_run_preview: bool = False
+    """True: the leaf owns its own ``--dry-run`` preview and so opts OUT of the seam
+    default (``otto.cli.invoke.stop_at_dry_run_seam``, which otherwise prints a generic
+    block and exits 0 ABOVE the leaf body). ``compose up``/``compose down`` resolve the
+    whole pure half of the pipeline under a dry run and decline with spec §12's plan —
+    the exact compose command included — so stopping at the seam would delete the
+    preview this workstream exists to ship. ``build``/``ps`` keep the safe default;
+    ``use-cases`` is read-only and behaves identically either way, so it needs no opt-in.
+    """
+
+
+# The single source of truth for which docker verbs exist, which group each registers
+# on, and the two per-leaf policies the leaf-invoke preamble reads off the RESOLVED
+# command's callback (`__cli_output_dir__`, `__cli_dry_run_preview__`, both defaulting
+# False when absent) -- typer's own callback shim functools-wraps the registered
+# function, carrying the markers through.
+_VERBS: "list[_Verb]" = [
+    _Verb("build", "docker", _build, dry_run_preview=True),
+    _Verb("ps", "docker", _ps, output_dir=False),
+    _Verb("use-cases", "docker", _use_cases, output_dir=False),
+    _Verb("build", "compose", _compose_build, dry_run_preview=True),
+    _Verb("up", "compose", _compose_up, dry_run_preview=True),
+    _Verb("down", "compose", _compose_down, dry_run_preview=True),
+]
+_GROUPS: "dict[str, typer.Typer]" = {"docker": docker_app, "compose": compose_app}
+
+for _verb in _VERBS:
+    _verb.leaf.__cli_output_dir__ = _verb.output_dir  # ty: ignore[unresolved-attribute]
+    _verb.leaf.__cli_dry_run_preview__ = _verb.dry_run_preview  # ty: ignore[unresolved-attribute]
+    _GROUPS[_verb.group].command(name=_verb.name)(_verb.leaf)

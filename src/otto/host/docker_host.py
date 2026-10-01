@@ -385,7 +385,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             except Exception as e:
                 raise RuntimeError(
                     f"Container {self.id!r} is declared but not running, and "
-                    f"auto-start failed: {e}. Run `otto docker up {self.project}` "
+                    f"auto-start failed: {e}. Run `otto docker compose up {self.project}` "
                     f"first."
                 ) from e
 
@@ -405,7 +405,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     f"Container {self.id!r} is declared but not running. "
                     f"Auto-start of use-case {self.project!r} did not produce "
                     f"a container for service {self.service!r} on {self.parent.id}. "
-                    f"Run `otto docker up {self.project}` first."
+                    f"Run `otto docker compose up {self.project}` first."
                 )
             return cid
 
@@ -422,7 +422,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running, and no "
                 f"repo named {self.project!r} is configured to auto-start it. "
-                f"Run `otto docker up` for project {self.project!r} first."
+                f"Run `otto docker compose up` for project {self.project!r} first."
             )
 
         try:
@@ -461,7 +461,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         except Exception as e:
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running, and "
-                f"auto-start failed: {e}. Run `otto docker up` for project "
+                f"auto-start failed: {e}. Run `otto docker compose up` for project "
                 f"{self.project!r} first."
             ) from e
 
@@ -470,7 +470,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running. "
                 f"Auto-start of stack {self.compose_project!r} did not produce "
-                f"a container for service {self.service!r}. Run `otto docker up` "
+                f"a container for service {self.service!r}. Run `otto docker compose up` "
                 f"for project {self.project!r} first."
             )
         return host.container_id
@@ -546,7 +546,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         the table is in-memory state built by whichever invocation ran the
         compose-up, and a later ``otto`` invocation re-registers the container
         as a placeholder with an empty table even while the stack is up. A
-        remedy line reading "run `otto docker up` first" would then instruct a
+        remedy line reading "run `otto docker compose up` first" would then instruct a
         reader to do the thing they had already done.
         """
         if self.mounts:
@@ -562,7 +562,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 f"for this container. Mounts are read from the daemon at bring-up and are "
                 f"held in memory by the process that brought the stack up, so either the "
                 f"stack is not up, or it was brought up by a different otto invocation. "
-                f"Bring it up from this process (`otto docker up`, or deploy its use-case) "
+                f"Bring it up from this process (`otto docker compose up`, or deploy its use-case) "
                 f"to populate the table."
             )
         return (

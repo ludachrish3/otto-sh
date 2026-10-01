@@ -189,7 +189,7 @@ async def resolve_endpoint(lab: "Lab", spec: EndpointSpec) -> ResolvedHop:
         if not running:
             raise ValueError(
                 f"container {host_id!r} is not running — tunnel commands never start "
-                f"containers; run `otto docker up` for project {host.project!r} first"
+                f"containers; run `otto docker compose up` for project {host.project!r} first"
             )
         return ResolvedHop(hop=TunnelHop(host=host_id), ip=await _container_ip(host), host=host)
     return _resolve_static(host_id, host, iface)

@@ -58,7 +58,7 @@ _ROLE_DOCKER_HOST = "test3"
 # The use-cases the sample repos declare (spec §14's "name the fragment after
 # the repo and container ids stay literally unchanged"): repo1 declares `repo1`
 # and `integration`, repo2 declares `repo2` and `integration`. Two or more
-# declared use-cases make a bare `otto docker up` ambiguous — it refuses,
+# declared use-cases make a bare `otto docker compose up` ambiguous — it refuses,
 # naming them — so every invocation below names the one it means.
 _REPO1_USE_CASE = "repo1"
 _MERGED_USE_CASE = "integration"
@@ -191,6 +191,7 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
     for use_case in (_REPO1_USE_CASE, _MERGED_USE_CASE):
         _run_otto(
             "docker",
+            "compose",
             "down",
             use_case,
             "--on",
@@ -208,6 +209,7 @@ def teardown_role_host_after(fresh_suffix, role_docker_host, tmp_path):
     for use_case in (_REPO1_USE_CASE, _MERGED_USE_CASE):
         _run_otto(
             "docker",
+            "compose",
             "down",
             use_case,
             "--on",
@@ -224,11 +226,18 @@ def teardown_role_host_after(fresh_suffix, role_docker_host, tmp_path):
 
 
 def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
-    """The bug that started this whole thread: `otto docker up` must build
+    """The bug that started this whole thread: `otto docker compose up` must build
     images first when the compose file references locally-built ones."""
     suffix = teardown_after
     up = _run_otto(
-        "docker", "up", _REPO1_USE_CASE, "--on", docker_host, xdir=tmp_path, compose_suffix=suffix
+        "docker",
+        "compose",
+        "up",
+        _REPO1_USE_CASE,
+        "--on",
+        docker_host,
+        xdir=tmp_path,
+        compose_suffix=suffix,
     )
     assert up.returncode == 0, (
         f"`docker up` should succeed end-to-end\nstdout:\n{up.stdout}\nstderr:\n{up.stderr}"
@@ -240,10 +249,17 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
     )
 
     down = _run_otto(
-        "docker", "down", _REPO1_USE_CASE, "--on", docker_host, xdir=tmp_path, compose_suffix=suffix
+        "docker",
+        "compose",
+        "down",
+        _REPO1_USE_CASE,
+        "--on",
+        docker_host,
+        xdir=tmp_path,
+        compose_suffix=suffix,
     )
     assert down.returncode == 0, down.stderr
-    assert f"{_REPO1_USE_CASE}: torn down." in down.stdout, down.stdout
+    assert f"{docker_host}: {_REPO1_USE_CASE} torn down" in down.stdout, down.stdout
     # docker orchestration runs on a docker host → docker output dir created
     assert_output_dir(tmp_path, "docker")
 
@@ -259,7 +275,14 @@ def test_e2e_host_run_against_running_container(
     suffix = teardown_role_host_after
     docker_host = role_docker_host
     up = _run_otto(
-        "docker", "up", _REPO1_USE_CASE, "--on", docker_host, xdir=tmp_path, compose_suffix=suffix
+        "docker",
+        "compose",
+        "up",
+        _REPO1_USE_CASE,
+        "--on",
+        docker_host,
+        xdir=tmp_path,
+        compose_suffix=suffix,
     )
     assert up.returncode == 0, up.stderr
 
@@ -289,7 +312,14 @@ def test_e2e_host_put_get_roundtrip(teardown_role_host_after, role_docker_host, 
     suffix = teardown_role_host_after
     docker_host = role_docker_host
     up = _run_otto(
-        "docker", "up", _REPO1_USE_CASE, "--on", docker_host, xdir=tmp_path, compose_suffix=suffix
+        "docker",
+        "compose",
+        "up",
+        _REPO1_USE_CASE,
+        "--on",
+        docker_host,
+        xdir=tmp_path,
+        compose_suffix=suffix,
     )
     assert up.returncode == 0, up.stderr
 
@@ -347,16 +377,30 @@ def test_e2e_host_put_get_roundtrip(teardown_role_host_after, role_docker_host, 
 
 
 def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
-    """A second `otto docker up` against a running stack must not fail or
+    """A second `otto docker compose up` against a running stack must not fail or
     re-create containers."""
     suffix = teardown_after
     first = _run_otto(
-        "docker", "up", _REPO1_USE_CASE, "--on", docker_host, xdir=tmp_path, compose_suffix=suffix
+        "docker",
+        "compose",
+        "up",
+        _REPO1_USE_CASE,
+        "--on",
+        docker_host,
+        xdir=tmp_path,
+        compose_suffix=suffix,
     )
     assert first.returncode == 0, first.stderr
 
     second = _run_otto(
-        "docker", "up", _REPO1_USE_CASE, "--on", docker_host, xdir=tmp_path, compose_suffix=suffix
+        "docker",
+        "compose",
+        "up",
+        _REPO1_USE_CASE,
+        "--on",
+        docker_host,
+        xdir=tmp_path,
+        compose_suffix=suffix,
     )
     assert second.returncode == 0, (
         f"second `up` against a running stack must succeed\n"
@@ -387,19 +431,13 @@ def test_e2e_build_rebuild_forces(docker_host, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Multi-repo lab filtering (the second user-reported bug)
+# Multi-repo build (host-wide, ignores use-case pins)
 # ---------------------------------------------------------------------------
 
 
-def test_e2e_multi_repo_build_names_the_excluded_repo(docker_host, tmp_path):
-    """`otto docker build` must name the repo it excluded, and skip it cleanly.
-
-    Repo2's ``[[docker.use_cases]]`` pins ``alt3``, a host of the unix_alt
-    lab, so under ``--lab unix`` it is not applicable and `_select_repos`
-    excludes it. That exclusion used to be a DEBUG log and an exit 0 with no
-    output (the reported demo failure); it is a loud yellow line now. `build`
-    is where `_select_repos` still runs — `up`/`down` select by use-case name
-    (spec §10), not by repo — so this is the verb that pins the loudness.
+def test_e2e_multi_repo_build_builds_every_loaded_repo_on_the_host(docker_host, tmp_path):
+    """`otto docker build --on HOST` builds every loaded repo's declared
+    images on that host, ignoring use-case pins.
     """
     result = _run_otto(
         "docker",
@@ -410,27 +448,21 @@ def test_e2e_multi_repo_build_names_the_excluded_repo(docker_host, tmp_path):
         xdir=tmp_path,
     )
     assert result.returncode == 0, (
-        f"multi-repo `build` should skip repos targeting other labs (loudly, not raise)\n"
+        f"multi-repo `build` should build every loaded repo\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    assert "not in lab" not in (result.stdout + result.stderr), (
-        "repo2 (unix_alt-lab host) must be filtered, not raise"
+    # `_render_build_report` prints "<repo>/<image>: built|cached → <tag>" for
+    # every image it actually builds.
+    assert "repo1/api: built → " in result.stdout or "repo1/api: cached → " in result.stdout, (
+        f"repo1/api must be built or cached:\n{result.stdout}"
     )
-    assert "skipping repo 'repo2'" in result.stdout, (
-        f"repo2 (unix_alt-lab host) must be named in a loud exclusion line:\n{result.stdout}"
-    )
-    # `_build` prints "<repo>/<image>: built|cached → <tag>" for every image
-    # it actually builds. repo2's only image is `worker`, so its absence in
-    # that form is what proves the exclusion reached the build loop and was
-    # not merely announced.
-    assert "repo2/worker" not in result.stdout, (
-        f"repo2 was excluded but its image was built anyway:\n{result.stdout}"
-    )
-    assert "repo1/api" in result.stdout, result.stdout
+    assert (
+        "repo2/worker: built → " in result.stdout or "repo2/worker: cached → " in result.stdout
+    ), f"repo2/worker must be built or cached:\n{result.stdout}"
 
 
 def test_e2e_multi_repo_up_composes_only_the_named_use_case(teardown_after, docker_host, tmp_path):
-    """With both repos loaded, `otto docker up repo1` must touch repo1 alone.
+    """With both repos loaded, `otto docker compose up repo1` must touch repo1 alone.
 
     A use-case is the unit of deployment now, so the narrowing is by NAME:
     only repo1 declares ``repo1``, so repo2 contributes no fragment and no
@@ -442,6 +474,7 @@ def test_e2e_multi_repo_up_composes_only_the_named_use_case(teardown_after, dock
     suffix = teardown_after
     up = _run_otto(
         "docker",
+        "compose",
         "up",
         _REPO1_USE_CASE,
         "--on",
@@ -468,7 +501,7 @@ def test_e2e_multi_repo_up_composes_only_the_named_use_case(teardown_after, dock
 
 
 def test_e2e_multi_repo_down_no_traceback(docker_host, tmp_path):
-    """With both repos in SUT_DIRS, `otto docker down` must not raise a
+    """With both repos in SUT_DIRS, `otto docker compose down` must not raise a
     Python traceback for the unrelated lab.
 
     Repo2 targets the unix_alt lab (alt3) which is not in the active
@@ -480,6 +513,7 @@ def test_e2e_multi_repo_down_no_traceback(docker_host, tmp_path):
     """
     result = _run_otto(
         "docker",
+        "compose",
         "down",
         _REPO1_USE_CASE,
         "--on",
@@ -530,7 +564,7 @@ def test_e2e_run_against_unstarted_container_auto_starts(
     auto-start the stack (feature de361cc) rather than erroring.
 
     The command then succeeds against the freshly-started container — no
-    ``otto docker up`` step required of the caller.
+    ``otto docker compose up`` step required of the caller.
     ``teardown_role_host_after`` reaps the auto-started stack so it can't
     leak. The id is a PLACEHOLDER's, so this must run on the host placement
     minted it for (:data:`_ROLE_DOCKER_HOST`).
@@ -559,8 +593,10 @@ def test_e2e_run_against_unstarted_container_auto_starts(
 
 
 def test_e2e_up_unknown_host_clear_error(tmp_path):
-    """`otto docker up --on <unknown>` exits cleanly with a clear message."""
-    result = _run_otto("docker", "up", _REPO1_USE_CASE, "--on", "no_such_host", xdir=tmp_path)
+    """`otto docker compose up --on <unknown>` exits cleanly with a clear message."""
+    result = _run_otto(
+        "docker", "compose", "up", _REPO1_USE_CASE, "--on", "no_such_host", xdir=tmp_path
+    )
     output = result.stdout + result.stderr
     assert result.returncode != 0
     assert "not in lab" in output or "no_such_host" in output, output
@@ -568,7 +604,7 @@ def test_e2e_up_unknown_host_clear_error(tmp_path):
 
 
 def test_e2e_up_with_no_use_case_names_the_declared_ones(tmp_path):
-    """A bare `otto docker up` is ambiguous now, and says so (spec §10).
+    """A bare `otto docker compose up` is ambiguous now, and says so (spec §10).
 
     Both sample repos declare two use-cases each, so omitting the positional
     is a hard error listing them — never a silent pick, and never a no-op.
@@ -577,6 +613,7 @@ def test_e2e_up_with_no_use_case_names_the_declared_ones(tmp_path):
     """
     result = _run_otto(
         "docker",
+        "compose",
         "up",
         sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
@@ -593,7 +630,14 @@ def test_e2e_ps_lists_running_containers(teardown_after, docker_host, tmp_path):
     """After `up`, `otto docker ps` must show the running container."""
     suffix = teardown_after
     _run_otto(
-        "docker", "up", _REPO1_USE_CASE, "--on", docker_host, xdir=tmp_path, compose_suffix=suffix
+        "docker",
+        "compose",
+        "up",
+        _REPO1_USE_CASE,
+        "--on",
+        docker_host,
+        xdir=tmp_path,
+        compose_suffix=suffix,
     )
     ps = _run_otto("docker", "ps", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert ps.returncode == 0, ps.stderr
@@ -669,6 +713,7 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
     suffix = teardown_after
     up = _run_otto(
         "docker",
+        "compose",
         "up",
         _MERGED_USE_CASE,
         "--on",
@@ -695,6 +740,7 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
 
     down = _run_otto(
         "docker",
+        "compose",
         "down",
         _MERGED_USE_CASE,
         "--on",
@@ -704,7 +750,7 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
         compose_suffix=suffix,
     )
     assert down.returncode == 0, down.stdout + down.stderr
-    assert f"{_MERGED_USE_CASE}: torn down." in down.stdout, down.stdout
+    assert f"{docker_host}: {_MERGED_USE_CASE} torn down" in down.stdout, down.stdout
 
     ps = _run_otto("docker", "ps", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert ps.returncode == 0, ps.stderr
@@ -725,6 +771,7 @@ def test_e2e_provide_flips_the_winner(teardown_after, docker_host, tmp_path):
     suffix = teardown_after
     up = _run_otto(
         "docker",
+        "compose",
         "up",
         _MERGED_USE_CASE,
         "--provide",
@@ -767,6 +814,7 @@ def test_e2e_dry_run_prints_the_plan_and_starts_nothing(docker_host, tmp_path):
     dry = _run_otto(
         "-n",
         "docker",
+        "compose",
         "up",
         _MERGED_USE_CASE,
         "--env-file",

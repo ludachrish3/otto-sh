@@ -89,7 +89,7 @@ match = { id = "test[1-3]" }
 # id, mirroring the TestCoverageProduct suite's own `_REAL_HOSTS`. Bare
 # UnixHost ids only — the dotted `<parent>.<project>.<service>` ids of the
 # DockerContainerHost placeholders `register_declared_container_hosts`
-# synthesizes fail exec until `otto docker up` populates them, so they are no
+# synthesizes fail exec until `otto docker compose up` populates them, so they are no
 # more a coverage target than they are a test target.
 hosts = "[^.]+"
 
