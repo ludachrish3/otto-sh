@@ -533,7 +533,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     #  File operations
     ####################
 
-    @cli_exposed(output_dir=False)
+    @cli_exposed(output_dir=False, help_="Check whether path exists on the device (`fs ls`).")
     async def exists(self, path: "str | Path") -> bool:
         """Return ``True`` when *path* exists on the device (via ``fs ls``).
 
@@ -548,7 +548,10 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         refuse_declined_fact(result, asked=f"exists({str(path)!r})")
         return result.status.is_ok
 
-    @cli_exposed(output_dir=False)
+    @cli_exposed(
+        output_dir=False,
+        help_="List entry names in path on the device (`fs ls`); `--all` has no effect.",
+    )
     async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002, ARG002 — A002: CLI-exposed param name; ARG002: required by UnixHost.ls override signature
         """List entry names in *path* via the device ``fs ls`` former.
 
@@ -564,7 +567,9 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             return []
         return [line for line in result.value.splitlines() if line]
 
-    @cli_exposed
+    @cli_exposed(
+        help_="Remove path on the device (`fs rm`); `--recursive` and `--force` have no effect."
+    )
     async def rm(
         self,
         path: "str | Path",
@@ -617,7 +622,11 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     #  Binary load
     ####################
 
-    @cli_exposed(success="Binary loaded.", dry_run_preview=True)
+    @cli_exposed(
+        success="Binary loaded.",
+        dry_run_preview=True,
+        help_="Load a binary into the device runtime through the host's binary loader.",
+    )
     async def load(
         self,
         file: Annotated[Path, Arg(help="Binary to load into the device runtime.")],
@@ -667,7 +676,11 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             return Result(Status.Success)
         return Result(Status.Error, msg=f"load {name} from {file} failed: {reason}")
 
-    @cli_exposed(success="Binary unloaded.", dry_run_preview=True)
+    @cli_exposed(
+        success="Binary unloaded.",
+        dry_run_preview=True,
+        help_="Unload a binary from the device runtime; succeeds if it is not loaded.",
+    )
     async def unload(
         self,
         name: Annotated[str, Arg(help="Name of the binary to unload.")],

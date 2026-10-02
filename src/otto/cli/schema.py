@@ -50,13 +50,15 @@ def export(
         ),
     ] = False,
 ) -> None:
-    """Generate the schema files into ``out``.
+    """Write the JSON Schema files into the `--out` directory.
 
-    Custom host classes registered via ``.otto/settings.toml`` init modules are
-    already loaded by the time this runs (the otto package applies repo settings
-    at import), so they appear automatically; pass ``--builtins-only`` to emit
-    just the in-tree types.
+    Custom host classes registered via `.otto/settings.toml` init modules are
+    included automatically; pass `--builtins-only` to emit just the built-in
+    host types.
     """
+    # Developer note: custom host classes are already loaded by the time this
+    # runs (the otto package applies repo settings at import), which is why they
+    # appear without any extra step.
     from ..models.jsonschema import build_schemas
 
     out.mkdir(parents=True, exist_ok=True)

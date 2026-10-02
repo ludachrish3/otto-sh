@@ -1768,7 +1768,7 @@ class BaseHost(ABC):
         """Per-command runner for the persistent shell session. Subclasses override."""
         raise NotImplementedError from None
 
-    @cli_exposed
+    @cli_exposed(help_="Run one command on the host and exit with the command's own status.")
     async def exec(
         self,
         cmd: Annotated[
@@ -2229,7 +2229,7 @@ class BaseHost(ABC):
                 return False
         return True
 
-    @cli_exposed(output_dir=False)
+    @cli_exposed(output_dir=False, help_="Report the opposite of `is-installed`.")
     async def is_uninstalled(self, owner: str | None = None) -> bool:
         """Inverse of :meth:`is_installed`."""
         return not await self.is_installed(owner=owner)
@@ -2342,7 +2342,12 @@ class BaseHost(ABC):
                 first_failure = result
         return first_failure if first_failure is not None else Result(Status.Success)
 
-    @cli_exposed
+    @cli_exposed(
+        help_=(
+            "Fetch the host's debug logs into `logs/<host-id>/debug/` under the output "
+            "directory (or `--dest`)."
+        )
+    )
     async def get_debug_logs(self, dest: "Path | None" = None) -> Result:
         """Fetch :attr:`debug_log_globs` matches into ``…/logs/<host-id>/debug/``.
 
@@ -2477,7 +2482,12 @@ class BaseHost(ABC):
                 return result
         return Result(Status.Success)
 
-    @cli_exposed
+    @cli_exposed(
+        help_=(
+            "Remove this host's dev tools, best-effort; `--owner REPO` limits it to the "
+            "tools REPO attached."
+        )
+    )
     async def uninstall_dev_tools(self, owner: str | None = None) -> Result:
         """Remove this host's dev tools (best-effort), scoped by *owner*.
 
@@ -2620,7 +2630,9 @@ class BaseHost(ABC):
             )
         return self.power_control
 
-    @cli_exposed
+    @cli_exposed(
+        help_="Power this host on or off through its power controller; with no state, toggle it."
+    )
     async def power(self, state: "Annotated[str | None, Arg()]" = None) -> Result:
         """Power this host ``'on'``/``'off'``, or toggle when *state* is None.
 
@@ -2835,7 +2847,12 @@ class BaseHost(ABC):
                 )
         return result
 
-    @cli_exposed
+    @cli_exposed(
+        help_=(
+            "Power this host off from its own shell. Only unix hosts support it; "
+            "on any other kind of host it reports an error."
+        )
+    )
     async def shutdown(self) -> Result:
         """Power this host off from its own shell (distinct from external ``power('off')``).
 

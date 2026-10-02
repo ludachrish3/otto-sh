@@ -71,8 +71,8 @@ DESCRIPTION = f"""
 O.T.T.O. (Our Trusty Testing Orchestrator)
 
 If a development repo is under test, then {SUT_DIRS_ENV_VAR} must be set in your environment.
-It is a list of paths to repo root directories, separated by ``,`` or the OS path separator
-(``:`` on Linux/macOS, ``;`` on Windows).
+It is a list of paths to repo root directories, separated by `,` or the OS path separator
+(`:` on Linux/macOS, `;` on Windows).
 
 """
 

@@ -159,7 +159,7 @@ class PosixFileOps(UserlandHost):
     def _q(path: "str | Path") -> str:
         return shlex.quote(str(path))
 
-    @cli_exposed(output_dir=False)
+    @cli_exposed(output_dir=False, help_="Check whether path exists on the host (`test -e`).")
     async def exists(self, path: "str | Path") -> bool:
         """Return True when *path* exists on the host (``test -e``).
 
@@ -172,7 +172,10 @@ class PosixFileOps(UserlandHost):
         refuse_declined_fact(result, asked=f"exists({str(path)!r})")
         return result.status.is_ok
 
-    @cli_exposed(output_dir=False)
+    @cli_exposed(
+        output_dir=False,
+        help_="List entry names in path (`ls -1`); `--all` includes dotfiles (`-A`).",
+    )
     async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002 — CLI-exposed param name, maps to --all flag
         """List entry names in *path* (``ls -1``; *all* adds ``-A`` for dotfiles).
 
@@ -189,7 +192,10 @@ class PosixFileOps(UserlandHost):
             return []
         return [line for line in result.value.splitlines() if line]
 
-    @cli_exposed(output_dir=False)
+    @cli_exposed(
+        output_dir=False,
+        help_="Expand pattern on the host with its POSIX shell and list the matching paths.",
+    )
     async def glob(self, pattern: "Annotated[str, Arg()]") -> list[str]:
         """Expand *pattern* on the host via its POSIX shell; return matching paths.
 
@@ -220,7 +226,12 @@ class PosixFileOps(UserlandHost):
             return []
         return [line for line in result.value.splitlines() if line]
 
-    @cli_exposed
+    @cli_exposed(
+        help_=(
+            "Create directory path with `mkdir -p`, so missing parents are created; "
+            "`--no-parents` drops the `-p`."
+        )
+    )
     async def mkdir(self, path: "str | Path", parents: bool = True) -> Result:
         """Create directory *path* (``mkdir``; *parents* adds ``-p``)."""
         flag = "-p " if parents else ""
@@ -268,7 +279,7 @@ class PosixFileOps(UserlandHost):
         result = await self.exec(cmd, user=user)  # ty: ignore[unresolved-attribute]
         return Result(result.status, msg=result.value)
 
-    @cli_exposed
+    @cli_exposed(help_="Remove path (`rm`); `--recursive` adds `-r`, `--force` adds `-f`.")
     async def rm(self, path: "str | Path", recursive: bool = False, force: bool = False) -> Result:
         """Remove *path* (``rm``; *recursive* → ``-r``, *force* → ``-f``)."""
         flags = "".join(f for f, on in (("r", recursive), ("f", force)) if on)
@@ -276,7 +287,7 @@ class PosixFileOps(UserlandHost):
         result = await self.exec(f"rm {opt}{self._q(path)}")  # ty: ignore[unresolved-attribute]
         return Result(result.status, msg=result.value)
 
-    @cli_exposed
+    @cli_exposed(help_="Copy src to dst on the host (`cp`); `--recursive` adds `-r`.")
     async def cp(self, src: "str | Path", dst: "str | Path", recursive: bool = False) -> Result:
         """Copy *src* to *dst* on the host (``cp``; *recursive* → ``-r``)."""
         opt = "-r " if recursive else ""
@@ -285,7 +296,7 @@ class PosixFileOps(UserlandHost):
         )
         return Result(result.status, msg=result.value)
 
-    @cli_exposed
+    @cli_exposed(help_="Move or rename src to dst on the host (`mv`).")
     async def mv(self, src: "str | Path", dst: "str | Path") -> Result:
         """Move/rename *src* to *dst* on the host (``mv``)."""
         result = await self.exec(  # ty: ignore[unresolved-attribute]
@@ -293,7 +304,7 @@ class PosixFileOps(UserlandHost):
         )
         return Result(result.status, msg=result.value)
 
-    @cli_exposed(output_dir=False)
+    @cli_exposed(output_dir=False, help_="Print the text contents of path.")
     async def read_file(self, path: "str | Path") -> str:
         """Return the text contents of *path*.
 
@@ -373,7 +384,10 @@ class PosixFileOps(UserlandHost):
             ) from exc
         return decoded.decode()
 
-    @cli_exposed(dry_run_preview=True)
+    @cli_exposed(
+        dry_run_preview=True,
+        help_="Write data to path, replacing the file; `--append` adds to the end instead.",
+    )
     async def write_file(self, path: "str | Path", data: str, append: bool = False) -> Result:
         """Write *data* to *path* (overwrite, or append).
 

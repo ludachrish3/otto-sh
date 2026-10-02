@@ -407,13 +407,14 @@ def diff(
 ) -> None:
     """Compare the inventory with a stage-1 file; exit 1 when anything differs.
 
-    Three exit codes, ``diff(1)``'s: 0 no differences, 1 differences, 2 could
-    not answer (see ``_CANNOT_ANSWER``).
+    Exit codes follow `diff(1)`: 0 no differences, 1 differences, 2 could not
+    answer.
 
-    With a second PATH the comparison is between the two FILES — yesterday's
-    export against today's — and the configured inventory is not resolved at
-    all, because nothing in the answer depends on it.
+    With a second file (`other`) the comparison is between the two files
+    (yesterday's export against today's) and the configured inventory is not
+    read at all, because nothing in the answer depends on it.
     """
+    # Developer note: the "could not answer" exit status is `_CANNOT_ANSWER`.
     from rich.table import Table
 
     from ..inventory import diff_records

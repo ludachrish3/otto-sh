@@ -345,14 +345,14 @@ def clear(
         typer.Option("--all", help="Clear every workspace's cache files, not just this one's."),
     ] = False,
 ) -> None:
-    """Clear this workspace's cache files, or every workspace's with --all.
+    """Clear this workspace's cache files, or every workspace's with `--all`.
 
-    Bare, this never removes the workspace directory itself -- it must keep
-    existing regardless of what else lives in it. ``--all`` clears every
-    workspace's cache files unconditionally (no age check) and removes a
-    workspace directory once emptying it leaves nothing behind; an ``env/``
-    virtualenv always keeps its directory.
+    Bare, this never removes the workspace directory itself. `--all` clears every
+    workspace's cache files regardless of age and removes a workspace directory
+    once it is empty; an `env/` virtualenv always keeps its directory.
     """
+    # Developer note: bare keeps the workspace directory because it must exist
+    # regardless of what else lives in it.
     if all_workspaces:
         from ..config.cache_maintenance import prune as run_prune
         from ..config.home import otto_home

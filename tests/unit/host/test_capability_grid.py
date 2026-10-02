@@ -19,10 +19,6 @@ The page these back is ``docs/cli/host/families.md``, whose byte-for-byte
 sync with the tree is pinned in ``tests/unit/test_support_matrix.py``.
 """
 
-import importlib
-import pkgutil
-import sys
-
 import pytest
 
 from otto.host.capability_grid import (
@@ -31,10 +27,10 @@ from otto.host.capability_grid import (
     UserSupport,
     shipped_host_families,
 )
-from otto.host.host import BaseHost
 from otto.host.os_profile import register_host_class
 from otto.host.remote_host import RemoteHost
 from otto.models.host import EmbeddedHostSpec
+from tests._fixtures.host_classes import host_classes_in_the_tree
 
 
 def _capabilities(**overrides) -> HostCapabilities:
@@ -117,41 +113,6 @@ class TestTheDeclarationItself:
             assert (member.__doc__ or "").strip(), member
 
 
-def _host_classes_in_the_tree() -> "list[type]":
-    """Every live ``BaseHost`` subclass otto itself defines.
-
-    Two filters, both necessary. Classes outside ``otto.`` are test doubles and
-    downstream subclasses, which this repository does not speak for. And a
-    ``@dataclass(slots=True)`` class is REPLACED by a new class object at
-    decoration time while the pre-slots original stays in
-    ``__subclasses__()`` forever — so a class is live only when its own module
-    still names it.
-    """
-    import otto.docker
-    import otto.host
-
-    for package in (otto.host, otto.docker):
-        for module in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
-            importlib.import_module(module.name)
-
-    def descendants(cls: type) -> "list[type]":
-        found = []
-        for sub in cls.__subclasses__():
-            found.append(sub)
-            found += descendants(sub)
-        return found
-
-    live = []
-    for cls in descendants(BaseHost):
-        if not cls.__module__.startswith("otto."):
-            continue
-        if getattr(sys.modules[cls.__module__], cls.__name__, None) is not cls:
-            continue
-        if cls not in live:
-            live.append(cls)
-    return live
-
-
 def test_every_host_class_in_the_tree_is_published_by_some_row():
     """A family otto ships and the page does not name is the failure mode here.
 
@@ -169,7 +130,7 @@ def test_every_host_class_in_the_tree_is_published_by_some_row():
     Anything else is a family with promises nobody publishes.
     """
     rows = {family.cls: family.name for family in shipped_host_families()}
-    for cls in _host_classes_in_the_tree():
+    for cls in host_classes_in_the_tree():
         if cls in rows:
             continue
         covering = [base for base in rows if issubclass(cls, base)]

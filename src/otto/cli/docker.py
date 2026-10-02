@@ -431,7 +431,7 @@ async def _compose_up(
         str | None,
         typer.Option(
             "--on",
-            help="Collapse every fragment onto this lab host (spec §5 knob 1).",
+            help="Collapse every fragment onto this lab host.",
             autocompletion=_docker_host_completer,
         ),
     ] = None,
@@ -505,7 +505,7 @@ async def _compose_down(
         str | None,
         typer.Option(
             "--on",
-            help="Collapse every fragment onto this lab host (spec §5 knob 1).",
+            help="Collapse every fragment onto this lab host.",
             autocompletion=_docker_host_completer,
         ),
     ] = None,

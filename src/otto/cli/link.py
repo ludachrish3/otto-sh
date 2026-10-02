@@ -198,7 +198,7 @@ async def impair(  # noqa: PLR0913 — CLI command params
         None, "--side", help="With --port: match only the dst or src port (default: either)."
     ),
 ) -> None:
-    """Impair a static link (merge-read-modify-replace, verified). See spec §9/§10."""
+    """Impair a static link (merge-read-modify-replace, verified)."""
     from ..config.fleet import get_lab
 
     given: dict[str, str | None] = {
@@ -280,7 +280,7 @@ async def repair(
         None, "--side", help="With --port: match only the dst or src port (default: either)."
     ),
 ) -> None:
-    """Clear a link's impairment(s) and cancel its timers, or repair --all. See spec §9/§10."""
+    """Clear a link's impairment(s) and cancel its timers, or repair --all."""
     from ..config.fleet import get_lab
 
     # This usage-error exit is deliberately kept OUT of the try/except below,
@@ -414,7 +414,7 @@ def _selector_rows(state: LinkState) -> list[str]:
 
 @link_app.command(name="list")
 async def list_links() -> None:
-    """List every static link's current impairment state (spec §9)."""
+    """List every static link's current impairment state."""
     from ..config.fleet import get_lab
 
     lab = get_lab()

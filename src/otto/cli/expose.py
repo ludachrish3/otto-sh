@@ -236,12 +236,36 @@ def exposed_cli_names(cls: type | None) -> set[str]:
     return set(collect_exposed_methods(cls)) if cls is not None else set()
 
 
+def verb_help(cls: type, attr_name: str) -> str:
+    """Return the ``--help`` text for *cls*'s ``@cli_exposed`` verb *attr_name*.
+
+    The ``help_`` the verb's own definition gives wins. An override that gives
+    none inherits the nearest ``help_`` further up the MRO of a verb exposed
+    under the same CLI name, so a verb restated in a subclass
+    (``DockerContainerHost.exec``) shows the text of the verb it overrides
+    without repeating it. With no ``help_`` anywhere, the first line of the
+    method's own docstring.
+    """
+    fn = inspect.getattr_static(cls, attr_name, None) or getattr(cls, attr_name)
+    cli_name = getattr(fn, "__cli_name__", None)
+    for klass in cls.__mro__:
+        candidate = klass.__dict__.get(attr_name)
+        if candidate is None or not getattr(candidate, "__cli_exposed__", False):
+            continue
+        if getattr(candidate, "__cli_name__", None) != cli_name:
+            continue
+        help_ = getattr(candidate, "__cli_help__", None)
+        if help_:
+            return help_
+    return ((fn.__doc__ or "").strip().splitlines() or [""])[0]
+
+
 def iter_exposed_verbs() -> Iterable[tuple[str, str, str, Callable[..., Any]]]:
     """Yield ``(cli_name, attr_name, help, sample_func)`` across all registered host classes.
 
-    First registration of a cli-name wins; help comes from ``__cli_help__`` or the
-    method docstring's first line.  ``sample_func`` is the unbound method used to
-    derive the CLI signature via :func:`~otto.cli.param_synth.build_cli_binding`.
+    First registration of a cli-name wins; help comes from :func:`verb_help`.
+    ``sample_func`` is the unbound method used to derive the CLI signature
+    via :func:`~otto.cli.param_synth.build_cli_binding`.
     """
     from ..host.os_profile import HOST_CLASSES
 
@@ -255,11 +279,7 @@ def iter_exposed_verbs() -> Iterable[tuple[str, str, str, Callable[..., Any]]]:
                 continue
             seen.add(cli_name)
             fn = inspect.getattr_static(cls, attr_name, None) or getattr(cls, attr_name)
-            help_text = (
-                getattr(fn, "__cli_help__", None)
-                or ((fn.__doc__ or "").strip().splitlines() or [""])[0]
-            )
-            yield cli_name, attr_name, help_text, fn
+            yield cli_name, attr_name, verb_help(cls, attr_name), fn
 
 
 def host_dry_run_references(ctx: typer.Context) -> "list[Any]":
@@ -425,11 +445,7 @@ def _make_host_group() -> "type[TyperGroup]":
             key = (cls, cmd_name)
             if key not in cache:
                 fn = inspect.getattr_static(cls, attr_name, None) or getattr(cls, attr_name)
-                help_text = (
-                    getattr(fn, "__cli_help__", None)
-                    or ((fn.__doc__ or "").strip().splitlines() or [""])[0]
-                )
-                cache[key] = _synthesize_command(cmd_name, attr_name, help_text, fn)
+                cache[key] = _synthesize_command(cmd_name, attr_name, verb_help(cls, attr_name), fn)
             return cache[key]
 
         @override

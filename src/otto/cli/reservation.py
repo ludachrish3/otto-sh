@@ -115,21 +115,25 @@ def whoami(ctx: typer.Context) -> None:
 
 @reservation_app.command()
 def check(ctx: typer.Context) -> None:
-    """Run the reservation check for the top-level ``--lab`` and report.
+    """Check the reservations the selected lab requires, and report.
 
-    The table lists every requirement with its origin — the slot, not just the
-    string — over the hosts in play (spec 2026-08-28 three-level-reservations
-    §5), whose count the title states. A ``[project]`` declaration that admits
-    no host in the loaded lab is ``0 host(s) in play``: the table then holds
-    the lab-level rows and only those, and this command still reports rather
-    than refusing — the fleet-shaped abort is a fleet WALK's, and this walks
-    nothing.
+    The lab is the one chosen with `otto --lab LAB reservation check` (or
+    `OTTO_LAB`). The table lists every required resource with where it is
+    declared (its level and owner) over the hosts in play, whose count the title
+    states, and shows whether you hold each one.
 
-    The backend is consulted only when something is actually required, so an
-    outage cannot fail a run that needs no reservation, and the ``"none"``
-    backend is never queried at all — its rows read ``n/a`` rather than a
-    ``held`` verdict it has no way to give.
+    The backend is consulted only when something is actually required, so a
+    backend outage cannot fail this check when nothing is required. The `none`
+    backend is never queried; its rows read `n/a`.
     """
+    # Developer note: the table lists every requirement with its origin -- the
+    # slot, not just the string -- over the hosts in play (spec 2026-08-28
+    # three-level-reservations §5). A `[project]` declaration that admits no
+    # host in the loaded lab is `0 host(s) in play`: the table then holds the
+    # lab-level rows and only those, and this command still reports rather than
+    # refusing -- the fleet-shaped abort is a fleet WALK's, and this walks
+    # nothing. The `"none"` backend answers no `held` verdict, so its rows read
+    # `n/a`.
     from ..config import get_lab
 
     # The group is lab_free (whoami needs no lab); check is the one subcommand

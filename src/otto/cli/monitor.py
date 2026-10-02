@@ -98,31 +98,40 @@ def monitor(
 ) -> None:
     """Launch an interactive performance monitoring dashboard, or review a saved export.
 
-    One command, two modes, and the leaf holds only the rules that are about
-    its own shape: exactly one of ``--live`` or ``<source>`` must be given.
-    Both together is a usage error; neither prints usage. Both exit 2.
-    Everything else is the monitor library's: the interval floor, the host
-    selection, the driving repo's scope, the TLS declaration and the review
-    source are all checked by ``otto.monitor.live.run_live`` and
-    ``otto.monitor.review.serve_review``, which this body calls with the
-    parsed flags as they are.
-
-    The preamble is per mode, because monitor's spec is ``lab_free`` (review
-    needs no lab) and ``gate=False`` (review touches no hardware), so the
-    shared :func:`~otto.cli.invoke.command_preamble` skips both modes. Review
-    runs :func:`~otto.cli.invoke.ensure_cli_session` only: the repos'
-    ``[logging.levels]`` and the console's host filter, with no lab loaded
-    and no output dir. ``--live`` runs
-    :func:`~otto.cli.invoke.ensure_lab_session` and then
-    :func:`~otto.cli.invoke.present_reservation_gate`.
-
-    The library's refusals are translated at one site. An input refusal
-    (``MonitorInputError``, ``ReviewSourceError``, both in
-    ``otto.monitor.errors``) goes through
-    :func:`~otto.cli.invoke.usage_error_from` and names the flag at fault:
-    exit 2. A selection, scope or TLS refusal is framed by
-    :func:`~otto.cli.invoke.fail`: one line, exit 1, no traceback.
+    Give exactly one of `--live` or `<source>`: never both, and never neither
+    (bare `otto monitor` prints usage and exits 2). `--live` collects from lab
+    hosts, so it needs a lab and is subject to the reservation check; reviewing
+    a saved `<source>` reads a local file and needs neither.
     """
+    # One command, two modes, and the leaf holds only the rules that are about
+    # its own shape: exactly one of ``--live`` or ``<source>`` must be given.
+    # Both together is a usage error; neither prints usage. Both exit 2.
+    # Everything else is the monitor library's: the interval floor, the host
+    # selection, the driving repo's scope, the TLS declaration and the review
+    # source are all checked by ``otto.monitor.live.run_live`` and
+    # ``otto.monitor.review.serve_review``, which this body calls with the
+    # parsed flags as they are.
+    #
+    # The preamble is per mode, because monitor's spec is ``lab_free`` (review
+    # needs no lab) and ``gate=False`` (review touches no hardware), so the
+    # shared :func:`~otto.cli.invoke.command_preamble` skips both modes. Review
+    # runs :func:`~otto.cli.invoke.ensure_cli_session` only: the repos'
+    # ``[logging.levels]`` and the console's host filter, with no lab loaded
+    # and no output dir. ``--live`` runs
+    # :func:`~otto.cli.invoke.ensure_lab_session` and then
+    # :func:`~otto.cli.invoke.present_reservation_gate`.
+    #
+    # The library's refusals are translated at one site. An input refusal
+    # (``MonitorInputError``, ``ReviewSourceError``, both in
+    # ``otto.monitor.errors``) goes through
+    # :func:`~otto.cli.invoke.usage_error_from` and names the flag at fault:
+    # exit 2. A selection, scope or TLS refusal is framed by
+    # :func:`~otto.cli.invoke.fail`: one line, exit 1, no traceback.
+    #
+    # Output-dir creation lives in the shared leaf-invoke
+    # :func:`~otto.cli.invoke.command_preamble` (monitor's spec declares
+    # ``output_dir=True``), so a ``--help`` invocation can never create a
+    # spurious dir.
     if ctx.resilient_parsing:
         return
 

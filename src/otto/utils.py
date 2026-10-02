@@ -495,6 +495,11 @@ def cli_exposed(
     """Mark a host coroutine method for auto-exposure as an ``otto host`` subcommand.
 
     ``name`` defaults to the method name with underscores dashed.
+    ``help_`` is the one-line description ``otto host`` shows for the verb; it
+    defaults to the first line of the method docstring, so give it whenever that
+    line is written for API readers (reStructuredText, parameter references)
+    rather than for someone typing ``otto host <id> <verb> --help``. An override
+    that gives none inherits the ``help_`` of the verb it overrides.
     ``success`` is an optional message printed on a successful ``(Status, "")``
     result (e.g. "Transfer complete.").
     ``output_dir=False`` marks a read-only verb that creates no per-invocation

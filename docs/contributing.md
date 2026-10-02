@@ -724,6 +724,15 @@ architecture page in the same PR.
   examples.  Also test these in `tests/unit/`.
 - **Keep doctests minimal.** 2-4 lines showing the happy path is enough.
   Edge cases belong in unit tests.
+- **A CLI command's help is user text.** Typer shows a command's docstring as
+  its `--help`, so for a command or group callback write plain language for the
+  person typing it: single backticks around a literal command or flag, no
+  reStructuredText (double backticks, roles, `*emphasis*`), no references to
+  specs or internals. Put developer notes in a `# Developer note:` comment
+  directly below the docstring. For an `otto host` verb the docstring stays API
+  documentation and `@cli_exposed(help_=...)` carries the user text.
+  `tests/unit/cli/test_help_text_user_facing.py` fails on markup in any built-in
+  command's help.
 
 ### Doctest quick reference
 

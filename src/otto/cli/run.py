@@ -222,11 +222,11 @@ def main(
         ),
     ] = False,
 ) -> None:
-    """Handle the eager ``--list-instructions`` flag; real work runs in the leaf preamble.
-
-    Output-dir creation and the reservation gate moved to the shared
-    leaf-invoke :func:`~otto.cli.invoke.command_preamble`, so a subcommand
-    ``--help`` (which exits before invoke) can never create a spurious dir.
-    """
+    """Run a registered instruction on the lab; `--list-instructions` shows what is available."""
+    # Developer note: this callback only handles the eager `--list-instructions`
+    # flag; the real work runs in the leaf preamble. Output-dir creation and the
+    # reservation gate live in the shared leaf-invoke
+    # `otto.cli.invoke.command_preamble`, so a subcommand `--help` (which exits
+    # before invoke) can never create a spurious dir.
     if ctx.resilient_parsing:
         return

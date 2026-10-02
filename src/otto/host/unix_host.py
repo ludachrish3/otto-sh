@@ -1360,7 +1360,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         self.cached_login_home = Path(answer)
         return self.cached_login_home
 
-    @cli_exposed(success="Module loaded.")
+    @cli_exposed(
+        success="Module loaded.",
+        help_="Insert a kernel module: copy the .ko to the host, then run `insmod` on it.",
+    )
     async def load(
         self,
         file: Annotated[Path, Arg(help="Kernel module .ko to insert.")],
@@ -1413,7 +1416,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return Result(Status.Success)
         return Result(Status.Error, msg=f"insmod {resolved} failed: {result.only.value.strip()}")
 
-    @cli_exposed(success="Module unloaded.")
+    @cli_exposed(
+        success="Module unloaded.",
+        help_="Remove a kernel module (`rmmod`); succeeds if it is not loaded.",
+    )
     async def unload(
         self,
         name: Annotated[str, Arg(help="Module name to remove.")],
@@ -1516,7 +1522,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         return True
 
     @override
-    @cli_exposed
+    @cli_exposed(
+        help_=(
+            "Power this host off from its own shell, with `shutdown -h now` or "
+            "`poweroff`, whichever the device has."
+        )
+    )
     async def shutdown(self) -> Result:
         """Power this host off from its own shell, in the spelling it has.
 

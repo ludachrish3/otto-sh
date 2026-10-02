@@ -53,6 +53,13 @@ class MyHost(UnixHost):
 otto host <my-host-id> flash-firmware ./build/app.bin
 ```
 
+`help_` sets the verb's `--help` text and its line in the `otto host` menu. An
+override that gives none inherits the nearest `help_` of the verb it overrides;
+with none anywhere, the first line of the method's docstring is used. Write it as plain text for the
+person typing the command: single backticks around a literal command or flag are
+fine, but no reStructuredText (double backticks, roles such as `:meth:`,
+`*emphasis*`). The method's docstring stays free to be written for API readers.
+
 A verb returning a `Result` exits non-zero when its status is not OK, and a
 verb returning a plain value exits 0 with the value printed as-is — see
 [Exit codes](../../cli/host/index.md#exit-codes).

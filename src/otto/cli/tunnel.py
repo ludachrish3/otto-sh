@@ -234,7 +234,7 @@ async def add(
         help="Drop a connection or UDP flow idle this many seconds. Default: never.",
     ),
 ) -> None:
-    """Create a bidirectional tunnel along an explicit host path. See spec §6."""
+    """Create a bidirectional tunnel along an explicit host path."""
     from ..config.fleet import get_lab
 
     lab = get_lab()
@@ -373,7 +373,7 @@ async def check(
 
 @tunnel_app.command(name="list")
 async def list_tunnels() -> None:
-    """List live tunnels (observed truth; spec §9)."""
+    """List the live tunnels, as observed on the hosts."""
     from rich.table import Table
 
     from ..config.fleet import get_lab
@@ -447,7 +447,7 @@ async def remove(
     all_: bool = typer.Option(False, "--all", help="Reap every otto tunnel."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the --all confirmation."),
 ) -> None:
-    """Remove a tunnel by id (all hops, both directions), or all tunnels. Spec §10."""
+    """Remove a tunnel by id (all hops, both directions), or all tunnels."""
     from ..config.fleet import get_lab
 
     # These two usage-error exits are deliberately kept OUT of the try/except
