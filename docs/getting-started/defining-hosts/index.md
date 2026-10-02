@@ -31,6 +31,10 @@ and where its lab data lives:
 :end-before: "# doc: end lab-sources"
 ```
 
+`paths` lists directories, `.json` files or globs, so lab data can be split
+across many files or a whole directory tree: see
+{ref}`Splitting lab data across files and directories <lab-data-across-files>`.
+
 And where the project's own code lives: `libs` puts it on the import path,
 and `init` lists every module otto imports as it loads. The first is the
 `libs/gs_example/` package itself, where the later pages register a command

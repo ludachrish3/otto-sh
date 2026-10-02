@@ -24,9 +24,9 @@ declares the sources it reads lab data from, see {doc}`host-sources`.
 
 Each directory a json `[[lab.sources]]` entry lists in `paths` (in
 `.otto/settings.toml`) may contain a `lab.json` file — and a `paths` entry
-may name a `.json` file directly, or a glob matching several ([Splitting a
-lab across files](#splitting-a-lab-across-files) below).  The file is a JSON
-**object** with three sections:
+may name a `.json` file directly, or a glob matching several, `**` included
+({ref}`Splitting lab data across files and directories <lab-data-across-files>`).
+The file is a JSON **object** with three sections:
 
 ```json
 {
@@ -88,45 +88,11 @@ is composed from the element's name and the host's `board` and `slot` —
 
 ### Splitting a lab across files
 
-Hundreds of elements do not belong in one file.  Every file a source names is
-a complete lab document that may carry **any subset** of the three sections,
-and one source composes all of its files by **union**: the `labs` tables
-merge, the `elements` arrays concatenate, and so do the `links`.  An element
-in one file joins a lab declared in another, and a file holding nothing but a
-`labs` table is a fine home for a whole site's declarations.
-
-A `paths` entry names those files.  Each entry is a **directory**
-(contributing its `lab.json`), a path ending in **`.json`** (read as the lab
-file itself), or a **glob** — an entry containing `*`, `?` or `[`.  A glob is
-expanded relative to its non-glob prefix and contributes the `.json` files it
-matches, in sorted order; one that matches nothing contributes nothing,
-exactly like an absent `lab.json`. See {doc}`host-sources` for the caution
-about a glob sweeping in `inventory.json`/`creds.json`.
-
-```toml
-# .otto/settings.toml
-
-[[lab.sources]]
-backend = "json"
-paths = ["lab_data/labs.json", "lab_data/elements/*.json"]
-```
-
-A layout that scales: one file holding every declaration, and one file per
-site (or per element) beside it.
-
-```text
-lab_data/
-├── labs.json          # the labs table: every lab, its resources, its metadata
-└── elements/
-    ├── rack-b4.json   # elements only
-    └── bench1.json    # elements only
-```
-
-Within **one** source a duplicate is a typo, never an override: the same lab
-declared by two of a source's files, or an element name repeated (compared
-by slug — see {ref}`host-identity` below) across two of them, fails the load
-naming both files.  Overriding is the opt-in of a second `[[lab.sources]]`
-entry — see {doc}`host-sources`.
+Hundreds of elements do not belong in one file.  One source can read many
+files, from one directory or from a whole tree, and an element in one file joins
+a lab declared in another.  {ref}`Splitting lab data across files and
+directories <lab-data-across-files>` shows how to name the files, and
+{ref}`how the files combine <one-source-several-files>` follows it.
 
 ## The labs table
 

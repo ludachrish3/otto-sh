@@ -57,22 +57,21 @@ of a host entry that references it — and there is exactly one per process, so
 no precedence question arises there at all. A lab file can come from any
 source and still reference the inventory; see {doc}`inventory`.
 
-### json sources: `paths` are directories, files, or globs
+(lab-data-across-files)=
 
-For `backend = "json"`, `paths` is required and non-empty. Each entry is one
-of three forms:
+### json sources: splitting lab data across files and directories
+
+A json source is not limited to one `lab.json` per directory. `paths` is
+required and non-empty, and each entry is one of three forms:
 
 - a **directory**, searched for a `lab.json` inside it;
-- a path ending in **`.json`**, read directly as the lab file; or
+- a path ending in **`.json`**, read directly as a lab file; or
 - a **glob** — any entry containing `*`, `?` or `[` — expanded relative to its
-  non-glob prefix, contributing the `.json` files it matches in sorted order.
+  non-glob prefix, contributing every `.json` file it matches in sorted order.
+  `**` matches directories at any depth, so a glob can recurse.
 
-A plain **directory** entry only ever contributes that directory's own
-`lab.json` — never a glob — so `lab_data/inventory.json` and
-`lab_data/creds.json` ({doc}`inventory`) sitting beside it are safe by
-default; a glob you write yourself for a split layout (`lab_data/*.json`) is
-not, and would parse them as lab files too, so keep any such glob narrower
-than that.
+The files from all of a source's entries are combined into that one source
+({ref}`one-source-several-files`).
 
 Entries resolve like every other settings path: `~` expands, a relative path
 anchors to the **repo root** (never the directory you ran `otto` from), and an
@@ -90,16 +89,10 @@ an absent `lab.json`, or a glob that matches nothing — so an optional-by-desig
 location costs nothing. `paths` is the *only* key the json backend accepts;
 anything else is a typo and fails loud at startup.
 
-(one-source-several-files)=
+#### Several files in one directory
 
-#### One source, several files
-
-A source is not one file. Every file its `paths` names is a complete lab
-document that may carry **any subset** of the three `lab.json` sections, and a
-source composes all of its files by **union**: the `labs` tables merge, the
-`elements` arrays concatenate, and so do the `links`. An element in one file
-joins a lab declared in another, so the declarations can live apart from the
-equipment:
+A glob picks up every matching file. This source reads one file that declares
+the labs and every file in `elements/`, one per site or per element:
 
 ```toml
 [[lab.sources]]
@@ -115,9 +108,48 @@ lab_data/
     └── bench1.json    # elements only
 ```
 
+A plain **directory** entry only ever contributes that directory's own
+`lab.json` — never a glob — so `lab_data/inventory.json` and
+`lab_data/creds.json` ({doc}`inventory`) sitting beside it are safe by
+default. A glob you write yourself for a split layout is not: `lab_data/*.json`
+and `lab_data/**/*.json` would both parse those two files as lab files too, so
+keep any such glob narrower than that, as `lab_data/elements/*.json` is.
+
+#### A directory hierarchy
+
+Put `**` in the glob to read a tree of lab files, however deeply it nests:
+
+```toml
+[[lab.sources]]
+backend = "json"
+paths = ["lab_data/labs.json", "lab_data/sites/**/*.json"]
+```
+
+```text
+lab_data/
+├── labs.json
+└── sites/
+    ├── east/
+    │   └── rack-b4.json
+    └── west/
+        ├── bench1.json
+        └── bench2.json
+```
+
+(one-source-several-files)=
+
+#### How the files combine
+
+Every file a source's `paths` name is a complete lab document that may carry
+**any subset** of the three `lab.json` sections, and a source composes all of
+its files by **union**: the `labs` tables merge, the `elements` arrays
+concatenate, and so do the `links`. An element in one file joins a lab declared
+in another, so the declarations can live apart from the equipment.
+
 Within **one** source a duplicate is a typo, never an override: the same lab
 declared by two of the source's files, or an element name repeated (compared
-by slug) across two of them, fails the load naming both files. Overriding is
+by slug, see {ref}`host-identity`) across two of them, fails the load naming
+both files. Overriding is
 the opt-in of a *second* `[[lab.sources]]` entry — see [Ordering and
 overrides](#ordering-and-overrides) below.
 
