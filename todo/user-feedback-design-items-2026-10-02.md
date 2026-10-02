@@ -26,7 +26,7 @@ what that host's daemon actually reports.
 
 Verified on a real daemon (dev VM, docker 29.1.3):
 
-```
+```text
 REPOSITORY   TAG                IMAGE ID
 repo1-api    a7c8217f18991996   cbd8571d4b6e
 repo1-api    latest             cbd8571d4b6e
@@ -125,10 +125,12 @@ is not done until it has one.
 
 ### 1.6 Related open issues to fold in
 
-#495 (context hash matches `.dockerignore` with fnmatch → stale image
-reported cached), #496 (displacement printed twice), #553 (`ps` host rule
-into the library), #550 (compose staging in shared `/tmp` leaks `otto.env`),
-#364, #365 (`docker_image` product kind).
+- #495: the context hash matches `.dockerignore` with fnmatch, so a stale
+  image can be reported cached.
+- #496: each displacement is printed twice.
+- #553: the `ps` host rule moves into the library.
+- #550: compose staging in shared `/tmp` leaks `otto.env`.
+- #364 and #365: the `docker_image` product kind.
 
 ### 1.7 Netem on a container (feature request, lower priority)
 
@@ -199,13 +201,66 @@ subcommand is open.
 
 ## 3. Docs structure and findability (P1)
 
-### 3.1 The naive-reader walk (in progress)
+### 3.1 The naive-reader walk (first run done, 2026-10-02)
 
 A lower-tier agent is given a from-scratch setup goal and may only open
 pages reachable by links/toctrees from `docs/index.rst`: no grep, no
 listing, no source. It reports its trail, wasted reads and backtracks. The
 restructuring proposal is written against that trail, and the walk is
 re-run after the restructure as the acceptance test.
+
+First run (Sonnet). Goal: scaffold a project, define a local and a remote
+docker-capable host, declare one shell product, declare one image and a
+one-service use-case, and prove all of it with listing and dry-run commands.
+
+- All five milestones reached. **11 pages opened, about 3,700 lines; 3 wasted
+  reads; 4 jumps between top-level sections.** In hindsight 7 pages were
+  needed, and only a section of each of the two largest
+  (`configuration/lab-config.md`, 1000 lines; `configuration/settings.md`,
+  560 lines).
+- The path it had to take: `index` → `overview` → `getting-started/index` →
+  `cli/init` → `configuration/lab-config` → `configuration/declared-products-tools`
+  → `cli/docker/index` → `cli/docker/use-cases` → `configuration/settings`
+  → `cli/dry-run`. Setup knowledge is split across Getting Started, CLI and
+  Configuration, and no page walks one project through all of it.
+- The fastest source of the TOML shapes was the **commented scaffold**
+  written by `otto init`, not a docs page.
+
+What it tripped on, in the order it hit them:
+
+1. `index.rst` is a bare list of names; `overview.md` "Where to start"
+   omits Getting Started. It guessed.
+2. Getting Started is an install page plus a tour of otto's own 16-host
+   bed. Nothing in it applies to "my lab with one remote host".
+3. The scaffolded host uses the three-file form (`lab.json` +
+   `inventory.json` + `creds.json`). The inline one-file form is the easy
+   first step and is only mentioned in passing on `lab-config`.
+4. `docker_capable` is one row in a ~30-row table; the useful section is at
+   line ~954 of `lab-config.md`, and the scaffold README's field list omits
+   it. There is no minimal "one remote host" example.
+5. The products page teaches the Python provider first; `[[products]]` is
+   its last paragraph (the same miss the real user made).
+6. "`[project]` is required once a product is declared" is stated only in
+   `settings.md` and a scaffold comment, not on the declared-products page.
+7. `[[docker.images]]` is documented only at the bottom of `settings.md`.
+   Neither docker page shows it. There is no "first deploy" sequence.
+8. **It could not verify that its product attached to the host.**
+   `--show-lab` elides products and `otto -n run install` names none. This
+   is the `--list-products` request (2.3), reached independently.
+9. `--probe` under `--dry-run` opens a connection; the page's first sentence
+   reads as "a dry run never touches a device". The reader ran it by
+   mistake (against an unroutable test address).
+10. `otto docker use-cases` is documented as contacting nothing, yet fails
+    without `--lab`, which the page does not say.
+11. The default staging directory and how to write `install` against it are
+    left to inference.
+
+Proposals it produced, to weigh in the restructure: a real quickstart that
+builds one host, one product and one image on the reader's own scaffold,
+with the bed tour demoted to a case study; a scaffolded inline host; a
+minimal-host example at the top of `lab-config` and a split of that page;
+the products page inverted to data-first; a "minimal docker config" block
+with images, composes and one use-case on the docker workflow page.
 
 ### 3.2 Known structural problems (before the walk)
 
