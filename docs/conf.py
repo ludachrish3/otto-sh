@@ -90,7 +90,8 @@ html_js_files = ["termynal.js", "termynal-init.js"]
 html_theme_options = {
     # Lets a reader dismiss the work-in-progress banner (_templates/base.html);
     # the theme only renders the close button and its JS when this is set.
-    "features": ["announce.dismiss"],
+    # content.code.copy adds a one-click copy button to every code block.
+    "features": ["announce.dismiss", "content.code.copy"],
     "palette": [
         {
             "media": "(prefers-color-scheme)",
