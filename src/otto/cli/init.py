@@ -356,10 +356,12 @@ def _scaffold_tests(root: Path, cfg: InitConfig) -> list[Path]:
     tests_dir = root / "tests"
     tests_dir.mkdir(parents=True, exist_ok=True)
     example = tests_dir / "test_example.py"
-    example.write_text(TEST_EXAMPLE_TEMPLATE.format(init_module=_tests_init_module(root, cfg)))
     conftest = tests_dir / "conftest.py"
-    conftest.write_text(CONFTEST_TEMPLATE)
-    return [example, conftest]
+    planned = [
+        (example, TEST_EXAMPLE_TEMPLATE.format(init_module=_tests_init_module(root, cfg)), None),
+        (conftest, CONFTEST_TEMPLATE, None),
+    ]
+    return [target for target, text, mode in planned if _write_if_absent(target, text, mode=mode)]
 
 
 def _scaffold_instructions(root: Path, cfg: InitConfig) -> list[Path]:
