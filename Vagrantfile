@@ -264,13 +264,6 @@ Vagrant.configure("2") do |config|
         # Private network (shared with test VMs)
         dev.vm.network "private_network", ip: "10.10.200.100"
 
-        # The box's 64 GB default filled to 98% with worktrees, nox envs and
-        # the Zephyr workspace matrix. VirtualBox grows the existing disk in
-        # place on `vagrant reload` (it can never shrink one), and
-        # grow_root_disk then extends the partition, LV and filesystem into
-        # the new space: `vagrant provision dev --provision-with dev-grow-disk`.
-        dev.vm.disk :disk, size: "80GB", primary: true
-
         # Grow the root LV before the Zephyr SDK/workspace downloads below run
         # it out of space — see grow_root_disk's own comment for the why/how.
         grow_root_disk(dev, "dev-grow-disk")
