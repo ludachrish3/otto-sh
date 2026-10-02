@@ -150,8 +150,8 @@ class RunContext:
         """Build the clean environment a capture's subprocess runs in."""
         # Same shape as scripts/capture_docs_termynal.py: strip every OTTO_*
         # variable, pin width and colour, then point at the example project.
-        # The width differs on purpose -- termynal renders into an 80-column
-        # player; these artifacts are read as text in a page, so 100.
+        # The width matches termynal's: 100 columns is the widest text the
+        # docs content column shows without scrolling in a 1440px window.
         env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
         home = self.tmp / "home"
         home.mkdir(parents=True, exist_ok=True)

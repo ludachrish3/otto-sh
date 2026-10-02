@@ -1,7 +1,10 @@
 /* otto's overrides for the vendored termynal.css (keep that file pristine).
  *
- * The captured CLI output is 80 columns of Rich box-drawing, so lines must
- * keep their exact whitespace and the window must fit ~82ch of monospace. */
+ * The captured CLI output is 100 columns of Rich box-drawing, so lines must
+ * keep their exact whitespace. At this font size the content column shows 100
+ * columns in a browser window 1440px wide or wider. The window never shrinks
+ * the text to fit: in a narrower one the block scrolls horizontally inside
+ * itself (overflow-x below) and the page does not. */
 
 [data-termynal] {
     width: 100%;

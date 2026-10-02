@@ -131,7 +131,7 @@ def _otto_env(demo: Path) -> dict[str, str]:
         OTTO_HOME=str(demo.parent / ".otto-home"),
         NO_COLOR="1",
         TERM="dumb",
-        COLUMNS="80",
+        COLUMNS="100",
         LINES="50",
     )
     return env
@@ -192,9 +192,9 @@ def _capture(demo: Path) -> None:
     for name, words in COMPLETIONS.items():
         candidates = sorted(_complete(words, demo))
         # Render the way bash presents it: the prompt with TAB-TAB, the
-        # candidate columns (wrapped at the 80-col terminal width), then the
+        # candidate columns (wrapped at the 100-col terminal width), then the
         # prompt again awaiting more input.
-        shown = textwrap.wrap("  ".join(candidates), width=78) or [""]
+        shown = textwrap.wrap("  ".join(candidates), width=98) or [""]
         (OUT_DIR / f"complete-{name}.html").write_text(
             _snippet(f"{words}<TAB><TAB>", [*shown, "", f"$ {words}"])
         )
