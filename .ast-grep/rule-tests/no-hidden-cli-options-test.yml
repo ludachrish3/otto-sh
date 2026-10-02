@@ -1,0 +1,40 @@
+# Rule test for .ast-grep/rules/no-hidden-cli-options.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: no-hidden-cli-options
+valid:
+# A shown option is the house shape.
+- |
+  rebuild: Annotated[bool, typer.Option("--no-cache", help="Do not use docker's layer cache.")] = False
+# `hidden` as a plain name, not a keyword argument to a call.
+- |
+  hidden = [extra for extra in extras if isinstance(extra, OptionInfo)]
+  if not hidden:
+      hidden.append(typer.Option(show_default=False))
+# A dict key is not a call keyword.
+- |
+  settings = {"hidden": True}
+# A keyword whose name merely contains the word.
+- |
+  app.command(show_hidden_files=True)
+invalid:
+- |
+  rebuild: Annotated[bool, typer.Option("--rebuild", hidden=True)] = False
+- |
+  name: Annotated[str, typer.Argument(hidden=True)]
+- |
+  @app.command(hidden=True)
+  def legacy() -> None:
+      pass
+- |
+  app = typer.Typer(hidden=True)
+- |
+  app.add_typer(sub_app, name="old", hidden=True)
+# otto's own aliases and a non-literal value are the same surface.
+- |
+  verbose: Annotated[bool, Opt(hidden=HIDE_IT)] = False
+- |
+  @click.option("--legacy", hidden=True)
+  def main(legacy: bool) -> None:
+      pass

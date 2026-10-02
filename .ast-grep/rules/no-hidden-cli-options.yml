@@ -1,0 +1,24 @@
+id: no-hidden-cli-options
+language: python
+severity: error
+message: A hidden CLI surface (`hidden=`) is a flag, argument or command that parses but does not appear in --help. otto has none. Delete the option or command outright, or show it.
+note: >
+  Chris, 2026-10-02, reviewing the docker honest-build plan, which had kept a
+  removed `--rebuild` as a hidden option that refused with its replacement:
+  "I DO NOT LIKE HIDDEN OPTIONS." Backwards compatibility is not a concern
+  (AGENTS.md), so a removed flag is simply removed and the parser's own
+  `No such option` is the answer; a flag that is wanted is shown. The rule
+  bans the keyword wherever a call passes it, which covers every spelling
+  Typer and click offer (`typer.Option`, `typer.Argument`, otto's `Opt` /
+  `Arg` aliases, `@app.command(hidden=...)`, `typer.Typer(hidden=...)`,
+  `app.add_typer(..., hidden=...)`, `click.option(hidden=...)`). ZERO
+  baseline violations at adoption; a non-CLI call that legitimately needs a
+  `hidden` keyword has not appeared in src/otto, and if one does, name it in
+  an `ignores:` entry here rather than loosening the pattern.
+files:
+- src/otto/**
+rule:
+  kind: keyword_argument
+  regex: ^hidden\s*=
+  inside:
+    kind: argument_list
