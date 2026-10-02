@@ -226,7 +226,9 @@ CACHE_FILENAME = "completion_cache.json"
 #      the one ``names`` key list, and it gains ``tables`` (the repos whose
 #      tables a tests site reads). A v22 shim would read a digest-keyed
 #      name blob no writer updates any more.
-SCHEMA_VERSION = 23
+# v24: the root group gains ``--list-products`` / ``--list-tools``; a warm cache
+#      learns them on the next rebuild.
+SCHEMA_VERSION = 24
 
 # A conftest holds no test of its own, but pytest loads it before collecting
 # anything under its directory, so the per-file tables watch every one.

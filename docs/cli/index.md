@@ -37,6 +37,8 @@ These options are available on every `otto` command:
 | `--skip-reservation-check, -R` | | `False` | Bypass the reservation check entirely (emergency use only) |
 | `--list-labs` | | | List available lab names and exit |
 | `--list-hosts` | | | List host IDs in the loaded lab and exit |
+| `--list-products` | | | List the products the repos declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
+| `--list-tools` | | | List the dev tools the repos declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
 | `--show-lab` | | | Print full lab details and exit |
 | `--lab-depth` | | `3` | Nesting depth for `--show-lab` output — how deep the lab's host details are expanded (0 = unlimited) |
 | `--version` | | | Show version and exit |
@@ -81,6 +83,59 @@ otto --lab my_lab --list-labs      # list all available lab names
 otto --lab my_lab --list-hosts     # list host IDs in the loaded lab
 otto --lab my_lab --show-lab       # full lab details (use -v for expanded output)
 ```
+
+(list-products-flag)=
+
+### Inspecting products and dev tools
+
+`--list-products` and `--list-tools` print a table of the products or dev tools
+your repos declare in {doc}`../configuration/declared-products-tools`. Neither
+contacts a host, and neither is lab-gated: they work with or without `--lab`.
+
+Without `--lab` the table is what the repos **declare** — one row per
+`[[products]]` (or `[[dev_tools]]`) entry, in repo then declaration order, with
+the entry's host selector under `match` (`any host` when it has none):
+
+```bash
+otto --list-products
+```
+
+A repo that also registers a code provider
+({func}`~otto.host.product.register_product_provider`) gets one line after the
+table, because what a provider supplies depends on the host and is only known
+once a lab is loaded.
+
+With `--lab` the table is what each host **gets**: one row per distinct
+product, the hosts that carry it, and where its artifact is staged. The
+`stage dir` is the entry's declared `stage_dir`, else the host's
+`default_dest_dir`, else `login home` (the directory the login user lands in,
+which otto does not look up for a listing). A product a provider built shows
+`code (<ClassName>)` as its kind. Whatever was left out is listed after the
+table with its reason:
+
+```bash
+otto --lab my_lab --list-products
+```
+
+```text
+                           products in lab my_lab
+╭───────┬─────────────────────┬───────┬──────────────┬────────────────────┬────────────╮
+│ name  │ kind                │ repo  │ hosts        │ artifact           │ stage dir  │
+├───────┼─────────────────────┼───────┼──────────────┼────────────────────┼────────────┤
+│ agent │ shell               │ repo1 │ test1, test2 │ build/agent.tar.gz │ /opt/stage │
+│ kcov  │ kmod                │ repo1 │ test1        │ build/kcov.ko      │ login home │
+│ probe │ code (ProbeProduct) │ repo2 │ test3        │                    │            │
+╰───────┴─────────────────────┴───────┴──────────────┴────────────────────┴────────────╯
+not used in this lab:
+  fw (embedded, repo2): no host matches
+```
+
+The three reasons an entry is not used are `no host matches`, `outside <repo>'s
+[project] scope` (the repo's `[project]` table does not target any host of the
+lab; see {ref}`project-scope-required`), and `shadowed by an earlier entry
+named '<name>'` — the first entry with a name wins on a host. A provider
+product dropped because a declared entry already held its name reads `shadowed
+by the declared entry named '<name>'`.
 
 ## Environment variables
 

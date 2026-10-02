@@ -198,6 +198,21 @@ class Product(ABC):
     which ingest stamps (:func:`stamp_cov_dir`) so a code product can read
     ``self.cov_dir`` when composing its install or run command."""
 
+    kind: str = "code"
+    """The declared kind that built this product (``"shell"``, ``"kmod"``, ...),
+    stamped by :meth:`~otto.declared.KindRegistry.build`; ``"code"`` for a
+    product a provider constructed. Read by ``otto --list-products``."""
+
+    origin: str = "provider"
+    """The origin of this product, ``"declared"`` (a ``[[products]]`` entry) or
+    ``"provider"`` (a :func:`register_product_provider` callback). Stamped at
+    ingest; read by ``otto --list-products``."""
+
+    source_entry: "DeclaredEntry | None" = None
+    """The ``[[products]]`` entry that built this product, stamped by
+    :meth:`~otto.declared.KindRegistry.build`; ``None`` for a provider product.
+    ``otto --list-products`` uses it to tell which entries built somewhere."""
+
     debug_log_globs: Sequence[str] = ()
     """Host paths (literal or glob) of this product's own debug logs, hauled
     into ``logs/<host>/<name>/debug/`` by :meth:`get_debug_logs`. An immutable
@@ -544,6 +559,16 @@ _PRODUCT_PROVIDERS: list[tuple[ProductProvider, str | None]] = []
 """Registered providers paired with the repo that registered each one."""
 
 
+def registered_product_providers() -> list[tuple[ProductProvider, str | None]]:
+    """Return a snapshot of the registered product providers, in registration order.
+
+    Each item pairs the provider with the name of the repo that registered it
+    (``None`` for a registration made outside any repo's init import). A copy:
+    the registry itself stays private to this module.
+    """
+    return list(_PRODUCT_PROVIDERS)
+
+
 def register_product_provider(provider: ProductProvider) -> None:
     """Register a function that decides which products a host carries.
 
@@ -559,6 +584,9 @@ def register_product_provider(provider: ProductProvider) -> None:
     The registering repo is captured **here**, not at ingest: this call runs
     inside that repo's init import, whereas the provider runs long after,
     when the marker is gone.
+
+    A returned instance must accept ``kind``, ``origin`` and ``owner``
+    attribute assignment: ingest stamps all three on it.
     """
     refuse_during_test_load(
         "product provider",
@@ -636,7 +664,10 @@ def apply_product_providers(host: "Host") -> None:
 
     Each attached product is stamped with :attr:`Product.owner` — the repo that
     registered the provider — unless the product already names an owner, which
-    lets one repo hand a product to another's ownership deliberately.
+    lets one repo hand a product to another's ownership deliberately. It is
+    also stamped ``kind = "code"`` and ``origin = "provider"``. A product
+    dropped because its name was taken is appended, with the host's id, to
+    ``host.shadowed_products`` (stamped the same way) so the listing can say so.
 
     A provider is SKIPPED — not called — when its registering repo's
     ``[project]`` declaration does not target ``(host.source_lab, host.id)``
@@ -670,15 +701,20 @@ def apply_product_providers(host: "Host") -> None:
             )
             continue
         for product in provider(host) or ():
+            if product.owner is None:
+                product.owner = provider_owner
+            product.kind = "code"
+            product.origin = "provider"
             if product.name in seen:
                 logger.debug(
                     "product provider: skipping duplicate %r on host %s",
                     product.name,
                     host.id,
                 )
+                # Kept, not just logged: `otto --list-products` reports a
+                # product that was supplied and then dropped for a taken name.
+                host.shadowed_products.append((host.id, product))
                 continue
-            if product.owner is None:
-                product.owner = provider_owner
             host.products.append(product)
             seen.add(product.name)
 

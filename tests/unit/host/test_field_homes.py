@@ -113,6 +113,8 @@ PROTOCOL_ATTRIBUTES = frozenset(
         "inventory_ref",
         "products",
         "dev_tools",
+        "shadowed_products",
+        "shadowed_dev_tools",
         "toolchain",
         "debug_log_globs",
         "power_control",

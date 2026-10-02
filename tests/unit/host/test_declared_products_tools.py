@@ -60,6 +60,9 @@ SEAMS = [
 
 def _host(**attrs):
     attrs.setdefault("products", [])
+    # Ingest records a provider instance dropped for a taken name here.
+    attrs.setdefault("shadowed_products", [])
+    attrs.setdefault("shadowed_dev_tools", [])
     attrs.setdefault("dev_tools", [])
     attrs.setdefault("id", "h1")
     attrs.setdefault("source_lab", "")

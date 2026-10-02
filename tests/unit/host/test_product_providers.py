@@ -25,6 +25,9 @@ def _prod(name):
 
 def _host(**attrs):
     attrs.setdefault("products", [])
+    # Ingest records a provider instance dropped for a taken name here.
+    attrs.setdefault("shadowed_products", [])
+    attrs.setdefault("shadowed_dev_tools", [])
     attrs.setdefault("id", "h1")
     # The ingest gate reads `source_lab`, so the double must carry it or it
     # would pin a shape no real host has. Empty is BaseHost's own default:

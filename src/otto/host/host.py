@@ -556,6 +556,13 @@ class Host(Protocol):
     dev_tools: list["DevTool"]
     """Repo-internal tooling deployed to this host (default empty)."""
 
+    shadowed_products: list[tuple[str, "Product"]]
+    """Provider products dropped at ingest because their name was already taken, as
+    ``(host id, product)`` pairs (default empty). Recorded for ``otto --list-products``."""
+
+    shadowed_dev_tools: list[tuple[str, "DevTool"]]
+    """The dev-tool twin of :attr:`shadowed_products` (default empty)."""
+
     toolchain: "Toolchain"
     """Toolchain this host's products are built with, and the tools it installs."""
 
@@ -1125,6 +1132,13 @@ class BaseHost(ABC):
 
     dev_tools: list["DevTool"] = field(default_factory=list)
     """Repo-internal tooling deployed to this host. Default empty."""
+
+    shadowed_products: list[tuple[str, "Product"]] = field(default_factory=list, repr=False)
+    """Provider products dropped at ingest because their name was already taken, as
+    ``(host id, product)`` pairs. Recorded for ``otto --list-products``; default empty."""
+
+    shadowed_dev_tools: list[tuple[str, "DevTool"]] = field(default_factory=list, repr=False)
+    """The dev-tool twin of :attr:`shadowed_products`. Default empty."""
 
     toolchain: "Toolchain" = field(default_factory=Toolchain, repr=False)
     """Toolchain associated with this host's products. Used by the coverage

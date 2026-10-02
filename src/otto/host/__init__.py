@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from .dev_tool import DevTool as DevTool
     from .dev_tool import DevToolProvider as DevToolProvider
     from .dev_tool import register_dev_tool_provider as register_dev_tool_provider
+    from .dev_tool import registered_dev_tool_providers as registered_dev_tool_providers
     from .docker_host import DockerContainerHost as DockerContainerHost
     from .embedded_host import EmbeddedHost as EmbeddedHost
     from .embedded_host import ZephyrHost as ZephyrHost
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
     from .product import ProductProvider as ProductProvider
     from .product import ShellProduct as ShellProduct
     from .product import register_product_provider as register_product_provider
+    from .product import registered_product_providers as registered_product_providers
     from .remote_host import OsType as OsType
     from .remote_host import RemoteHost as RemoteHost
     from .session import Expect as Expect
@@ -105,6 +107,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "DevTool": "otto.host.dev_tool",
     "DevToolProvider": "otto.host.dev_tool",
     "register_dev_tool_provider": "otto.host.dev_tool",
+    "registered_dev_tool_providers": "otto.host.dev_tool",
     "DockerContainerHost": "otto.host.docker_host",
     "EmbeddedHost": "otto.host.embedded_host",
     "ZephyrHost": "otto.host.embedded_host",
@@ -135,6 +138,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "ProductProvider": "otto.host.product",
     "ShellProduct": "otto.host.product",
     "register_product_provider": "otto.host.product",
+    "registered_product_providers": "otto.host.product",
     "OsType": "otto.host.remote_host",
     "RemoteHost": "otto.host.remote_host",
     "Expect": "otto.host.session",
@@ -241,5 +245,7 @@ __all__ = [
     "register_product_provider",
     "register_term_backend",
     "register_transfer_backend",
+    "registered_dev_tool_providers",
+    "registered_product_providers",
     "validate_host_dict",
 ]

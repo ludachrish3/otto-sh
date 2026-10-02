@@ -62,6 +62,21 @@ class DevTool(ABC):
     marker (see :func:`otto.registry.registering_repo`). ``None`` = attached
     outside any repo's init import. Default per-repo actions filter on this."""
 
+    kind: str = "code"
+    """The declared kind that built this tool (``"shell"``, ``"kmod"``, ...),
+    stamped by :meth:`~otto.declared.KindRegistry.build`; ``"code"`` for a tool a
+    provider constructed. Read by ``otto --list-tools``."""
+
+    origin: str = "provider"
+    """The origin of this tool, ``"declared"`` (a ``[[dev_tools]]`` entry) or
+    ``"provider"`` (a :func:`register_dev_tool_provider` callback). Stamped at
+    ingest; read by ``otto --list-tools``."""
+
+    source_entry: "DeclaredEntry | None" = None
+    """The ``[[dev_tools]]`` entry that built this tool, stamped by
+    :meth:`~otto.declared.KindRegistry.build`; ``None`` for a provider tool.
+    ``otto --list-tools`` uses it to tell which entries built somewhere."""
+
     @property
     def stages_artifact(self) -> bool:
         """Whether this tool puts a FILE at ``<stage_dir>/<artifact basename>``.
@@ -118,6 +133,15 @@ Separate from ``product._PRODUCT_PROVIDERS`` on purpose — each seam owns its
 registry, so a provider can never attach to the other seam's list."""
 
 
+def registered_dev_tool_providers() -> list[tuple[DevToolProvider, str | None]]:
+    """Return a snapshot of the registered dev tool providers, in registration order.
+
+    The twin of :func:`otto.host.product.registered_product_providers`: each item
+    pairs the provider with the name of the repo that registered it.
+    """
+    return list(_DEV_TOOL_PROVIDERS)
+
+
 def register_dev_tool_provider(provider: DevToolProvider) -> None:
     """Register a function that decides which dev tools a host carries.
 
@@ -133,6 +157,9 @@ def register_dev_tool_provider(provider: DevToolProvider) -> None:
     The registering repo is captured **here**, not at ingest: this call runs
     inside that repo's init import, whereas the provider runs long after,
     when the marker is gone.
+
+    A returned instance must accept ``kind``, ``origin`` and ``owner``
+    attribute assignment: ingest stamps all three on it.
     """
     refuse_during_test_load(
         "dev tool provider",
@@ -216,7 +243,10 @@ def apply_dev_tool_providers(host: "Host") -> None:
 
     Each attached dev tool is stamped with :attr:`DevTool.owner` — the repo that
     registered the provider — unless the tool already names an owner, which lets
-    one repo hand a tool to another's ownership deliberately.
+    one repo hand a tool to another's ownership deliberately. It is also stamped
+    ``kind = "code"`` and ``origin = "provider"``; a tool dropped because its
+    name was taken goes to ``host.shadowed_dev_tools`` (see
+    :func:`otto.host.product.apply_product_providers`).
 
     A provider is SKIPPED — not called — when its registering repo's
     ``[project]`` declaration does not target ``(host.source_lab, host.id)``
@@ -241,15 +271,18 @@ def apply_dev_tool_providers(host: "Host") -> None:
             )
             continue
         for tool in provider(host) or ():
+            if tool.owner is None:
+                tool.owner = provider_owner
+            tool.kind = "code"
+            tool.origin = "provider"
             if tool.name in seen:
                 logger.debug(
                     "dev tool provider: skipping duplicate %r on host %s",
                     tool.name,
                     host.id,
                 )
+                host.shadowed_dev_tools.append((host.id, tool))
                 continue
-            if tool.owner is None:
-                tool.owner = provider_owner
             host.dev_tools.append(tool)
             seen.add(tool.name)
 

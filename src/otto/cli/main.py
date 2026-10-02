@@ -601,6 +601,26 @@ def main(  # noqa: PLR0913 — CLI command params
         bool,
         typer.Option("--list-hosts", help="Show all valid host IDs."),
     ] = False,
+    list_products: Annotated[
+        bool,
+        typer.Option(
+            "--list-products",
+            help=(
+                "List the products the repos declare; with --lab, which hosts each one "
+                "lands on and what was left out."
+            ),
+        ),
+    ] = False,
+    list_tools: Annotated[
+        bool,
+        typer.Option(
+            "--list-tools",
+            help=(
+                "List the dev tools the repos declare; with --lab, which hosts each one "
+                "lands on and what was left out."
+            ),
+        ),
+    ] = False,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -667,7 +687,8 @@ def main(  # noqa: PLR0913 — CLI command params
     :func:`~otto.cli.invoke.command_preamble`, so ``--help`` / discovery paths
     are structurally incapable of touching host state. The only exceptions are
     ``--show-lab`` / ``--list-hosts``, which inspect live lab state and so load
-    it inline here before printing and exiting.
+    it inline here before printing and exiting, and ``--list-products`` /
+    ``--list-tools``, which do the same only when ``--lab`` is given.
     """
     if ctx.resilient_parsing:
         return
@@ -715,6 +736,18 @@ def main(  # noqa: PLR0913 — CLI command params
     from ..logger import management
 
     management.install_console(log_level, show_time=show_time)
+
+    if list_products or list_tools:
+        # Read-only listings that contact no host. Without --lab they describe
+        # what the repos declare, so they do not demand one (unlike --list-hosts).
+        from .listing import show_listing
+
+        if list_products:
+            show_listing(ctx, "products")
+        if list_tools:
+            show_listing(ctx, "dev_tools")
+        if not (show_lab or list_hosts):
+            raise typer.Exit
 
     if show_lab or list_hosts:
         # These root flags inspect live lab state: gates, session and lab load

@@ -8,6 +8,9 @@ share one schema and one behavior; only the seam differs. Code providers
 declared entries apply first at lab ingest, and a provider instance whose
 name a declared entry already claimed stands down.
 
+To see which hosts a product lands on, run `otto --lab X --list-products`
+(`--list-tools` for dev tools); see {ref}`list-products-flag`.
+
 A repo that declares a non-empty `[[products]]` or `[[dev_tools]]` array must
 also declare its fleet in a `[project]` table; otherwise otto exits 1 at
 startup with an error naming the repo. See {ref}`project-scope-required` for

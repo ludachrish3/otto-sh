@@ -336,10 +336,15 @@ def test_host_resources_reach_the_runtime_host_as_a_frozenset_copy():
 # ``element`` joins them since spec 2026-09-05 §2.6: it is the FACTORY's own
 # argument, built once per element by the loader and shared by every host of
 # it, so a host entry declares no part of it and the spec has no such field.
+# ``shadowed_products`` / ``shadowed_dev_tools`` are the provider-built items
+# the ingest dropped because a declared entry already held the name — recorded
+# for ``otto --list-products`` / ``--list-tools``, never declared in lab data.
 _NON_SPEC_RUNTIME_FIELDS = frozenset(
     {
         "products",
         "dev_tools",
+        "shadowed_products",
+        "shadowed_dev_tools",
         "lab_info",
         "inventory_ref",
         "element",

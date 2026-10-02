@@ -281,7 +281,10 @@ class KindRegistry(Registry[Callable[[DeclaredEntry, Any], T]], Generic[T]):
         with a message naming its replacement. Built instances whose
         ``owner`` is None are stamped with the entry's declaring repo (the
         provider loops' carve-out: a factory may hand its instance to another
-        repo's ownership).
+        repo's ownership). Every built instance is also stamped with the
+        entry's ``kind``, ``origin = "declared"`` and the entry itself
+        (``source_entry``) — recorded here, where the entry is in hand, so
+        ``otto --list-products`` reads facts instead of re-deriving them.
         """
         out: list[T] = []
         taken: set[str] = set()
@@ -295,9 +298,48 @@ class KindRegistry(Registry[Callable[[DeclaredEntry, Any], T]], Generic[T]):
             if getattr(obj, "owner", None) is None:
                 # Product/DevTool contract: built instances carry a mutable owner attribute.
                 obj.owner = entry.owner  # ty: ignore[unresolved-attribute]
+            # Same contract: Product/DevTool carry mutable kind/origin/source_entry attributes.
+            obj.kind = entry.kind  # ty: ignore[unresolved-attribute]
+            obj.origin = "declared"  # ty: ignore[unresolved-attribute]
+            obj.source_entry = entry  # ty: ignore[unresolved-attribute]
             out.append(obj)
             taken.add(entry.name)
         return out
+
+
+def _loaded_repos() -> "tuple[list[Any], set[str | None]] | None":
+    """Return ``(discovered repos, survivor names)``, or ``None`` when there is nothing to read.
+
+    The one place that decides which repos' declarations exist: ``None`` when
+    bootstrap has not started (probed via ``is_bootstrapped``, never forced) or
+    the config is unreachable. Discovery order is kept for the repos; the
+    survivors are the ones the dependency pass did not skip.
+    """
+    try:
+        # function-scope: config's init boots the app
+        from .config import get_ordered_repos, get_repos, is_bootstrapped
+
+        if not is_bootstrapped():
+            return None
+        repos = get_repos()
+        surviving = {getattr(r, "name", None) for r in get_ordered_repos()}
+    except Exception as exc:  # noqa: BLE001 — see declared_for_host: no config means no entries
+        logger.debug("declared entries: config unreachable (%s)", exc)
+        return None
+    return list(repos or ()), surviving
+
+
+def surviving_repos() -> list[Any]:
+    """Return the discovered repos whose declarations apply, in discovery order.
+
+    The set :func:`declared_for_host` collects from: every discovered repo except
+    one the dependency pass skipped. Empty when nothing is bootstrapped.
+    """
+    loaded = _loaded_repos()
+    if loaded is None:
+        return []
+    repos, surviving = loaded
+    return [r for r in repos if getattr(r, "name", None) in surviving]
 
 
 def declared_for_host(host: Any, seam_attr: str) -> list[DeclaredEntry]:
@@ -333,21 +375,15 @@ def declared_for_host(host: Any, seam_attr: str) -> list[DeclaredEntry]:
     ``getattr`` with a default because bare-library ``Repo`` stand-ins predate
     these fields; *seam_attr* is ``"declared_products"``/``"declared_dev_tools"``.
     """
-    try:
-        # function-scope: config's init boots the app
-        from .config import get_ordered_repos, get_repos, is_bootstrapped
-
-        if not is_bootstrapped():
-            return []
-        repos = get_repos()
-        surviving = {getattr(r, "name", None) for r in get_ordered_repos()}
-    except Exception as exc:  # noqa: BLE001 — see docstring: no config means no entries
-        logger.debug("declared %s: config unreachable (%s) — no entries", seam_attr, exc)
+    loaded = _loaded_repos()
+    if loaded is None:
+        logger.debug("declared %s: config unreachable or not bootstrapped — no entries", seam_attr)
         return []
+    repos, surviving = loaded
     from .config.scope import repo_targets  # function-scope: same import-light seam
 
     out: list[DeclaredEntry] = []
-    for repo in repos or ():
+    for repo in repos:
         entries = getattr(repo, seam_attr, None)
         if not entries:
             continue
