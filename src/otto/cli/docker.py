@@ -544,7 +544,8 @@ def _use_cases(
     """List declared use-cases: their fragments, where they land, env keys.
 
     Reads configuration only — nothing is contacted and nothing is started, so
-    the answer is the same with or without --dry-run. Values are never printed,
+    the answer is the same with or without --dry-run (the leaf opts out of the
+    generic dry-run stop to say so). Values are never printed,
     only the env KEY names. Name a USE_CASE to see just that one.
     """
     # Selection (§4) and placement (§5) are pure, which is what lets this verb
@@ -711,8 +712,10 @@ class _Verb:
     block and exits 0 ABOVE the leaf body). ``compose up``/``compose down`` resolve the
     whole pure half of the pipeline under a dry run and decline with spec §12's plan —
     the exact compose command included — so stopping at the seam would delete the
-    preview this workstream exists to ship. ``build``/``ps`` keep the safe default;
-    ``use-cases`` is read-only and behaves identically either way, so it needs no opt-in.
+    preview this workstream exists to ship, and the build verbs likewise print their plan.
+    ``use-cases`` opts out too: it is a read-only inventory of configuration that
+    contacts no host, so its body is its own dry-run answer and prints identically
+    either way. ``ps`` keeps the safe default.
     """
 
 
@@ -724,7 +727,7 @@ class _Verb:
 _VERBS: "list[_Verb]" = [
     _Verb("build", "docker", _build, dry_run_preview=True),
     _Verb("ps", "docker", _ps, output_dir=False),
-    _Verb("use-cases", "docker", _use_cases, output_dir=False),
+    _Verb("use-cases", "docker", _use_cases, output_dir=False, dry_run_preview=True),
     _Verb("build", "compose", _compose_build, dry_run_preview=True),
     _Verb("up", "compose", _compose_up, dry_run_preview=True),
     _Verb("down", "compose", _compose_down, dry_run_preview=True),

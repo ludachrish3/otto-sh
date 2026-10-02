@@ -301,3 +301,8 @@ declines at the first real touch, printing the resolved plan **and the exact
 per-host `docker compose` command it would have issued**, env prefix included.
 `down` declines the same way with its resolved plan. See
 {doc}`docker/use-cases` for what the plan's parts mean.
+
+`otto docker use-cases` opts out of the seam's generic stop as well, because it
+is already a configuration-only inventory: under `--dry-run` it prints the same
+tables, displacement lines and placement problems as without, and exits with
+the same code. `otto docker ps` keeps the seam default.

@@ -885,6 +885,53 @@ def test_use_cases_says_so_when_nothing_is_declared(capsys):
     assert "[[docker.use_cases]]" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [[], ["integration"], ["integraton"]],
+    ids=["every-use-case", "named", "unknown-name"],
+)
+def test_use_cases_prints_the_same_under_dry_run(argv):
+    """The inventory reads configuration only, so `--dry-run` changes nothing about it.
+
+    Drives the real CLI leaf through the leaf-invoke preamble twice over the same
+    configuration, once live and once under an injected dry run, and compares what
+    the user sees and the exit code (the unknown name exits 1 either way). The live
+    run is the positive control: the table is there to be missing. The host's
+    transport is a spy that fails the test if the inventory ever dials, which also
+    covers "contacts nothing" for a dry run that would otherwise only decline.
+    """
+    from otto.cli.docker import docker_app
+    from otto.utils import DRY_RUN_HEADLINE
+    from tests._fixtures.dispatch import DispatchRunner
+
+    winner = _uc_repo("repo1", _uc(provides="edge", priority=10, env={"EDGE_ADDR": "x"}))
+    loser = _uc_repo("repo2", _uc(provides="edge", priority=5))
+    lab = Lab(name="unix")
+    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
+    dialled = AsyncMock(side_effect=AssertionError("use-cases must not contact a host"))
+
+    def run(*, dry_run: bool):
+        with (
+            patch.object(docker_cli, "get_repos", return_value=[winner, loser]),
+            patch.object(fleet_mod, "get_lab", return_value=lab),
+            patch("otto.docker.resolve.scope_for_repo", return_value=None),
+            patch.object(UnixHost, "exec", dialled),
+            patch.object(UnixHost, "put", dialled),
+            active_context(dry_run=dry_run),
+        ):
+            return DispatchRunner().invoke(docker_app, ["use-cases", *argv], spec_name="docker")
+
+    live = run(dry_run=False)
+    dry = run(dry_run=True)
+
+    if argv != ["integraton"]:
+        assert "EDGE_ADDR" in live.output, "the live run printed the table"
+    assert DRY_RUN_HEADLINE not in dry.output, "the generic dry-run block must not replace it"
+    assert dry.exit_code == live.exit_code
+    assert dry.output == live.output
+    dialled.assert_not_called()
+
+
 def test_a_malformed_provide_is_a_usage_error_through_the_dispatch():
     """`BadParameter` from a BODY must still reach click's usage-error exit 2.
 
