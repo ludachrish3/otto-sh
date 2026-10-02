@@ -269,7 +269,7 @@ Vagrant.configure("2") do |config|
         # place on `vagrant reload` (it can never shrink one), and
         # grow_root_disk then extends the partition, LV and filesystem into
         # the new space: `vagrant provision dev --provision-with dev-grow-disk`.
-        dev.vm.disk :disk, size: "90GB", primary: true
+        dev.vm.disk :disk, size: "80GB", primary: true
 
         # Grow the root LV before the Zephyr SDK/workspace downloads below run
         # it out of space — see grow_root_disk's own comment for the why/how.
