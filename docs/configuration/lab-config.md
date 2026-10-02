@@ -866,17 +866,21 @@ of it:
 [project] pattern 'bench(' is not a valid regular expression: missing ), unterminated subpattern at position 5
 ```
 
-### Required once a repo registers providers
+(project-scope-required)=
+
+### Required once a repo provides products or dev tools
 
 A repo that registers a product or dev-tool provider (see
-{doc}`../cli/host/capabilities/index`) **must** declare `lab_patterns`.  The
-check runs at bootstrap, right after init modules have been imported, and it
-aborts the whole run rather than warning:
+{doc}`../cli/host/capabilities/index`), or declares a non-empty `[[products]]`
+or `[[dev_tools]]` array ({doc}`declared-products-tools`), **must** declare
+`lab_patterns`.  The check runs at bootstrap, right after init modules have
+been imported.  It does not warn: otto prints the message below, prefixed
+`error:`, and exits 1.
 
 ```text
-repo 'sensors' registers product/dev-tool providers but declares no
-[project] lab_patterns in .otto/settings.toml. A providing repo must say
-which labs it applies to. Add:
+repo 'sensors' registers product/dev-tool providers or declares
+[[products]]/[[dev_tools]] entries but declares no [project] lab_patterns in
+.otto/settings.toml. A providing repo must say which labs it applies to. Add:
 
     [project]
     lab_patterns = [".*"]   # every lab — make the reach explicit
@@ -888,9 +892,10 @@ and narrow the patterns to the labs this project actually targets.
 `lab_patterns = []` gets the same refusal: an empty list is not a narrower
 declaration, it is the same "no lab" the missing key compiles to.  An empty
 `host_patterns = []` is refused separately — it admits no host in any lab, so
-every provider the repo registers would be dead code.
+every provider or declared entry the repo registers would be dead code.
 
-A repo that registers **no** providers needs no `[project]` table at all.
+A repo that registers no providers and declares no `[[products]]` or
+`[[dev_tools]]` entries needs no `[project]` table at all.
 
 ### What the declaration changes
 

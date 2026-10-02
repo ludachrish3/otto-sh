@@ -16,6 +16,9 @@ collecting performance data.
 
 ## Where to start
 
+- **Install otto and set up your first project** → {doc}`Getting Started
+  <getting-started/index>`: installs otto, scaffolds a project with `otto init`,
+  then walks a worked example.
 - **Drive your lab from the CLI** → the {doc}`CLI Reference <cli/index>`,
   one section per functional area.
 - **Learn what a host can do** → {doc}`otto host <cli/host/index>`: the

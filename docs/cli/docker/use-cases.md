@@ -39,8 +39,9 @@ above; this page is about what they *mean*.
 ## Seeing what is declared before deploying anything
 
 `otto docker use-cases` is the inventory view. It contacts nothing, starts
-nothing, and creates no output directory, so it answers the same with or
-without `--dry-run`:
+nothing, and creates no output directory. Like every `otto docker` verb it
+needs a lab selected (`--lab` or `OTTO_LAB`); without one it exits 2 before
+listing anything. The host column is placement resolved against that lab:
 
 ```console
 $ otto --lab unix docker use-cases integration

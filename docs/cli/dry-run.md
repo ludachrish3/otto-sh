@@ -1,9 +1,11 @@
 # Dry runs
 
 **A dry run never runs a command on any device.** By default it validates and
-stops at the CLI seam; a command may opt in to a deeper, configuration-only
-preview; and `--probe` may permit a *connection* — never a command — so you can
-see whether the hosts would answer.
+stops at the CLI seam, and a command may opt in to a deeper,
+configuration-only preview. Neither contacts a device. The one thing that does
+is `--probe`: it opens, and logs in over, a connection to each host the
+command names, and runs no command, so you can see whether the hosts would
+answer. Read {ref}`dry-run-probe` before using it.
 
 ## The default: validate, print, stop
 
@@ -153,6 +155,8 @@ metrics from every host in the lab.
 If a command of your own should genuinely do work under `-n`, register it
 with `dry_run_preview=True` — see
 {doc}`../cookbook/dry-run-contract`.
+
+(dry-run-probe)=
 
 ## Reachability: `--dry-run --probe`
 
