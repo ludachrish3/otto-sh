@@ -21,6 +21,47 @@ Handlers hang off a `QueueListener`, so slow file I/O (e.g. logs on NFS)
 never blocks the event loop, and old run directories are pruned under a
 time-boxed budget so rotation cannot stall startup on slow mounts.
 
+## Rich markup in log messages
+
+A log message is [Rich markup](https://rich.readthedocs.io/en/stable/markup.html)
+on every sink. The console handler is a `RichHandler` built with
+`markup=True`, and both files render each message through
+{class}`~otto.logger.formatters.RichFormatter`, which prints it with markup on
+before writing it. A style tag colours the console and is consumed in the
+files:
+
+```python
+logger.info("[bold]Deploy finished[/bold]")
+logger.warning("[yellow]Retrying[/yellow] the connection")
+logger.info("[magenta][DRY RUN] Commands and file transfers will be skipped.")
+```
+
+The last one is otto's own. Rich reads a bracket as a tag only when its text
+starts with a lowercase letter, `#`, `@` or `/`, so `[DRY RUN]` is printed as
+written. `[bench, floor]` is read as a tag, and a tag that names no style
+disappears from every sink. Whatever a message interpolates is parsed as well,
+f-string or `%`-argument alike, so a message that carries a lab list, a path or
+a library's error text can lose part of itself. To print a literal `[`, escape
+the text with Rich's `escape`, as `otto.cli.invoke.print_error` and
+`otto.project.orchestrator` do:
+
+```python
+from rich.markup import escape
+
+logger.warning(f"not applicable to the loaded lab(s) {escape(str(labs))}")
+```
+
+`escape` puts a backslash before each bracket that would start a tag. A
+literal in your own source can carry that backslash directly
+(`"\\[bench] stays in brackets"`). `extra={"markup": False}` is no substitute: the
+console honours it, but the files do not.
+
+By default the files are plain text: the markup is applied and its ANSI codes
+are stripped. `--rich-log-file` (or `OTTO_LOG_RICH`) keeps those codes in both
+files, for a pager that renders them (`less -R`). The colour comes from the
+terminal otto started in, so a run whose output is redirected writes plain
+message lines even with the flag set.
+
 ## LogMode: one knob for command I/O
 
 Whether a host's command echo and output *show up* is a per-host and
