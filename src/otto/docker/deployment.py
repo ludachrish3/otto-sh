@@ -659,13 +659,11 @@ async def deploy(
 
     # Read once: every host's branch below must agree about which run this is.
     dry = is_dry_run()
-    # Above the dry branch on purpose, which is a CHANGE: this used to sit
-    # below the decline and so never spoke during a preview. Displacements are
-    # settled from configuration, they are the single most surprising thing a
-    # deployment does, and a dry run is exactly when someone is checking which
-    # provider won -- reporting them only on the live run would have made the
-    # preview quieter than the thing it previews.
-    _log_displacements(use_case, selection)
+    # A live run reports each displacement through this log line; a dry run
+    # reports it through the plan its decline carries (`_plan`), which the
+    # caller prints. Logging it on a dry run as well showed each one twice.
+    if not dry:
+        _log_displacements(use_case, selection)
     stack = UseCaseStack(use_case=use_case, selection=selection)
     brought_up: "list[tuple[UnixHost, str]]" = []
     previews: "list[tuple[str, str]]" = []  # (host id, the command it would run)
@@ -791,19 +789,22 @@ def _command_preview(previews: "list[tuple[str, str]]") -> str:
 def _log_displacements(use_case: str, selection: Selection) -> None:
     """Name every fragment the provider competition excluded (spec §4).
 
-    Both priorities are printed and NEITHER is described as the higher one:
-    a ``--provide cap=repo`` override narrows the field to one repo first, so
-    the winner can legitimately carry a LOWER priority than the fragment it
-    displaced. The loser can also be the winner's own repo (two fragments of
-    one repo at different priorities). Saying "lower priority lost" would be
-    a lie in both cases; naming who won and at what is true in all of them.
+    The sentence is :meth:`~otto.docker.resolve.Displacement.describe`'s, which
+    explains why it never calls either priority the higher one. This log line
+    is the ONE place a live deployment reports a displacement: at the default
+    log level it reaches the console and both log files, so the CLI's stack
+    report does not echo it. A Python caller of :func:`deploy` sees it only if
+    it configured logging; the data is on ``stack.selection.displaced``. A dry
+    run does not log it; the plan its decline carries (:func:`_plan`) says it,
+    so a dry run that fails before that decline is raised (an adapter or render
+    error) names no displacement.
     """
+    from rich.markup import escape
+
+    # The log message is rich markup, so a repo or capability name carrying
+    # `[x]` would be eaten as a style tag unescaped.
     for d in selection.displaced:
-        logger.info(
-            rf"\[docker] use-case {use_case}: capability {d.capability!r} goes to "
-            f"{d.winner_repo} (priority {d.winner_priority}); "
-            f"{d.loser_repo} (priority {d.loser_priority}) stands down"
-        )
+        logger.info(rf"\[docker] use-case {use_case}: {escape(d.describe())}")
 
 
 def _refuse_failed_up(compose_project: str, parent_id: str, output: str) -> "NoReturn":
@@ -828,11 +829,8 @@ def _plan(placed: "dict[str, list[SelectedFragment]]", selection: Selection) -> 
     ``deploy``. The clause that used to apologize here for a command it could
     not show described the old arm's position, not a property of a dry run.
 
-    The displacement clause renders each record AS IT IS and calls neither
-    priority the higher one, for :func:`_log_displacements`'s reason: a
-    ``--provide`` override narrows the field to one repo before ranking, so
-    the winner can carry a LOWER priority than what it displaced, and the
-    loser can be the winner's own repo.
+    The displacement clause is one
+    :meth:`~otto.docker.resolve.Displacement.describe` sentence per record.
     """
     per_host = "; ".join(
         f"{host_id} <- "
@@ -841,11 +839,7 @@ def _plan(placed: "dict[str, list[SelectedFragment]]", selection: Selection) -> 
     )
     keys = sorted({key for frags in placed.values() for sf in frags for key in sf.fragment.env})
     env_note = f" Fragment env keys: {keys}." if keys else ""
-    displaced = "; ".join(
-        f"{d.capability} -> {d.winner_repo} (priority {d.winner_priority}), "
-        f"{d.loser_repo} (priority {d.loser_priority}) stands down"
-        for d in selection.displaced
-    )
+    displaced = ". ".join(d.describe() for d in selection.displaced)
     displaced_note = f" Displaced: {displaced}." if displaced else ""
     return (
         f"Resolved plan: {per_host}.{displaced_note}{env_note} No image was built, "

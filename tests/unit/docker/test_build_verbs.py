@@ -362,5 +362,5 @@ async def test_compose_build_dry_run_names_the_displacements(lab, builds):
         pytest.raises(CommandNotRunError) as e,
     ):
         await compose_build("integration")
-    assert "Displaced: db -> real (priority 1), mock (priority 0) stands down" in str(e.value)
+    assert "Displaced: db goes to real (priority 1); mock (priority 0) stands down." in str(e.value)
     assert builds == []

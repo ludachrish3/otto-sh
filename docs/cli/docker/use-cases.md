@@ -269,7 +269,7 @@ and both of its files are in the merged stack:
 ```console
 $ otto --lab unix --dry-run docker compose up integration
 … Resolved plan: test3 <- repo1[core,edge], repo2[core].
-  Displaced: edge -> repo1 (priority 10), repo2 (priority 0) stands down. …
+  Displaced: edge goes to repo1 (priority 10); repo2 (priority 0) stands down. …
 ```
 
 Now hand the capability to the mock:
@@ -277,7 +277,7 @@ Now hand the capability to the mock:
 ```console
 $ otto --lab unix --dry-run docker compose up integration --provide edge=repo2
 … Resolved plan: test3 <- repo2[core], repo2[mock-edge].
-  Displaced: edge -> repo2 (priority 0), repo1 (priority 10) stands down. …
+  Displaced: edge goes to repo2 (priority 0); repo1 (priority 10) stands down. …
 ```
 
 Repo1's `core` file — and the `api` service in it — is **gone**, not just its
@@ -457,7 +457,7 @@ includes the **exact** per-host compose command, not a description of one:
 $ otto --lab unix --dry-run docker compose up integration
 'deploy(integration)' was not run on host 'test3': this is a dry run, which
 contacts no device. … Resolved plan: test3 <- repo1[core,edge], repo2[core].
-Displaced: edge -> repo1 (priority 10), repo2 (priority 0) stands down.
+Displaced: edge goes to repo1 (priority 10); repo2 (priority 0) stands down.
 Fragment env keys: ['EDGE_ADDR']. No image was built, no file was staged and
 no container was started. The adapters ran (plain data; the only thing one may
 write is its own scratch dir), so this is the command itself, not a

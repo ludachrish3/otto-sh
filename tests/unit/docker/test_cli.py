@@ -531,9 +531,9 @@ async def test_up_forwards_provide_env_and_env_files(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_up_prints_displacements_as_they_are():
-    """A --provide override can leave the WINNER carrying the lower priority,
-    and the loser can be the winner's own repo. The line must survive both."""
+async def test_up_leaves_displacements_to_the_librarys_log_line():
+    """`deploy` logs each displacement, and that line reaches the console, so the
+    stack report must not print it a second time (#496)."""
     displaced = [
         Displacement(
             capability="edge",
@@ -552,10 +552,8 @@ async def test_up_prints_displacements_as_they_are():
         await docker_cli._compose_up(use_case="integration", service=None)
 
     printed = " ".join(str(c) for c in mock_rprint.call_args_list)
-    assert "edge" in printed
-    assert "priority 5" in printed
-    assert "priority 10" in printed
-    assert "lower" not in printed
+    assert "container(s) registered" in printed
+    assert "stands down" not in printed
 
 
 @pytest.mark.asyncio

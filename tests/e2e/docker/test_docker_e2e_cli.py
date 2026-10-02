@@ -829,7 +829,9 @@ def test_e2e_dry_run_prints_the_plan_and_starts_nothing(docker_host, tmp_path):
     assert dry.returncode == 0, f"a dry run is an answer, not a failure:\n{out}"
     assert "Traceback" not in out, out
     assert f"Resolved plan: {docker_host} <- repo1[core,edge], repo2[core]" in out, out
-    assert "Displaced: edge -> repo1 (priority 10), repo2 (priority 0) stands down" in out, out
+    assert "Displaced: edge goes to repo1 (priority 10); repo2 (priority 0) stands down." in out, (
+        out
+    )
     assert "Fragment env keys: ['EDGE_ADDR']" in out, out
     # Spec §12: the EXACT command, not a description of one.
     assert f"docker compose -p unix-{_MERGED_USE_CASE}-{suffix}" in out, out

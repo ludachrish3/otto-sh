@@ -35,13 +35,30 @@ class SelectedFragment:
 
 @dataclass
 class Displacement:
-    """A provider fragment excluded by a higher-priority winner (spec §4)."""
+    """A provider fragment the competition excluded (spec §4)."""
 
     capability: str
     loser_repo: str
     loser_priority: int
     winner_repo: str
     winner_priority: int
+
+    def describe(self) -> str:
+        """Return the one sentence every surface uses to report this displacement.
+
+        Names who won, at what priority, and who stands down, and calls NEITHER
+        priority the higher one: ``--provide cap=repo`` narrows the field to one
+        repo before ranking, so the winner can legitimately carry a LOWER
+        priority than the fragment it displaced, and the loser can be the
+        winner's own repo (two fragments of one repo at different priorities).
+        "Lower priority lost" would be false in both cases; this sentence is
+        true in all of them. The log line, the CLI reports and the dry-run
+        plans each add their own lead-in and never re-word this.
+        """
+        return (
+            f"{self.capability} goes to {self.winner_repo} (priority {self.winner_priority}); "
+            f"{self.loser_repo} (priority {self.loser_priority}) stands down"
+        )
 
 
 @dataclass

@@ -148,11 +148,7 @@ def _plan_text(
             continue
         by_host.setdefault(parent.id, []).append(f"{repo.name}[{','.join(chosen)}]")
     per_host = "; ".join(f"{host} <- {'; '.join(items)}" for host, items in by_host.items())
-    displaced_text = "; ".join(
-        f"{d.capability} -> {d.winner_repo} (priority {d.winner_priority}), "
-        f"{d.loser_repo} (priority {d.loser_priority}) stands down"
-        for d in displaced
-    )
+    displaced_text = ". ".join(d.describe() for d in displaced)
     displaced_note = f" Displaced: {displaced_text}." if displaced_text else ""
     return f"Build plan: {per_host}.{displaced_note} No context was staged and no image was built."
 

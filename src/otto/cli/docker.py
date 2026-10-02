@@ -201,25 +201,18 @@ def _parse_env(values: "list[str] | None") -> dict[str, str]:
 def _print_displacements(displaced: "list[Displacement]") -> None:
     """Name every fragment the provider competition excluded (spec §4).
 
-    Renders each record AS IT IS and calls NEITHER priority the higher one, for
-    ``deployment._log_displacements``' reason: ``--provide`` narrows the field
-    to one repo before ranking, so the winner can legitimately carry a LOWER
-    priority than what it displaced, and the loser can be the winner's own repo
-    (two fragments of one repo). "Lower priority lost" would be false in both
-    cases; naming who won, at what, and what stood down is true in all of them.
+    For the verbs whose library call has no log line of its own (``use-cases``
+    and the build verbs); ``compose up`` leaves it to ``deploy``'s log line,
+    which reaches the console at the default log level. The sentence is
+    :meth:`~otto.docker.resolve.Displacement.describe`'s.
     """
     for d in displaced:
-        line = (
-            f"docker: {d.capability} goes to {d.winner_repo} (priority "
-            f"{d.winner_priority}); {d.loser_repo} (priority {d.loser_priority}) "
-            f"stands down"
-        )
+        line = f"docker: {d.describe()}"
         rprint(f"[yellow]{escape(line)}")
 
 
 def _print_stack_report(stack: "UseCaseStack") -> None:
     """Report what :func:`~otto.docker.deployment.deploy` registered, per host."""
-    _print_displacements(stack.selection.displaced)
     if not stack.by_host:
         # Not reachable from a resolvable selection (a winner always
         # participates, and a `services=` narrowing that matches nothing is

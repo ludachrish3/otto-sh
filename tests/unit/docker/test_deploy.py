@@ -1290,7 +1290,7 @@ async def test_dry_run_plan_shows_displacements_as_they_are(tmp_path):
         await deploy("integration", on="test3", provide={"edge": "b"})
 
     message = str(excinfo.value)
-    assert "Displaced: edge -> b (priority 5), a (priority 10) stands down" in message
+    assert "Displaced: edge goes to b (priority 5); a (priority 10) stands down." in message
     assert "lower" not in message
 
 
