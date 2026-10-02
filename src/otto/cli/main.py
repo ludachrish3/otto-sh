@@ -1156,8 +1156,14 @@ def entry(cache_stale: bool = False) -> None:
         #
         # The stack is not DESTROYED, only demoted: an OttoError raised from
         # somewhere it has no business being is a bug, and the maintainer
-        # chasing it needs the frames. Debug logging prints them.
+        # chasing it needs the frames. Debug logging prints them, and both log
+        # files always keep them. The files take the FULL message: a coverage
+        # refusal's plain verdict listing lives in `str(e)`, and a log file
+        # cannot hold the table the console gets instead.
         print_traceback_if_debug()
+        from ..logger.management import record_command_failure
+
+        record_command_failure(e, f"error: {e}")
         # A coverage refusal carries its per-product verdicts as structure as
         # well as text; on a console those render as the rounded table and the
         # error line keeps only the headline. Here rather than in a leaf
@@ -1167,6 +1173,23 @@ def entry(cache_stale: bool = False) -> None:
         # as its own full message, unchanged.
         print_error(f"error: {render_instrumentation_refusal(e)}")
         raise SystemExit(1) from e
+    except BaseException as e:
+        # A crash. An Exception was marked by Typer for its own excepthook,
+        # which prints the rich traceback once the re-raise leaves the
+        # process; anything else (a leaked `asyncio.CancelledError`) gets the
+        # interpreter's. All this frame adds is the same failure in both log
+        # files, written as soon as the logging listener reaches it.
+        #
+        # The three exits that are not failures pass untouched. Click's own
+        # control flow never lands here as anything else: in standalone mode a
+        # usage error, `typer.Exit`, `--help` and Ctrl-C all leave `app()` as
+        # SystemExit, and an interrupt otto raises itself is a
+        # KeyboardInterrupt.
+        if not isinstance(e, (SystemExit, KeyboardInterrupt, GeneratorExit)):
+            from ..logger.management import record_command_failure
+
+            record_command_failure(e, f"uncaught {type(e).__name__} ended the command")
+        raise
     finally:
         reset_cli_context()
         if completion:

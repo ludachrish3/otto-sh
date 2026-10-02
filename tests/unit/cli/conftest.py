@@ -188,7 +188,7 @@ def real_main_mocks(tmp_path):
 
     What is mocked (I/O boundaries only):
       - ``management.remove_old_logs`` — filesystem listing + deletion
-      - ``RichHandler`` — console I/O
+      - ``_ConsoleHandler`` (otto's ``RichHandler``) — console I/O
       - ``get_repos`` — module-level singleton; returns a real ``Repo``
       - ``LocalHost.run`` — subprocess for git commands
     """
@@ -231,7 +231,7 @@ def real_main_mocks(tmp_path):
         # otherwise raise TypeError from inside mock, far from its cause —
         # exactly the failure shape this double exists to eliminate.
         patch(
-            "otto.logger.management.RichHandler",
+            "otto.logger.management._ConsoleHandler",
             side_effect=lambda *args, **kwargs: logging.NullHandler(),
         ) as p_rich,
         patch("otto.config.get_repos", return_value=[repo]),

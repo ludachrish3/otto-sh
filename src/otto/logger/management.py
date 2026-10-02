@@ -20,6 +20,7 @@ creation/rotation. It is not a catch-all.
 """
 
 import atexit
+import copy
 import logging
 import re
 import time
@@ -31,12 +32,21 @@ from logging.handlers import QueueHandler, QueueListener
 from pathlib import Path
 from queue import Queue
 from shutil import rmtree
+from typing import Any
 
 from rich.highlighter import NullHighlighter
 from rich.logging import RichHandler
+from typing_extensions import override
 
 from ..console import CONSOLE
-from .formatters import RichFormatter, format_log_time
+from .formatters import (
+    CONSOLE_TRACEBACK_MAX_FRAMES,
+    EXC_ID_ATTR,
+    TRACE_ATTR,
+    RichFormatter,
+    capture_exception,
+    format_log_time,
+)
 
 # Matches the timestamp directory names ``create_output_dir`` writes:
 # ``YYYYMMDD_HHMMSS_mmm`` optionally followed by ``_<subcommand>``. Fail-safe so
@@ -221,12 +231,16 @@ def install_console(log_level: str, *, show_time: bool = False) -> None:
         if not isinstance(h, QueueHandler):
             root.removeHandler(h)
     previous = _state.console_handler
-    stdout_handler = RichHandler(
+    # No locals on the console: a logged exception is often routine (a
+    # teardown step, an asyncio task nobody awaited, a dashboard request), and
+    # a locals panel per frame would bury the terminal. The files keep them.
+    stdout_handler = _ConsoleHandler(
         level=log_level,
         console=CONSOLE,
         show_time=show_time,
-        tracebacks_max_frames=20,
-        tracebacks_show_locals=True,
+        rich_tracebacks=True,
+        tracebacks_max_frames=CONSOLE_TRACEBACK_MAX_FRAMES,
+        tracebacks_show_locals=False,
         markup=True,
         highlighter=NullHighlighter(),
         show_path=log_level == "DEBUG",
@@ -533,14 +547,161 @@ def create_output_dir(command: str, subcommand: str | None = None) -> Path:
     return output_dir
 
 
+class _LogFileHandler(FileHandler):
+    """A log file whose formatter learns when a traceback write failed.
+
+    ``StreamHandler.emit`` reports a failed write through ``handleError``
+    rather than raising. The formatter has by then counted the exception as
+    written to this file, so it is told to forget it, and the next record
+    carrying that exception gets the traceback in full rather than a pointer to
+    one the file never received.
+    """
+
+    @override
+    def handleError(self, record: LogRecord) -> None:
+        if isinstance(self.formatter, RichFormatter):
+            self.formatter.forget_last_write()
+        super().handleError(record)
+
+
 def _make_file_handler(path: Path, level: "int | str", rich: bool) -> FileHandler:
-    """Build a ``FileHandler`` at *level* with a (optionally rich) ``RichFormatter``."""
-    fh = FileHandler(path, mode="x")
+    """Build a log-file handler at *level* with a (optionally rich) ``RichFormatter``."""
+    fh = _LogFileHandler(path, mode="x")
     fh.setLevel(level)
     fmt = RichFormatter()
     fmt.rich = rich
     fh.setFormatter(fmt)
     return fh
+
+
+COMMAND_FAILURE_ATTR = "_otto_command_failure"
+"""Marker on the record :func:`record_command_failure` enqueues.
+
+The listener hands a record carrying it to the log files alone, past their
+levels; see ``_SinkListener``."""
+
+
+class _InProcessQueueHandler(QueueHandler):
+    """A ``QueueHandler`` that captures a record's exception as data before queueing it.
+
+    The stdlib ``prepare`` readies a record for a queue that may cross a
+    process boundary: it formats the message and the traceback into ``msg``
+    and drops ``exc_info``. That turns every logged exception into a plain
+    traceback before any sink sees it: the console's Rich traceback is lost,
+    and the files get text their markup pass then reads (a ``[red]`` in a
+    frame is eaten as a style).
+
+    This one merges the message the same way, on the logging thread, so a
+    mutable ``%``-argument changed afterwards cannot change what was logged.
+    The exception is not flattened and not carried live either:
+    :func:`~otto.logger.formatters.capture_exception` turns it into data here,
+    on the thread that logged it, where its frames and locals can be read
+    safely, and each sink renders that data its own way.
+    """
+
+    @override
+    def prepare(self, record: LogRecord) -> LogRecord:
+        record = copy.copy(record)
+        record.message = record.msg = record.getMessage()
+        record.args = None
+        capture_exception(record)
+        return record
+
+
+def _without_locals(trace: Any) -> Any:
+    """Return a copy of a Rich ``Trace`` with every frame's locals dropped.
+
+    Rich draws a locals panel for any frame whose trace carries locals,
+    whatever ``show_locals`` says, and the one trace a record carries was taken
+    with them for the files.
+    """
+    from dataclasses import replace
+
+    return replace(
+        trace,
+        stacks=[
+            replace(
+                stack,
+                frames=[replace(frame, locals=None) for frame in stack.frames],
+                exceptions=[_without_locals(group) for group in stack.exceptions],
+            )
+            for stack in trace.stacks
+        ],
+    )
+
+
+class _ConsoleHandler(RichHandler):
+    """otto's console handler: a ``RichHandler`` that renders a captured exception.
+
+    Records that went through the queue carry their exception as data (see
+    ``_InProcessQueueHandler``), which the stock ``emit`` cannot see. This one
+    builds the Rich traceback from that data, with the handler's own
+    ``tracebacks_*`` settings, and falls back to the plain text captured
+    alongside it if Rich cannot. Any other record, including every record
+    before the file sinks exist (when this handler hangs on root directly and
+    still sees a live ``exc_info``), takes the stock path.
+    """
+
+    @override
+    def emit(self, record: LogRecord) -> None:
+        if getattr(record, EXC_ID_ATTR, None) is None:
+            super().emit(record)
+            return
+        from rich.console import Group, RenderableType
+        from rich.text import Text
+        from rich.traceback import Traceback
+
+        trace = getattr(record, TRACE_ATTR, None)
+        tail: RenderableType = Text(record.exc_text or "")
+        if trace is not None:
+            try:
+                tail = Traceback(
+                    trace if self.tracebacks_show_locals else _without_locals(trace),
+                    width=self.tracebacks_width,
+                    code_width=self.tracebacks_code_width,
+                    extra_lines=self.tracebacks_extra_lines,
+                    theme=self.tracebacks_theme,
+                    word_wrap=self.tracebacks_word_wrap,
+                    show_locals=self.tracebacks_show_locals,
+                    locals_max_length=self.locals_max_length,
+                    locals_max_string=self.locals_max_string,
+                    suppress=self.tracebacks_suppress,
+                    max_frames=self.tracebacks_max_frames,
+                )
+            except Exception:  # noqa: BLE001 — the captured plain text stands in
+                tail = Text(record.exc_text or "")
+        message = self.render_message(record, record.getMessage())
+        try:
+            self.console.print(
+                self.render(record=record, traceback=None, message_renderable=Group(message, tail))
+            )
+        except Exception:  # noqa: BLE001 — the stock emit's own contract: report, never raise
+            self.handleError(record)
+
+
+class _SinkListener(QueueListener):
+    """The fan-out, plus one routing rule: a command's failure goes to the files only.
+
+    A record from :func:`record_command_failure` documents the failure that
+    ended the command. Both files take it whatever their level, since a
+    ``--log-level CRITICAL`` run that ends on an error must still say why in
+    its transcript. The console never does: the terminal has already shown
+    the failure in its own way. Filters are skipped too, for the same reason
+    as levels; they exist to quiet a host's command I/O, which this is not.
+    """
+
+    @override
+    def handle(self, record: LogRecord) -> None:
+        if not getattr(record, COMMAND_FAILURE_ATTR, False):
+            super().handle(record)
+            return
+        for handler in self.handlers:
+            if isinstance(handler, FileHandler):
+                handler.acquire()
+                try:
+                    handler.emit(record)
+                finally:
+                    handler.release()
 
 
 def install_sinks(output_dir: Path) -> None:
@@ -642,12 +803,53 @@ def install_sinks(output_dir: Path) -> None:
     _state.sinks_log_level = log_level
 
     log_queue: Queue[LogRecord] = Queue(-1)
-    _state.listener = QueueListener(
+    _state.listener = _SinkListener(
         log_queue, *console_handlers, console_log, verbose_log, respect_handler_level=True
     )
-    root.addHandler(_mark(QueueHandler(log_queue)))
+    root.addHandler(_mark(_InProcessQueueHandler(log_queue)))
     _state.listener.start()
     atexit.register(_stop_listener)
+
+
+def record_command_failure(exc: BaseException, message: str) -> None:
+    """Write *message* and *exc*'s traceback to both log files, whatever their level.
+
+    For the frame that ends a command on an exception: the terminal shows
+    that failure its own way (a clean error line, or the crash traceback),
+    and this puts it, with a Rich traceback and every frame's locals, into
+    ``console.log`` and ``verbose.log`` for whoever reads the run later. It
+    never reaches the console or a foreign root handler.
+
+    *message* is plain text: it is escaped here, so brackets in it survive
+    the files' markup pass. The exception is captured as data here, on the
+    calling thread (see :func:`~otto.logger.formatters.capture_exception`).
+    The record joins the queue behind everything logged before it and is
+    written as soon as the listener reaches it; the ``atexit`` stop
+    :func:`install_sinks` registered is the backstop that drains whatever is
+    still queued when the process exits normally. Nothing survives an exit
+    that skips ``atexit`` (``os._exit``, SIGKILL), and a sink stuck on a slow
+    write holds back everything queued behind it.
+
+    A no-op without live sinks, which is every failure before the command's
+    output directory exists: there are no files to write to.
+    """
+    listener = _state.listener
+    if listener is None or not _sinks_are_live():
+        return
+    from rich.markup import escape
+
+    record = LogRecord(
+        name="otto",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=0,
+        msg=escape(message),
+        args=None,
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    setattr(record, COMMAND_FAILURE_ATTR, True)
+    capture_exception(record)
+    listener.queue.put_nowait(record)
 
 
 def attach_console_suppress_filter(filt: Filter) -> None:

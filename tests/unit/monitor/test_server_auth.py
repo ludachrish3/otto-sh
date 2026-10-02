@@ -356,3 +356,55 @@ class TestAccessKeyNeverWrittenToLogFiles:
 
         # The keyless server-start line is still recorded for the audit trail.
         assert "Monitor dashboard started on" in (out / "verbose.log").read_text()
+
+    def test_a_failing_route_writes_its_traceback_without_the_key(self, tmp_path):
+        """A route's exception reaches both files, and the key in the middleware's locals does not.
+
+        Every request runs through ``_AccessKeyMiddleware.__call__``, whose
+        locals hold the key, and uvicorn logs a route's exception with its
+        traceback. The files write tracebacks with locals, so without
+        ``_OmitTracebackLocals`` on ``uvicorn.error`` this one would carry the
+        key in full.
+        """
+        management.reset()
+        management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+        out = management.create_output_dir("monitor")
+        server = MonitorServer(_collector(), host="127.0.0.1", port=0)
+
+        async def explode() -> None:
+            raise RuntimeError("the route exploded")
+
+        server._app.add_api_route("/api/explode", explode)
+
+        async def scenario() -> None:
+            task = asyncio.create_task(server.serve())
+            await server.wait_started()
+            try:
+                url = f"http://127.0.0.1:{server._port}/api/explode?key={server.key}"
+
+                def fetch() -> int:
+                    # the 500 is the point; close it, or 3.14's tempfile
+                    # finalizer warns about the unread error body
+                    try:
+                        with urllib.request.urlopen(url) as response:
+                            response.read()
+                    except urllib.error.HTTPError as exploded:
+                        exploded.close()
+                        return exploded.code
+                    return 200
+
+                assert await asyncio.to_thread(fetch) == 500
+            finally:
+                server.stop()
+                await task
+
+        try:
+            with CONSOLE.capture():
+                asyncio.run(scenario())
+            management._state.listener.stop()  # drain the async queue into the files
+            for name in ("console.log", "verbose.log"):
+                text = (out / name).read_text()
+                assert "RuntimeError: the route exploded" in text, f"{name}:\n{text}"
+                assert server.key not in text, f"access key leaked into {name}:\n{text}"
+        finally:
+            management.reset()

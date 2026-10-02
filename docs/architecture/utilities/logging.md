@@ -14,7 +14,7 @@ CLI logging writes to three places, wired per invocation by
 | Sink | Level | Purpose |
 | --- | --- | --- |
 | console (Rich) | `--log-level` | what the operator watches; timestamps only with `--show-time` |
-| `console.log` | `--log-level` | a *faithful transcript* of the console — same records, always timestamped |
+| `console.log` | `--log-level` | a *faithful transcript* of the console — same records, always timestamped, plus the failure that ended the command ([Tracebacks](#tracebacks)) |
 | `verbose.log` | INFO floor, DEBUG when `--log-level DEBUG` | the everything-record, including what the console suppressed |
 
 Handlers hang off a `QueueListener`, so slow file I/O (e.g. logs on NFS)
@@ -61,6 +61,110 @@ are stripped. `--rich-log-file` (or `OTTO_LOG_RICH`) keeps those codes in both
 files, for a pager that renders them (`less -R`). The colour comes from the
 terminal otto started in, so a run whose output is redirected writes plain
 message lines even with the flag set.
+
+## Tracebacks
+
+An exception reaches the sinks by one of three paths. The console shows a Rich
+traceback without local variables; the files show a Rich traceback with each
+frame's local variables:
+
+| Path | Console | `console.log` and `verbose.log` |
+| --- | --- | --- |
+| logged: `logger.exception(...)`, or any call with `exc_info=` | the message and a Rich traceback (up to 20 frames, no locals), if `--log-level` admits the record | the message and the traceback, in each file whose level admits the record |
+| an `OttoError` ends the command | the one-line `error: ...`, plus a plain traceback on stderr at `--log-level DEBUG` only | `error: <message>` and the traceback, in both files at any `--log-level` |
+| any other exception ends the command (a crash, including a leaked `asyncio.CancelledError`) | the interpreter's traceback on stderr, once (Typer's, for an `Exception`) | `uncaught <Type> ended the command` and the traceback, in both files at any `--log-level` |
+
+The console leaves locals out because a logged exception is often routine: a
+teardown step, an asyncio task nobody awaited, a dashboard request that failed.
+A locals panel per frame would bury the terminal; the files are where they are
+read.
+
+The two command-ending rows are written to both files whatever their level,
+since a run that ends on an error has to say why in its transcript, and they
+are never written to the console, which has already shown the failure its own
+way. The files take an `OttoError`'s full message: a coverage refusal keeps its
+plain verdict listing there, where the console prints the verdict table and a
+headline. `SystemExit`, `KeyboardInterrupt` and `GeneratorExit` are not
+failures and write nothing; a usage error, `typer.Exit`, `--help` and Ctrl-C
+all leave the app as `SystemExit`.
+
+Two kinds of failure leave no traceback in the files:
+
+- a failure before the command has created its output directory (bootstrap,
+  lab load), which has no files to land in; the terminal is its only record;
+- a command that catches its own error, prints it and exits (a `typer.Exit` or
+  `SystemExit` raised in `otto.cli`), which is a clean exit as far as the
+  logs are concerned. Only an exception that leaves the command is recorded.
+
+In the files a traceback is written below its message, each line with the
+usual timestamp and level prefix, at a fixed 160 columns so a frame is not
+folded to the width of the terminal the run started in. It shows up to 100
+frames; frames inside Typer and click are shown by location only, as Typer's
+own traceback does. It is plain text; with `--rich-log-file` it keeps Rich's
+colours, whether or not otto was started in a terminal. It never passes
+through the markup rendering above, so a source line or a local whose value is
+`"[bold]x[/bold]"` appears exactly as written.
+
+Each file writes a given exception object's traceback once. The same exception
+logged twice, or logged and then re-raised until it ends the command, gets
+`(traceback written above)` in place of a second copy, and only once the
+first copy was actually written. A different exception object is written in
+full, chain and all: an exception raised `from` one that was already logged,
+or an exception group, prints the earlier exception again as part of its
+chain.
+
+```{warning}
+Local variables are written to both log files as Rich shows them, in every
+frame outside Typer and click. Each value is bounded: a string past 120
+characters is truncated, a container past 10 items is cut short, and nesting
+stops three levels down. The bounds hold in every frame of the traceback,
+including the frames of an exception group's members (a `TaskGroup`, anyio or
+`except*` failure). Containers, dataclasses (an `OttoContext`, a host)
+and pydantic models are expanded field by field down to that depth. The
+bounds shorten a secret but do not hide it. Nothing is redacted, and
+`LogMode.NEVER` does not apply (it gates command I/O, not tracebacks). A
+password, a token or a credential object in scope when the exception is
+raised ends up in `console.log` and `verbose.log`. The one exception is the
+monitor dashboard: `uvicorn.error` records are written without locals, because
+every request passes through the frame that holds the dashboard's access key.
+```
+
+### How it works
+
+The `QueueHandler` on root is a subclass whose `prepare` turns a record's
+exception into data on the thread that logged it:
+{func}`~otto.logger.formatters.capture_exception` takes a Rich trace (with the
+locals, inside the bounds above), the stdlib's plain traceback as a fallback,
+and an id that names the exception object, and clears `exc_info`. The stdlib's
+own `prepare` flattens the traceback into the message text instead, which
+loses the Rich rendering and feeds the traceback to the markup pass.
+
+Capturing on the logging thread is what keeps the listener safe. The frame that
+caught the exception is still running when the listener gets to the record, so
+reading its locals there races the code that owns them, and an exception
+escaping a handler kills the listener thread and every record after it. A live
+traceback in the queue would also keep every frame and local alive until the
+listener let go of the record, so their finalizers would run late and on the
+listener thread. A logger filter that sets
+{data}`~otto.logger.formatters.NO_LOCALS_ATTR` runs before the capture, which
+is how the monitor keeps its key out.
+
+Each sink renders the data its own way: the console handler builds a Rich
+traceback without the locals, and the files go through
+{func}`~otto.logger.formatters.render_traceback`. If Rich cannot take or render
+the trace, both fall back to the plain traceback captured with it.
+
+The command-ending paths call
+{func}`~otto.logger.management.record_command_failure` from the frame in
+`otto.cli.main.entry` that wraps the app. It captures the exception the same
+way, puts a marked record straight onto the listener's queue behind everything
+logged before it, and the listener hands that record to the two files alone.
+The record is written as soon as the listener reaches it; the `atexit` stop of
+the listener is the backstop that drains whatever is still queued when the
+process exits. Nothing survives an exit that skips `atexit` (`os._exit`,
+SIGKILL), and a sink stuck on a slow write holds back everything queued behind
+it. Because locals are read where the exception is logged, a local whose
+`repr` blocks holds up that logging call, not the listener.
 
 ## LogMode: one knob for command I/O
 
@@ -142,7 +246,11 @@ same shape below `<kind>/<host_id>/`.
 - `otto.layout` — the pure run-tree path builders and the product-name
   rule, shared by the host layer and the coverage pipeline
 - {mod}`otto.logger.management` — `install_console`/`install_sinks` (root
-  handler wiring, marked-handler ownership), the `QueueListener`, and
-  time-boxed log rotation
+  handler wiring, marked-handler ownership), the `QueueListener`, the
+  exception-capturing `QueueHandler`, the console handler,
+  `record_command_failure`, and time-boxed log rotation
+- {mod}`otto.logger.formatters` — `RichFormatter` (markup rendering for the
+  files), `capture_exception`, `render_traceback` (the files' one traceback
+  renderer) and the traceback bounds
 - {mod}`otto.logger.mode` — `LogMode` and `effective_mode`, the
   most-restrictive-wins composition

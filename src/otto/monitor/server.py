@@ -42,6 +42,7 @@ from typing_extensions import override
 
 from .. import _webassets
 from ..console import CONSOLE
+from ..logger.formatters import NO_LOCALS_ATTR
 from ..models import LabSnapshot, MonitorExport
 from ..models.monitor import EventCreateBody, EventRecord, EventUpdateBody, SessionRecord
 from ..utils import wait_for_async
@@ -88,6 +89,31 @@ class SuppressASGIWarning(Filter):
 
 
 getLogger("uvicorn.error").addFilter(SuppressASGIWarning())
+
+
+class _OmitTracebackLocals(Filter):
+    """``logging.Filter`` that keeps the locals out of a uvicorn error's traceback.
+
+    A route that raises is logged by uvicorn on ``uvicorn.error`` with the
+    exception, and otto's log files write a traceback with every frame's local
+    variables. Every request passes through ``_AccessKeyMiddleware.__call__``,
+    whose locals hold the access key (the decoded ``key_bytes``, the
+    ``?key=`` value, the cookie it mints), so the key would reach both files
+    on any route failure. Marking the record here works because a logger's
+    filters run on the logging thread before any handler sees the record, so
+    the mark is in place before the record's exception is captured as data.
+    The traceback itself, with its exception type and message, is still
+    written.
+    """
+
+    @override
+    def filter(self, record: LogRecord) -> bool:
+        if record.exc_info:
+            setattr(record, NO_LOCALS_ATTR, True)
+        return True
+
+
+getLogger("uvicorn.error").addFilter(_OmitTracebackLocals())
 
 
 def _cookie_name(port: int | None) -> str:
