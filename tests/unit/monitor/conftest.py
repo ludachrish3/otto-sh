@@ -1,5 +1,8 @@
 """Shared fixtures for tests/unit/monitor."""
 
+import subprocess
+from pathlib import Path
+
 import pytest
 
 
@@ -24,3 +27,35 @@ def _hermetic_static_dir(hermetic_monitor_dist: object) -> None:
     the test body — that later call on the same ``monkeypatch`` fixture
     simply overrides this one.
     """
+
+
+@pytest.fixture
+def tls_pair(tmp_path: Path) -> tuple[Path, Path]:
+    """Mint a throwaway self-signed certificate and key as two PEM files: ``(cert, key)``.
+
+    Two files, not a bundle, so a test can tell the cert from the key: a
+    wiring that swapped them would still find both paths present.
+    """
+    cert, key = tmp_path / "tls-cert.pem", tmp_path / "tls-key.pem"
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-sha256",
+            "-days",
+            "2",
+            "-keyout",
+            str(key),
+            "-out",
+            str(cert),
+            "-subj",
+            "/CN=127.0.0.1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return cert, key

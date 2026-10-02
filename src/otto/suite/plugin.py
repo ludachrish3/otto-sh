@@ -81,12 +81,11 @@ import contextvars
 import functools
 import logging
 import os
-import re
 import time
 import types
 from collections.abc import AsyncGenerator, Callable, Generator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -118,53 +117,6 @@ object's included (``_pytest.fixtures.resolve_fixture_function``), and pytest
 10 makes it an error. So the class-scoped fixtures on this plugin are
 staticmethods that find their plugin here, through ``request.config``.
 """
-
-_MAX_NAMED_HOSTS = 5
-"""How many ids the no-monitorable-hosts warning spells out before summarizing.
-
-The ids are what make the message actionable — the fix is per-host lab config,
-so "which host" IS the question — but this branch fires only when EVERY selected
-host is unmonitorable, which on a large fleet is a whole-lab misconfiguration
-and a wall of ids nobody reads.
-"""
-
-
-def _no_monitorable_hosts_message(walked: "list[Any]") -> str:
-    """Explain a ``--monitor`` run that has nothing to sample, per condition.
-
-    THE REGEX IS INNOCENT HERE, and saying otherwise was the defect. A
-    ``--monitor-hosts`` pattern that fullmatched nothing — or whose every match
-    a membership flag removed — raises
-    :class:`~otto.config.scope.EmptySelectionError` before this is reached, so
-    getting here with a pattern PROVES the pattern matched. The old label
-    (``no hosts matching "X"``) sent that reader off to widen a regex that was
-    already right, past the real cause: a host otto's suite collector cannot
-    sample. That collector reads metrics over a shell, so a non-Unix host — an
-    embedded RTOS console, whose single session cannot be shared with a metrics
-    poller — offers it nothing. (``otto monitor`` can also poll SNMP; the suite
-    collector cannot, so this message must not offer that route.)
-
-    The other reach of the same branch is an EMPTY walk, which a pattern can
-    also arrive at over an empty base set. That one must not mention the
-    pattern either — the lab held nothing to select.
-
-    Args:
-        walked: The hosts the selection yielded, monitorable or not.
-
-    Returns:
-        The one-line WARNING, ids included when there are any.
-    """
-    if not walked:
-        return "--monitor: no hosts available to monitor — collection disabled."
-    ids = sorted(host.id for host in walked)
-    shown = ", ".join(ids[:_MAX_NAMED_HOSTS])
-    if len(ids) > _MAX_NAMED_HOSTS:
-        shown += f" (+{len(ids) - _MAX_NAMED_HOSTS} more)"
-    return (
-        f"--monitor: {len(ids)} host(s) selected, but none of them can be monitored: "
-        f"{shown}. The suite collector samples metrics over a shell (Unix hosts) and "
-        "these offer none, so the selection is not the problem — collection disabled."
-    )
 
 
 def _python_file(path: object) -> str | None:
@@ -1253,6 +1205,11 @@ class OttoPlugin:
         per-test events (and the per-class collection task below) can reach it,
         export collected data on teardown, then close.
 
+        Refuses, rather than running unmonitored: when the selection holds
+        nothing otto can sample (or the lab is empty, or a ``--monitor-hosts``
+        pattern matched nothing) the run stops with a usage error, because the
+        user asked for a monitored run this lab cannot give.
+
         Note: this fixture *does not* drive ``collector.run()``.
         ``_otto_class_monitor_task`` does, restarted per class, so collection
         runs while each class's tests do and pauses between classes.
@@ -1261,116 +1218,47 @@ class OttoPlugin:
             yield
             return
 
-        from ..config import all_hosts
+        from ..config.fleet import get_lab
         from ..config.scope import EmptySelectionError
-        from ..host import UnixHost
-        from ..monitor.db import MetricDB
-        from ..monitor.export import build_live_export, build_session_metric_db, document_json
-        from ..monitor.factory import build_monitor_collector
-        from ..monitor.session import new_frame, snapshot_lab
+        from ..monitor.errors import NoMonitorableHostsError
+        from ..monitor.live import select_monitor_hosts
+        from ..monitor.session import MonitorSession
 
-        pattern = re.compile(self._monitor_hosts) if self._monitor_hosts else None
-        # The list() is INSIDE the guard, not just the call: `all_hosts` is a
-        # generator, so its empty-selection refusal (D6) is raised at the first
-        # `next()`. Unguarded it escapes a session-scoped fixture as a raw
-        # errored-fixture traceback through pytest-asyncio's internals, once
-        # per test in the session, for a one-line mistake in the invocation.
-        # `pytest.exit` because that IS the truthful outcome: the user asked
-        # for a monitored run over hosts this lab does not have, so the run
-        # stops with the error's own words and pytest's usage-error code
-        # rather than quietly running unmonitored (the pre-D6 behavior, which
-        # answered a question nobody asked) or failing every test.
+        # pytest.exit, because that IS the truthful outcome: the user asked for
+        # a monitored run and this lab cannot give one. Unguarded, the refusal
+        # would escape a session-scoped fixture as an errored-fixture traceback
+        # once per test. RunOptions already refused a malformed regex.
         try:
-            walked = list(all_hosts(pattern=pattern))
+            hosts = select_monitor_hosts(self._monitor_hosts)
         except EmptySelectionError as exc:
             pytest.exit(f"--monitor-hosts: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
-        # build_monitor_collector only handles UnixHost; embedded RTOS
-        # targets don't expose the metric-collection commands it issues.
-        hosts = [h for h in walked if isinstance(h, UnixHost)]
-        if not hosts:
-            logger.warning(_no_monitorable_hosts_message(walked))
-            yield
-            return
+        except NoMonitorableHostsError as exc:
+            pytest.exit(f"--monitor: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
 
         output = self._monitor_output
-        db_path = output if output is not None and output.suffix.lower() == ".db" else None
-        # Session identity + lab snapshot are built ONCE and shared by BOTH
-        # output branches (JSON export below, and the MetricDB passed to
-        # build_monitor_collector) so a --monitor run always carries real
-        # session framing, never an anonymous/empty one (spec 2026-07-12).
-        # No suite/run name is threaded into OttoPlugin today, so `label`
-        # stays None (honest, not a placeholder). Declared links aren't
-        # resolvable here — the pytest-suite context has no active lab config,
-        # only the monitored host objects — so `declared=[]`; implicit
-        # hop-links still derive from `hosts` itself.
-        frame = new_frame(label=None, note=None)
-        lab = snapshot_lab(hosts, declared=[])
-
-        monitor_db: MetricDB | None = None
-        if db_path is not None:
-            # Same construction-order knot the CLI's `--live --db` path has
-            # (see otto.cli.monitor): MetricDB needs meta_json up front, but
-            # the collector that will OWN this db can't be built until the db
-            # exists. So derive the meta from a throwaway collector over the
-            # same hosts — get_meta_model() depends only on hosts + the parser
-            # catalog, never on the db. build_session_metric_db is the ONE
-            # shared place this construction happens — see its docstring for
-            # why persisting "{}" here would render a DB-backed suite run with
-            # no chart specs and no units, the same degradation an empty
-            # chart_map caused.
-            #
-            # `interval` MUST be passed explicitly: the collector only records
-            # its own interval once run() starts (the class-scoped fixture
-            # below), which is after this row is written — so reading it off
-            # the model here would persist null forever and leave the replayed
-            # session's derived health unresolvable. We have the number right
-            # here: it's --monitor-interval.
-            meta_collector = build_monitor_collector(hosts=hosts)
-            monitor_db = build_session_metric_db(
-                str(db_path), frame, lab, meta_collector, interval=self._monitor_interval
-            )
-        collector = build_monitor_collector(hosts=hosts, db=monitor_db)
-        # Open the session archive HERE, not inside the per-class collection
-        # task: that task is cancelled at class teardown, and a class that
-        # finishes before open() completes would leave a partially-initialized
-        # DB — which the NEXT class's retry then rejects as unsupported, with
-        # the error swallowed by the task's gather(return_exceptions=True),
-        # and the teardown's finalize() no-oping on the never-opened
-        # connection (same race as MonitorHandle.start — issues #136 etc.).
-        # aiosqlite delivers each call's result on the calling loop, so a
-        # connection opened on this session loop is safe to write from
-        # whichever loop drives run(). (spawn_collection() doesn't fit this
-        # split between setup here and run() in the class fixture; run()'s
-        # precondition still enforces the ordering loudly if this await is
-        # ever dropped.)
-        await collector.init_db()
-
-        self.session_monitor_collector = collector
-        # Imported before the try: an ImportError inside the finally would
-        # mask the suite body's own exception.
-        from ..host.connections import teardown_step
-
+        to_db = output is not None and output.suffix.lower() == ".db"
+        session = MonitorSession.build(
+            hosts,
+            interval=self._monitor_interval,
+            db_path=output if to_db else None,
+            export_path=None if to_db else output,
+            declared=get_lab().links,
+            owns_hosts=True,
+        )
+        # Opened HERE, on the session loop, before any per-class task drives
+        # run() (see _otto_class_monitor_task): a class that ends before an
+        # in-task open completes would leave a partial archive.
+        await session.open()
+        self.session_monitor_collector = session.collector
         try:
             yield
         finally:
-            # Stamp end BEFORE building/finalizing either output — an
-            # unstamped end is the producer's deliberate crash marker (see
-            # MetricDB.finalize / otto.monitor.export._fallback_end), so a
-            # clean teardown must not leave every session looking crashed.
-            end = datetime.now(tz=timezone.utc)
-            if output is not None and output.suffix.lower() != ".db":
-                frame.end = end
-                output.parent.mkdir(parents=True, exist_ok=True)
-                export = build_live_export(frame, collector, lab)
-                output.write_text(document_json(export))
-                logger.info(f"Monitor data written to {output}")
-            elif db_path is not None:
-                if monitor_db is not None:
-                    await monitor_db.finalize(end)
-                logger.info(f"Monitor data written to {db_path}")
-            with teardown_step("suite monitor", "collector close"):
-                await collector.close()
-            self.session_monitor_collector = None
+            try:
+                await session.finish()
+                if output is not None:
+                    logger.info(f"Monitor data written to {output}")
+            finally:
+                self.session_monitor_collector = None
 
     @pytest_asyncio.fixture(scope="class", autouse=True)
     @staticmethod

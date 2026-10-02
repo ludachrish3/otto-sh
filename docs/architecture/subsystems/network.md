@@ -178,7 +178,7 @@ injected `discover_tunnel_records` callable rather than importing
 `otto.tunnel` directly — the monitor package stays tunnel-blind, and the
 adapter from `DiscoveredTunnel` to `TunnelRecord` lives tunnel-side, in
 {mod}`otto.tunnel.discovery`'s sibling module `otto/tunnel/records.py`;
-`otto.cli.monitor` composes the callable over the *whole lab*, not the
+{func}`otto.monitor.live.run_live` composes the callable over the *whole lab*, not the
 monitored host subset, since a tunnel can traverse hosts otto isn't
 otherwise polling. On the monitor side, persistence is last-known-state
 only, not a timeline: the `sessions` table's `tunnels_json` column (added to

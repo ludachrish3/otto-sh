@@ -6,21 +6,26 @@ These tests verify that the collection loop:
   - Continues collecting after host errors
   - Respects the duration parameter
   - Passes the interval as a cumulative timeout to run
+  - Parses real parser output into series and the archive (``TestCollectorLiveRun``)
 """
 
 import asyncio
 import contextlib
 import heapq
 import itertools
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.monitor.collector import MetricCollector, MonitorTarget
-from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext
+from otto.monitor.db import MetricDB
+from otto.monitor.parsers import LoadParser, MemParser, MetricDataPoint, MetricParser, ParseContext
+from otto.monitor.session import new_frame
 from otto.monitor.snmp import OID_SYS_UPTIME, SnmpSource
 from otto.result import CommandResult, Results
 from otto.utils import Status
@@ -143,7 +148,7 @@ def _make_mock_host(name: str, delay: float = 0.0, fail: bool = False) -> MagicM
     host.id = name
     host.log = LogMode.QUIET
 
-    async def _run_cmds(cmds, timeout=None):
+    async def _run_cmds(cmds, timeout=None, log=None):
         if fail:
             raise RuntimeError(f"{name} is unreachable")
         # Only apply delay to collection commands, not the one-time
@@ -486,3 +491,196 @@ class TestSnmpCollection:
         series = collector.get_series()
         assert "zephyr37_fat/Uptime" in series  # SNMP path
         assert "test1/value" in series  # shell path, unaffected
+
+
+@pytest.mark.asyncio
+async def test_shell_collection_is_silenced_per_call_not_on_the_host():
+    from otto.host.element import Element
+    from otto.host.login_proxy import Cred
+    from otto.host.unix_host import UnixHost
+    from otto.monitor.factory import build_monitor_collector
+
+    host = UnixHost(
+        ip="10.0.0.1",
+        element=Element("box"),
+        creds=[Cred(login="a", password="b")],
+        log=LogMode.NORMAL,
+    )
+    host.run = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    collector = build_monitor_collector([host])
+    await collector._collect_one(collector._targets[0], 1.0)
+    assert host.run.await_args.kwargs["log"] is LogMode.NEVER
+    assert host.log is LogMode.NORMAL
+
+
+# ── Real parsers through a live run ──────────────────────────────────────────
+
+# Synthetic command outputs matching the parsers' expected formats.
+_FREE_OUTPUT = (
+    "              total        used        free      shared  buff/cache   available\n"
+    "Mem:    16000000000  10000000000   3000000000           0  3000000000  6000000000\n"
+    "Swap:    2048000000           0  2048000000"
+)
+_LOADAVG_OUTPUT = "0.52 0.58 0.59 1/432 12345"
+_CPUINFO_OUTPUT = "4"
+
+
+def _make_monitor_host(name: str = "router1") -> MagicMock:
+    """Return a mock UnixHost whose run returns canned metric output.
+
+    The mock boundary is at the host I/O layer — the collector, parsers,
+    and storage all run for real.
+    """
+    host = MagicMock(spec=UnixHost)
+    host.name = name
+    host.id = name
+    host.log = LogMode.NORMAL
+
+    responses: dict[str, CommandResult] = {
+        "grep -c ^processor /proc/cpuinfo": CommandResult(
+            Status.Success,
+            value=_CPUINFO_OUTPUT,
+            command="grep -c ^processor /proc/cpuinfo",
+            retcode=0,
+        ),
+        "free -b": CommandResult(
+            Status.Success,
+            value=_FREE_OUTPUT,
+            command="free -b",
+            retcode=0,
+        ),
+        "cat /proc/loadavg": CommandResult(
+            Status.Success,
+            value=_LOADAVG_OUTPUT,
+            command="cat /proc/loadavg",
+            retcode=0,
+        ),
+    }
+
+    async def fake_run_cmds(
+        cmds: list[str] | str, timeout: float | None = None, log: object = None
+    ) -> Results:
+        if isinstance(cmds, str):
+            cmds = [cmds]
+        results = []
+        for cmd in cmds:
+            if cmd in responses:
+                results.append(responses[cmd])
+            else:
+                results.append(CommandResult(Status.Failed, value="", command=cmd, retcode=1))
+        return Results.collect(results)
+
+    host.run = AsyncMock(side_effect=fake_run_cmds)
+    return host
+
+
+class TestCollectorLiveRun:
+    """Tests that let MetricCollector.run() execute for real with mock hosts.
+
+    Mock boundary: host.run (I/O layer).
+    Exercises: parser selection, output parsing, series storage, DB writes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_single_cycle_parses_metrics(self):
+        host = _make_monitor_host("router1")
+        collector = MetricCollector(
+            hosts=[host],
+            parsers=[MemParser(), LoadParser()],
+        )
+
+        await collector.run(
+            interval=timedelta(seconds=1),
+            duration=timedelta(seconds=0),
+        )
+
+        series = collector.get_series()
+        # MemParser produces "Memory Usage" keyed by chart name
+        assert "router1/Memory Usage" in series
+        mem_pt = series["router1/Memory Usage"][0]
+        assert abs(mem_pt.value - 62.5) < 0.1  # 10B / 16B = 62.5%
+        assert mem_pt.meta is not None
+
+        # LoadParser produces three load average series
+        assert "router1/Load (1m)" in series
+        assert "router1/Load (5m)" in series
+        assert "router1/Load (15m)" in series
+        load_1m = series["router1/Load (1m)"][0].value
+        assert abs(load_1m - 0.52) < 0.01
+
+    @pytest.mark.asyncio
+    async def test_collection_stores_to_sqlite(self, tmp_path):
+        host = _make_monitor_host("router1")
+        db_file = tmp_path / "test_metrics.db"
+        db = MetricDB(
+            str(db_file),
+            new_frame(label=None, note=None),
+            lab_json="{}",
+            meta_json="{}",
+        )
+        collector = MetricCollector(
+            hosts=[host],
+            parsers=[MemParser(), LoadParser()],
+            db=db,
+        )
+
+        # The Tier-0.7 seam: run() refuses an unopened DB (no lazy in-task
+        # open), so this drives the same path production does.
+        await collector.init_db()
+        await collector.run(
+            interval=timedelta(seconds=1),
+            duration=timedelta(seconds=0),
+        )
+        await collector.close_db()
+
+        assert db_file.exists()
+        with contextlib.closing(sqlite3.connect(str(db_file))) as conn, conn:
+            rows = conn.execute("SELECT host, label, value FROM metrics").fetchall()
+        # 1 Memory Usage + 3 Load averages = 4 rows
+        assert len(rows) >= 4
+        labels = {row[1] for row in rows}
+        assert "Memory Usage" in labels
+        assert "Load (1m)" in labels
+
+    @pytest.mark.asyncio
+    async def test_multiple_hosts_collected(self):
+        host1 = _make_monitor_host("host1")
+        host2 = _make_monitor_host("host2")
+        collector = MetricCollector(
+            hosts=[host1, host2],
+            parsers=[LoadParser()],
+        )
+
+        await collector.run(
+            interval=timedelta(seconds=1),
+            duration=timedelta(seconds=0),
+        )
+
+        series = collector.get_series()
+        assert "host1/Load (1m)" in series
+        assert "host2/Load (1m)" in series
+
+    @pytest.mark.asyncio
+    async def test_failed_command_does_not_crash_collector(self):
+        host = _make_monitor_host("router1")
+        # Override host.run to always return failures with empty output
+        host.run = AsyncMock(
+            return_value=Results.collect(
+                [
+                    CommandResult(Status.Failed, value="", command="free -b", retcode=1),
+                    CommandResult(Status.Failed, value="", command="cat /proc/loadavg", retcode=1),
+                ]
+            )
+        )
+        collector = MetricCollector(
+            hosts=[host],
+            parsers=[MemParser(), LoadParser()],
+        )
+
+        await collector.run(
+            interval=timedelta(seconds=1),
+            duration=timedelta(seconds=0),
+        )
+
+        # Parsers return {} for empty/unparseable output — no series created
+        assert collector.get_series() == {}

@@ -89,6 +89,12 @@ from otto.link.manage import (
 )
 from otto.monitor.archive_edit import ArchiveLockedError
 from otto.monitor.db import UnsupportedDBError
+from otto.monitor.errors import (
+    MonitorInputError,
+    MonitorTlsError,
+    NoMonitorableHostsError,
+    ReviewSourceError,
+)
 from otto.monitor.event_ops import EventValidationError
 from otto.params import (
     OptionsCollisionError,
@@ -135,6 +141,10 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (GitCommandFailedError, RuntimeError),
     (EnsureStateError, RuntimeError),
     (FieldError, Exception),
+    (MonitorInputError, Exception),
+    (ReviewSourceError, Exception),
+    (NoMonitorableHostsError, Exception),
+    (MonitorTlsError, Exception),
     (CoverageToolVersionError, RuntimeError),
     (CoverageConfigError, ValueError),
     (CoverageNotInstrumentedError, ValueError),
@@ -206,6 +216,15 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         # carried a `.field` attribute, so Exception is its honest root —
         # each concrete subclass still declares its own ValueError/RuntimeError.
         FieldError,
+        # The monitor library's refusals: two are FieldError subclasses (so
+        # they share its rootlessness), and the other two (a selection with
+        # nothing otto can sample; TLS settings that cannot be served) are
+        # otto's own concept of the monitor's inputs and settings, never a
+        # stdlib type a caller was already catching.
+        MonitorInputError,
+        ReviewSourceError,
+        NoMonitorableHostsError,
+        MonitorTlsError,
         # A contradictory ACTIVATION configuration: the labs drop a provider
         # while a kept repo requires it. Sits beside ProjectScopeError above
         # for the same reason it has no stdlib root — the project layer's

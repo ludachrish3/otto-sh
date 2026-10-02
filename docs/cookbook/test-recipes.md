@@ -85,7 +85,9 @@ Every marker otto adds, and where your own are declared, is in
 ## Monitoring from a test
 
 Request the `monitor` fixture and start it around a workload to capture
-metrics from the hosts it names:
+metrics from the hosts it names. It collects and serves no dashboard: archive
+with `db_path=` and review the file with `otto monitor <file>.db`, or watch a
+lab live with `otto monitor --live`.
 
 ```python
 from otto.config import get_host
@@ -93,7 +95,7 @@ from otto.config import get_host
 
 async def test_performance_under_load(monitor) -> None:
     hosts = [get_host("server1"), get_host("server2")]
-    url = await monitor.start(hosts=hosts)  # the live dashboard's URL
+    await monitor.start(hosts=hosts)  # collection only: no dashboard, no URL
 
     await monitor.event("load started", color="#2ca02c")
     # ... run workload ...
@@ -104,8 +106,8 @@ async def test_performance_under_load(monitor) -> None:
 ```
 
 - **Stopping is automatic.** If a test started the monitor, the fixture
-  stops it when the test ends, even when the test fails, so the dashboard
-  server shuts down and a `db_path=` archive gets its end time. Call
+  stops it when the test ends, even when the test fails, so
+  a `db_path=` archive gets its end time. Call
   `monitor.stop()` yourself only to stop earlier.
 - **The data outlives the stop.** `monitor.results()` and `monitor.events()`
   still read what was collected after `stop()`.

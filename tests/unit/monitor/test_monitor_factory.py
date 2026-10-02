@@ -2,7 +2,11 @@
 
 from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
-from otto.monitor.factory import build_monitor_collector
+from otto.host.login_proxy import Cred
+from otto.host.unix_host import UnixHost
+from otto.logger.mode import LogMode
+from otto.monitor.factory import build_monitor_collector, is_monitorable, monitorable
+from otto.monitor.parsers import LoadParser
 
 
 class TestBuildMonitorCollector:
@@ -131,3 +135,59 @@ def test_factory_passes_tunnel_source_through() -> None:
 
 def test_factory_defaults_to_no_tunnel_source() -> None:
     assert build_monitor_collector(hosts=[])._tunnel_source is None
+
+
+def _unix(name: str = "box") -> UnixHost:
+    return UnixHost(
+        ip="10.0.0.1",
+        element=Element(name),
+        creds=[Cred(login="a", password="b")],
+        log=LogMode.NORMAL,
+    )
+
+
+def _embedded(name: str, *, snmp: bool) -> "object":
+    spec = {"ip": "192.0.2.1", "os_type": "embedded", "command_frame": "zephyr"}
+    if snmp:
+        spec["snmp"] = {"oids": ["1.3.6.1.2.1.1.3.0"]}
+    return create_host_from_dict(spec, element=Element(name))
+
+
+class TestMonitorable:
+    def test_unix_host_is_monitorable(self):
+        assert is_monitorable(_unix())
+
+    def test_snmp_only_host_is_monitorable(self):
+        assert is_monitorable(_embedded("z1", snmp=True))
+
+    def test_host_offering_neither_is_not(self):
+        assert not is_monitorable(_embedded("z2", snmp=False))
+
+    def test_monitorable_filters_and_keeps_order(self):
+        a, b, c = _unix("a"), _embedded("b", snmp=False), _embedded("c", snmp=True)
+        assert monitorable([a, b, c]) == [a, c]
+
+
+def test_building_a_collector_leaves_the_hosts_log_mode_alone():
+    host = _unix()
+    build_monitor_collector([host])
+    assert host.log is LogMode.NORMAL
+
+
+def test_explicit_parsers_replace_the_registered_set_for_shell_hosts():
+    collector = build_monitor_collector([_unix()], parsers=[LoadParser()])
+    assert list(collector._targets[0].parsers) == [LoadParser().command]
+
+
+def test_explicit_parsers_do_not_touch_snmp_targets():
+    collector = build_monitor_collector([_embedded("z", snmp=True)], parsers=[LoadParser()])
+    assert collector._targets[0].parsers == {}
+
+
+def test_explicit_parsers_are_copied_per_host_because_parsers_keep_state():
+    mine = LoadParser()
+    collector = build_monitor_collector([_unix("a"), _unix("b")], parsers=[mine])
+    first, second = (next(iter(t.parsers.values())) for t in collector._targets)
+    assert first is not second
+    assert first is not mine
+    assert second is not mine

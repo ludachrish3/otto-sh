@@ -18,9 +18,23 @@ no cookie, renders a small 403 hint page pointing back at the full URL
 There are no flags to disable or pin the key — no `--key`, no `--no-key`.
 The key is always freshly generated and always required.
 
+## Connection log
+
+otto logs the dashboard's requests itself (uvicorn's access log is off, because
+it would print the key). The log carries the path only, never the query string:
+
+- **INFO**, once per browser IP for the run: `Dashboard client connected from
+  <ip>`. Seen the first time that IP makes a request with a valid key or cookie.
+- **WARNING**, once per IP for the run: `Dashboard request without a valid
+  access key from <ip>`. A repeat probe from the same IP is not logged again at
+  this level.
+- **DEBUG**, every request: `<method> <path> <status> from <ip>`.
+
 ## Enabling TLS
 
-TLS is optional and config-driven, never a CLI flag. Add a `[monitor]`
+TLS is optional and config-driven, never a CLI flag. It applies to
+`otto monitor` only: a test's `monitor` fixture and `otto test --monitor` start
+no dashboard. Add a `[monitor]`
 table to `.otto/settings.toml`:
 
 ```toml

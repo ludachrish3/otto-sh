@@ -101,9 +101,8 @@ def session_meta(
         collector: The collector whose parser catalog describes this session.
         interval: The run's collection interval in seconds. **Pass this
             whenever the meta is built before :meth:`MetricCollector.run` has
-            started** — i.e. from the construction-time ``--db`` call sites in
-            :mod:`otto.cli.monitor` (its ``--interval`` option) and
-            :mod:`otto.suite.plugin` (its ``--monitor-interval``). The
+            started** — i.e. from the construction-time archive in
+            :meth:`otto.monitor.session.MonitorSession.build`. The
             collector only records its own ``interval`` once ``run()`` begins,
             so reading it off the model at construction yields ``None``
             *permanently* for a DB archive: nothing repairs it later (unlike
@@ -133,18 +132,12 @@ def build_session_metric_db(
 ) -> MetricDB:
     """Construct an unopened, archive-real v2 :class:`~otto.monitor.db.MetricDB`.
 
-    **The shared construction for every ``--db``-backed session-monitor call
-    site — never hand-roll ``MetricDB(..., lab_json="{}", meta_json="{}")``.**
-    Used by :meth:`otto.suite.monitor_fixture.MonitorHandle.start`,
-    :class:`otto.suite.plugin.OttoPlugin`'s ``--monitor --monitor-output
-    *.db`` session fixture, and ``otto.cli.monitor``'s ``--live --db`` path —
-    closing a long-standing triplication: all three call sites used to build
-    their own ``MetricDB``. One of them (the per-test monitor start, now
-    ``MonitorHandle.start``) had drifted and kept persisting
-    ``lab_json="{}"``/``meta_json="{}"`` — the degraded-archive shape this
-    producer phase spent three fix waves eliminating elsewhere (no chart
-    specs, no units, null interval, no lab topology on replay); the CLI's
-    copy was already correct, just duplicated.
+    **The one construction of a ``db_path``-backed session archive — never
+    hand-roll ``MetricDB(..., lab_json="{}", meta_json="{}")``.** Called by
+    :meth:`otto.monitor.session.MonitorSession.build`, which every producer
+    (``otto monitor --live``, ``otto test --monitor``, the ``monitor``
+    fixture) goes through. A hand-rolled copy persists the degraded-archive
+    shape: no chart specs, no units, null interval, no lab topology on replay.
 
     Args:
         path: Filesystem path for the SQLite archive.

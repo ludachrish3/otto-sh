@@ -65,6 +65,21 @@
 # respectively) — this is simply the first time the flag ran since they
 # joined.
 #
+# 2026-10-02 (thin-CLI series item 5) ADDED THE FIRST NESTED MODULE,
+# otto.monitor.live. `otto monitor --live`'s pipeline moved into the library,
+# and its lab-aware entry points (select_monitor_hosts, run_live) must read the
+# active lab, the repos, the driving repo's scope and full-lab tunnel
+# discovery: otto.config, otto.context and otto.tunnel. The engine
+# (otto.monitor) keeps those injected, as its own note says, so the entry
+# points live in a child module with its own edges instead of widening the
+# engine's. otto.cli and otto.suite declare otto.monitor.live as the callers.
+# RE-MEASURED with forbid_circular_dependencies: TWENTY-ONE modules — the
+# twenty above plus otto.monitor.live, which joins through its declared
+# callers (monitor.live -> config -> cli -> monitor.live). Measured both ways
+# the same day: with the otto.cli/otto.suite -> otto.monitor.live edges
+# removed it is the same twenty as before, so the new member is those two
+# inbound edges, not the module's own imports.
+#
 # THOSE PAIRS ARE NOT THE WHOLE FORMATION — they accounted for only TWELVE of
 # the sixteen (2026-08-17 snapshot). The other four joined through longer
 # loops that contain no mutual pair of their own:
@@ -155,7 +170,7 @@ path = "otto.cli"
 # retires; tach's ratchet just never carried it (the edge is function-scope,
 # added when project instructions started registering data instead of a
 # make_app factory, and this file was not updated alongside).
-depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project"]
+depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live"]
 
 [[modules]]
 path = "otto.config"
@@ -463,6 +478,13 @@ path = "otto.monitor"
 depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.snmp", "otto.link", "otto.filesystem", "otto.registry", "otto.logger", "otto.console", "otto.errors", "otto.utils"]
 
 [[modules]]
+path = "otto.monitor.live"
+# The lab-aware layer above the monitor engine: it reads the active lab, the
+# repos, the driving repo's scope and full-lab tunnel discovery, and hands them
+# to the engine, which keeps its injected-dependencies rule (see otto.monitor).
+depends_on = ["otto.monitor", "otto.config", "otto.context", "otto.tunnel", "otto.utils", "otto.host"]
+
+[[modules]]
 path = "otto.params"
 
 [[modules]]
@@ -575,7 +597,7 @@ path = "otto.suite"
 # "installed" means.
 #
 # No loop: otto.project no longer imports otto.cli (thin-CLI item 1).
-depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.project"]
+depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.project", "otto.monitor.live", "otto.utils"]
 
 [[modules]]
 path = "otto.testing"

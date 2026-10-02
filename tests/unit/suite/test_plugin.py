@@ -113,7 +113,7 @@ async def test_session_monitor_disabled_is_noop():
     """When ``--monitor`` is off the fixture must not touch hosts or write files."""
     plugin = OttoPlugin(monitor=False)
     with (
-        patch("otto.config.all_hosts") as p_hosts,
+        patch("otto.config.fleet.all_hosts") as p_hosts,
         patch("otto.monitor.factory.build_monitor_collector") as p_build,
     ):
         gen = await _FixtureRunner.setup(plugin)
@@ -124,20 +124,18 @@ async def test_session_monitor_disabled_is_noop():
 
 # ── --monitor-hosts: three emptinesses, three texts ─────────────────────────
 
-# THE SAME DISCIPLINE `otto monitor` KEEPS (see otto/cli/monitor.py's four
-# outcomes). A `--monitor-hosts` run that collects nothing ends up in exactly
-# one of three states, and the user must be able to tell which from the text:
+# THE SAME DISCIPLINE `otto monitor` KEEPS (selection and refusals live in the
+# monitor library: otto.monitor.live and MonitorSession). A `--monitor-hosts`
+# run that collects nothing ends up in exactly one of three states, and the
+# user must be able to tell which from the text:
 #
 # 1. the pattern fullmatched nothing        -> EmptySelectionError (regex)
 # 2. every match was flag-excluded          -> EmptySelectionError (flag)
-# 3. hosts WERE selected, none monitorable  -> this plugin's own warning
+# 3. hosts WERE selected, none monitorable  -> NoMonitorableHostsError
 #
-# The first two are a USAGE mistake in the invocation: the run was asked for
-# something it cannot deliver, so it stops with the error's own message and no
-# traceback rather than erroring one fixture per test. The third is not the
-# user's selection at all — it is a lab where nothing can be sampled — so it
-# disables collection and lets the tests run, and it must not blame the regex:
-# reaching it PROVES the regex matched.
+# All three stop the run with the error's own message and a usage-error exit,
+# no traceback, rather than erroring one fixture per test. The third must not
+# blame the regex: reaching it PROVES the regex matched.
 
 _INNER_SUITE = """\
 def test_one():
@@ -169,7 +167,10 @@ def _inner_run(pytester, plugin, hosts):
             return iter(hosts)
 
     pytester.makepyfile(test_inner=_INNER_SUITE)
-    with patch("otto.config.all_hosts", _all_hosts):
+    with (
+        patch("otto.config.fleet.all_hosts", _all_hosts),
+        patch("otto.config.fleet.get_lab", return_value=MagicMock(links=[])),
+    ):
         return pytester.runpytest_inprocess(*INNER_ARGS, plugins=[plugin])
 
 
@@ -229,44 +230,66 @@ def test_selected_but_unmonitorable_hosts_blame_the_hosts_not_the_regex(pytester
     it could only fire here — where the pattern matched and every match was
     unmonitorable. It sent the reader to widen a regex that was already right,
     past the real cause. The truthful message names the hosts and the reason,
-    and the run CONTINUES: an unmonitorable lab is not a reason to fail tests
-    that were never about monitoring.
+    and the run STOPS: the user asked for a monitored run this lab cannot give.
     """
     from otto.host.factory import create_host_from_dict
 
     # Through the factory, like the monitor CLI's twin test: a MagicMock would
-    # answer the production predicate (``isinstance(h, UnixHost)``) however the
+    # answer the production predicate (``is_monitorable``: a Unix host, or one
+    # with an ``snmp`` block) however the
     # test wanted, and prove nothing about a real console host.
     board = create_host_from_dict(
         {"os_type": "zephyr", "ip": "10.0.0.9", "board": "mps2"}, element=Element("board")
     )
     result = _inner_run(pytester, OttoPlugin(monitor=True, monitor_hosts="board.*"), [board])
 
-    assert result.ret == pytest.ExitCode.OK
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
     out = " ".join(result.outlines)
+    assert "--monitor: 1 host(s) selected, but none of them can be monitored" in out
     assert board.id in out
-    assert "shell" in out  # what a monitorable host has to offer
-    assert "collection disabled" in out
     assert "board.*" not in out  # the retracted claim: the regex is innocent here
 
 
 @pytest.mark.asyncio
-async def test_session_monitor_no_matching_hosts_skips(tmp_path):
-    """An empty host match must not crash; no collector built, no file written."""
-    plugin = OttoPlugin(
-        monitor=True,
-        monitor_hosts="will-not-match",
-        monitor_output=tmp_path / "m.json",
-    )
+async def test_session_monitor_an_empty_lab_stops_the_run(tmp_path):
+    """A lab with no hosts stops the run with a usage error; nothing built, nothing written."""
+    from _pytest.outcomes import Exit
+
+    plugin = OttoPlugin(monitor=True, monitor_output=tmp_path / "m.json")
     with (
-        patch("otto.config.all_hosts", return_value=iter([])) as p_hosts,
+        patch("otto.config.fleet.all_hosts", return_value=iter([])) as p_hosts,
         patch("otto.monitor.factory.build_monitor_collector") as p_build,
+        pytest.raises(Exit) as excinfo,
     ):
-        gen = await _FixtureRunner.setup(plugin)
-        await _FixtureRunner.teardown(gen)
+        await _FixtureRunner.setup(plugin)
+    assert excinfo.value.returncode == pytest.ExitCode.USAGE_ERROR
+    assert "--monitor: No hosts available in the active lab" in excinfo.value.msg
     p_hosts.assert_called_once()
     p_build.assert_not_called()
     assert not (tmp_path / "m.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_session_monitor_a_pattern_matching_nothing_stops_the_run(tmp_path):
+    """The EmptySelectionError branch, driven straight at the fixture."""
+    from _pytest.outcomes import Exit
+
+    from otto.config.scope import EmptySelectionError
+
+    plugin = OttoPlugin(monitor=True, monitor_hosts="will-not-match")
+
+    def _refuse(*_a, **_kw):
+        raise EmptySelectionError("will-not-match", 3)
+        yield  # pragma: no cover — makes this a generator, like the real all_hosts
+
+    with (
+        patch("otto.config.fleet.all_hosts", _refuse),
+        pytest.raises(Exit) as excinfo,
+    ):
+        await _FixtureRunner.setup(plugin)
+    assert excinfo.value.returncode == pytest.ExitCode.USAGE_ERROR
+    assert excinfo.value.msg.startswith("--monitor-hosts: ")
+    assert "will-not-match" in excinfo.value.msg
 
 
 @pytest.mark.asyncio
@@ -295,7 +318,8 @@ async def test_session_monitor_publishes_collector_and_exports_json(tmp_path):
     real_collector = MetricCollector(targets=[])
 
     with (
-        patch("otto.config.all_hosts", return_value=iter([fake_host])),
+        patch("otto.config.fleet.all_hosts", return_value=iter([fake_host])),
+        patch("otto.config.fleet.get_lab", return_value=MagicMock(links=[])),
         patch(
             "otto.monitor.factory.build_monitor_collector", return_value=real_collector
         ) as p_build,
@@ -351,7 +375,10 @@ async def test_session_monitor_db_output_persists_real_lab_and_meta(tmp_path):
     out_path = tmp_path / "monitor.db"
     plugin = OttoPlugin(monitor=True, monitor_interval=3.0, monitor_output=out_path)
 
-    with patch("otto.config.all_hosts", return_value=iter([_make_host("router1")])):
+    with (
+        patch("otto.config.fleet.all_hosts", return_value=iter([_make_host("router1")])),
+        patch("otto.config.fleet.get_lab", return_value=MagicMock(links=[])),
+    ):
         gen = await _FixtureRunner.setup(plugin)
         try:
             collector = plugin.session_monitor_collector
@@ -402,7 +429,8 @@ async def test_session_monitor_does_not_start_run_task(tmp_path):
     real_collector.run = AsyncMock()  # type: ignore[method-assign]
 
     with (
-        patch("otto.config.all_hosts", return_value=iter([fake_host])),
+        patch("otto.config.fleet.all_hosts", return_value=iter([fake_host])),
+        patch("otto.config.fleet.get_lab", return_value=MagicMock(links=[])),
         patch("otto.monitor.factory.build_monitor_collector", return_value=real_collector),
     ):
         gen = await _FixtureRunner.setup(plugin)
@@ -410,6 +438,128 @@ async def test_session_monitor_does_not_start_run_task(tmp_path):
 
     real_collector.run.assert_not_awaited()
     real_collector.run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_session_monitor_samples_an_snmp_only_host(tmp_path):
+    """#504: the suite collector takes SNMP hosts, as otto monitor does."""
+    from otto.host.factory import create_host_from_dict
+
+    snmp_host = create_host_from_dict(
+        {
+            "ip": "192.0.2.1",
+            "os_type": "embedded",
+            "command_frame": "zephyr",
+            "snmp": {"oids": ["1.3.6.1.2.1.1.3.0"]},
+        },
+        element=Element("z1"),
+    )
+    plugin = OttoPlugin(monitor=True, monitor_interval=1.0, monitor_output=tmp_path / "m.json")
+    with (
+        patch("otto.config.fleet.all_hosts", return_value=iter([snmp_host])),
+        patch("otto.config.fleet.get_lab", return_value=MagicMock(links=[])),
+    ):
+        gen = await _FixtureRunner.setup(plugin)
+        try:
+            collector = plugin.session_monitor_collector
+            assert collector is not None
+            assert collector._targets[0].snmp is not None
+        finally:
+            await _FixtureRunner.teardown(gen)
+
+
+@pytest.mark.asyncio
+async def test_session_monitor_db_output_honours_an_upper_case_suffix(tmp_path):
+    """Regression guard: --monitor-output RUN.DB archives to SQLite, never JSON in a .DB file."""
+    from otto.monitor.db import read_sessions
+
+    out = tmp_path / "RUN.DB"
+    plugin = OttoPlugin(monitor=True, monitor_interval=1.0, monitor_output=out)
+    with (
+        patch("otto.config.fleet.all_hosts", return_value=iter([_make_host("router1")])),
+        patch("otto.config.fleet.get_lab", return_value=MagicMock(links=[])),
+    ):
+        gen = await _FixtureRunner.setup(plugin)
+        await _FixtureRunner.teardown(gen)
+    (session,) = read_sessions(str(out))
+    assert session.end is not None
+
+
+@pytest.mark.asyncio
+async def test_session_monitor_leaves_the_hosts_logging_alone(tmp_path):
+    """Regression guard: the lab's shared host objects keep their logging mode."""
+    from otto.logger.mode import LogMode
+
+    host = _make_host("router1")
+    host.log = LogMode.NORMAL
+    plugin = OttoPlugin(monitor=True, monitor_interval=1.0, monitor_output=tmp_path / "m.json")
+    with (
+        patch("otto.config.fleet.all_hosts", return_value=iter([host])),
+        patch("otto.config.fleet.get_lab", return_value=MagicMock(links=[])),
+    ):
+        gen = await _FixtureRunner.setup(plugin)
+        try:
+            assert host.log is LogMode.NORMAL
+        finally:
+            await _FixtureRunner.teardown(gen)
+
+
+@pytest.mark.asyncio
+async def test_session_monitor_snapshots_the_labs_declared_links(tmp_path):
+    """The lab's declared links between selected hosts reach the export's lab snapshot."""
+    import json
+
+    from otto.link.model import Link, LinkEndpoint
+
+    out = tmp_path / "m.json"
+    declared = Link(a=LinkEndpoint(host="r1"), b=LinkEndpoint(host="r2"), name="uplink")
+    plugin = OttoPlugin(monitor=True, monitor_interval=1.0, monitor_output=out)
+    with (
+        patch(
+            "otto.config.fleet.all_hosts",
+            return_value=iter([_make_host("r1"), _make_host("r2")]),
+        ),
+        patch("otto.config.fleet.get_lab", return_value=MagicMock(links=[declared])),
+    ):
+        gen = await _FixtureRunner.setup(plugin)
+        await _FixtureRunner.teardown(gen)
+    links = json.loads(out.read_text())["sessions"][0]["lab"]["links"]
+    assert [link["name"] for link in links] == ["uplink"]
+
+
+@pytest.mark.asyncio
+async def test_session_monitor_closes_the_selected_hosts_at_teardown(tmp_path):
+    """The session owns the lab's host connections for the run: teardown closes them."""
+    host = _make_host("router1")
+    host.close = AsyncMock()  # type: ignore[method-assign]
+    plugin = OttoPlugin(monitor=True, monitor_interval=1.0, monitor_output=tmp_path / "m.json")
+    with (
+        patch("otto.config.fleet.all_hosts", return_value=iter([host])),
+        patch("otto.config.fleet.get_lab", return_value=MagicMock(links=[])),
+    ):
+        gen = await _FixtureRunner.setup(plugin)
+        host.close.assert_not_awaited()
+        await _FixtureRunner.teardown(gen)
+    host.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_session_monitor_clears_the_collector_slot_when_finish_raises(tmp_path):
+    """A failing export must not leave a dead collector published on the plugin."""
+    plugin = OttoPlugin(monitor=True, monitor_interval=1.0, monitor_output=tmp_path / "m.json")
+    with (
+        patch("otto.config.fleet.all_hosts", return_value=iter([_make_host("router1")])),
+        patch("otto.config.fleet.get_lab", return_value=MagicMock(links=[])),
+        patch(
+            "otto.monitor.session.MonitorSession.finish",
+            new=AsyncMock(side_effect=RuntimeError("export failed")),
+        ),
+    ):
+        gen = await _FixtureRunner.setup(plugin)
+        assert plugin.session_monitor_collector is not None
+        with pytest.raises(RuntimeError, match="export failed"):
+            await gen.__anext__()
+    assert plugin.session_monitor_collector is None
 
 
 # ── --monitor class-scoped run task ─────────────────────────────────────────
@@ -569,7 +719,7 @@ def test_e2e_monitor_collects_metrics_for_an_unmarked_suite(tmp_path):
     out_path = tmp_path / "monitor.json"
     plugin = OttoPlugin(
         monitor=True,
-        monitor_interval=0.01,
+        monitor_interval=1.0,  # fake_run below ticks on its own clock
         monitor_output=out_path,
     )
 
@@ -587,7 +737,8 @@ def test_e2e_monitor_collects_metrics_for_an_unmarked_suite(tmp_path):
 
     fake_host = _make_host("host1")
     with (
-        patch("otto.config.all_hosts", return_value=iter([fake_host])),
+        patch("otto.config.fleet.all_hosts", return_value=iter([fake_host])),
+        patch("otto.config.fleet.get_lab", return_value=MagicMock(links=[])),
         patch("otto.monitor.factory.build_monitor_collector", return_value=real_collector),
     ):
         try:

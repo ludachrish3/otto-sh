@@ -35,7 +35,7 @@ def _make_host(name: str, host_id: str) -> MagicMock:
     host.id = host_id
     host.snmp = None
 
-    async def _run(cmds, timeout=None):
+    async def _run(cmds, timeout=None, log=None):
         return Results.collect(
             [
                 CommandResult(Status.Success, value=_CANNED.get(cmd, ""), command=cmd, retcode=0)

@@ -8,6 +8,7 @@ pure ASGI (not BaseHTTPMiddleware) so the SSE stream is gated identically.
 import asyncio
 import json
 import logging
+import urllib.error
 import urllib.request
 
 import pytest
@@ -24,7 +25,9 @@ def _collector() -> MetricCollector:
     return MetricCollector(hosts=[], parsers=[])
 
 
-async def _asgi_get(app, path, query=b"", cookie=None, server_port=8123):
+async def _asgi_get(
+    app, path, query=b"", cookie=None, server_port=8123, client=("127.0.0.1", 55555)
+):
     """Drive one GET through the ASGI app; return (status, headers-list, body)."""
     headers = [(b"host", f"127.0.0.1:{server_port}".encode())]
     if cookie is not None:
@@ -40,8 +43,9 @@ async def _asgi_get(app, path, query=b"", cookie=None, server_port=8123):
         "query_string": query,
         "headers": headers,
         "server": ("127.0.0.1", server_port),
-        "client": ("127.0.0.1", 55555),
     }
+    if client is not None:
+        scope["client"] = client
     status, resp_headers, chunks = None, [], []
 
     async def receive():
@@ -211,38 +215,87 @@ class TestServerKeyProperties:
         assert all(u.endswith(f"/?key={server.key}") for u in server.urls)
 
 
-class TestAccessKeyNeverLogged:
-    """Spec: 'the key appears exactly once in output (the printed URL) and is
-    never logged per-request.'
+class TestRequestLogging:
+    """otto logs dashboard connections itself; uvicorn's per-request access log is off.
 
-    Uvicorn's own access logger logs the *full* request line, query string
-    included (``get_path_with_query_string``), whenever it has a handler
-    anywhere in its propagation chain -- which any real console/file logging
-    setup gives it; ``log_config=None`` in ``MonitorServer.serve()`` only
-    skips uvicorn's own ``dictConfig`` call, it does not detach this logger.
-    So this must run through a REAL uvicorn server (not the raw-ASGI helper
-    above, which never touches uvicorn's protocol/logging layer at all) and
-    capture what uvicorn itself writes to ``uvicorn.access``.
+    Runs a REAL uvicorn server: the access log and the client address only
+    exist on uvicorn's protocol layer, never on the raw-ASGI helper above.
     """
 
+    @staticmethod
+    async def _get(url: str) -> None:
+        def fetch() -> None:
+            # a 403 is an answer, not a failure, here; close it, or 3.14's
+            # tempfile finalizer warns about the unread error body
+            try:
+                with urllib.request.urlopen(url) as response:
+                    response.read()
+            except urllib.error.HTTPError as refused:
+                refused.close()
+
+        await asyncio.to_thread(fetch)
+
     @pytest.mark.asyncio
-    async def test_key_does_not_appear_in_uvicorn_access_log(self, caplog):
+    async def test_one_info_per_admitted_ip_one_warning_per_refused_ip(self, caplog):
         server = MonitorServer(_collector(), host="127.0.0.1", port=0)
         task = asyncio.create_task(server.serve())
         await server.wait_started()
+        base = f"http://127.0.0.1:{server._port}/api/mode"
         try:
-            with caplog.at_level(logging.INFO, logger="uvicorn.access"):
-                url = f"http://127.0.0.1:{server._port}/api/mode?key={server.key}"
-                resp = await asyncio.to_thread(urllib.request.urlopen, url)
-                resp.read()
+            with caplog.at_level(logging.DEBUG):
+                for _ in range(2):
+                    await self._get(f"{base}?key={server.key}")
+                    await self._get(base)
         finally:
             server.stop()
             await task
 
-        access_records = [r for r in caplog.records if r.name == "uvicorn.access"]
-        assert access_records, "expected uvicorn to emit an access-log record for the request"
-        for record in access_records:
-            assert server.key not in record.getMessage()
+        ours = [r for r in caplog.records if r.name == "otto.monitor.server"]
+        infos = [
+            r.getMessage()
+            for r in ours
+            if r.levelno == logging.INFO and r.getMessage().startswith("Dashboard client")
+        ]
+        warnings = [r.getMessage() for r in ours if r.levelno == logging.WARNING]
+        debugs = [
+            r.getMessage()
+            for r in ours
+            if r.levelno == logging.DEBUG and r.getMessage().startswith("GET /api/mode")
+        ]
+        assert infos == ["Dashboard client connected from 127.0.0.1"]
+        assert warnings == ["Dashboard request without a valid access key from 127.0.0.1"]
+        assert len(debugs) == 4
+        assert not [r for r in caplog.records if r.name == "uvicorn.access"]
+        assert all(server.key not in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_scope_without_a_client_logs_as_unknown(caplog):
+    """No ``client`` in the scope (a unix socket, some proxies) must not crash the gate."""
+    app = _build_app(_collector(), key="k")
+    with caplog.at_level(logging.DEBUG, logger="otto.monitor.server"):
+        status, _headers, _body = await _asgi_get(app, "/api/mode", client=None)
+    assert status == 403
+    assert "Dashboard request without a valid access key from unknown" in caplog.messages
+
+
+@pytest.mark.asyncio
+async def test_a_client_admitted_by_its_cookie_alone_logs_one_info(caplog):
+    """A client that never sends ``?key=`` (a bookmarked tab) still logs its connection."""
+    app = _build_app(_collector(), key=TEST_KEY)
+    cookie = f"otto_monitor_8123={TEST_KEY}"
+    with caplog.at_level(logging.DEBUG, logger="otto.monitor.server"):
+        for _ in range(2):
+            status, _headers, _body = await _asgi_get(
+                app, "/api/mode", cookie=cookie, client=("10.0.0.7", 40000)
+            )
+            assert status == 200
+    infos = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO and r.getMessage().startswith("Dashboard client")
+    ]
+    assert infos == ["Dashboard client connected from 10.0.0.7"]
 
 
 class TestAccessKeyNeverWrittenToLogFiles:

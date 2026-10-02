@@ -9,13 +9,17 @@ and serves an interactive web dashboard.
    broadcast
    collector
    db
+   errors
    events
    export
    factory
+   live
    log_sourced
    parsers
    rates
+   review
    server
    session
    snmp
    store
+   tls

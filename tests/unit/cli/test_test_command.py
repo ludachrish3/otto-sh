@@ -171,6 +171,21 @@ def test_a_failing_run_exits_with_its_code(otto_test_cli, monkeypatch):
     assert otto_test_cli(["test", "test_x"]).exit_code == 1
 
 
+def test_a_monitor_refusal_at_run_time_exits_4(otto_test_cli, sut_repo, monkeypatch):
+    """``--monitor`` over a lab with nothing to sample stops the run with pytest's usage code.
+
+    The whole chain is real: the plugin's session fixture refuses through
+    ``pytest.exit``, the in-process session returns its code, ``run_tests``
+    folds it into the run's exit code and the command hands that to typer.
+    Only the fleet walk is stubbed, to an empty lab.
+    """
+    sut_repo(files={"tests/test_m.py": "def test_m(): pass\n"})
+    monkeypatch.setattr("otto.config.fleet.all_hosts", lambda *a, **kw: iter([]))
+    result = otto_test_cli(["test", "test_m", "--monitor"])
+    assert result.exit_code == pytest.ExitCode.USAGE_ERROR == 4, result.output
+    assert "--monitor: No hosts available in the active lab" in result.output
+
+
 def test_overwrite_cov_dir_reaches_run_options(otto_test_cli, captured_run, tmp_path):
     cov = tmp_path / "cov"
     cov.mkdir()
@@ -553,6 +568,16 @@ def test_help_lists_names_and_run_flags(otto_test_cli):
         assert flag in result.output
     for gone in ("--tests", "--list-suites"):
         assert gone not in result.output
+
+
+def test_help_states_the_interval_floor_as_the_errors_do(otto_test_cli, monkeypatch):
+    """``1.0s``, as ``otto monitor --help`` and the refusal both spell it — never ``1s``."""
+    from tests.unit.cli.conftest import _flat
+
+    monkeypatch.setenv("COLUMNS", "300")
+    result = otto_test_cli(["test", "--help"], lab=None)
+    assert result.exit_code == 0
+    assert "Sampling interval for --monitor (at least 1.0s)." in _flat(result.output)
 
 
 def test_the_cache_serialises_the_test_verbs_flags_and_the_fast_path_rebuilds_them():

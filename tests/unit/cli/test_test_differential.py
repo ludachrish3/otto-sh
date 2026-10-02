@@ -17,6 +17,7 @@ own (whose sample already picks ``False``) on
 
 import dataclasses
 import inspect
+import re
 from pathlib import Path
 from typing import Any, get_args, get_origin
 
@@ -100,6 +101,12 @@ CONTRADICTIONS = [
 ]
 
 
+SINGLE_FIELD_REFUSALS = [
+    ({"monitor_interval": 0.5}, "monitor_interval: interval must be at least"),
+    ({"monitor_hosts": "("}, "monitor_hosts: host pattern"),
+]
+
+
 def _argv(fields: dict, tmp_path: Path) -> list[str]:
     out: list[str] = []
     for name, value in fields.items():
@@ -110,6 +117,20 @@ def _argv(fields: dict, tmp_path: Path) -> list[str]:
         else:
             out += [RUN_FLAGS[name], str(value).format(tmp=tmp_path)]
     return out
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"), SINGLE_FIELD_REFUSALS, ids=["monitor_interval", "monitor_hosts"]
+)
+def test_each_single_field_refusal_is_the_librarys_message_in_flag_spelling(
+    fields, message, capture_cov, tmp_path
+):
+    with pytest.raises(OptionsValidationError, match=re.escape(message)) as excinfo:
+        RunOptions(**fields)
+    exit_code, handed, output = capture_cov(_argv(fields, tmp_path))
+    assert exit_code == 2
+    assert handed == {}
+    assert _flat(spell_flags(str(excinfo.value), RUN_FLAGS)) in _flat(output)
 
 
 def _resolve(value: object, tmp_path: Path) -> object:

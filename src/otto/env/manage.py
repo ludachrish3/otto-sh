@@ -111,7 +111,7 @@ def _settings_backend(repos: "list[Repo]") -> "str | None":
     A workspace is several repos by definition, so two of them CAN declare
     different installers. Picking one silently would bind the wrong answer
     with no indication it happened; this refuses instead, naming both, the
-    same way ``[monitor]`` TLS disagreement is refused in ``cli/monitor.py``.
+    same way ``[monitor]`` TLS disagreement is refused in ``otto.monitor.tls``.
     """
     declaring = [(r.name, r.env_backend) for r in repos if r.env_backend]
     if not declaring:

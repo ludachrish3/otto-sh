@@ -5,17 +5,19 @@ points: ``--live`` (collect from lab hosts, explicit opt-in) and a
 ``<source>`` positional (review a saved format:1 export). These tests drive
 that dispatch/validation surface through Typer's ``CliRunner`` — no uvicorn
 server is ever started here (the Playwright task covers serving behavior),
-and ``--live`` collection itself is mocked out so no real lab or hosts are
-touched, matching this directory's hostless CLI-shape testing pattern.
+and ``--live`` collection itself is never reached, so no real lab or hosts
+are touched, matching this directory's hostless CLI-shape testing pattern.
 
-Finer-grained option-parsing and factory/collector coverage lives in
-``tests/unit/cli/test_monitor.py``. The lab-requirement tests near the
-bottom of this file (``--lab`` optional for review, mandatory for
-``--live``) dispatch through the FULL ``otto.cli.main.app`` rather than the
-bare ``monitor_app`` used everywhere else here: that is the only path that
-runs the real ``CommandSpec``/``command_preamble`` dispatch machinery, which
-is where the bug they guard against actually lived (a bare ``monitor_app``
-invocation bypasses ``ensure_lab_context`` entirely and cannot see it).
+What the leaf hands the monitor library, and how it reports the library's
+refusals, is pinned by ``tests/unit/cli/test_monitor_differential.py``. The
+shape-only tests at the top (bare invocation, mutual exclusion, a missing
+file) are refused before the command body runs, so they invoke the bare
+``monitor_app``. Everything that reaches the body dispatches through the FULL
+``otto.cli.main.app``: that is the only path that runs the real
+``CommandSpec``/``command_preamble`` dispatch machinery, which the body's
+per-mode preamble (``ensure_cli_session`` for review) relies on, and where
+the lab-requirement bug the tests near the bottom guard against actually
+lived.
 """
 
 import asyncio
@@ -23,19 +25,32 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import click
 import pytest
-import typer
 from typer.testing import CliRunner
 
-from otto.cli.monitor import monitor, monitor_app
+from otto.cli.monitor import monitor_app
 from otto.monitor.db import MetricDB
 from otto.monitor.session import new_frame
-from otto.reservations import ReservationGateResult
 
 pytestmark = pytest.mark.hostless
 
 runner = CliRunner()
+
+
+def _flat(text: str) -> str:
+    """Collapse rich's wrapped error panel so a message can be matched as one string."""
+    return " ".join(text.replace("│", " ").split())
+
+
+def _review(tmp_path: Path, source: Path):
+    """Run ``otto monitor <source>`` through the full app, with no lab configured."""
+    from otto.cli.main import app
+
+    return runner.invoke(
+        app,
+        ["monitor", str(source)],
+        env={"OTTO_LAB": "", "OTTO_XDIR": str(tmp_path)},
+    )
 
 
 # ── 1. Bare invocation: usage, exit 2 ────────────────────────────────────────
@@ -64,17 +79,22 @@ def test_live_and_source_mutually_exclusive(tmp_path: Path) -> None:
 
 
 # ── 3. Unknown source suffix ─────────────────────────────────────────────────
+#
+# A source that is not a loadable export is a bad argument, so it is a usage
+# error naming SOURCE: exit 2, like every other refused input.
 
 
 def test_source_rejects_unknown_suffix(tmp_path: Path) -> None:
     csv_file = tmp_path / "x.csv"
     csv_file.write_text("not a monitor export")
 
-    result = runner.invoke(monitor_app, [str(csv_file)])
+    result = _review(tmp_path, csv_file)
 
-    assert result.exit_code == 1
-    assert ".json" in result.output
-    assert ".db" in result.output
+    assert result.exit_code == 2, result.output
+    flat = _flat(result.output)
+    assert "Invalid value for SOURCE" in flat
+    assert ".json" in flat
+    assert ".db" in flat
 
 
 # ── 4. Legacy (pre-format:1) JSON is rejected ────────────────────────────────
@@ -84,9 +104,9 @@ def test_source_rejects_legacy_json(tmp_path: Path) -> None:
     legacy = tmp_path / "legacy.json"
     legacy.write_text(json.dumps({"metrics": [], "events": []}))
 
-    result = runner.invoke(monitor_app, [str(legacy)])
+    result = _review(tmp_path, legacy)
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2, result.output
     assert "format" in result.output.lower()
 
 
@@ -95,7 +115,7 @@ def test_source_rejects_legacy_json(tmp_path: Path) -> None:
 # Reproduces the hand-carried-archive path the guide advertises (a truncated
 # `scp` copy): sqlite3.connect() is lazy, so a garbage-bytes file only fails
 # on the first PRAGMA, raising sqlite3.DatabaseError — the PARENT class of
-# OperationalError. Must surface as otto's own fail-loud message, exit 1, and
+# OperationalError. Must surface as otto's own fail-loud message, exit 2, and
 # critically NO raw traceback on stderr/stdout.
 
 
@@ -103,10 +123,10 @@ def test_source_rejects_corrupted_db_no_traceback(tmp_path: Path) -> None:
     garbage = tmp_path / "garbage.db"
     garbage.write_bytes(b"not a sqlite database at all, just garbage bytes")
 
-    result = runner.invoke(monitor_app, [str(garbage)])
+    result = _review(tmp_path, garbage)
 
-    assert result.exit_code == 1
-    assert "not a monitor database" in result.output
+    assert result.exit_code == 2, result.output
+    assert "not a monitor database" in _flat(result.output)
     assert "Traceback" not in result.output
     assert result.exception is None or isinstance(result.exception, SystemExit)
 
@@ -124,62 +144,7 @@ def test_source_rejects_missing_file(tmp_path: Path) -> None:
     assert result.exit_code != 0
 
 
-# ── 6. --live gates before host selection ────────────────────────────────────
-
-
-def _make_ctx(meta: dict) -> typer.Context:
-    """Build a typer.Context (backed by click.Context) with the given meta.
-
-    Mirrors the established fixture in tests/unit/cli/test_monitor.py /
-    tests/unit/cli/test_preamble_reservation_gate.py: monitor() reads
-    ctx.meta["otto_reservation"] and calls .evaluate() inline (there is no
-    standalone gate(ctx) callable to patch), so exercising gate ORDER means
-    calling monitor() directly with a hand-built context rather than going
-    through CliRunner.
-    """
-    cmd = click.Command("monitor")
-    ctx = click.Context(cmd)
-    ctx.meta.update(meta)
-    return ctx  # type: ignore[return-value]
-
-
-def test_live_requires_reservation_gate_before_host_selection() -> None:
-    """The reservation gate must be consulted BEFORE hosts are selected.
-
-    Records the order two mocked calls happen in: the gate's .evaluate() and
-    otto.config.fleet.all_hosts(). No hosts match (all_hosts returns empty),
-    so monitor() exits 1 right after selection — this test only cares about
-    what happened, and in what order, up to that point.
-    """
-    order: list[str] = []
-
-    mock_res = MagicMock()
-
-    def _evaluate() -> ReservationGateResult:
-        order.append("gate")
-        return ReservationGateResult(checked=True, skipped=False, warning=None)
-
-    mock_res.evaluate.side_effect = _evaluate
-
-    def _fake_all_hosts(*_args, **_kwargs):
-        order.append("hosts")
-        return iter([])
-
-    ctx = _make_ctx({"otto_reservation": mock_res})
-
-    with (
-        patch("otto.config.fleet.all_hosts", side_effect=_fake_all_hosts),
-        pytest.raises(typer.Exit) as excinfo,
-    ):
-        monitor(ctx, live=True)  # type: ignore[arg-type]
-
-    assert excinfo.value.exit_code == 1  # the no-hosts refusal, not a success exit
-
-    assert order == ["gate", "hosts"]
-    mock_res.evaluate.assert_called_once()
-
-
-# ── 7. Lab requirement: optional for review, mandatory for --live ───────────
+# ── 6. Lab requirement: optional for review, mandatory for --live ───────────
 #
 # Regression coverage for the live-bed-caught bug: monitor's spec set
 # gate=False but not lab_free=True, so the shared root preamble still
@@ -187,24 +152,23 @@ def test_live_requires_reservation_gate_before_host_selection() -> None:
 # `otto monitor <source>` — the exact command docs/cli/monitor/review.md
 # documents — failed with "Error: Missing option '--lab'" even against a
 # fully self-contained archive. See builtin_commands.py's monitor
-# registration (lab_free=True) and monitor.py's --live branch (which now
-# pulls the lab in itself via otto.cli.invoke.ensure_lab_session).
+# registration (lab_free=True) and monitor.py's --live branch (which pulls
+# the lab in itself via otto.cli.invoke.ensure_lab_session).
 
 
 def test_review_mode_reaches_server_without_lab(tmp_path: Path) -> None:
     """``otto monitor <source>`` with no ``--lab`` and no lab configured must succeed.
 
-    Builds a real (empty) schema-v2 ``.db`` the way
-    ``tests/unit/cli/test_monitor.py::TestSourceArgument.test_db_file_accepted``
-    does (a real ``MetricDB``, not hand-crafted SQLite), then dispatches
-    through the full app with ``OTTO_LAB`` cleared and no ``--lab`` anywhere
-    on the command line — the exact scenario the live-bed report reproduced.
-    Only ``MonitorServer.serve()`` is stubbed (an ``AsyncMock``, so the real
-    ``asyncio.run(_serve_review(...))`` coroutine actually runs to the point
-    of constructing the server, then returns immediately instead of starting
-    a real uvicorn server) — everything up to and including server
-    construction runs for real, so this fails RED against the pre-fix code
-    (exit 2, "Missing option '--lab'") and passes GREEN after it.
+    Builds a real (empty) schema-v2 ``.db`` with a real ``MetricDB`` (not
+    hand-crafted SQLite), then dispatches through the full app with
+    ``OTTO_LAB`` cleared and no ``--lab`` anywhere on the command line — the
+    exact scenario the live-bed report reproduced. Only
+    ``MonitorServer.serve()`` is stubbed (an ``AsyncMock``, so the real
+    ``serve_review`` coroutine runs to the point of constructing the server,
+    then returns immediately instead of starting a real uvicorn server) —
+    everything up to and including server construction runs for real, so this
+    fails RED against the pre-fix code (exit 2, "Missing option '--lab'") and
+    passes GREEN after it.
     """
     db_file = tmp_path / "metrics.db"
 
@@ -218,14 +182,8 @@ def test_review_mode_reaches_server_without_lab(tmp_path: Path) -> None:
     mock_server = MagicMock()
     mock_server.serve = AsyncMock()
 
-    from otto.cli.main import app
-
     with patch("otto.monitor.server.MonitorServer", return_value=mock_server) as mock_cls:
-        result = runner.invoke(
-            app,
-            ["monitor", str(db_file)],
-            env={"OTTO_LAB": "", "OTTO_XDIR": str(tmp_path)},
-        )
+        result = _review(tmp_path, db_file)
 
     assert result.exit_code == 0, result.output
     mock_cls.assert_called_once()
@@ -253,10 +211,10 @@ def test_live_without_lab_reports_missing_option(tmp_path: Path) -> None:
     assert "Missing option '--lab'" in result.stderr
 
 
-# ── 8. Review mode prints the server URL to the console ─────────────────────
+# ── 7. Review mode prints the server URL to the console ─────────────────────
 #
 # Regression coverage for the live-bed-caught bug: `lab_free=True` (added to
-# fix #7 above) makes `command_preamble` early-return entirely for BOTH of
+# fix #6 above) makes `command_preamble` early-return entirely for BOTH of
 # monitor's branches, skipping `ensure_cli_session` (`init_cli_logging`)
 # for review mode too — not just the lab load. With no handler attached to the
 # `'otto'` logger, every `MonitorServer.serve()` record vanished into Python's
@@ -322,14 +280,8 @@ def test_review_mode_logs_server_url_to_console(
         self.started = True
         self.servers = [_FakeUvicornServer()]
 
-    from otto.cli.main import app
-
     with patch.object(uvicorn.Server, "serve", _fake_uvicorn_serve):
-        result = runner.invoke(
-            app,
-            ["monitor", str(db_file)],
-            env={"OTTO_LAB": "", "OTTO_XDIR": str(tmp_path)},
-        )
+        result = _review(tmp_path, db_file)
 
     assert result.exit_code == 0, result.output
     # The keyed URL reaches the console via CONSOLE.print (terminal only)...

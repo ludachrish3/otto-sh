@@ -54,9 +54,9 @@ a plain-HTML hint page pointing back at the full keyed URL.
 
 The key never appears in per-request logs. Uvicorn's access logger would
 otherwise print the full request line — query string included — on every
-hit, which would put the credential in the log on request one; a filter
-strips the query string from that logger's records for exactly this
-reason.
+hit, so it is turned off; the access-key middleware logs requests itself,
+from the path alone; the lines it writes are listed under
+[Connection log](../../cli/monitor/serving.md#connection-log).
 
 ## TLS
 
@@ -113,18 +113,19 @@ syntax.
 
 ## Where the code lives
 
-- {mod}`otto.monitor.server` — `_AccessKeyMiddleware` (the gate),
-  `_cookie_name` (port-scoped naming), `_RedactAccessLogQueryString` (the
-  access-log filter), and `MonitorServer`'s `ssl_certfile`/`ssl_keyfile`
-  wiring into uvicorn
+- {mod}`otto.monitor.server` — `_AccessKeyMiddleware` (the gate, and the
+  dashboard's request log, see above), `_cookie_name` (port-scoped naming), and `MonitorServer`'s
+  `ssl_certfile`/`ssl_keyfile` wiring into uvicorn
 - {class}`~otto.models.settings.MonitorSettingsSpec` — the `[monitor]`
   boundary spec (`tls_cert`/`tls_key`, `~` expansion, the
   key-without-cert validation error)
 - {mod}`otto.config.repo` — `MonitorSettings`, the runtime dataclass
   `MonitorSettingsSpec.to_runtime()` builds
-- {mod}`otto.cli.monitor` — `_resolve_monitor_tls`, which resolves the
-  declaration across every configured repo and turns a missing cert/key
-  file or a multi-repo disagreement into a hard exit
+- {mod}`otto.monitor.tls` — `resolve_monitor_tls`, which resolves the
+  declaration across every configured repo and raises `MonitorTlsError` for a
+  missing or unloadable cert/key file or a multi-repo disagreement;
+  {mod}`otto.monitor.live` and {mod}`otto.monitor.review` call it, and
+  `otto monitor` turns the error into a hard exit
 - {mod}`otto.tls` — `os_trust_session`, the one adapter that carries both
   the request timeout and the OS-store `truststore` context; the NetBox
   backend hands pynetbox that session

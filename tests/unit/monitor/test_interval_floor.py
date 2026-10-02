@@ -3,6 +3,7 @@
 import asyncio
 from contextlib import suppress
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from otto.logger.mode import LogMode
 from otto.models import MIN_INTERVAL_SECONDS, validate_interval
 from otto.monitor.collector import MetricCollector, MonitorTarget
+from otto.monitor.errors import MonitorInputError
 from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext
 from otto.result import CommandResult, Results
 from otto.suite.monitor_fixture import MonitorHandle
@@ -22,7 +24,9 @@ class TestValidator:
         assert validate_interval(5.0) == 5.0
 
     def test_rejects_below_the_floor_naming_the_value_and_the_reason(self) -> None:
-        with pytest.raises(ValueError, match="monitor interval"):
+        with pytest.raises(
+            ValueError, match=r"^interval must be at least 1\.0s, got 0\.5s — a host needs time"
+        ):
             validate_interval(0.5)
 
     def test_floor_is_one_second(self) -> None:
@@ -31,10 +35,18 @@ class TestValidator:
 
 class TestLibraryBoundary:
     @pytest.mark.asyncio
-    async def test_monitor_start_rejects_a_sub_second_interval(self) -> None:
+    async def test_monitor_start_rejects_a_sub_second_interval(self, monkeypatch) -> None:
+        """The floor holds at the fixture boundary, refused as a field error.
+
+        The interval is checked before the empty host list is, so ``hosts=[]``
+        still reaches the interval refusal. The lab is stubbed because the
+        fixture only ever starts inside a run that has one loaded.
+        """
+        monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
         handle = MonitorHandle(plugin=None)
-        with pytest.raises(ValueError, match="interval"):
+        with pytest.raises(MonitorInputError, match="interval") as excinfo:
             await handle.start(hosts=[], interval=0.1)
+        assert excinfo.value.field == "interval"
 
 
 class _StubParser(MetricParser):
@@ -56,7 +68,9 @@ def _make_instant_host(name: str) -> MagicMock:
     host.id = name
     host.log = LogMode.QUIET
 
-    async def _run_cmds(cmds: list[str], timeout: float | None = None) -> Results:
+    async def _run_cmds(
+        cmds: list[str], timeout: float | None = None, log: object = None
+    ) -> Results:
         results = [
             CommandResult(Status.Success, value="42\n", command=cmd, retcode=0) for cmd in cmds
         ]

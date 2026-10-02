@@ -95,14 +95,32 @@ hosts, where no real host is ever polled.
 
 
 def validate_interval(seconds: float) -> float:
-    """Return *seconds*, or raise ``ValueError`` if it is below the floor."""
+    """Return *seconds*, or raise ``ValueError`` if it is below the floor.
+
+    The one home for the refusal's wording. It names no field and no flag,
+    and avoids the bare word "monitor", which a CLI's field-to-flag spelling
+    would rewrite as ``--monitor``: each caller wraps the text in its own
+    field-named error.
+    """
     if seconds < MIN_INTERVAL_SECONDS:
         raise ValueError(
-            f"monitor interval must be at least {MIN_INTERVAL_SECONDS}s, got {seconds}s — "
+            f"interval must be at least {MIN_INTERVAL_SECONDS}s, got {seconds}s — "
             "a host needs time to answer every query in the interval without being "
             "taxed by the polling itself."
         )
     return seconds
+
+
+def compile_host_pattern(text: str) -> "re.Pattern[str]":
+    """Compile a host-id selection regex, or raise ``ValueError`` naming it.
+
+    The message names no field or flag: each caller wraps the ``ValueError``
+    in its own field-named error.
+    """
+    try:
+        return re.compile(text)
+    except re.error as exc:
+        raise ValueError(f"host pattern {text!r} is not a valid regex: {exc}") from exc
 
 
 def split_on(values: list[str] | str, sep: str = ",") -> list[str]:

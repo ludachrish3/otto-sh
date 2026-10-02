@@ -122,9 +122,11 @@ class RunOptions:
 
         Raises:
             otto.params.OptionsValidationError: ``cov=False`` with a
-                coverage destination, or a ``seed`` with ``random_order=False``. Imported
-                inline on each raise branch, not at the top of this method, so the happy
-                path (no contradiction) costs no import.
+                coverage destination, a ``seed`` with ``random_order=False``,
+                a ``monitor_interval`` below the monitor's floor, or a
+                ``monitor_hosts`` that is not a valid regex. The error class
+                is imported inline on each raise branch, so the happy path
+                (no contradiction) never imports it.
         """
         if self.cov_report_dir is not None or self.cov_tickets_json is not None:
             object.__setattr__(self, "cov_report", True)
@@ -140,6 +142,23 @@ class RunOptions:
             object.__setattr__(self, "cov", True)
         if self.monitor_output is not None or self.monitor_hosts is not None:
             object.__setattr__(self, "monitor", True)
+        from ..utils import validate_interval
+
+        try:
+            validate_interval(self.monitor_interval)
+        except ValueError as exc:
+            from ..params import OptionsValidationError
+
+            raise OptionsValidationError(f"monitor_interval: {exc}") from exc
+        if self.monitor_hosts:
+            from ..utils import compile_host_pattern
+
+            try:
+                compile_host_pattern(self.monitor_hosts)
+            except ValueError as exc:
+                from ..params import OptionsValidationError
+
+                raise OptionsValidationError(f"monitor_hosts: {exc}") from exc
         if self.seed is not None and not self.random_order:
             from ..params import OptionsValidationError
 

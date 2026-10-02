@@ -125,7 +125,9 @@ def _make_mock_host(name: str) -> MagicMock:
     host.name = name
     host.log = LogMode.QUIET
 
-    async def _run_cmds(cmds: list[str], timeout: float | None = None) -> Results:
+    async def _run_cmds(
+        cmds: list[str], timeout: float | None = None, log: object = None
+    ) -> Results:
         results = [
             CommandResult(Status.Success, value="42\n", command=cmd, retcode=0) for cmd in cmds
         ]

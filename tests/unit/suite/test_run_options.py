@@ -77,3 +77,22 @@ def test_resolve_coverage_never_turns_a_destination_off(monkeypatch, tmp_path):
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: {})
     with pytest.raises(CoverageConfigError):
         run_module.resolve_coverage(RunOptions(cov_dir=tmp_path), [], command="otto test")
+
+
+def test_a_monitor_interval_below_the_floor_is_refused_naming_the_field():
+    with pytest.raises(
+        OptionsValidationError,
+        match=r"^monitor_interval: interval must be at least 1\.0s, got 0\.5s",
+    ):
+        RunOptions(monitor_interval=0.5)
+
+
+def test_an_invalid_monitor_hosts_regex_is_refused_naming_the_field():
+    with pytest.raises(
+        OptionsValidationError, match=r"^monitor_hosts: host pattern '\(' is not a valid regex"
+    ):
+        RunOptions(monitor_hosts="(")
+
+
+def test_an_empty_monitor_hosts_is_no_filter_not_a_refusal():
+    assert RunOptions(monitor_hosts="").monitor

@@ -90,43 +90,6 @@ class SuppressASGIWarning(Filter):
 getLogger("uvicorn.error").addFilter(SuppressASGIWarning())
 
 
-_ACCESS_LOG_PATH_ARG_INDEX = 2  # position of the path+query string in uvicorn's access-log args
-
-
-class _RedactAccessLogQueryString(Filter):
-    """``logging.Filter`` that drops the query string from uvicorn's access log.
-
-    Every route now carries ``?key=<token>`` (see ``_AccessKeyMiddleware``
-    below), and uvicorn's access logger logs the *full* request line
-    including the query string (``get_path_with_query_string``) whenever
-    ``uvicorn.access`` has any handler in its propagation chain — which is
-    exactly what otto's own CLI logging setup gives it, console or file. The
-    ``log_config=None`` passed to ``uvicorn.Config`` in ``serve()`` only
-    skips uvicorn's *own* ``logging.config.dictConfig()`` call; it does not
-    disable this logger or stop it from inheriting the root logger's
-    handlers. Without this filter, the per-run access key — meant to appear
-    exactly once, in the printed URL — would be written to the log on every
-    single request. The access-log call site passes the path+query string as
-    the third positional arg (``'%s - "%s %s HTTP/%s" %d'``), so mutating
-    ``record.args`` here strips it before formatting while keeping method,
-    client address, and status intact.
-    """
-
-    @override
-    def filter(self, record: LogRecord) -> bool:
-        args = record.args
-        if isinstance(args, tuple) and len(args) > _ACCESS_LOG_PATH_ARG_INDEX:
-            path = args[_ACCESS_LOG_PATH_ARG_INDEX]
-            if isinstance(path, str) and "?" in path:
-                new_args = list(args)
-                new_args[_ACCESS_LOG_PATH_ARG_INDEX] = path.split("?", 1)[0]
-                record.args = tuple(new_args)
-        return True
-
-
-getLogger("uvicorn.access").addFilter(_RedactAccessLogQueryString())
-
-
 def _cookie_name(port: int | None) -> str:
     """Auth-cookie name, scoped by port.
 
@@ -156,12 +119,28 @@ class _AccessKeyMiddleware:
     else. A correctly-keyed request of ANY path gets the cookie minted on its
     response, so keyed deep links work, and the browser then authenticates
     every follow-up (assets, fetches, EventSource) via the cookie alone.
+
+    Also the dashboard's request log: one INFO per admitted IP and one WARNING
+    per refused IP for the life of this app (one server run), and a DEBUG line
+    per request. uvicorn's own access log is off.
     """
 
     def __init__(self, app: ASGIApp, *, key: str, secure_cookie: bool) -> None:
         self._app = app
         self._key = key
         self._secure = secure_cookie
+        self._admitted: set[str] = set()
+        self._refused: set[str] = set()
+
+    def _note_admitted(self, ip: str) -> None:
+        if ip not in self._admitted:
+            self._admitted.add(ip)
+            logger.info(f"Dashboard client connected from {ip}")
+
+    def _note_refused(self, ip: str) -> None:
+        if ip not in self._refused:
+            self._refused.add(ip)
+            logger.warning(f"Dashboard request without a valid access key from {ip}")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "lifespan":
@@ -180,6 +159,17 @@ class _AccessKeyMiddleware:
             await receive()
             await send({"type": "websocket.close", "code": 1008})
             return
+        client = scope.get("client")
+        ip = client[0] if client else "unknown"
+        method, path = scope.get("method", ""), scope.get("path", "")
+
+        async def logged_send(message: Message) -> None:
+            # scope["path"] only, never the query string: the access key rides
+            # in ?key= and must never reach a log record.
+            if message["type"] == "http.response.start":
+                logger.debug(f"{method} {path} {message['status']} from {ip}")
+            await send(message)
+
         request = Request(scope)
         cookie_name = _cookie_name(request.url.port)
         key_bytes = self._key.encode("ascii")
@@ -200,23 +190,26 @@ class _AccessKeyMiddleware:
                 if message["type"] == "http.response.start":
                     headers = MutableHeaders(scope=message)
                     headers.append("set-cookie", cookie)
-                await send(message)
+                await logged_send(message)
 
+            self._note_admitted(ip)
             await self._app(scope, receive, send_with_cookie)
             return
         from_cookie = request.cookies.get(cookie_name)
         if from_cookie is not None and secrets.compare_digest(
             from_cookie.encode("utf-8"), key_bytes
         ):
-            await self._app(scope, receive, send)
+            self._note_admitted(ip)
+            await self._app(scope, receive, logged_send)
             return
+        self._note_refused(ip)
         if request.url.path.startswith("/api/"):
             response: Response = JSONResponse(
                 {"error": "missing or invalid access key"}, status_code=403
             )
         else:
             response = HTMLResponse(_FORBIDDEN_HTML, status_code=403)
-        await response(scope, receive, send)
+        await response(scope, receive, logged_send)
 
 
 def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route count, not branching
@@ -931,6 +924,9 @@ class MonitorServer:
                     host=self._bind_host,
                     port=self._port,
                     log_config=None,
+                    # otto logs requests itself (one INFO per admitted IP, DEBUG per
+                    # request) from the access-key middleware.
+                    access_log=False,
                     ssl_certfile=str(self._tls_cert) if self._tls_cert else None,
                     ssl_keyfile=str(self._tls_key) if self._tls_key else None,
                 )

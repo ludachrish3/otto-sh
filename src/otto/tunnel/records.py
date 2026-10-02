@@ -2,7 +2,7 @@
 
 Lives tunnel-side so the monitor package never imports ``otto.tunnel`` —
 the collector consumes these through an injected callable composed in
-``otto.cli.monitor`` (spec 2026-07-16 §2).
+``otto.monitor.live`` (spec 2026-07-16 §2).
 """
 
 from typing import TYPE_CHECKING

@@ -181,7 +181,8 @@ in its signature. They work the same in a test class and in a test function.
   body still wins. See the
   [expect recipe](../test-recipes.md#non-fatal-assertions-with-expect).
 - `monitor`: a per-test metrics monitor. `await monitor.start(hosts=[...])`
-  starts collection and a live dashboard and returns its URL;
+  starts collection (no dashboard; archive with `db_path=` and review it with
+  `otto monitor <file>.db`);
   `await monitor.event("label")` marks the timeline; `monitor.results()` and
   `monitor.events()` read what was collected, also after
   `await monitor.stop()`. The fixture stops a started monitor for you when

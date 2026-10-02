@@ -49,6 +49,14 @@ digraph monitor {
 }
 ```
 
+**One library.** `otto monitor`, `otto test --monitor` and the `monitor`
+fixture all go through {class}`~otto.monitor.session.MonitorSession`, which
+owns a run's identity, lab snapshot, collector and archive; the CLI leaf
+modules only parse, call the library and translate its errors to exit codes. {func}`~otto.monitor.live.run_live`
+is the lab-aware `otto monitor --live`, {func}`~otto.monitor.review.serve_review`
+the review path, and {func}`~otto.monitor.tls.resolve_monitor_tls` the TLS
+resolution. The package quick start is the worked example.
+
 **Collection.** `build_monitor_collector` (`otto/monitor/factory.py`) turns a
 host list into `MonitorTarget`s and picks each host's collection mode:
 
@@ -88,7 +96,8 @@ hosts.
 or plain function, gets a start and an end mark automatically; a test marks
 its own moments with `monitor.event(...)` through the `monitor` fixture
 ({class}`~otto.suite.monitor_fixture.MonitorHandle`), which can also start a
-collector and dashboard of the test's own.
+collector of the test's own. Neither serves a dashboard; the events are read
+back on review.
 
 **Serving and persistence.** A live dashboard
 ({class}`~otto.monitor.server.MonitorServer`) binds an OS-assigned port and
@@ -112,26 +121,20 @@ preamble: live collection (`--live`) runs the reservation gate; reviewing a
 saved `<source>` reads a local file and is gate-exempt by design
 ({doc}`../lifecycle`).
 
-**Opening the archive, then collecting.** `spawn_collection()` is the seam
-that owns that ordering: it awaits `init_db()` and only then creates the
-collection task. {meth}`~otto.monitor.collector.MetricCollector.run`
-**refuses** an unopened DB — it raises a loud precondition rather than
-opening lazily in-task. That refusal is the fix for a five-issue flake wave
-(#136/#137/#142-#144): an in-task open can be cancelled mid-schema, leaving a
-partial archive that `finalize()` then silently no-ops on, and its failures
-die inside a task whose supervising `gather(return_exceptions=True)` swallows
-them. The rule used to be a comment repeated at every call site; now it lives
-in one method with the precondition behind it, so a caller that bypasses the
-seam fails at once instead of racing. Two test-side callers legitimately
-await `init_db()` themselves instead, for different reasons: the `--monitor`
-session plugin opens once, when the session starts, while a class-scoped
-fixture restarts `run()` for each test class, a split `spawn_collection()`
-does not express; and the `monitor` fixture's `MonitorHandle.start` opens
-before spawning because its spawn happens inside a task, where
-`spawn_collection()` would put the open back into cancellable context — the
-very thing the seam exists to prevent. Both are
-still covered by `run()`'s precondition, which is what makes them safe to
-write by hand.
+**Opening the archive, then collecting.** `MonitorSession.open()` (which
+`async with session:` calls) awaits `init_db()`, and `spawn()` refuses until
+it has, so the task that collects never exists before the archive does.
+{meth}`~otto.monitor.collector.MetricCollector.run` **refuses** an unopened DB
+too — it raises a loud precondition rather than opening lazily in-task. That
+refusal is the fix for a five-issue flake wave (#136/#137/#142-#144): an
+in-task open can be cancelled mid-schema, leaving a partial archive that
+`finalize()` then silently no-ops on, and its failures die inside a task whose
+supervising `gather(return_exceptions=True)` swallows them. The ordering used
+to be a comment repeated at every call site; now one class owns it with the
+precondition behind it, so a caller that bypasses it fails at once instead of
+racing. Under `otto test --monitor` the session opens once, when the test
+session starts, and a class-scoped fixture restarts `run()` for each test
+class.
 
 **Bounded live buffers.** Both live-side buffers have ceilings, because a
 multi-day run previously grew without one. Each SSE subscriber queue is
@@ -178,7 +181,12 @@ path a drag-select does, so the two cannot disagree about the current window.
   loop
 - {mod}`otto.monitor.store`, {mod}`otto.monitor.db`, {mod}`otto.monitor.broadcast`
   — the collector's in-memory buffer, SQLite persistence, and live fan-out
-- {mod}`otto.monitor.session` — a run's identity and lab snapshot
+- {mod}`otto.monitor.session` — `MonitorSession`, a run's identity, lab
+  snapshot, collector and archive
+- {mod}`otto.monitor.live`, {mod}`otto.monitor.review`,
+  {mod}`otto.monitor.tls` — the lab-aware live run, the review server and the
+  dashboard's TLS resolution, shared by every producer
+- {mod}`otto.monitor.errors` — the library's error taxonomy
 - {mod}`otto.monitor.export` — the `format:1` producer shared by review and
   live hydration
 - {mod}`otto.monitor.server` — `MonitorServer`, the dashboard's HTTP/SSE

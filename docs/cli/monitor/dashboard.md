@@ -184,14 +184,12 @@ line and the border drawn around a span. Editing or
 deleting an existing event reuses the same panel; deleting requires
 pressing **Delete** twice ("Really delete?") before it takes effect.
 
-**Live during a test run.** When a test starts a monitor through the
-`monitor` fixture (see [Monitoring from a
-test](../../cookbook/test-recipes.md#monitoring-from-a-test)), each
-`monitor.event(...)` call appears on that monitor's open dashboard the moment
-it's recorded — the same live `/api/stream` feed the metrics ride — so
-there's no reload needed to watch a test's marks land while it runs. The
-automatic per-test start/pass/fail marks belong to the run-wide
-`otto test --monitor` collector, not to a test's own monitor.
+**During a test run.** Neither the `monitor` fixture (see [Monitoring from a
+test](../../cookbook/test-recipes.md#monitoring-from-a-test)) nor the run-wide
+`otto test --monitor` serves a dashboard. Events from `monitor.event(...)`, and
+the automatic per-test start/pass/fail marks of `--monitor`, are recorded into
+the archive; see them on the timeline by [reviewing the
+capture](review.md#reviewing-a-capture).
 
 ## Live status, pause, and reconnect
 

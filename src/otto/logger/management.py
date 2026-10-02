@@ -161,12 +161,11 @@ appears under live SSH load, so a hostless seeding run cannot exercise it, and
 its absence from such a run is not evidence against the entry. Re-seed by
 measuring; do not delete ``asyncssh`` on a hostless count of zero.
 
-``uvicorn.error`` / ``uvicorn.access`` are deliberately ABSENT though the
-seeding run saw both emit at INFO: otto integrates with those two on purpose
-(``otto.monitor.server`` attaches filters that suppress one shutdown warning
-and redact the access log's query string), so their INFO records are wanted
-output, not noise. Quieting them here would delete the access log and make
-that redaction filter dead code.
+``uvicorn.error`` is deliberately ABSENT though the seeding run saw it emit
+at INFO: otto filters one shutdown warning on it (``otto.monitor.server``)
+and its INFO lines are wanted output, not noise. ``uvicorn.access`` emits
+nothing, because ``MonitorServer`` turns the access log off and logs requests
+itself on ``otto.monitor.server``.
 """
 
 

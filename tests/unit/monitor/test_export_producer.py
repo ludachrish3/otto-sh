@@ -137,9 +137,9 @@ def test_session_meta_is_the_only_safe_way_to_build_meta_json():
     miss. A session persisted that way replays with no chart specs and no
     units, the same degradation an empty ``chart_map`` causes.
 
-    Both ``--db`` producers (otto.cli.monitor's live path and
-    otto.suite.plugin's --monitor path) must persist
-    ``session_meta(collector).model_dump_json()``. This pins the trap so a
+    Every ``--db`` producer (otto.monitor.session's ``MonitorSession.build``,
+    which ``otto monitor --live``, ``otto test --monitor`` and the fixture
+    use) must persist ``session_meta(collector).model_dump_json()``. This pins the trap so a
     third call site can't quietly reintroduce the raw dump.
     """
     collector = MetricCollector(hosts=[], parsers=[PerCoreCpuParser()])

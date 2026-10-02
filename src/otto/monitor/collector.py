@@ -7,7 +7,7 @@ Live collection only: a collector polls hosts via ``asyncio.gather()`` per
 tick, optionally persisting to a session-bound :class:`~otto.monitor.db.MetricDB`
 (schema v2). Review (historical) data is a separate concern — see
 :mod:`otto.monitor.export` (``build_db_export``/``build_live_export``) for the
-format:1 producer that reads/wraps collected data, and :mod:`otto.cli.monitor`
+format:1 producer that reads/wraps collected data, and :mod:`otto.monitor.review`
 for how a saved export is loaded back for review. A bare ``MetricCollector``
 with no live targets (e.g. ``MetricCollector(targets=[])``) still declares its
 parser catalog so ``get_meta_model()`` remains well-formed.
@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ..logger.mode import LogMode
 from ..models import ChartSpec, MetricPoint, MonitorMeta, TabSpec, TunnelRecord
 from ..models.monitor import DEFAULT_MAX_SERIES_PER_CHART
 from ..result import CommandResult, Results
@@ -208,7 +209,7 @@ class MetricCollector:
         # `MetricCollector(targets=[])` (targets is explicitly `[]`, not
         # `None`) — that collector intentionally serves empty meta, since
         # review mode renders from the loaded `document` (see
-        # otto.monitor.export/otto.cli.monitor), not from get_meta_model().
+        # otto.monitor.export/otto.monitor.review), not from get_meta_model().
         if not self._targets and targets is None:
             unified = list(parser_dict.values())
             self._parsers = dict(parser_dict)
@@ -240,7 +241,7 @@ class MetricCollector:
 
         # Global collection interval in seconds, recorded by run() before the
         # collection loop starts. None until a live run happens — a review
-        # collector (targets=[], see otto.cli.monitor) and scripted test
+        # collector (targets=[], see otto.monitor.review) and scripted test
         # collectors that never call run() report it as None via
         # get_meta_model().
         self._global_interval: float | None = None
@@ -354,6 +355,11 @@ class MetricCollector:
         its command on a different bucket than the rest of the target's
         commands. ``None`` collects every one of the target's commands, as
         before (SNMP targets ignore it — they have no per-command intervals).
+
+        Collection is silenced per call (``log=LogMode.NEVER``; the most
+        restrictive mode wins in ``BaseHost._effective_log``), never by
+        mutating ``host.log``, because a monitored host may be the same object
+        a test is driving.
         """
         if target.snmp is not None:
             return await asyncio.wait_for(
@@ -363,6 +369,7 @@ class MetricCollector:
         return await target.host.run(
             commands if commands is not None else list(target.parsers.keys()),
             timeout=timeout,
+            log=LogMode.NEVER,
         )
 
     async def _collect_bucket(
@@ -435,18 +442,11 @@ class MetricCollector:
         # Loud precondition, not a lazy in-task open: opening here would race
         # cancellation (partial DB, silently no-op'd finalize — the
         # #136/#137/#142-#144 class) and hide open() errors inside whatever
-        # supervises this task. spawn_collection() is the blessed seam. Two
-        # suite-side callers await init_db() themselves instead, for reasons
-        # spawn_collection() cannot express — and this precondition is what
-        # keeps both honest:
-        #   - suite/plugin.py's session fixture: opens on the SESSION loop
-        #     because the per-class tasks drive run() on their own loops
-        #     (aiosqlite delivers on the calling loop, so the cross-loop split
-        #     is deliberate).
-        #   - suite/monitor_fixture.py's MonitorHandle.start: SAME loop, but
-        #     its spawn happens inside _run(), itself a task —
-        #     spawn_collection() there would put the open back in cancellable
-        #     task context, exactly what this guard exists to prevent.
+        # supervises this task. Callers open through MonitorSession.open() (or
+        # spawn_collection()). The one caller that opens on one loop and drives
+        # run() on others is `otto test --monitor`'s session fixture (the
+        # per-class tasks run on their own loops, and aiosqlite delivers on the
+        # calling loop), which is why open() and spawn() are separate.
         if self._db is None and self._pending_db is not None:
             raise RuntimeError(
                 "Collector.run() started before its DB was opened — spawn via "

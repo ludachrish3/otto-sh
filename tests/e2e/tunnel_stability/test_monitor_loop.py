@@ -42,7 +42,7 @@ _TICK_BUDGET = _TUNNEL_HOST_TIMEOUT + 15.0
 
 
 def _spy_collector(lab) -> tuple[MetricCollector, list[dict]]:
-    """Composition-site wiring (cli/monitor.py:225) with spy sinks: real
+    """Composition-site wiring (otto.monitor.live.run_live) with spy sinks: real
     discovery over the real bed, no web server."""
     published: list[dict] = []
     c = MetricCollector(hosts=[], tunnel_source=lambda: discover_tunnel_records(lab))

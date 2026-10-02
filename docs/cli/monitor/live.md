@@ -27,7 +27,8 @@ otto --lab my_lab monitor --live --hosts router1
 
 A pattern that matches none of the hosts the run may walk is an error, not an
 empty run: `otto monitor` prints the pattern, how many hosts it was matched
-against, and the wildcard to add.
+against, and the wildcard to add. A pattern that is not a valid regex at all
+is a usage error naming `--hosts` (exit 2).
 
 Omit the option to monitor every real host in the lab (Docker containers
 excluded).
@@ -63,6 +64,11 @@ different fix:
 
 All four exit 1 with a one-line message on stderr.
 
+## Who is connected
+
+The dashboard logs each browser IP that connects, and each IP that arrives
+without a valid key, once per run; see [Connection log](serving.md#connection-log).
+
 ## Collection interval
 
 Control how often metrics are collected with `--interval` (default: 5
@@ -78,7 +84,8 @@ interval — `otto monitor --interval` above, `otto test --monitor-interval`
 run](during-tests.md#monitoring-during-a-test-run)), and
 a test's `monitor.start()` (see [Monitoring from a
 test](../../cookbook/test-recipes.md#monitoring-from-a-test)) all
-reject anything lower. `MetricCollector` itself has no floor.
+reject anything lower. On `otto monitor`, a lower value is a usage error
+naming `--interval` (exit 2). `MetricCollector` itself has no floor.
 
 ## Persisting data — sessions
 

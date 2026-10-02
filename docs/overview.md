@@ -205,7 +205,9 @@ otto monitor metrics.db                            # review a captured session
 ```
 
 A test can also start a monitor of its own through the `monitor` fixture:
-`await monitor.start(hosts=...)`, stopped for it when the test ends.
+`await monitor.start(hosts=...)`, stopped for it when the test ends. It
+collects without a dashboard; see
+[Monitoring from a test](cookbook/test-recipes.md#monitoring-from-a-test).
 
 ## Quick-start example
 

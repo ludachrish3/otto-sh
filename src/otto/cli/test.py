@@ -564,8 +564,7 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
         typer.Option(
             "--monitor-interval",
             metavar="SECONDS",
-            help="Sampling interval for --monitor.",
-            min=MIN_INTERVAL_SECONDS,
+            help=f"Sampling interval for --monitor (at least {MIN_INTERVAL_SECONDS}s).",
         ),
     ] = 5.0,
     monitor_output: Annotated[

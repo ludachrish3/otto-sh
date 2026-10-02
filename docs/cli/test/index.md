@@ -299,12 +299,19 @@ archive. Both load the same way.
 `sensor` does not select `sensor-1` — write `sensor.*`. A pattern that matches
 none of the hosts the run may walk **stops the run before any test executes**,
 naming the pattern, the size of the set it was matched against, and the
-wildcard to add. Hosts that matched but cannot be sampled — an embedded
-console has no shell for the collector to read — are a different thing: that
-logs a warning naming them, disables collection, and lets the tests run.
+wildcard to add. That refusal exits 4 (pytest's usage-error code) with a
+message beginning `--monitor-hosts:`; a malformed regex or a
+`--monitor-interval` below the floor is refused earlier, at parse time, with
+exit 2.
 
-A single test can also start and stop a monitor of its own, with its own
-dashboard, through the `monitor` fixture; see
+Hosts are sampled over a shell (Unix hosts) or over SNMP (a host that declares
+an `snmp` block). A selection with nothing sampleable in it, or a lab with no
+hosts at all, also stops the run before any test executes, with the
+same exit 4 and a message beginning `--monitor:`. When only some of the selected
+hosts can be sampled, the run samples those.
+
+A single test can also start and stop a monitor of its own through the
+`monitor` fixture (collection only, no dashboard); see
 [Monitoring from a test](../../cookbook/test-recipes.md#monitoring-from-a-test).
 
 ## Markers

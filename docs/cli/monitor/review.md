@@ -20,9 +20,10 @@ test run](during-tests.md#monitoring-during-a-test-run)). Anything else is a fas
 clear CLI error — there is no silent partial load:
 
 - An **unrecognized suffix**, or a `.json`/`.db` that **doesn't parse as a
-  `format:1` document**, exits **1** with a message naming what was
+  `format:1` document**, is a usage error: it exits **2** with a usage
+  banner and an `Invalid value for SOURCE:` message naming what was
   expected.
-- A **path that doesn't exist** exits **2** with a usage banner — the
+- A **path that doesn't exist** also exits **2** with a usage banner — the
   argument is validated before the command body runs, so it fails the same
   way any other bad invocation does.
 

@@ -1,18 +1,30 @@
 """Session framing for live monitor runs (spec 2026-07-12).
 
 The collector stays session-blind: one process run == one live session, and
-the frame is stamped at the edges (CLI at launch, shutdown hook at exit).
+:class:`MonitorSession` stamps the frame at its edges (the start in
+:meth:`~MonitorSession.build`, the end in :meth:`~MonitorSession.finish`).
 """
 
-from collections.abc import Sequence
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Literal
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
+from typing_extensions import Self
+
+from ..host.connections import teardown_step
 from ..host.remote_host import RemoteHost
 from ..link.derive import implicit_links
 from ..link.model import Link, Provenance
 from ..models import HostSnapshot, LabSnapshot, LinkEndpointSnapshot, LinkSnapshot
+
+if TYPE_CHECKING:
+    from ..models.monitor import MonitorExport, TunnelRecord
+    from .collector import MetricCollector, MonitorTarget
+    from .db import MetricDB
+    from .parsers import MetricParser
 
 
 @dataclass
@@ -171,3 +183,209 @@ def snapshot_lab_json(hosts: Sequence[RemoteHost], declared: list[Link]) -> str:
         the server.
     """
     return snapshot_lab(hosts, declared).model_dump_json()
+
+
+# Imports of collector/factory/export live inside the methods: otto.monitor.db
+# and otto.monitor.export import SessionFrame from this module.
+class MonitorSession:
+    """One live monitor session: its identity, lab snapshot, collector and archive.
+
+    The single owner of what every producer (``otto monitor --live``,
+    ``otto test --monitor``, the ``monitor`` fixture) used to hand-maintain:
+    build the frame, snapshot and collector once; open the archive BEFORE
+    any collection task exists; at the end, stamp the end, write the export,
+    finalize the archive and close. Who drives
+    :meth:`~otto.monitor.collector.MetricCollector.run` stays the caller's
+    choice: :meth:`spawn` for a task beside a server, or the caller's own
+    loop (``otto test`` drives it per class).
+
+    Build with :meth:`build`; ``async with session:`` is :meth:`open` /
+    :meth:`finish`.
+    """
+
+    def __init__(
+        self,
+        *,
+        frame: SessionFrame,
+        lab: "LabSnapshot",
+        collector: "MetricCollector",
+        interval: timedelta,
+        db: "MetricDB | None",
+        db_path: "Path | None",
+        export_path: "Path | None",
+        owns_hosts: bool,
+    ) -> None:
+        self.frame = frame
+        self.lab = lab
+        self.collector = collector
+        self.interval = interval
+        self.db_path = db_path
+        self.export_path = export_path
+        self.owns_hosts = owns_hosts
+        self._db = db
+        self._opened = False
+        self._finished = False
+
+    @classmethod
+    def build(  # noqa: PLR0913 — one keyword per session input
+        cls,
+        hosts: "Sequence[RemoteHost] | None" = None,
+        *,
+        targets: "list[MonitorTarget] | None" = None,
+        parsers: "list[MetricParser] | None" = None,
+        interval: "timedelta | float",
+        db_path: "Path | str | None" = None,
+        export_path: "Path | None" = None,
+        label: "str | None" = None,
+        note: "str | None" = None,
+        declared: "Sequence[Link]" = (),
+        tunnel_source: "Callable[[], Awaitable[list[TunnelRecord]]] | None" = None,
+        owns_hosts: bool,
+    ) -> "MonitorSession":
+        """Validate the inputs, then build the session. No I/O: nothing is opened.
+
+        Args:
+            hosts: The hosts to sample. Exactly one of *hosts* and *targets*.
+            targets: Per-host targets, for callers assigning their own parsers
+                per host.
+            parsers: Shell parsers for every shell host in *hosts* (default:
+                each host's registered set). Ignored with *targets*.
+            interval: Collection interval (seconds or a timedelta).
+            db_path: SQLite archive written live; ``None`` keeps data in memory.
+            export_path: format:1 JSON document written by :meth:`finish`.
+            label: Human label stored with the session.
+            note: Free-form note stored with the session.
+            declared: The lab's resolved declared links; only links whose both
+                endpoints are in this session are kept.
+            tunnel_source: Full-lab tunnel discovery for the collector.
+            owns_hosts: Whether :meth:`finish` closes the hosts' connections.
+                ``False`` when the hosts belong to someone else (a test).
+
+        Raises:
+            MonitorInputError: neither or both of hosts/targets, no hosts, an
+                interval below the floor, or a host otto cannot sample.
+        """
+        from ..utils import validate_interval
+        from .collector import MetricCollector
+        from .errors import MonitorInputError
+        from .export import build_session_metric_db
+        from .factory import build_monitor_collector, is_monitorable
+
+        if (hosts is None) == (targets is None):
+            raise MonitorInputError("pass exactly one of hosts or targets", field="hosts")
+        seconds = interval.total_seconds() if isinstance(interval, timedelta) else float(interval)
+        try:
+            validate_interval(seconds)
+        except ValueError as exc:
+            raise MonitorInputError(str(exc), field="interval") from exc
+        if hosts is not None:
+            field, snapshot_hosts = "hosts", list(hosts)
+            bad = [h.id for h in snapshot_hosts if not is_monitorable(h)]
+        else:
+            field, snapshot_hosts = "targets", [t.host for t in targets or []]
+            bad = [t.host.id for t in targets or [] if t.snmp is None and not _is_unix(t.host)]
+        if not snapshot_hosts:
+            raise MonitorInputError("no hosts to monitor", field=field)
+        if bad:
+            raise MonitorInputError(
+                f"cannot monitor {', '.join(sorted(bad))}: otto samples metrics over a "
+                "shell (Unix hosts) or over SNMP (a host declaring an `snmp` block), "
+                "and these offer neither",
+                field=field,
+            )
+
+        def _collector(db: "MetricDB | None") -> "MetricCollector":
+            if targets is not None:
+                return MetricCollector(targets=targets, db=db, tunnel_source=tunnel_source)
+            return build_monitor_collector(
+                snapshot_hosts, parsers=parsers, db=db, tunnel_source=tunnel_source
+            )
+
+        frame = new_frame(label=label, note=note)
+        lab = snapshot_lab(snapshot_hosts, list(declared))
+        db = None
+        if db_path is not None:
+            # The throwaway collector only derives the parser-catalog meta that
+            # MetricDB's constructor needs up front; see build_session_metric_db.
+            db = build_session_metric_db(
+                str(db_path), frame, lab, _collector(None), interval=seconds
+            )
+        return cls(
+            frame=frame,
+            lab=lab,
+            collector=_collector(db),
+            interval=timedelta(seconds=seconds),
+            db=db,
+            db_path=Path(db_path) if db_path is not None else None,
+            export_path=export_path,
+            owns_hosts=owns_hosts,
+        )
+
+    async def open(self) -> None:
+        """Open the archive, before any collection task exists. Idempotent.
+
+        The open must complete first: an in-task open can be cancelled
+        mid-schema by a prompt stop and leave a partial archive (#136). A
+        locked or unsupported archive raises here.
+        """
+        await self.collector.init_db()
+        self._opened = True
+
+    def spawn(self) -> "asyncio.Task[None]":
+        """Start collection at the session interval; the caller owns the task.
+
+        Cancel and gather it before :meth:`finish`.
+
+        Raises:
+            RuntimeError: :meth:`open` has not completed.
+        """
+        if not self._opened:
+            raise RuntimeError("MonitorSession.spawn() before open(): open the archive first")
+        return asyncio.create_task(self.collector.run(self.interval))
+
+    async def finish(self) -> None:
+        """Stamp the end, write the export, finalize the archive, close. Idempotent.
+
+        Safe after a failed or skipped :meth:`open`. Closes the hosts only
+        when the session owns them; otherwise only the archive.
+        """
+        if self._finished:
+            return
+        self._finished = True
+        from .export import document_json
+
+        end = datetime.now(tz=timezone.utc)
+        self.frame.end = end
+        try:
+            if self.export_path is not None:
+                self.export_path.parent.mkdir(parents=True, exist_ok=True)
+                self.export_path.write_text(document_json(self.export()))
+            if self._db is not None and self._opened:
+                await self._db.finalize(end)
+        finally:
+            # Always reached: a failed export or finalize must not strand the
+            # host connections, the aiosqlite connection or the archive flock.
+            with teardown_step("monitor", "collector close"):
+                if self.owns_hosts:
+                    await self.collector.close()
+                else:
+                    await self.collector.close_db()
+
+    def export(self) -> "MonitorExport":
+        """Return the session as a single-session format:1 document."""
+        from .export import build_live_export
+
+        return build_live_export(self.frame, self.collector, self.lab)
+
+    async def __aenter__(self) -> Self:
+        await self.open()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.finish()
+
+
+def _is_unix(host: "RemoteHost") -> bool:
+    from ..host.unix_host import UnixHost
+
+    return isinstance(host, UnixHost)

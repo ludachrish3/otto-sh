@@ -149,7 +149,19 @@ behaviour, kmodcov export/check verbs (own series).
 
 ---
 
-## Item 5 — `otto monitor` and `otto test --monitor` share one monitor library
+## Item 5 ✅ — `otto monitor` and `otto test --monitor` share one monitor library
+
+**Done** (branch `worktree-monitor-library`, squashed onto local main): one
+`MonitorSession` builds, opens, runs and tears down for `otto monitor --live`,
+`otto test --monitor` and the `monitor` fixture; `otto.monitor.live`
+(`select_monitor_hosts`, `run_live`) is a nested lab-aware tach module;
+`resolve_monitor_tls`, `serve_review` and typed field-named errors live in
+`otto.monitor`; the leaf translates at one site behind a differential. The
+audit's "TLS used by all three servers" premise changed by ruling: only
+`otto monitor` serves a dashboard (the fixture and `--monitor` collect only).
+Nothing is left in this item.
+
+**Spec:** `docs/superpowers/specs/2026-10-02-monitor-one-library-design.md`.
 
 **Issues:** #503, #504 (refs #525). **Subsystem:** `otto.monitor`,
 `src/otto/cli/monitor.py`, `src/otto/suite/plugin.py`,
