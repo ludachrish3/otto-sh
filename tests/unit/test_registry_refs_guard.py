@@ -80,7 +80,7 @@ BUILTINS: list[Builtins] = [
         "TRANSFER_BACKENDS",
         {"ftp", "scp", "tftp", "nc", "sftp", "shell", "console"},
     ),
-    Builtins("otto.host.product", "PRODUCT_KINDS", {"kmod", "llext", "docker_image", "shell"}),
+    Builtins("otto.host.product", "PRODUCT_KINDS", {"kmod", "embedded", "docker_image", "shell"}),
     Builtins("otto.host.dev_tool", "DEV_TOOL_KINDS", {"shell", "kmod", "kmodcov"}),
     Builtins("otto.inventory.registry", "INVENTORY_BACKENDS", {"json", "netbox"}),
     Builtins("otto.creds.registry", "CREDS_BACKENDS", {"json"}),

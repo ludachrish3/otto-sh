@@ -74,6 +74,15 @@ class BinaryLoader(ABC):
         """Return the device command that calls exported function *fn* of *name*."""
         ...
 
+    def reports_not_loaded(self, output: str, name: str) -> bool:  # noqa: ARG002 — the override's parameters; this conservative default reads neither
+        """Return True when *output* (from :meth:`call_command`) says *name* is not resident.
+
+        A positive match only: a loader that cannot recognise its device's
+        "not loaded" answer keeps this default, and every call it makes is
+        judged on its status alone.
+        """
+        return False
+
 
 class LlextHexLoader(BinaryLoader):
     """Zephyr LLEXT shell loader: ``llext load_hex`` / ``llext unload``.
@@ -122,6 +131,18 @@ class LlextHexLoader(BinaryLoader):
     @override
     def call_command(self, name: str, fn: str) -> str:
         return f"llext call_fn {name} {fn}"
+
+    @override
+    def reports_not_loaded(self, output: str, name: str) -> bool:
+        """Match the shell's own line for an absent extension, ``No such extension <name>``.
+
+        Zephyr 3.7 and 4.4 print that line (and return ``-ENOENT``) from
+        ``llext call_fn`` when no extension of that name is resident. The
+        whole line has to match, so ``cov_ext_two``'s absence is not
+        ``cov_ext``'s.
+        """
+        line = f"No such extension {name}"
+        return any(raw.strip() == line for raw in output.splitlines())
 
 
 def _validate_binary_loader(type_name: str, cls: type[BinaryLoader]) -> None:

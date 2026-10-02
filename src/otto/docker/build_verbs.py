@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from ..config import get_lab, get_ordered_repos, get_repos
-from ..errors import OttoError
+from ..errors import FieldError
 from ..host.host import is_dry_run
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError
@@ -28,17 +28,12 @@ if TYPE_CHECKING:
     from .resolve import Displacement
 
 
-class DockerBuildError(OttoError, ValueError):
+class DockerBuildError(FieldError, ValueError):
     """A build verb's input is unusable; nothing was touched.
 
     ``field`` names the offending parameter (``host``, ``repo``, ``images``)
-    or is ``None`` for a refusal about the selection as a whole, so the CLI
-    can spell the message in its own flags at one site.
+    or is ``None`` for a refusal about the selection as a whole.
     """
-
-    def __init__(self, message: str, *, field: "str | None") -> None:
-        super().__init__(message)
-        self.field = field
 
 
 def _capable_ids(lab: "Lab") -> "list[str]":

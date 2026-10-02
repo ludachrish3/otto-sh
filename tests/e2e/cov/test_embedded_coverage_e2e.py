@@ -46,9 +46,9 @@ def _repo3_settings() -> dict:
     return tomli.loads((REPO3 / ".otto" / "settings.toml").read_text())
 
 
-def _llext_products() -> list[dict]:
-    """repo3's ``kind = "llext"`` ``[[products]]`` entries, in declaration order."""
-    return [e for e in _repo3_settings().get("products", []) if e.get("kind") == "llext"]
+def _embedded_products() -> list[dict]:
+    """repo3's ``kind = "embedded"`` ``[[products]]`` entries, in declaration order."""
+    return [e for e in _repo3_settings().get("products", []) if e.get("kind") == "embedded"]
 
 
 PRODUCT = "cov_ext"
@@ -58,10 +58,10 @@ name each capture records, and the extension the collector dumps."""
 
 def _extension_artifacts() -> list[Path]:
     """Every declared LLEXT artifact, one per Zephyr version bed."""
-    entries = _llext_products()
+    entries = _embedded_products()
     if not entries:
         pytest.fail(
-            "no [[products]] entry of kind 'llext' in tests/repo3/.otto/settings.toml "
+            "no [[products]] entry of kind 'embedded' in tests/repo3/.otto/settings.toml "
             "— this lane fails loud rather than retiring behind a skip (G12): declare "
             "the coverage extension or deselect the lane, don't hollow it."
         )
@@ -160,6 +160,43 @@ def _product_line_coverage(info_file: Path) -> tuple[int, int]:
         elif line == "end_of_record" and cur and cur.endswith("/cov_ext.c"):
             return lh, lf
     return 0, 0
+
+
+_PRODUCT_FUNCTIONS = [
+    "math_clamp",
+    "math_div",
+    "op_clamp_lo",
+    "op_clamp_in",
+    "op_div_ok",
+    "op_div_zero",
+]
+"""cov_ext.c's product functions — everything in it but the coverage entry
+points (``cov_init``/``cov_dump``/``cov_reset``), whose own counters tick
+whenever otto initialises, dumps or resets the extension."""
+
+
+def _product_function_hits(info_file: Path) -> dict[str, int]:
+    """``FNDA`` hit count per function of the product cov_ext.c in an lcov .info."""
+    from otto.coverage.merge.lcov_loader import parse_fnda_record
+
+    hits: dict[str, int] = {}
+    cur = None
+    for line in info_file.read_text().splitlines():
+        if line.startswith("SF:"):
+            cur = line[3:]
+        elif line.startswith("FNDA:") and cur and cur.endswith("/cov_ext.c"):
+            hit = parse_fnda_record(line[5:])
+            hits[hit.name] = hits.get(hit.name, 0) + hit.count
+    return hits
+
+
+def _board_info(cov_dir: Path, host_id: str) -> Path:
+    """The lcov capture staged for *host_id*'s product at collect time."""
+    info = cov_dir / host_id / PRODUCT / "board.resolved.info"
+    if not info.exists():
+        info = cov_dir / host_id / PRODUCT / "board.info"
+    assert info.exists(), f"no lcov .info staged for {host_id} under {cov_dir}"
+    return info
 
 
 def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
@@ -271,7 +308,55 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
     lh, lf = _product_line_coverage(info)
     assert lf > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"
     assert lh > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"
+    # Every function the suite runs on every host is counted by name — the
+    # reading the clean test below needs to see drop to zero, proven here to
+    # be non-zero after the same exercise (op_div_zero runs on one host only).
+    hits = _product_function_hits(info)
+    exercised = [f for f in _PRODUCT_FUNCTIONS if f != "op_div_zero"]
+    assert all(hits.get(f, 0) > 0 for f in exercised), f"cov_ext.c function hits: {hits}"
 
     # a real embedded suite run produces results → test output dir created.
     # (NB: the `--cov-dir` here is tmp_path/"cov", unrelated to any `otto cov` run.)
     assert_output_dir(tmp_path, "test")
+
+
+def test_embedded_cov_clean_zeroes_the_board_e2e(clean_zephyr37_llext, tmp_path):
+    """Exercise, ``otto cov clean``, dump: the board's product counters read zero.
+
+    The repo3 ``TestEmbeddedCounterReset`` class runs every product operation
+    on both boards, cleans them through :func:`otto.coverage.clean_coverage`
+    (what ``otto cov clean`` calls), and checks that an unexported
+    ``reset_fn`` fails and that a board without the extension is a no-op.
+    ``--cov`` then dumps the post-clean counters
+    through the real collector and lcov, so the zero is read by function name:
+    every product function the exercise ran — counted non-zero by the test
+    above — reads zero hits on both boards.
+    """
+    for artifact in _extension_artifacts():
+        if not artifact.exists():
+            pytest.fail(
+                f"embedded-coverage product not built: {artifact} — build it per "
+                "tests/repo3/product/README.md; this lane fails loud rather than "
+                "skipping (G12)."
+            )
+    cov_dir = tmp_path / "cov"
+
+    result = _run_otto(
+        "test",
+        "--cov",
+        "--cov-dir",
+        str(cov_dir),
+        "TestEmbeddedCounterReset",
+        xdir=tmp_path,
+    )
+
+    assert result.returncode == 0, (
+        f"otto test --cov TestEmbeddedCounterReset failed (rc={result.returncode}):\n"
+        f"STDOUT:\n{result.stdout[-4000:]}\nSTDERR:\n{result.stderr[-2000:]}"
+    )
+    for host_id in ("zephyr37-llext", "zephyr44-llext"):
+        hits = _product_function_hits(_board_info(cov_dir, host_id))
+        missing = [f for f in _PRODUCT_FUNCTIONS if f not in hits]
+        assert not missing, f"{host_id}: no FNDA record for {missing} in {hits}"
+        counted = {f: hits[f] for f in _PRODUCT_FUNCTIONS if hits[f]}
+        assert not counted, f"{host_id}: counters survived the clean: {counted}"

@@ -3,9 +3,9 @@
 The thin-CLI series moves every rule out of `otto.cli` into the library it
 wraps, one verb family per item, so `import otto` users get identical
 behaviour and the CLI is a parse, complete, call, render layer. Items 1
-(`otto run`, #502) and 2 (`otto test` + the coverage report, #505/#506/#507)
-have landed; item 3 (`otto docker`, #493/#494) is in flight in the worktree
-`docker-use-case-library`.
+(`otto run`, #502), 2 (`otto test` + the coverage report, #505/#506/#507)
+and 3 (`otto docker`, #493/#494, pushed at cb23b63f) have landed; item 4 is
+done and awaits Chris's squash. Items 5 and 6 remain.
 
 The items below are **independent of each other and of item 3**: each lives
 in one subsystem with its own CLI module, tests and doc pages. They can run
@@ -79,28 +79,73 @@ library entry point", and the two landed specs as worked examples:
 
 ---
 
-## Item 4 — `otto cov get` / `otto cov clean`: leaf input checks move to the library
+## Item 4 ✅ — `otto cov get` / `otto cov clean` / `otto cov report`: one public entry point per verb
 
-**Issues:** #536 (refs #525). **Subsystem:** `otto.coverage`, `src/otto/cli/cov.py`.
+**Done** (branch `worktree-cov-get-clean`, awaiting the squash): `get_coverage`,
+`clean_coverage` and `run_coverage_report` own their rules, the `llext` kind is
+now `embedded` with a real `reset_fn` reset, and one differential covers all
+three leaves. Nothing is left in this item.
 
-**What the audit found.** `src/otto/cli/cov.py` keeps a residual `is_dir`
-check on the coverage directory and validates tier names before calling
-the library, so a Python caller of `get` / `clean` does not get the
-refusals the CLI gives. `otto cov report` already follows the contract
-(item 2): `run_coverage_report` owns its destination, `usage_error_from`
-spells `DestinationError`.
+**Issues:** #536 (refs #525). **Subsystem:** `otto.coverage`, `src/otto/cli/cov.py`,
+`src/otto/suite/run.py` (the `--cov-clean` caller).
 
-**Shape to aim for.** Public library entry points for `get` and `clean`
-(whatever `otto.coverage` already exposes, extended rather than
-duplicated) that validate their inputs first with field-named errors;
-`cov.py`'s two leaves become parse, call, render; one `usage_error_from`
-arm with the flag map; differential rows for `get`, `clean` and `report`.
-Check whether `otto.coverage.tiers` and the tier-name spelling
-(`spell_flags(str(e), {"tier=NAME": "--tier NAME"})` in `cov.py`'s
-`_do_get`) can become a field-named error instead of a text rewrite.
+**What the audit found.** Wider than the issue's "residual `is_dir` and tier
+check". `otto cov get` and `otto cov clean` are whole pipelines in
+`src/otto/cli/cov.py`:
 
-**Likely scope creep to refuse:** the coverage report's own behaviour
-(done), kmodcov export/check verbs (own series).
+- `get`: the manual-tier `--ticket` rule, the not-instrumented refusal, the
+  repository preflight, output-dir resolution, tester identity, the write
+  into the committed manual-capture store, the no-captures refusal and the
+  scoped `--clean` live only in `_do_get`. A Python caller of
+  `collect_coverage` with a manual tier gets none of them; its captures
+  never reach the manual store. The tier error is spelled by rewriting
+  text (`spell_flags(str(e), {"tier=NAME": "--tier NAME"})`).
+- `clean` has two owners: the library's `clean_remote_gcda` (used by
+  `otto test --cov --cov-clean`, silent when nothing is configured or
+  matched) and the CLI's `_do_clean` (refuses). In both, a failed per-host
+  reset is only logged, so `otto cov clean` exits 0 when every host failed
+  (the #494 defect class).
+- The CLI's embedded-board guard for clean (`_unix_only_pattern`) is dead:
+  the library's per-host clean already skips embedded boards and the runner.
+- `report`: a residual `is_dir` check on the output dirs stays in the leaf.
+
+**Shape to aim for (Chris's rulings, 2026-10-01).** Each verb gets its own
+public library entry point; the CLI leaf parses, calls one function,
+renders its report, and translates field-named errors at the one
+`usage_error_from` site.
+
+- `get` → a new `otto.coverage.get_coverage(output_dir, *, tier, ticket,
+  note, tester_name, tester_email, clean, repos)` that validates its inputs
+  first with field-named errors (tier, ticket), owns every rule above, and
+  composes the unchanged `collect_coverage` engine (still what
+  `otto test --cov` calls). Returns a report.
+- `clean` → `clean_remote_gcda` becomes the single `clean_coverage(repos=None)`
+  returning a per-host report (item 3's `HostReport`); `otto cov clean` and
+  `otto test --cov --cov-clean` both call it. A failed reset REFUSES in both
+  commands, naming the host (`otto test` stops before any test runs).
+  ANY inability to clear counters is a failure, never a warning (Chris):
+  `otto test --cov`'s post-collection clean fails the run naming the host
+  even when every test passed (the captures stay written); `get --clean`
+  keeps the captures it wrote and exits 1 naming the host. A missing `[coverage]`
+  section refuses in both (today `--cov-clean` silently skips).
+- Embedded boards get a real reset: the LLEXT kind overrides its counter
+  reset to call a `reset_fn` (default `cov_reset`, mirroring `dump_fn`)
+  that wraps embedded-gcov's `__gcov_clear()`, so clean walks embedded
+  boards like any other host. A product that does not export it fails its
+  reset with a message naming the fix. The `tests/repo3` demo product gains
+  the export and the `GCOV_OPT_PROVIDE_CLEAR_COUNTERS` build define.
+- The product kind `llext` is renamed `embedded` in the same squash: it is
+  already loader-agnostic (Zephyr's `llext-hex` is only the first
+  `BinaryLoader`). `kind = "llext"` refuses naming the new kind; "llext"
+  stays only where it names Zephyr's format, loader or shell commands.
+
+**Spec:** `docs/superpowers/specs/2026-10-01-cov-verbs-own-their-rules-design.md`.
+- `report` → `run_coverage_report` stays its entry point and absorbs the
+  leaf's `is_dir` check.
+- One differential (#525) with rows for `get`, `clean` and `report`.
+
+**Likely scope creep to refuse:** the coverage report's rendering
+behaviour, kmodcov export/check verbs (own series).
 
 ---
 

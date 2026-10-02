@@ -21,30 +21,44 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..config.coverage_settings import CoverageConfigError as CoverageConfigError
     from .collect import CollectResult as CollectResult
-    from .collect import clean_remote_gcda as clean_remote_gcda
+    from .collect import clean_coverage as clean_coverage
     from .collect import collect_coverage as collect_coverage
     from .config import DestinationError as DestinationError
+    from .errors import CoverageCleanError as CoverageCleanError
+    from .errors import CoverageInputError as CoverageInputError
     from .errors import CoverageNotInstrumentedError as CoverageNotInstrumentedError
     from .errors import NoCoverageDataError as NoCoverageDataError
+    from .errors import NoCoverageHostsError as NoCoverageHostsError
     from .fetcher.remote import GcdaFetcher as GcdaFetcher
+    from .get import get_coverage as get_coverage
     from .report_inputs import ReportInputs as ReportInputs
     from .report_inputs import resolve_report_inputs as resolve_report_inputs
     from .reporter import CoverageReporter as CoverageReporter
+    from .reports import CleanReport as CleanReport
+    from .reports import FailedReset as FailedReset
+    from .reports import GetReport as GetReport
     from .store.model import CoverageStore as CoverageStore
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
+    "CleanReport": "otto.coverage.reports",
     "CollectResult": "otto.coverage.collect",
+    "CoverageCleanError": "otto.coverage.errors",
     "CoverageConfigError": "otto.config.coverage_settings",
+    "CoverageInputError": "otto.coverage.errors",
     "CoverageNotInstrumentedError": "otto.coverage.errors",
     "CoverageReporter": "otto.coverage.reporter",
     "CoverageStore": "otto.coverage.store.model",
     "DestinationError": "otto.coverage.config",
+    "FailedReset": "otto.coverage.reports",
     "GcdaFetcher": "otto.coverage.fetcher.remote",
+    "GetReport": "otto.coverage.reports",
     "NoCoverageDataError": "otto.coverage.errors",
+    "NoCoverageHostsError": "otto.coverage.errors",
     "ReportInputs": "otto.coverage.report_inputs",
-    "clean_remote_gcda": "otto.coverage.collect",
+    "clean_coverage": "otto.coverage.collect",
     "collect_coverage": "otto.coverage.collect",
+    "get_coverage": "otto.coverage.get",
     "resolve_report_inputs": "otto.coverage.report_inputs",
 }
 
@@ -64,16 +78,23 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "CleanReport",
     "CollectResult",
+    "CoverageCleanError",
     "CoverageConfigError",
+    "CoverageInputError",
     "CoverageNotInstrumentedError",
     "CoverageReporter",
     "CoverageStore",
     "DestinationError",
+    "FailedReset",
     "GcdaFetcher",
+    "GetReport",
     "NoCoverageDataError",
+    "NoCoverageHostsError",
     "ReportInputs",
-    "clean_remote_gcda",
+    "clean_coverage",
     "collect_coverage",
+    "get_coverage",
     "resolve_report_inputs",
 ]

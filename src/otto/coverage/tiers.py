@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .colors import DEFAULT_TIER_COLORS
+from .errors import CoverageInputError
 from .store.model import TIER_SYSTEM
 
 
@@ -70,20 +71,23 @@ def resolve_get_tier(tiers: list[TierConfig], name: str | None) -> TierConfig:
     """Resolve the target tier for ``otto cov get``.
 
     ``None`` selects the sole e2e-kind tier; ambiguity or an unknown name
-    raises ``ValueError`` listing the candidates.
+    raises :class:`~otto.coverage.errors.CoverageInputError` (``field="tier"``)
+    listing the candidates.
     """
     if name is not None:
         for t in tiers:
             if t.name == name:
                 return t
-        raise ValueError(
-            f"unknown tier {name!r}; configured tiers: {', '.join(t.name for t in tiers)}"
+        raise CoverageInputError(
+            f"unknown tier {name!r}; configured tiers: {', '.join(t.name for t in tiers)}",
+            field="tier",
         )
     e2e = [t for t in tiers if t.kind == "e2e"]
     if len(e2e) != 1:
-        raise ValueError(
+        raise CoverageInputError(
             "cannot pick a default tier: "
             f"{len(e2e)} e2e-kind tiers configured ({', '.join(t.name for t in e2e)}); "
-            "choose one with tier=NAME"
+            "name one of them",
+            field="tier",
         )
     return e2e[0]

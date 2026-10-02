@@ -306,15 +306,17 @@ class Product(ABC):
 
         Default: delete every ``.gcda`` under :attr:`cov_dir` — the pre-run
         ``--cov-clean``, the post-fetch clean and ``otto cov clean`` all come
-        through here. A kind whose counters also live elsewhere overrides
-        this to zero them first, then awaits this default to finish.
+        through here. A :attr:`cov_dir` that does not exist yet has nothing
+        to clear and succeeds (see :func:`~otto.host.product.gcda_delete_cmd`). A kind whose
+        counters also live elsewhere overrides this to zero them first, then
+        awaits this default to finish.
 
         Raises:
             ValueError: :attr:`name` is not a single safe path segment;
                 checked before any command is issued.
         """
         layout.validate_product_name(self.name)
-        return await host.exec(f"{gcda_find_cmd(cov_dir_of(self))} -delete", timeout=60)
+        return await host.exec(gcda_delete_cmd(cov_dir_of(self)), timeout=60)
 
 
 def cov_dir_of_name(name: str) -> str:
@@ -336,11 +338,26 @@ def stamp_cov_dir(product: Product) -> None:
 def gcda_find_cmd(cov_dir: str) -> str:
     """``find <cov_dir> -name '*.gcda' -type f``, with *cov_dir* shell-quoted.
 
-    The quoting is load-bearing on the reset path, which appends ``-delete``:
+    The quoting is load-bearing on the reset path (:func:`gcda_delete_cmd`),
+    which appends ``-delete``:
     an unquoted ``/opt/My App/cov`` would reach ``find`` as TWO start points,
     the second of them relative to the shell's cwd.
     """
     return f"find {shlex.quote(cov_dir)} -name '*.gcda' -type f"
+
+
+def gcda_delete_cmd(cov_dir: str) -> str:
+    """Delete every ``.gcda`` under *cov_dir*; one shell line, one exit status.
+
+    ``! test -d <cov_dir> || find <cov_dir> -name '*.gcda' -type f -delete``:
+    a directory that does not exist yet has nothing to clear and exits 0 —
+    the default ``/tmp/<name>`` is gone after a reboot, and gcov only creates
+    it when the product first exits. A directory that is there gets
+    ``find``'s own exit status, so a delete that fails (permission denied)
+    is still a failure. The line uses ``!`` and ``||``, so it needs a shell;
+    an elevated caller must wrap it whole (:func:`sudo_gcda_delete`).
+    """
+    return f"! test -d {shlex.quote(cov_dir)} || {gcda_find_cmd(cov_dir)} -delete"
 
 
 async def sudo_gcda_delete(product: Product, host: "Host") -> Result:
@@ -350,8 +367,12 @@ async def sudo_gcda_delete(product: Product, host: "Host") -> Result:
     are the kernel's own (:mod:`otto.host.kmod_kind`), a container's are
     whatever user its process ran as (:mod:`otto.host.docker_image_kind`).
     Validates :attr:`Product.name` first, exactly as the unelevated default
-    (:meth:`Product.reset_coverage`) does, then runs the same find+delete line
-    through ``host.run(..., sudo=True)``. A host declining under
+    (:meth:`Product.reset_coverage`) does, then runs the same
+    :func:`gcda_delete_cmd` line through ``host.run(..., sudo=True)``, inside
+    ``sh -c``: sudo takes an argv tail and the line is appended to it raw, so
+    unwrapped, sudo would run only ``!`` and the ``find`` after ``||`` would
+    run unelevated. A missing :attr:`~Product.cov_dir` is therefore a
+    success here too. A host declining under
     ``--dry-run`` answers :attr:`~otto.utils.Status.NotRun`; that is
     returned as-is, never mapped to :attr:`~otto.utils.Status.Error` — the
     dry-run contract requires a decline to reach the fetcher unchanged
@@ -363,16 +384,15 @@ async def sudo_gcda_delete(product: Product, host: "Host") -> Result:
     """
     layout.validate_product_name(product.name)
     cov_dir = cov_dir_of(product)
-    result = await host.run(f"{gcda_find_cmd(cov_dir)} -delete", sudo=True)
+    result = await host.run(f"sh -c {shlex.quote(gcda_delete_cmd(cov_dir))}", sudo=True)
     if result.status is Status.NotRun:
         return Result(Status.NotRun)
     if result.is_ok:
         return Result(Status.Success)
     failure = result.first_failure
     detail = f": {failure.value.strip()}" if failure is not None else ""
-    return Result(
-        Status.Error, msg=f"{product.name}: deleting .gcda under {cov_dir} failed{detail}"
-    )
+    # No product name in the message: every consumer prefixes `<host>/<product>: `.
+    return Result(Status.Error, msg=f"deleting .gcda under {cov_dir} failed{detail}")
 
 
 INSTRUMENTATION_MARKERS: tuple[bytes, ...] = (b".gcda", b"__gcov_", b"__llvm_gcov")
@@ -669,7 +689,7 @@ def _register_builtin_kinds() -> None:
         ("shell", "otto.host.shell_kind", "_shell_kind"),
         ("docker_image", "otto.host.docker_image_kind", "_docker_image_kind"),
         ("kmod", "otto.host.kmod_kind", "_kmod_kind"),
-        ("llext", "otto.host.llext_kind", "_llext_kind"),
+        ("embedded", "otto.host.embedded_kind", "_embedded_kind"),
     ]:
         PRODUCT_KINDS.register(kind, Ref(f"{module}:{factory}"), origin=module)
 

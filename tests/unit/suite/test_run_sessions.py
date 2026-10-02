@@ -1373,7 +1373,7 @@ def pre_clean(monkeypatch):
         lambda opts, repos, *, command: dataclasses.replace(opts, cov=True),
     )
     clean = AsyncMock()
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", clean)
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", clean)
     monkeypatch.setattr(run_module, "_post_run_coverage", AsyncMock())
     return clean
 
@@ -1428,13 +1428,20 @@ def test_a_name_the_marker_excludes_never_cleans_the_remote_coverage(sut_repo, t
 def test_the_remote_coverage_is_cleaned_once_before_the_first_test(
     two_sut_repos, tmp_path, pre_clean
 ):
+    from otto.coverage.reports import CleanReport
+
     shell_a = _Repo(tmp_path / "repo_a")
     shell_b = _Repo(tmp_path / "repo_b")
     two_sut_repos(
         a={"tests/test_a.py": shell_a.module("test_a", _test("test_in_a"))},
         b={"tests/test_b.py": shell_b.module("test_b", _test("test_in_b"))},
     )
-    pre_clean.side_effect = lambda repos: shell_a.ran.write_text("PRECLEAN\n")
+
+    def _clean_and_record(repos: object) -> CleanReport:
+        shell_a.ran.write_text("PRECLEAN\n")
+        return CleanReport(hosts={})
+
+    pre_clean.side_effect = _clean_and_record
 
     result = run_tests(["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
 

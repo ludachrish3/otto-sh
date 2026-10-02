@@ -24,15 +24,22 @@ coverage on one host, stamped with the `base_commit` (the SUT's commit at
 capture time) it is valid against.  It is the same capture-production
 machinery `otto cov get` runs.
 
-This tail never fails an otherwise-successful test run.  A SUT that is not a
-git checkout (no commit to anchor a capture to), misconfigured tiers, or a
-stamp mismatch during merge — gcov reporting that the fetched `.gcda` came
-from a different build than the local `.gcno` notes files — are logged and
-swallowed.  What survives is the fetched `.gcda` themselves, in the run's own
-local `cov/` tree: recovery re-processes those, because a successful fetch
-zeroes the host's copies behind it.  They land under `cov/` in the run's
-output directory, keyed by host and then product —
-{ref}`the run tree <run-tree>` is the shape.
+This tail never fails an otherwise-successful test run **over collection**: a
+SUT that is not a git checkout (no commit to anchor a capture to),
+misconfigured tiers, or a stamp mismatch during merge — gcov reporting that
+the fetched `.gcda` came from a different build than the local `.gcno` notes
+files — are logged and swallowed.  What survives is the fetched `.gcda`
+themselves, in the run's own local `cov/` tree: recovery re-processes those.
+They land under `cov/` in the run's output directory, keyed by host and then
+product — {ref}`the run tree <run-tree>` is the shape.
+
+A failed **clean after collection** is not swallowed the same way. Once
+counters are fetched, the tail zeroes every contributing host's counters —
+embedded boards included — exactly as {doc}`clean` does, so the next run
+does not double-count. A reset that fails there fails the run even though
+every test passed; the captures already written are unaffected and stay on
+disk, and `--cov-report` still writes its report before the run fails. See {ref}`coverage-cov-clean-failures` below for the symmetric pre-run
+case.
 
 (coverage-tristate)=
 ## Auto, on, off
@@ -144,9 +151,10 @@ stays off and the tests still run. Under `--cov` the same selector is an
 error.
 
 ```{note}
-Both `otto cov get` and this `otto test --cov` tail wrap one async library
-function — `collect_coverage()` — paired with `run_coverage_report()` for the
-HTML report. To drive collection and reporting from your own Python (CI glue or
+This `otto test --cov` tail calls the async library function
+`collect_coverage()`; `otto cov get` calls `otto.coverage.get.get_coverage()`,
+which adds the command's rules and composes the same `collect_coverage()`.
+`run_coverage_report()` builds the HTML report from what either one fetched. To drive collection and reporting from your own Python (CI glue or
 a custom pipeline), see the *Collecting coverage from Python* section of
 {doc}`../../cookbook/python-library`.
 ```
@@ -158,7 +166,7 @@ a custom pipeline), see the *Collecting coverage from Python* section of
 | `--cov / --no-cov` | Force retrieval on or off; the default is auto (see {ref}`coverage-tristate`). On, each instrumented product's `.gcda` is fetched into `<run>/cov/<host_id>/<product>/` |
 | `--cov-dir PATH` | Write coverage artifacts to an explicit directory instead of `<run>/cov/` (implies `--cov`). PATH replaces that `cov/` directory and nothing else: each product's counters still land in `PATH/<host_id>/<product>/` |
 | `--overwrite-cov-dir` | Allow `--cov-dir` to clear an existing non-empty directory |
-| `--cov-clean / --no-cov-clean` | Delete stale `.gcda` under each instrumented product's `cov_dir` before the run (on by default; `.gcda` counters are additive) |
+| `--cov-clean / --no-cov-clean` | Reset every instrumented product's counters before the run — the same reset {doc}`clean` performs — on by default; `.gcda` counters are additive. See {ref}`coverage-cov-clean-failures` |
 | `--cov-report, -r` | Also render the HTML report inline after the run (implies `--cov`) |
 | `--cov-report-dir PATH` | Explicit destination for the inline HTML report (implies `--cov-report`) |
 | `--cov-tickets-json PATH` | Also write the per-ticket coverage summary to PATH after the run (implies `--cov-report`). Needs `[coverage.tickets]` configured, checked before any test runs — see {ref}`coverage-tickets-json` |
@@ -205,12 +213,22 @@ Like the capture tail, inline report generation is best-effort — a
 report-side problem is logged and never fails an otherwise-successful
 test run.
 
+(coverage-cov-clean-failures)=
 ## Pre-Run Cleanup
 
-By default, a run with coverage on deletes stale `.gcda` files under each
-instrumented product's `cov_dir` **before** the test run.  This is important
-because `.gcda` counters are **additive** — without cleanup, coverage data
-from previous runs contaminates the current results.
+By default, a run with coverage on resets every instrumented product's
+counters **before** the test run — the same per-kind reset {doc}`clean`
+performs (Unix/container `.gcda`, a kernel module's sysfs reset, an embedded
+board's `reset_fn`). This is important because `.gcda` counters are
+**additive** — without cleanup, coverage data from previous runs
+contaminates the current results.
+
+This pre-run clean refuses **before any test runs** when it cannot clear a
+counter, naming the host, the product, and the fix — the same failure
+`otto cov clean` would exit `1` on. `--no-cov-clean` skips the reset and
+that failure-refusal only; it does **not** bypass the missing-`[coverage]`
+or bad-`hosts`-selector refusal, which comes from `--cov` itself
+(see {ref}`coverage-tristate` above) whichever way `--cov-clean` is set.
 
 To skip pre-run cleanup and accumulate coverage across runs:
 

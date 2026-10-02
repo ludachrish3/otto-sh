@@ -201,6 +201,8 @@ class KmodProduct(ShellProduct):
         return listing.is_ok and self.module_name in listing.value
 
     # ── hooks ────────────────────────────────────────────────────────────────
+    # Their failure messages never name the product: the fetcher's warning and
+    # every clean report already prefix host and product.
 
     @override
     async def prepare_coverage(self, host: "Host") -> Result:
@@ -265,7 +267,7 @@ class KmodProduct(ShellProduct):
         """
         return Result(
             Status.Error,
-            msg=f"{self.name}: cannot read or write {self.gcov_path} — does this kernel have "
+            msg=f"cannot read or write {self.gcov_path} — does this kernel have "
             f"CONFIG_GCOV_KERNEL, and is the module loaded or its data kept "
             f"(gcov_persist=1)? ({result.msg})",
         )
@@ -284,7 +286,7 @@ class KmodProduct(ShellProduct):
         if listing.status is Status.NotRun:
             return Result(Status.NotRun)
         if not listing.is_ok:
-            return Result(Status.Error, msg=f"{self.name}: lsmod failed: {listing.msg}")
+            return Result(Status.Error, msg=f"lsmod failed: {listing.msg}")
         return Result(Status.Success, value=self.module_name in listing.value)
 
     async def _run_sudo(self, host: Any, script: str) -> Result:
@@ -304,7 +306,7 @@ class KmodProduct(ShellProduct):
         if result.is_ok:
             return Result(Status.Success)
         output = result.only.value.strip() if hasattr(result, "only") else ""
-        return Result(Status.Error, msg=f"{self.name}: `{script}` failed: {output}")
+        return Result(Status.Error, msg=f"`{script}` failed: {output}")
 
     async def _prepare_module(self, host: Any) -> Result:
         loaded = await self._module_loaded(host)
@@ -323,7 +325,7 @@ class KmodProduct(ShellProduct):
             return result
         return Result(
             Status.Error,
-            msg=f"{self.name}: cannot write {dump} — {await self._kmodcov_context(host)}; was the "
+            msg=f"cannot write {dump} — {await self._kmodcov_context(host)}; was the "
             f"module built with its consumer snippet? ({result.msg})",
         )
 

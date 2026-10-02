@@ -23,7 +23,9 @@ note: >
     - rich.table: cli.test, cli.run, cli.docker, cli.cache, cli.inventory;
     - otto.coverage.reporter/merge/store/tree/errors: cli.cov (also
       spelled as otto.coverage's lazy CoverageReporter/CoverageStore and
-      its two error names);
+      its five error names: CoverageCleanError, CoverageInputError,
+      CoverageNotInstrumentedError, NoCoverageDataError,
+      NoCoverageHostsError);
     - otto.host.errors/unix_host/remote_host: cli.cov, cli.docker, cli.host
       (also spelled as otto.host's lazy UnixHost/RemoteHost/OsType);
     - otto.config.fleet/lab/repo: cli.docker, cli.host, cli.monitor,
@@ -127,7 +129,7 @@ rule:
           any:
           - kind: dotted_name
           - kind: aliased_import
-          regex: '^(reporter|merge|store|tree|errors|CoverageReporter|CoverageStore|CoverageNotInstrumentedError|NoCoverageDataError)(\s+as\s+\w+)?$'
+          regex: '^(reporter|merge|store|tree|errors|CoverageReporter|CoverageStore|CoverageCleanError|CoverageInputError|CoverageNotInstrumentedError|NoCoverageDataError|NoCoverageHostsError)(\s+as\s+\w+)?$'
   - not:
       inside:
         kind: function_definition

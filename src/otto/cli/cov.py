@@ -87,20 +87,26 @@ output directory. It is the single retrieval command for both automated
     respectively; an unset email is omitted rather than annotated empty.
 
 ``--clean``
-    Zero the fetched hosts' remote ``.gcda`` counters after a successful
-    retrieval — for use before starting a manual session.
+    Zero the counters of every host that contributed a capture, after a
+    successful retrieval — for use before starting a manual session. Each
+    reset is printed; a failed one exits 1 (the captures are still written).
 
-``otto cov clean`` zeroes each instrumented product's ``.gcda`` counters on
-the lab's **fetchable** coverage hosts — the same host selection ``get``
-fetches from — without first fetching anything. Useful ahead of a manual
-session when the previous capture has already been retrieved::
+``otto cov clean`` zeroes each instrumented product's coverage counters on
+every coverage host ``[coverage].hosts`` selects — Unix hosts, containers and
+embedded boards alike, each through its product's own reset — without first
+fetching anything. Useful ahead of a manual session when the previous capture
+has already been retrieved::
 
     otto cov clean
 
-Embedded coverage hosts are out of scope for this phase (counter reset
-requires a product-side ``cov_reset`` LLEXT function mirroring
-``cov_dump``, a later phase); when the lab has any, the command logs a
-note and exits 0 rather than failing.
+It prints one line per host and product and exits 1 when any reset failed;
+under ``--dry-run`` each reset is printed as not run.
+
+Each verb is a thin leaf over one library call —
+:func:`~otto.coverage.get.get_coverage`,
+``otto.coverage.collect.clean_coverage`` and
+:func:`~otto.coverage.reporter.run_coverage_report` — which owns every rule;
+the leaf renders the result and spells a refused input in its flags.
 """
 
 import logging
@@ -115,12 +121,8 @@ if TYPE_CHECKING:
     # doesn't touch the `cov` import-budget surface (measured by `otto cov
     # --help`, which never runs get()/clean()'s bodies). Real coverage-
     # machinery imports stay function-local per the same budget.
-    import re
-    from typing import Any
-
-    from ..config.repo import Repo
     from ..coverage.reporter import TierSpec
-    from ..host.remote_host import RemoteHost
+    from ..coverage.reports import CleanReport, GetReport
 
 logger = logging.getLogger(__name__)
 
@@ -150,42 +152,31 @@ def cov_callback(ctx: typer.Context) -> None:
 
 
 def _parse_tier_specs(raw_tiers: list[str]) -> "list[TierSpec]":
-    """Parse repeated ``--tier NAME[=PATH]`` values into ordered tier specs.
+    """Split repeated ``--tier NAME[=PATH]`` values into ordered ``(name, path)`` pairs.
 
-    Order is preserved (= precedence order).  ``--tier system`` without a
-    path is allowed and represents the implicit lcov-merged system tier.
-    Any other tier without a path is rejected.
+    Order is preserved (= precedence order). Only the syntax is checked here
+    — a name, and a path after any ``=``; which tiers may omit a path and
+    whether a name repeats are :func:`~otto.coverage.reporter.run_coverage_report`'s
+    rules.
     """
-    from ..coverage.store.model import TIER_SYSTEM
-
     specs: "list[TierSpec]" = []
-    seen: set[str] = set()
     for raw in raw_tiers:
-        if "=" in raw:
-            name, _, path_str = raw.partition("=")
-            name = name.strip()
-            if not name:
-                raise typer.BadParameter(f"--tier value missing name: {raw!r}")
-            if not path_str:
-                raise typer.BadParameter(f"--tier value missing path: {raw!r}")
-            path: Path | None = Path(path_str)
-        else:
-            name = raw.strip()
-            if not name:
-                raise typer.BadParameter("--tier value cannot be empty")
-            if name != TIER_SYSTEM:
-                raise typer.BadParameter(
-                    f"Tier {name!r} requires a path: --tier {name}=PATH "
-                    f"(only the {TIER_SYSTEM!r} tier may omit a path)"
-                )
-            path = None
-
-        if name in seen:
-            raise typer.BadParameter(f"Duplicate --tier name: {name!r}")
-        seen.add(name)
-        specs.append((name, path))
-
+        name, sep, path_str = raw.partition("=")
+        name = name.strip()
+        if not name:
+            raise typer.BadParameter(f"missing tier name: {raw!r}", param_hint="--tier")
+        if sep and not path_str:
+            raise typer.BadParameter(f"missing path after '=': {raw!r}", param_hint="--tier")
+        specs.append((name, Path(path_str) if sep else None))
     return specs
+
+
+_REPORT_FLAGS = {
+    "cov_dirs": "OUTPUT_DIRS",
+    "tier_specs": "--tier",
+    "output_dir": "--dir",
+    "overwrite": "--overwrite-dir",
+}
 
 
 @cov_app.command()
@@ -267,11 +258,6 @@ def report(
     from ..host.errors import CoverageToolMissingError
 
     output_dirs = output_dirs or []
-    # Validate output directories
-    for d in output_dirs:
-        if not d.is_dir():
-            logger.error("Output directory does not exist: %s", d)
-            raise typer.Exit(1)
 
     # Precedence rule: explicit --tier flags are a git-less escape hatch and
     # take precedence over settings tiers — route them through the legacy
@@ -284,14 +270,7 @@ def report(
 
     inputs = ReportInputs()
     if tier:
-        try:
-            tier_specs: "list[TierSpec]" = _parse_tier_specs(tier)
-        except typer.BadParameter as e:
-            # A --tier usage error (missing path, duplicate name): the message
-            # already names the offending value and the fix — print it clean,
-            # like every other user-facing error path in this command.
-            logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: user typo, message names the fix
-            raise typer.Exit(1) from e
+        tier_specs: "list[TierSpec]" = _parse_tier_specs(tier)
         # --tier never resolves settings (see precedence rule above), so
         # inputs stays ReportInputs() here — run_coverage_report defaults to
         # Thresholds()'s 80.0/70.0 and runs no ticket attribution (it has no
@@ -314,6 +293,7 @@ def report(
 
     from ..coverage.capture.gitio import GitUnavailableError, NotAGitRepoError
     from ..coverage.config import DestinationError
+    from ..coverage.errors import CoverageInputError
     from ..coverage.reporter import run_coverage_report
     from ..lifecycle import run_command
     from .invoke import usage_error_from
@@ -366,13 +346,13 @@ def report(
         # what git said rather than mislabelling it as "not a git repository".
         logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: git's own message is the cause
         raise typer.Exit(1) from e
-    except DestinationError as e:
-        # --dir named an existing non-empty directory and --overwrite-dir was
-        # not given: a usage error (exit 2), not a data/merge failure — the
-        # fix is a flag, not a rerun. DestinationError is a ValueError
-        # subclass, so this must be caught before the generic handler below.
-        flags = {"output_dir": "--dir", "overwrite": "--overwrite-dir"}
-        raise usage_error_from(e, flags=flags) from e
+    except (DestinationError, CoverageInputError) as e:
+        # A refused input — a run directory that does not exist, a tier
+        # without a path or named twice, a --dir that is not empty without
+        # --overwrite-dir — is a usage error (exit 2): the fix is an argument,
+        # not a rerun. Both are ValueError subclasses, so this must be caught
+        # before the generic handler below.
+        raise usage_error_from(e, flags=_REPORT_FLAGS) from e
     except ValueError as e:
         # A malformed committed manual capture (load_manual_captures wraps the
         # parse error with the offending file name), or the no-[coverage]-
@@ -453,355 +433,10 @@ def report(
 
 
 # ---------------------------------------------------------------------------
-# get — single retrieval command (fetch + produce_captures)
+# get — retrieve the lab's coverage now (get_coverage)
 # ---------------------------------------------------------------------------
 
-
-class _CovError(Exception):
-    """Base for clean, single-line-message ``otto cov`` command failures.
-
-    Raised directly by :func:`_connect_cov_hosts` for the one failure mode
-    shared by every command that discovers coverage hosts (no ``[coverage]``
-    section configured); command-specific failures raise a subclass
-    (:class:`_GetError`, :class:`_CleanError`). Each command's sync wrapper
-    catches this base type and prints ``str(e)`` without a traceback,
-    mirroring ``report``'s ``CoverageDataMismatchError`` handling.
-    """
-
-
-class _GetError(_CovError):
-    """Internal signal for a clean, single-line ``cov get`` failure.
-
-    Raised by :func:`_do_get` for every ``get``-specific failure mode; the
-    sync ``get`` command catches the shared :class:`_CovError` base (which
-    also covers :func:`_connect_cov_hosts`'s "no config" failure).
-    """
-
-
-def _resolve_tester(name: str | None, email: str | None, sut_dir: Path) -> dict[str, str]:
-    """Resolve tester identity for a manual capture (spec decision 15).
-
-    ``name`` defaults to :func:`getpass.getuser`; ``email`` defaults to
-    ``git config user.email`` read *in the SUT repo* (so the identity comes
-    from the repo being tested, not whatever repo the process CWD happens to
-    be in) and is omitted entirely (not annotated empty) when the key is
-    unset or ``git config`` itself fails. CLI-supplied values always win over
-    both defaults.
-
-    Note ``config_value`` runs WITHOUT ``--local``, so a *sut_dir* that is not
-    a repo still reads ``~/.gitconfig`` and answers rc 0 — the
-    NotAGitRepoError arm below is defensive, not a path a non-repo takes.
-    Reading the ambient identity there is the intended behaviour (it is the
-    human running the capture), so this does not want narrowing.
-
-    A MISSING git propagates instead: "otto cannot run git" is an
-    environment error, not evidence that the tester has no email, and
-    swallowing it here is what let it be reported as the latter. In the
-    ``cov get`` flow it is unreachable anyway — the ``head_commit`` preflight
-    has already proven git runs — so the top-level CLI handler is the right
-    place for the case where it is not.
-    """
-    import getpass
-
-    from ..coverage.capture.gitio import GitCommandFailedError, NotAGitRepoError, config_value
-
-    resolved_name = name or getpass.getuser()
-    resolved_email = email
-    if not resolved_email:
-        try:
-            resolved_email = config_value(sut_dir, "user.email")
-        except (NotAGitRepoError, GitCommandFailedError):
-            resolved_email = None
-
-    tester: dict[str, str] = {"name": resolved_name}
-    if resolved_email:
-        tester["email"] = resolved_email
-    return tester
-
-
-def _capture_annotations(
-    kind: str,
-    ticket: str | None,
-    note: str | None,
-    tester_name: str | None,
-    tester_email: str | None,
-    sut_dir: Path,
-) -> tuple[dict[str, str] | None, str | None, str | None]:
-    """Resolve the (tester, ticket, note) annotations for a capture run.
-
-    Ticket and note annotate every tier kind (run-contexts spec §4);
-    tester attribution stays manual-only — an automated run has no human
-    session to attribute. *sut_dir* scopes the tester's git-identity default.
-    """
-    tester = _resolve_tester(tester_name, tester_email, sut_dir) if kind == "manual" else None
-    return tester, ticket, note
-
-
-async def _connect_cov_hosts() -> tuple[
-    "list[Repo]",
-    "Repo",
-    "dict[str, Any]",
-    "re.Pattern[str] | None",
-    "list[RemoteHost]",
-    "list[RemoteHost]",
-]:
-    """Bootstrap, locate ``[coverage]`` config, and discover matching lab hosts.
-
-    Shared setup for both ``get``'s fetch flow and ``clean``: loads the
-    active lab's repos (:func:`~otto.config.bootstrapped.get_repos`), locates the
-    repo with a ``[coverage]`` section, compiles its ``hosts`` pattern, and
-    enumerates every lab host that pattern matches — mirroring
-    :func:`otto.coverage.collect.collect_coverage`'s fetch stage. Deliberately stops
-    short of constructing a
-    :class:`~otto.coverage.fetcher.remote.GcdaFetcher`: ``get`` and
-    ``clean`` disagree on both the fetcher's staging root (a real output
-    dir vs. an unused placeholder) and its ``pattern`` scope (``get``
-    fetches with no pattern, preserving its existing tested behavior;
-    ``clean`` scopes to the already-computed ``fetch_hosts`` list, not the
-    raw ``[coverage].hosts`` pattern, so it can never re-match an embedded
-    host), so each command builds its own fetcher from the pieces returned
-    here.
-
-    Container hosts are included in the walk: a product can live in a
-    container, and the fetch reaches it through its Unix parent.
-
-    Raises :class:`_CovError` when no ``[coverage]`` section is configured
-    at all — the one failure mode every caller treats identically.
-
-    Returns:
-        ``(repos, cov_repo, cov_config, cov_pattern, cov_hosts, fetch_hosts)``,
-        where ``fetch_hosts`` are the matched hosts with a filesystem to fetch
-        over the network — every host but the runner itself and the embedded
-        boards, which dump over their console instead.
-    """
-    from ..config import all_hosts, get_repos
-    from ..config.coverage_settings import (
-        CoverageConfigError,
-        get_cov_config,
-        get_cov_repo,
-        load_hosts_pattern,
-    )
-    from ..config.scope import EmptySelectionError
-    from ..host.embedded_host import EmbeddedHost
-    from ..host.local_host import LocalHost
-
-    repos = get_repos()
-    cov_config = get_cov_config(repos)
-    cov_repo = get_cov_repo(repos)
-    if not cov_config or cov_repo is None:
-        raise _CovError("No [coverage] section found in .otto/settings.toml")
-
-    # Same repo-declared selector collect_coverage uses to keep infrastructure
-    # hosts (e.g. an SSH hop) out of the coverage set; a malformed value is
-    # refused by name in the shared loader, re-framed as this file's error the
-    # same way EmptySelectionError is below.
-    try:
-        cov_pattern = load_hosts_pattern(cov_config)
-    except CoverageConfigError as e:
-        raise _CovError(str(e)) from e
-
-    # Re-framed as a `_CovError`, which is what every caller's sync wrapper
-    # already prints without a traceback. The message is passed through
-    # verbatim — it explains fullmatch semantics and what to type instead, and
-    # this site knows nothing the reader needs that it does not. Wrapping the
-    # `list(...)`, not the call: `all_hosts` is a generator, so the refusal
-    # arrives at the first `next()`.
-    try:
-        cov_hosts = list(all_hosts(pattern=cov_pattern, include_containers=True))
-    except EmptySelectionError as e:
-        raise _CovError(str(e)) from e
-    fetch_hosts = [h for h in cov_hosts if not isinstance(h, (LocalHost, EmbeddedHost))]
-
-    return repos, cov_repo, cov_config, cov_pattern, cov_hosts, fetch_hosts
-
-
-def _unix_only_pattern(fetch_hosts: "list[RemoteHost]") -> "re.Pattern[str]":
-    """Anchored regex matching exactly the given fetchable hosts' ids.
-
-    :meth:`~otto.coverage.fetcher.remote.GcdaFetcher.clean_remote` re-derives
-    its own host set from its ``pattern`` via ``do_for_all_hosts()`` /
-    ``all_hosts()`` — a path with **no** ``EmbeddedHost`` guard. Passing the
-    raw ``[coverage].hosts`` pattern would therefore let ``clean_remote`` send
-    an embedded board a bogus ``find ... -delete`` on a mixed lab. Scoping to
-    the already-computed fetchable hosts closes that. Matching is
-    ``pattern.fullmatch(host.id)`` (see :meth:`OttoContext.all_hosts`); the
-    ``^``/``$`` anchors are therefore redundant and kept only because they say
-    out loud that a host id like ``"zephyr37-fat"`` must not also select a sibling
-    ``"zephyr37-fat2"``.
-    """
-    import re
-
-    host_ids = "|".join(re.escape(h.id) for h in fetch_hosts)
-    return re.compile(f"^(?:{host_ids})$")
-
-
-async def _do_get(
-    output_dir: Path | None,
-    tier_name: str | None,
-    ticket: str | None,
-    note: str | None,
-    tester_name: str | None,
-    tester_email: str | None,
-    clean: bool,
-) -> list[Path]:
-    """Fetch coverage from the lab and produce per-board captures.
-
-    Owns the ``get``-specific validation (tier resolution, the manual-tier
-    ``--ticket`` guard, the git preflight, and output-dir resolution) and then
-    delegates the whole fetch → metadata → capture pipeline to the single
-    canonical :func:`otto.coverage.collect.collect_coverage` (with
-    ``clean_after_fetch=False`` — ``get`` owns its own scoped post-fetch clean
-    via ``--clean``). The already-resolved ``TierConfig`` is passed straight
-    through (not just its name), so ``collect_coverage`` never re-resolves it
-    — one ``resolve_get_tier`` call for the whole invocation, done here.
-    Manual-kind tiers additionally copy each produced capture into the repo's
-    committed manual-capture store (``.otto/coverage/manual/``).
-
-    Every failure mode raises :class:`_GetError` (or, via
-    :func:`_connect_cov_hosts`, the shared :class:`_CovError`) with a
-    single-line, user-facing message; the sync ``get`` command is the only
-    place that turns either into ``typer.Exit(1)``.
-    """
-    from ..context import get_context
-    from ..coverage.capture.gitio import GitUnavailableError, head_commit
-    from ..coverage.capture.model import Capture
-    from ..coverage.capture.store_dir import write_manual_capture
-    from ..coverage.collect import collect_coverage
-    from ..coverage.errors import CoverageDataMismatchError, CoverageToolVersionError
-    from ..coverage.fetcher.remote import GcdaFetcher
-    from ..coverage.tiers import load_tiers, resolve_get_tier
-    from ..host.errors import CoverageToolMissingError
-
-    # collect_coverage re-derives the host set (cov_pattern/cov_hosts) itself, so
-    # _do_get only needs cov_config (tier resolution), cov_repo (git preflight +
-    # manual store), cov_hosts (display names + the instrumentation scan), and
-    # fetch_hosts (the scoped --clean). The one thing _connect_cov_hosts owns
-    # that collect_coverage does not is the no-[coverage]-config _CovError,
-    # raised before any fetch — the message the "no config" get/clean tests
-    # assert, and the reason it stays ahead of the scan below.
-    (
-        repos,
-        cov_repo,
-        cov_config,
-        _cov_pattern,
-        cov_hosts,
-        fetch_hosts,
-    ) = await _connect_cov_hosts()
-
-    tiers = load_tiers(cov_config)
-    try:
-        resolved_tier = resolve_get_tier(tiers, tier_name)
-    except ValueError as e:
-        from .invoke import spell_flags
-
-        raise _GetError(spell_flags(str(e), {"tier=NAME": "--tier NAME"})) from e
-
-    if resolved_tier.kind == "manual" and not ticket:
-        raise _GetError(f"tier {resolved_tier.name!r} is a manual-kind tier; requires --ticket")
-
-    # `otto cov get` is retrieval on purpose — the forced-on mode of the same
-    # decision `otto test --cov` takes. Detection is local (each product reads
-    # its own artifact), so a lab with nothing instrumented is refused here,
-    # with the per-product verdicts, before a single host is touched. Imported
-    # inside the command body: the instrumentation module pulls rich.table, and
-    # this module sits on an import-budget surface.
-    from ..coverage.errors import CoverageNotInstrumentedError
-    from ..coverage.instrumentation import decide_coverage, detect
-
-    try:
-        decide_coverage(True, detect(cov_hosts), has_cov_config=True, command="otto cov get")
-    except CoverageNotInstrumentedError as e:
-        # The verdicts go to the console as the rounded table, and _GetError
-        # then carries only the headline: the rest of `str(e)` is the SAME
-        # verdicts in plain text, which belongs in the run log, not printed a
-        # second time under the table.
-        from .invoke import render_instrumentation_refusal
-
-        raise _GetError(render_instrumentation_refusal(e)) from e
-
-    # Git preflight: capture production anchors to HEAD (base_commit), so a
-    # non-git sut can never yield a capture. Fail fast here — before the fleet pull — rather
-    # than wasting a fetch and only discovering it in produce_captures. The
-    # message is identical to the post-fetch GitUnavailableError path below.
-    try:
-        head_commit(cov_repo.sut_dir)
-    except GitUnavailableError as e:
-        raise _GetError(str(e)) from e
-
-    # Resolve the destination only now — after validation — so config/tier
-    # errors surface first. The CLI preamble records the standard
-    # per-invocation output dir on the context; --output overrides it; a
-    # bare programmatic call has neither and must say so.
-    if output_dir is None:
-        output_dir = get_context().output_dir
-        if output_dir is None:
-            raise _GetError("no output directory available: pass --output/-o")
-    output_dir = output_dir.resolve()
-
-    cov_dir = output_dir / "cov"
-
-    tester, produce_ticket, produce_note = _capture_annotations(
-        resolved_tier.kind, ticket, note, tester_name, tester_email, cov_repo.sut_dir
-    )
-
-    # One canonical collection call (fetch → metadata sidecar → per-board
-    # capture). clean_after_fetch=False: `get` owns its own post-fetch clean
-    # below, scoped to the Unix host ids so a mixed lab's embedded board is never
-    # zeroed — so collect_coverage must not fire its own unscoped clean. The
-    # raised family maps to _GetError preserving today's exact message shapes:
-    # collect_coverage raises NoCoverageDataError (a ValueError) for the "no
-    # .gcda counters retrieved from any host (searched: ...)" fail-loud;
-    # GitUnavailableError and the typed capture errors are RuntimeError
-    # subclasses and must be caught before the bare-RuntimeError "Coverage
-    # merge failed" arm.
-    try:
-        result = await collect_coverage(
-            cov_dir,
-            repos=repos,
-            tier=resolved_tier,
-            ticket=produce_ticket,
-            note=produce_note,
-            tester=tester,
-            display_names={h.id: h.name for h in cov_hosts},
-            clean_after_fetch=False,
-        )
-    except GitUnavailableError as e:
-        raise _GetError(str(e)) from e
-    except (CoverageDataMismatchError, CoverageToolVersionError, CoverageToolMissingError) as e:
-        raise _GetError(str(e)) from e
-    except ValueError as e:
-        raise _GetError(str(e)) from e
-    except RuntimeError as e:
-        raise _GetError(f"Coverage merge failed: {e}") from e
-
-    written = result.captures_written
-    if not written:
-        # collect_coverage fetched .gcda from some product but produce_captures
-        # made no capture. The test-run tail swallows this; a retrieval command
-        # must not. The message names every host:product it searched.
-        searched = ", ".join(f"{h}:{p}" for h, p in sorted(result.product_dirs))
-        where = f"searched: {searched}" if searched else "no products produced captures"
-        raise _GetError(f"no .gcda counters retrieved from any product ({where})")
-
-    if resolved_tier.kind == "manual":
-        for capture_path in written:
-            capture = Capture.load(capture_path)
-            write_manual_capture(capture, cov_repo.sut_dir)
-
-    # `--clean` (post-retrieval remote zero, for the start of a manual session).
-    # collect_coverage skipped its internal clean, so `get` does it here — but
-    # clean_remote() re-derives its own host set from the fetcher's pattern with
-    # no EmbeddedHost guard, so scope a second fetcher to just the fetchable
-    # host ids that actually contributed a product. Guard on those ids (not the
-    # raw [coverage].hosts) so a mixed lab's embedded board can never be zeroed.
-    fetched_ids = {host_id for (host_id, _p) in result.product_dirs}
-    fetched_fetch_hosts = [h for h in fetch_hosts if h.id in fetched_ids]
-    if clean and fetched_fetch_hosts:
-        clean_fetcher = GcdaFetcher(cov_dir, pattern=_unix_only_pattern(fetched_fetch_hosts))
-        await clean_fetcher.clean_remote()
-
-    logger.info("Coverage captured: %d product(s) -> %s", len(written), cov_dir)
-    return written
+_GET_FLAGS = {"tier": "--tier", "ticket": "--ticket", "output_dir": "--output"}
 
 
 @cov_app.command()
@@ -854,132 +489,114 @@ def get(
         typer.Option(
             "--clean",
             help=(
-                "Zero the fetched hosts' remote .gcda counters after a successful "
-                "retrieval — for use before starting a manual session."
+                "Zero the counters of every host that contributed a capture, after a "
+                "successful retrieval — for use before starting a manual session."
             ),
         ),
     ] = False,
 ) -> None:
     """Fetch .gcda from the lab's instrumented products; produce per-product captures."""
+    # Function-local: this module sits on the `cov` import-budget surface, and
+    # the coverage library pulls the collector, the fetcher and rich.table.
+    from ..coverage.errors import CoverageInputError, CoverageNotInstrumentedError
+    from ..coverage.get import get_coverage
     from ..lifecycle import run_command
+    from .invoke import render_instrumentation_refusal, usage_error_from
 
     try:
-        run_command(
-            _do_get(
+        got = run_command(
+            get_coverage(
                 output_dir,
-                tier,
-                ticket,
-                note,
-                tester_name,
-                tester_email,
-                clean,
+                tier=tier,
+                ticket=ticket,
+                note=note,
+                tester_name=tester_name,
+                tester_email=tester_email,
+                clean=clean,
             )
         )
-    except _CovError as e:
-        # Escaped: this is the direct log-emit site for the no-[coverage]-
-        # config / no-.gcda _CovError family (a literal bracket must survive
-        # the Rich-markup console handler).
-        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
+    except CoverageInputError as e:
+        raise usage_error_from(e, flags=_GET_FLAGS) from e
+    except CoverageNotInstrumentedError as e:
+        # The verdicts go to the console as the rounded table; only the
+        # headline is logged beside it (the rest of the message is the same
+        # verdicts in plain text).
+        logger.error(escape_markup(render_instrumentation_refusal(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e
+    except (ValueError, RuntimeError) as e:
+        # Every other refusal (no [coverage] section, an empty host selection,
+        # no repository, no data, a typed capture error) names its own cause
+        # and remedy. Escaped: these messages may carry a literal bracket.
+        logger.error(escape_markup(_failure_line(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        raise typer.Exit(1) from e
+    _render_get_report(got)
+
+
+def _failure_line(error: BaseException) -> str:
+    """Say what failed: a bare RuntimeError is the merge; every typed error speaks for itself."""
+    if type(error) is RuntimeError:
+        return f"Coverage merge failed: {error}"
+    return str(error)
+
+
+def _render_get_report(got: "GetReport") -> None:
+    """Print one line per capture and the summary; a failed ``--clean`` exits 1."""
+    from rich import print as rprint
+
+    for path in got.captures:
+        rprint(escape_markup(str(path)))
+    rprint(escape_markup(f"Coverage captured: {len(got.captures)} product(s) -> {got.cov_dir}"))
+    if got.clean is not None:
+        _render_clean_report(got.clean)
 
 
 # ---------------------------------------------------------------------------
-# clean — zero remote .gcda counters (no fetch)
+# clean — zero every coverage host's counters (clean_coverage)
 # ---------------------------------------------------------------------------
-
-
-class _CleanError(_CovError):
-    """Internal signal for a clean, single-line ``cov clean`` failure.
-
-    Raised by :func:`_do_clean` for every ``clean``-specific failure mode
-    (no matching fetchable hosts); the sync ``clean`` command catches the
-    shared :class:`_CovError` base (which also covers
-    :func:`_connect_cov_hosts`'s "no config" failure).
-    """
-
-
-async def _do_clean() -> None:
-    """Zero remote ``.gcda`` counters on the lab's fetchable coverage hosts.
-
-    Uses :func:`_connect_cov_hosts` for the identical host discovery
-    ``get`` uses (same ``[coverage].hosts`` pattern, same fetchable/embedded
-    split), then hands the matched hosts to the existing
-    :meth:`~otto.coverage.fetcher.remote.GcdaFetcher.clean_remote`, which
-    walks each host's instrumented products and deletes the counters under
-    each product's own ``cov_dir``. That method already logs one line per
-    host (success or failure) via its own module logger, so no extra
-    per-host logging is added here — only a completion summary.
-
-    Embedded coverage hosts are out of scope for this phase (counter reset
-    needs a product-side ``cov_reset`` LLEXT function mirroring
-    ``cov_dump``): when the matched hosts include any, this logs a note but
-    does not fail. A lab with *only* embedded coverage hosts (no Unix hosts
-    matched) is likewise not an error — there is simply nothing this phase
-    can clean yet.
-
-    Every failure mode raises :class:`_CleanError`; the sync ``clean``
-    command is the only place that turns the shared :class:`_CovError` base
-    into ``typer.Exit(1)``.
-    """
-    from ..coverage.fetcher.remote import GcdaFetcher
-    from ..host.embedded_host import EmbeddedHost
-
-    (
-        _repos,
-        _cov_repo,
-        _cov_config,
-        _cov_pattern,
-        cov_hosts,
-        fetch_hosts,
-    ) = await _connect_cov_hosts()
-
-    has_embedded = any(isinstance(h, EmbeddedHost) for h in cov_hosts)
-
-    if not fetch_hosts:
-        if has_embedded:
-            logger.info(
-                "embedded boards not cleaned (requires product-side counter reset — later phase)"
-            )
-            return
-        # Not "nothing matched": the runner itself can match [coverage].hosts
-        # and is then dropped as unfetchable, so say which families were
-        # excluded rather than sending the reader back to the selector.
-        raise _CleanError(
-            "No fetchable coverage host matched [coverage].hosts — nothing to clean "
-            "(the otto runner itself and embedded boards are excluded: neither has "
-            "remote counters this command can zero)"
-        )
-
-    # staging_root is unused by clean_remote() (no files are downloaded); the
-    # scoped pattern keeps clean_remote()'s own host re-derivation off embedded
-    # boards on a mixed lab (see _unix_only_pattern).
-    fetcher = GcdaFetcher(Path("/tmp"), pattern=_unix_only_pattern(fetch_hosts))  # noqa: S108 — deliberate staging path, never written to
-    await fetcher.clean_remote()
-    logger.info("Coverage counters cleared on %d host(s)", len(fetch_hosts))
-
-    if has_embedded:
-        logger.info(
-            "embedded boards not cleaned (requires product-side counter reset — later phase)"
-        )
 
 
 @cov_app.command()
 def clean() -> None:
-    """Zero each instrumented product's .gcda counters on the lab's fetchable hosts."""
+    """Zero each instrumented product's counters on the lab's coverage hosts."""
+    from ..coverage.collect import clean_coverage
     from ..lifecycle import run_command
 
     try:
-        run_command(_do_clean())
-    except _CovError as e:
-        # Escaped: same log-emit site as `get`'s _CovError handler above —
-        # a literal bracket (e.g. "[coverage]") must survive the Rich-markup
-        # console handler.
+        cleaned = run_command(clean_coverage())
+    except ValueError as e:
+        # No [coverage] section, a malformed selector, or no host to walk:
+        # each message names the cause. Escaped for the literal "[coverage]".
         logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e
+    _render_clean_report(cleaned)
 
 
 # `clean` zeroes remote counters and writes nothing locally — no output dir.
 clean.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
+
+
+def _render_clean_report(cleaned: "CleanReport") -> None:
+    """Print one line per host and product; exit 1 when any reset failed.
+
+    A reset a dry run declined is printed as not run and is not a failure.
+    """
+    from rich import print as rprint
+
+    from ..utils import Status
+    from .invoke import print_error
+
+    for host, products in cleaned.hosts.items():
+        if not products:
+            rprint(f"[dim]{escape_markup(f'{host}: no instrumented products')}")
+        for product, result in products.items():
+            if result.status is Status.NotRun:
+                rprint(f"[dim]{escape_markup(f'{host}/{product}: not run (dry run)')}")
+            elif result.is_ok:
+                rprint(f"[green]{escape_markup(f'{host}/{product}: counters cleared')}")
+    for failed in cleaned.failed:
+        print_error(f"{failed.host}/{failed.product}: {failed.reason}")
+    if not cleaned.ok:
+        raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------

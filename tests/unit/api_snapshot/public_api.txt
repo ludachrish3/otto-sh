@@ -35,8 +35,17 @@ otto.context:OttoContext
 otto.context:reset_context
 otto.context:set_context
 otto.coverage.reporter:run_coverage_report
+otto.coverage:
+otto.coverage:CleanReport
+otto.coverage:CoverageCleanError
+otto.coverage:CoverageInputError
 otto.coverage:DestinationError
+otto.coverage:FailedReset
+otto.coverage:GetReport
+otto.coverage:NoCoverageHostsError
+otto.coverage:clean_coverage
 otto.coverage:collect_coverage
+otto.coverage:get_coverage
 otto.coverage:resolve_report_inputs
 otto.creds:register_creds_backend
 otto.docker.compose:get_container_host

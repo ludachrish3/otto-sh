@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from ..config.collected_tests import Classification, FileRecord, RepoTable
     from ..config.repo import Repo
     from ..context import OttoContext
+    from ..coverage.reports import CleanReport
     from ..registry import RegistrationRefused
     from .layout import ArtifactLayout
     from .plugin import SelectedTest, StabilityCollector
@@ -471,19 +472,38 @@ def _cov_command_label(opts: RunOptions, command: str) -> str:
 
 
 async def _pre_run_cov_clean(repos: "list[Repo]", opts: RunOptions) -> None:
-    """Pre-run cleanup of .gcda files on remotes, when --cov and --cov-clean.
+    """Pre-run cleanup of coverage counters on the lab's hosts, when --cov and --cov-clean.
 
     Called once per invocation, never once per repo inside the session loop.
-    The .gcda-removal machinery (clean + host-connection rebuild) lives in
-    :func:`otto.coverage.collect.clean_remote_gcda`; it is imported lazily so
-    this module never pulls the coverage stack at load time. The
-    ``--cov``/``--cov-clean`` gate stays here.
+    The clean itself lives in :func:`otto.coverage.collect.clean_coverage`; it
+    is imported lazily so this module never pulls the coverage stack at load
+    time. The ``--cov``/``--cov-clean`` gate stays here. A failed reset is
+    never best-effort: it raises :class:`~otto.coverage.errors.CoverageCleanError`,
+    naming the host and product, which ends the run before any test runs (the
+    ``pytest.exit`` wrapper around this call, in :meth:`_Sessions._before_tests`,
+    carries it out).
     """
     if not (opts.cov and opts.cov_clean):
         return
-    from ..coverage.collect import clean_remote_gcda
+    from ..coverage.collect import clean_coverage
+    from ..coverage.errors import CoverageCleanError
 
-    await clean_remote_gcda(repos)
+    report = await clean_coverage(repos)
+    if not report.ok:
+        raise CoverageCleanError(report)
+    _log_clean_summary(report, "before the run")
+
+
+def _log_clean_summary(report: "CleanReport", when: str) -> None:
+    """Leave one INFO line in the run log for a clean that succeeded (*when* names which)."""
+    cleared = report.cleared
+    hosts = {host for host, _product in cleared}
+    message = (
+        f"coverage counters cleared {when} on {len(cleared)} product(s) across {len(hosts)} host(s)"
+    )
+    if report.not_run:
+        message += f"; {len(report.not_run)} not run (dry run)"
+    logger.info(message)
 
 
 def _post_run_coverage_beside(
@@ -530,6 +550,10 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         # non-coverage library run_tests() call from pulling the CLI (typer).
         return
 
+    # A failed clean after collection fails the run, but only once the report
+    # below has had its turn: the captures are already written, and the
+    # report is best-effort by policy, so it is never skipped for the clean.
+    clean_failure: Exception | None = None
     if opts.cov:
         from rich.markup import escape as escape_markup
 
@@ -544,14 +568,23 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         # via `otto cov get`. %s-formats *e* through escape_markup: the
         # console handler renders log messages as Rich markup, and this
         # message may echo a literal bracket (e.g. "no [coverage] section").
+        result = None
         try:
-            await collect_coverage(cov_dir, repos=repos)
+            result = await collect_coverage(cov_dir, repos=repos)
         except (ValueError, RuntimeError, FileNotFoundError) as e:
             logger.warning(
                 "Coverage collection failed (%s); raw coverage artifacts remain in %s",
                 escape_markup(str(e)),
                 cov_dir,
             )
+        if result is not None and result.clean is not None and not result.clean.ok:
+            from ..coverage.errors import CoverageCleanError
+
+            # Clearing is never best-effort: stale counters would mix into the
+            # next run's coverage. Raised after the report block below.
+            clean_failure = CoverageCleanError(result.clean)
+        elif result is not None and result.clean is not None:
+            _log_clean_summary(result.clean, "after collection")
 
     if opts.cov_report:
         from rich.markup import escape as escape_markup
@@ -661,6 +694,9 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                         )
                     else:
                         logger.info("Ticket export: %s", opts.cov_tickets_json)
+
+    if clean_failure is not None:
+        raise clean_failure
 
 
 def _guarded_pytest_session(

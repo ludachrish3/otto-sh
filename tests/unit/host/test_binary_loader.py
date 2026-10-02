@@ -92,3 +92,52 @@ def test_llext_list_and_call_commands():
 )
 def test_llext_is_loaded_matches_the_name_as_a_whole_token(output, expected):
     assert LlextHexLoader().is_loaded("cov_ext", output) is expected
+
+
+_BOARD_NOT_LOADED = "No such extension cov_ext"
+"""What ``llext call_fn cov_ext cov_reset`` printed on the zephyr37-llext and
+zephyr44-llext beds with no ``cov_ext`` resident (both versions' shell.c print
+the same line)."""
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        (_BOARD_NOT_LOADED, True),
+        (f"\r\n{_BOARD_NOT_LOADED}\r\n", True),  # the line, wherever the console framed it
+        ("No such extension cov_ext_two", False),  # another extension's absence
+        ("gcov_clear", False),
+        ("", False),
+        ("No such llext cov_ext", False),  # list_symbols' wording, not call_fn's
+    ],
+)
+def test_llext_reports_not_loaded_only_on_the_shells_own_line(output, expected):
+    assert LlextHexLoader().reports_not_loaded(output, "cov_ext") is expected
+
+
+def test_a_loader_that_does_not_override_it_never_reports_not_loaded():
+    class Minimal(BinaryLoader):
+        type_name = "minimal-test"
+
+        def load_command(self, name, payload):
+            return ""
+
+        def check_loaded(self, output):
+            return True, ""
+
+        def unload_command(self, name):
+            return ""
+
+        def is_fully_unloaded(self, output):
+            return True
+
+        def list_command(self):
+            return ""
+
+        def is_loaded(self, name, output):
+            return False
+
+        def call_command(self, name, fn):
+            return ""
+
+    assert Minimal().reports_not_loaded(_BOARD_NOT_LOADED, "cov_ext") is False

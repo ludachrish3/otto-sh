@@ -6,8 +6,9 @@ first to put its counters on disk, then the fetcher discovers ``.gcda`` there
 with ``find`` and pulls them with the host's ``get`` (SCP, SFTP, FTP, netcat,
 ``docker cp`` — whatever the family provides) into
 ``<staging_root>/<host_id>/<product>/`` (:func:`otto.layout.cov_product_dir_in`),
-where *staging_root* is the already-resolved local cov dir. Cleaning issues
-each product's ``reset_coverage`` hook instead of a hardcoded ``find -delete``.
+where *staging_root* is the already-resolved local cov dir. Clearing counters
+is not this module's job — see :func:`otto.coverage.collect.clean_coverage`,
+which calls each product's own ``reset_coverage`` hook directly.
 """
 
 import logging
@@ -39,33 +40,6 @@ def _skipped_family(host: Any) -> bool:
     from ...host.local_host import LocalHost
 
     return isinstance(host, (LocalHost, EmbeddedHost))
-
-
-async def _clean_one_host(host: Any) -> None:
-    """Delete every instrumented product's ``.gcda`` on one host, logging each outcome."""
-    if _skipped_family(host):
-        return
-    from ...host.product import cov_dir_of
-    from ..instrumentation import instrumented_products
-
-    for product in instrumented_products(host):
-        # Before the hook runs, not after: a name that is not a single safe
-        # path segment must never reach a host.
-        layout.validate_product_name(product.name)
-        cov_dir = cov_dir_of(product)
-        result = await product.reset_coverage(host)
-        if result.status is Status.NotRun:
-            continue  # dry run: the session already printed the declined command
-        if not result.is_ok:
-            logger.warning(
-                "Failed to clean .gcda for %s on %s (%s): %s",
-                product.name,
-                host.id,
-                cov_dir,
-                result.msg or result.value,
-            )
-        else:
-            logger.info("Cleaned .gcda for %s on %s (%s)", product.name, host.id, cov_dir)
 
 
 async def _fetch_one_product(host: Any, product: "Product", staging_root: Path) -> Path | None:
@@ -216,18 +190,3 @@ class GcdaFetcher:
                 for product, dest in value.items():
                     results[(host_id, product)] = dest
         return results
-
-    async def clean_remote(self) -> None:
-        """Delete every instrumented product's ``.gcda`` on every matching host.
-
-        Should be called **before** a test run to ensure clean coverage
-        data, and optionally **after** collection to save disk space.
-        """
-        clean_results = await do_for_all_hosts(
-            _clean_one_host,
-            pattern=self.pattern,
-            include_containers=True,
-        )
-        for host_id, result in clean_results.items():
-            if isinstance(result, BaseException):
-                logger.warning("Failed to clean .gcda files on %s: %s", host_id, result)

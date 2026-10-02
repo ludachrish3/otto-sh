@@ -44,7 +44,7 @@ command can install.
 | Kind | What drives its verbs | Coverage |
 |---|---|---|
 | `shell` | the `install` / `check` / `uninstall` commands you write | `.gcda` under `cov_dir`, fetched with `find` |
-| `llext` | the host's binary loader (a Zephyr LLEXT extension) | dumped over the console by the embedded collector |
+| `embedded` | the host's binary loader (a Zephyr LLEXT extension) | dumped over the console by the embedded collector |
 | `kmod` | the kernel's module loader (`insmod`/`rmmod`) | `none`, or `module` (the `otto_kmodcov` runtime dumps to `cov_dir`), or `kernel` (`CONFIG_GCOV_KERNEL`'s debugfs tree copied to `cov_dir`) |
 | `docker_image` | a docker daemon (`docker load`/`pull`, `run -d`, `rm -f`) | `.gcda` under `cov_dir`, bind-mounted into the container |
 
@@ -93,7 +93,7 @@ param; everything else is optional:
 | Param | Meaning |
 |---|---|
 | `artifact` | **Required.** Local file, forward slashes, anchored to the repo root |
-| `stage_dir` | Staging directory on the *host*, accepted by **every kind that places a file**. Must be an **absolute** path — a relative one (or a `~`, which no transfer backend expands) would mean a different directory to the transfer that puts the artifact and to the command that names it afterwards, so it is refused at lab load. Leave it empty and otto resolves it: the host's `default_dest_dir` when the host record declares one, otherwise the login user's home, read from the host once per host object. The artifact lands at `<stage_dir>/<artifact basename>`; a `shell` product's STAYS there (it is the product), while the transient kinds (`kmod`, `docker_image`, the kernel-module dev tools) delete their copy once it is consumed. Two entries on ONE host — products and dev tools together — that would stage the same basename into the same directory are refused at lab load, naming both. An `llext` entry has no `stage_dir`: the load is the transfer, so there is no directory to name |
+| `stage_dir` | Staging directory on the *host*, accepted by **every kind that places a file**. Must be an **absolute** path — a relative one (or a `~`, which no transfer backend expands) would mean a different directory to the transfer that puts the artifact and to the command that names it afterwards, so it is refused at lab load. Leave it empty and otto resolves it: the host's `default_dest_dir` when the host record declares one, otherwise the login user's home, read from the host once per host object. The artifact lands at `<stage_dir>/<artifact basename>`; a `shell` product's STAYS there (it is the product), while the transient kinds (`kmod`, `docker_image`, the kernel-module dev tools) delete their copy once it is consumed. Two entries on ONE host — products and dev tools together — that would stage the same basename into the same directory are refused at lab load, naming both. An `embedded` entry has no `stage_dir`: the load is the transfer, so there is no directory to name |
 | `install` / `uninstall` / `check` | optional command strings run on the host |
 | `cov_dir` | host directory the product writes its coverage counters under (its `GCOV_PREFIX`); default `/tmp/<name>`, and the empty string is refused |
 | `debug_log_globs` | host paths or globs of the product's own debug logs, hauled into `logs/<host_id>/<product>/debug/` ({ref}`the run tree <run-tree>`) |
@@ -150,42 +150,47 @@ valid placeholders — never quietly rewritten into the command that runs on the
 host. A literal brace is doubled, `{{` and `}}`, which is what an `awk
 '{{print $1}}'` program or a shell `${{VAR}}` needs.
 
-## The `llext` kind
+## The `embedded` kind
 
-Built in, products only: a Zephyr LLEXT extension as a product. An extension
-has no filesystem home — the load *is* the transfer — so `stage` is a no-op,
-`install` loads the object, and `uninstall` unloads it. The entry's `name` is
-the `<product>` segment of {ref}`the run tree <run-tree>`, and the
-instrumentation scan reads the extension's own `.gcda` strings. There is no
-`stage_dir` either: nothing is placed on a filesystem to name a directory for.
+Built in, products only: a binary loaded into an embedded target's runtime
+(a Zephyr LLEXT extension, today). An extension has no filesystem home — the
+load *is* the transfer — so `stage` is a no-op, `install` loads the object,
+and `uninstall` unloads it. The entry's `name` is the `<product>` segment of
+{ref}`the run tree <run-tree>`, and the instrumentation scan reads the
+extension's own `.gcda` strings. There is no `stage_dir` either: nothing is
+placed on a filesystem to name a directory for.
+
+The kind is not tied to Zephyr: it loads through the host's binary loader,
+and `llext-hex` is only the first one otto ships.
 
 | Param | Meaning |
 |---|---|
 | `artifact` | the local `.llext` object; required |
 | `call_after_load` | exported functions called, in order, right after a successful load (`["cov_init"]` runs the embedded-gcov constructor) |
 | `dump_fn` | the exported function the embedded coverage collector calls to dump counters; default `cov_dump` |
+| `reset_fn` | the exported function {doc}`../cli/cov/clean` calls to zero counters in place; default `cov_reset`. See {ref}`coverage-embedded-reset` |
 | `instrumented` | as the `shell` kind |
 | `debug_log_globs` | as the `shell` kind |
 
-There is no `{cov_dir}`/`{name}` substitution here: an `llext` entry declares
+There is no `{cov_dir}`/`{name}` substitution here: an `embedded` entry declares
 no command strings to substitute into.
 
 The matched host must carry a **binary loader** — the object is pushed through
 `host.load`, and `is_installed` asks the loader's own list command what is
-resident. An `llext` entry matched to a host without one is refused at lab
+resident. An `embedded` entry matched to a host without one is refused at lab
 load, naming the host. See {doc}`../cli/cov/instrumenting/embedded`.
 
 ```toml
 [[products]]
 name = "cov_ext"
-kind = "llext"
+kind = "embedded"
 artifact = "build/v3_7/cov_ext.stripped.llext"
 call_after_load = ["cov_init"]
 match = { id = "zephyr37-llext" }
 
 [[products]]                 # same NAME, a different board's build
 name = "cov_ext"
-kind = "llext"
+kind = "embedded"
 artifact = "build/v4_4/cov_ext.stripped.llext"
 call_after_load = ["cov_init"]
 match = { id = "zephyr44-llext" }

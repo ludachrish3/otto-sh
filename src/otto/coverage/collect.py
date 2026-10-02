@@ -1,22 +1,24 @@
 """Composed coverage collection: fetch ``.gcda`` → write metadata → produce captures.
 
 This is the single canonical collection workflow behind both ``otto test --cov``
-(via :func:`otto.suite.run._post_run_coverage`) and ``otto cov get`` (via
-``otto.cli.cov._do_get``, rewired in a later task). It replaces the copy that
+(via ``otto.suite.run._post_run_coverage``) and ``otto cov get`` (via
+:func:`otto.coverage.get.get_coverage`). It replaces the copy that
 used to live inline in the ``otto.cli.test`` coverage helpers.
 
 Two public entry points:
 
-* :func:`clean_remote_gcda` zeroes ``.gcda`` counters under every instrumented
-  product's ``cov_dir`` on the lab's remote hosts *before* a run, and rebuilds
-  host connections so the pytest session gets fresh ones on its own event loop.
-  The ``--cov``/``--cov-clean`` gate stays with the caller.
+* :func:`clean_coverage` is the one clear path for zeroing counters: every
+  instrumented product's own :meth:`~otto.host.product.Product.reset_coverage`
+  hook, on every coverage host the lab admits. ``otto cov clean``, the
+  ``otto test --cov --cov-clean`` pre-run clean, the clean after an
+  ``otto test --cov`` collection and ``otto cov get --clean`` all come through
+  it — a failed reset is a result in its report, never a log line.
 * :func:`collect_coverage` runs the fetch → metadata → capture sequence *after*
   a run and returns a :class:`CollectResult`. It **fails loud**: a missing
   ``[coverage]`` section, no ``.gcda`` retrieved from any product, an
   ambiguous/unknown tier, or a merge/produce error all raise — the never-fail-a-
   successful-run swallow policy lives in the callers (see
-  :func:`otto.suite.run._post_run_coverage`).
+  ``otto.suite.run._post_run_coverage``).
 
 Products, not hosts, are the unit of collection: each host's instrumented
 products name their own ``cov_dir``, and every stage below keys off the
@@ -31,6 +33,7 @@ otto.coverage.collect`` stays cheap for library callers and the existing
 
 import dataclasses
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +43,8 @@ from .errors import NoCoverageDataError
 if TYPE_CHECKING:
     from ..config.repo import Repo
     from ..host.toolchain import Toolchain
+    from ..result import Result
+    from .reports import CleanReport
     from .tiers import TierConfig
 
 logger = logging.getLogger(__name__)
@@ -72,41 +77,119 @@ class CollectResult:
     cov_dir: Path
     product_dirs: dict[tuple[str, str], Path]
     captures_written: list[Path]
+    clean: "CleanReport | None" = None
+    """The clean after collection, when ``clean_after_fetch`` ran one."""
 
 
-async def clean_remote_gcda(repos: "list[Repo] | None" = None) -> None:
-    """Delete each instrumented product's ``.gcda`` on the lab's remote hosts.
+async def clean_coverage(
+    repos: "list[Repo] | None" = None,
+    *,
+    host_ids: "list[str] | None" = None,
+) -> "CleanReport":
+    """Zero every instrumented product's counters on the lab's coverage hosts.
 
-    The pre-run cleanup for ``otto test --cov --cov-clean``: zero every
-    instrumented product's counters, under that product's own ``cov_dir``, so
-    stale data from a previous run cannot be mixed in. The connections the
-    clean opens belong to the caller's event loop and stay open. Under
-    ``otto test`` the caller is :func:`~otto.lifecycle.run_command`, whose
-    loop closes them as it ends, and the pytest session then reconnects each
-    host on its own loop. The ``if opts.cov and opts.cov_clean`` gate stays
-    with the caller.
+    The one clear path: ``otto cov clean``, ``otto test --cov --cov-clean``,
+    the clean after an ``otto test --cov`` collection and ``otto cov get
+    --clean`` all come through here. Every host ``[coverage].hosts`` matches
+    (containers included, the otto runner excluded) has each instrumented
+    product's own :meth:`~otto.host.product.Product.reset_coverage` called:
+    Unix and container products delete their ``.gcda``, kernel modules write
+    their sysfs reset, embedded extensions call their ``reset_fn``.
+
+    A failed reset is a result in the returned report, never a log line:
+    callers decide, and every caller in otto treats ``not report.ok`` as a
+    failure. A host whose reset raises (a dropped connection) reports every
+    one of its products failed, naming the exception.
 
     Raises:
-        CoverageConfigError: ``[coverage].hosts`` is malformed — refused by
-            name here exactly as it is in :func:`collect_coverage`, before any
-            host is touched.
+        CoverageConfigError: no ``[coverage]`` section, or a malformed
+            ``hosts`` selector.
+        NoCoverageHostsError: the selector matched no host (the otto runner
+            is never in the base set ``all_hosts`` walks, so this is the only
+            way the walk comes back empty), or ``host_ids`` narrowed an
+            otherwise non-empty match down to nothing.
     """
     from ..config import all_hosts, get_repos
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
-    from .fetcher.remote import GcdaFetcher
+    from ..config.fleet import do_for_all_hosts
+    from ..config.scope import EmptySelectionError
+    from ..errors import is_containable
+    from ..result import Result
+    from ..utils import Status
+    from .errors import NoCoverageHostsError
+    from .instrumentation import instrumented_products
+    from .reports import CleanReport
 
     if repos is None:
         repos = get_repos()
-
     cov_config = get_cov_config(repos)
-
     if not cov_config:
-        return  # no [coverage] section — nothing to clean
-    if not any(all_hosts(include_containers=True)):
-        return  # no hosts in the lab — nothing to clean
-    # The staging root is unused by clean_remote() — nothing is downloaded.
-    staging_root = Path("/tmp")  # noqa: S108 — deliberate staging path, never written to
-    await GcdaFetcher(staging_root, pattern=load_hosts_pattern(cov_config)).clean_remote()
+        raise CoverageConfigError("No [coverage] section found in .otto/settings.toml")
+
+    pattern = load_hosts_pattern(cov_config)
+    try:
+        hosts = list(all_hosts(pattern=pattern, include_containers=True))
+    except EmptySelectionError as e:
+        raise NoCoverageHostsError(f"nothing to clean: {e}") from e
+    if not hosts:
+        # The base set itself was empty (a lab with no hosts at all) —
+        # `all_hosts` stays silent here rather than raising (see its
+        # docstring), so this is the only way that case reaches us.
+        raise NoCoverageHostsError("no host in the lab to walk — nothing to clean")
+    if host_ids is not None:
+        wanted = set(host_ids)
+        hosts = [h for h in hosts if h.id in wanted]
+        if not hosts:
+            raise NoCoverageHostsError(
+                f"host_ids={sorted(wanted)!r} matched none of the hosts "
+                "[coverage].hosts selected — nothing to clean"
+            )
+
+    scoped = re.compile("^(?:" + "|".join(re.escape(h.id) for h in hosts) + ")$")
+    outcomes = await do_for_all_hosts(_reset_products, pattern=scoped, include_containers=True)
+
+    def _all_failed(host: "Any", reason: str) -> "dict[str, Result]":
+        """Every instrumented product on *host*, reported failed with *reason*.
+
+        The shape a host-level failure (a raised exception, or no outcome at
+        all) takes: Chris's ruling leaves no room for a silent "ok" default,
+        so a host this walk could not get a real per-product answer from is
+        reported as fully failed rather than dropped or left empty.
+        """
+        return {p.name: Result(Status.Error, msg=reason) for p in instrumented_products(host)} or {
+            "(host)": Result(Status.Error, msg=reason)
+        }
+
+    by_host: dict[str, dict[str, Result]] = {}
+    for host in hosts:
+        if host.id not in outcomes:
+            # A gap between this scoped re-derivation and the walk
+            # `do_for_all_hosts` just ran — the host was supposed to be
+            # dispatched to but reported nothing back at all.
+            by_host[host.id] = _all_failed(host, f"no result returned for host {host.id!r}")
+            continue
+        outcome = outcomes[host.id]
+        if isinstance(outcome, BaseException):
+            if not is_containable(outcome):
+                raise outcome
+            by_host[host.id] = _all_failed(host, f"{type(outcome).__name__}: {outcome}")
+        else:
+            by_host[host.id] = outcome
+    return CleanReport(hosts=by_host)
+
+
+async def _reset_products(host: "Any") -> "dict[str, Result]":
+    """Reset every instrumented product on *host*, in declaration order."""
+    from .. import layout
+    from .instrumentation import instrumented_products
+
+    results = {}
+    for product in instrumented_products(host):
+        # Before the hook runs, not after: a name that is not a single safe
+        # path segment must never reach a host.
+        layout.validate_product_name(product.name)
+        results[product.name] = await product.reset_coverage(host)
+    return results
 
 
 async def collect_coverage(
@@ -166,14 +249,17 @@ async def collect_coverage(
         note: Optional free-text note annotated onto every capture.
         tester: Optional tester identity annotated onto each capture.
         display_names: Optional board-dir (host id) → display name map.
-        clean_after_fetch: When ``True`` (default), zero the fetched products'
-            remote ``.gcda`` counters immediately after a successful fetch —
-            the ``otto test --cov`` semantics that keep the next run from
-            mixing in stale data. When ``False``, skip that internal clean
-            entirely so the caller can own the post-fetch clean itself (e.g.
-            ``otto cov get`` scopes its ``--clean`` to just the fetched hosts,
-            never an embedded board on a mixed lab). Embedded counters are
-            never cleaned here.
+        clean_after_fetch: When ``True`` (default), call :func:`clean_coverage`
+            on every host that contributed a product (embedded boards
+            included) immediately after a successful collection — the
+            ``otto test --cov`` semantics that keep the next run from mixing
+            in stale data. When ``False``, skip that internal clean entirely
+            so the caller can own the post-fetch clean itself (e.g.
+            ``otto cov get`` scopes its ``--clean`` to just the hosts it
+            fetched). The report lands on the returned
+            :class:`CollectResult`'s ``clean`` field (``None`` when this is
+            ``False``); a failed reset is never swallowed here — it is the
+            caller's to act on.
 
     Returns:
         A :class:`CollectResult` with the destination, per-product dirs, and
@@ -225,13 +311,6 @@ async def collect_coverage(
         fetcher = GcdaFetcher(cov_dir, pattern=cov_pattern)
         fetched = await fetcher.fetch_all()
         product_dirs.update(fetched)
-        if fetched and clean_after_fetch:
-            # The unscoped post-fetch clean that preserves `otto test --cov`
-            # semantics: zero the remotes right after a successful fetch so the
-            # next run cannot mix in stale counters. Callers that own their own
-            # (scoped) post-fetch clean — `otto cov get --clean` must never zero
-            # an embedded board on a mixed lab — pass clean_after_fetch=False.
-            await fetcher.clean_remote()
 
     # Embedded (RTOS) boards dump their products' .gcda over the console.
     embedded_dirs = await collect_embedded_coverage(cov_dir, pattern=cov_pattern)
@@ -252,6 +331,15 @@ async def collect_coverage(
         else:
             where = "no hosts matched [coverage].hosts"
         raise NoCoverageDataError(f"no .gcda counters retrieved from any product ({where})")
+
+    clean_report = None
+    if clean_after_fetch:
+        # Every host that contributed a product, embedded boards included:
+        # each has a real reset now. A failed reset is reported, never logged
+        # and dropped — the caller (otto test) fails the run on it.
+        clean_report = await clean_coverage(
+            repos, host_ids=sorted({host_id for host_id, _product in product_dirs})
+        )
 
     logger.info("Coverage data collected to %s (%d product dir(s))", cov_dir, len(product_dirs))
 
@@ -277,7 +365,10 @@ async def collect_coverage(
     )
 
     return CollectResult(
-        cov_dir=cov_dir, product_dirs=product_dirs, captures_written=captures_written
+        cov_dir=cov_dir,
+        product_dirs=product_dirs,
+        captures_written=captures_written,
+        clean=clean_report,
     )
 
 

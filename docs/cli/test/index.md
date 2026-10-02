@@ -104,7 +104,7 @@ in the Cookbook.
 | `--cov / --no-cov` | auto | Collect gcov coverage from remotes after the run; with neither flag, on when an instrumented product is found ({ref}`coverage-tristate`) |
 | `--cov-dir PATH` | `<run dir>/cov` | Override coverage destination (implies `--cov`) |
 | `--overwrite-cov-dir` | off | Allow `--cov-dir` to clear an existing non-empty dir |
-| `--cov-clean / --no-cov-clean` | on | Delete `.gcda` on remotes before the run |
+| `--cov-clean / --no-cov-clean` | on | Reset every instrumented product's counters before the run, each its own way (see {doc}`../cov/clean`) |
 | `--cov-report, -r` | off | Generate an HTML coverage report after the run (implies `--cov`) |
 | `--cov-report-dir PATH` | `<run dir>/cov_report` | Override HTML report destination (implies `--cov-report`) |
 | `--overwrite-cov-report-dir` | off | Allow `--cov-report-dir` to clear an existing non-empty dir |

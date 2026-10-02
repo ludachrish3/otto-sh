@@ -61,7 +61,7 @@ transfer = "console"
 max_filename_len = 32
 
 # The instrumented LLEXT extension (product/) as a product, one entry per
-# Zephyr version. An `llext` product has no filesystem home: `install` IS the
+# Zephyr version. An `embedded` product has no filesystem home: `install` IS the
 # `llext load_hex` + `call_after_load`, and `uninstall` is the unload — so the
 # TestEmbeddedCoverage suite drives the extension through the product rather
 # than spelling the loader commands itself, and the collector dumps it through
@@ -79,14 +79,14 @@ max_filename_len = 32
 # trusting it.
 [[products]]
 name = "cov_ext"
-kind = "llext"
+kind = "embedded"
 artifact = "/home/vagrant/build/cov_ext_app/zephyr/cov_ext.stripped.llext"
 call_after_load = ["cov_init"]
 match = { id = "zephyr37-llext" }
 
 [[products]]
 name = "cov_ext"
-kind = "llext"
+kind = "embedded"
 artifact = "/home/vagrant/build/cov_ext_app_v4_4/zephyr/cov_ext.stripped.llext"
 call_after_load = ["cov_init"]
 match = { id = "zephyr44-llext" }

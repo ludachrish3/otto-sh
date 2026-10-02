@@ -24,7 +24,7 @@ mechanism ``tests/unit/config/test_completion_cache.py`` uses.
 
 All tests carry ``@pytest.mark.xdist_group("coverage_e2e")`` so pytest-xdist
 pins them to a single worker. Without this pinning, concurrent workers
-would race on the shared Vagrant VMs (both running ``clean_remote_gcda``
+would race on the shared Vagrant VMs (both running ``clean_coverage``
 and ``collect_coverage`` against the same ``/var/coverage/product`` directory),
 which deadlocks asyncssh transfers.
 """

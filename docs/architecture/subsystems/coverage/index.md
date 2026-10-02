@@ -111,7 +111,8 @@ Each product carries two coverage hooks: `prepare_coverage(host)` runs before
 the fetcher's `find` and puts counters on disk when they live somewhere else
 first, and `reset_coverage(host)` is what every clean — `--cov-clean`, the
 post-fetch clean, `otto cov clean` — issues per product. The defaults (do
-nothing; `find <cov_dir> -name '*.gcda' -type f -delete`) are the user-space case;
+nothing; `find <cov_dir> -name '*.gcda' -type f -delete`, guarded so a `cov_dir`
+that does not exist yet is a no-op) are the user-space case;
 a kind whose counters live in the kernel or behind a daemon overrides them.
 
 ## Where the code lives

@@ -120,14 +120,23 @@ def _expected_module_write_cmd(module_name: str, action: str) -> str:
 def _expected_kernel_reset_cmds(gcov_path: str, cov_dir: str) -> tuple[str, str]:
     """Independently reconstruct the two commands the kernel ``reset_coverage`` branch emits."""
     path_q = shlex.quote(gcov_path)
-    dest_q = shlex.quote(cov_dir)
     reset_script = (
         f'test -d {path_q} && find {path_q} -name "*.gcda" -type f | '
         'while read -r f; do echo 1 > "$f" || exit 1; done'
     )
     reset_cmd = f"sh -c {shlex.quote(reset_script)}"
-    delete_cmd = f"find {dest_q} -name '*.gcda' -type f -delete"
-    return reset_cmd, delete_cmd
+    return reset_cmd, _expected_sudo_delete_cmd(cov_dir)
+
+
+def _expected_delete_line(cov_dir: str) -> str:
+    """Independently reconstruct the guarded delete line: a missing cov_dir is a no-op."""
+    dest_q = shlex.quote(cov_dir)
+    return f"! test -d {dest_q} || find {dest_q} -name '*.gcda' -type f -delete"
+
+
+def _expected_sudo_delete_cmd(cov_dir: str) -> str:
+    """The guarded delete line, wrapped whole in ``sh -c`` so sudo elevates all of it."""
+    return f"sh -c {shlex.quote(_expected_delete_line(cov_dir))}"
 
 
 # ── builder ──────────────────────────────────────────────────────────────────
@@ -397,7 +406,7 @@ async def test_kmod_none_method_inherits_the_default_hooks():
     assert host.run_calls == []
     assert host.exec_calls == []
     await p.reset_coverage(host)
-    expected = ("find /var/cov/demo -name '*.gcda' -type f -delete", {"timeout": 60})
+    expected = (_expected_delete_line("/var/cov/demo"), {"timeout": 60})
     assert host.exec_calls == [expected]
 
 
@@ -526,7 +535,7 @@ async def test_kmod_module_reset_writes_reset_then_deletes_under_sudo():
     assert (await p.reset_coverage(host)).is_ok
     cmds = [c for c, _ in host.run_calls]
     assert cmds[0] == _expected_module_write_cmd("otto_kmod_demo", "reset")
-    assert cmds[1] == "find /var/cov/demo -name '*.gcda' -type f -delete"
+    assert cmds[1] == _expected_sudo_delete_cmd("/var/cov/demo")
     assert all(kw == {"sudo": True} for _, kw in host.run_calls)
     assert host.exec_calls == []
 
@@ -539,7 +548,7 @@ async def test_kmod_module_reset_fails_when_lsmod_itself_fails():
     result = await p.reset_coverage(host)
     assert not result.is_ok
     assert result.status is not Status.NotRun
-    assert "lsmod" in result.msg
+    assert result.msg == "lsmod failed: boom"  # no `demo: ` — the consumer names the product
     assert host.run_calls == []  # neither the sysfs write nor the delete
 
 
@@ -552,6 +561,7 @@ async def test_kmod_module_reset_failure_names_the_kmodcov_tool_and_its_residenc
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
     result = await p.reset_coverage(host)
     assert result.status is Status.Error
+    assert result.msg.startswith("`echo 1 > ")  # no `demo: ` — the consumer names the product
     assert "otto_kmodcov: 'kmodcov-6.8' dev tool, resident" in result.msg
     assert f"{KMODCOV_SYSFS_ROOT}/otto_kmod_demo/kmodcov/reset" in result.msg
     assert len(host.run_calls) == 1  # the failed write; no delete followed
@@ -562,7 +572,7 @@ async def test_kmod_module_reset_skips_the_sysfs_write_when_unloaded():
     host = _KmodHost(loaded=[])
     p = _build(host, coverage="module", cov_dir="/var/cov/demo")
     await p.reset_coverage(host)
-    assert [c for c, _ in host.run_calls] == ["find /var/cov/demo -name '*.gcda' -type f -delete"]
+    assert [c for c, _ in host.run_calls] == [_expected_sudo_delete_cmd("/var/cov/demo")]
 
 
 @pytest.mark.asyncio
@@ -610,7 +620,7 @@ async def test_kmod_module_reset_announces_the_write_and_delete_when_lsmod_is_de
     cmds = [c for c, _ in host.run_calls]
     assert cmds == [
         _expected_module_write_cmd("otto_kmod_demo", "reset"),
-        "find /var/cov/demo -name '*.gcda' -type f -delete",
+        _expected_sudo_delete_cmd("/var/cov/demo"),
     ]
 
 
@@ -719,7 +729,8 @@ async def test_kmod_kernel_reset_error_names_gcov_path():
     result = await p.reset_coverage(host)
     assert not result.is_ok
     assert result.status is not Status.NotRun
-    assert gcov_path in result.msg
+    # The consumer prefixes `<host>/<product>: `; the reason never repeats the name.
+    assert result.msg.startswith(f"cannot read or write {gcov_path}")
     assert "find:" in result.msg
     # The script failed outright — no delete follows a failed reset.
     assert len(host.run_calls) == 1

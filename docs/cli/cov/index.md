@@ -9,8 +9,9 @@ multi-tier HTML coverage reports.  Coverage tiers — `system` (e2e),
    fetches `.gcda` counters from each instrumented **product** on each
    coverage host and writes a `capture.json` per host per product,
    anchored to `base_commit`.
-2. **`otto cov clean`** — zeroes each product's remote `.gcda` counters
-   ahead of a fresh collection session.
+2. **`otto cov clean`** — resets every instrumented product's counters on
+   each coverage host, each its own way (see {doc}`clean`), ahead of a
+   fresh collection session.
 3. **`otto cov report`** — assembles every tier's data (e2e captures,
    harvested unit counters, the committed manual store) into an HTML
    report.

@@ -7,7 +7,7 @@ import pytest
 
 from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
-from otto.coverage.fetcher.remote import GcdaFetcher, _clean_one_host, _fetch_one_product
+from otto.coverage.fetcher.remote import GcdaFetcher, _fetch_one_product
 from otto.host.product import Product
 from otto.result import CommandResult, NotRunResult, Result
 from otto.utils import Status
@@ -356,8 +356,7 @@ class TestGcdaFetcher:
 
     @pytest.mark.asyncio
     async def test_a_cov_dir_with_a_space_is_shell_quoted(self, tmp_path, fake_config_module):
-        """An unquoted `/opt/My App/cov` would reach `find` as two start points —
-        and on the clean path, `-delete` would then run against the wrong one."""
+        """An unquoted `/opt/My App/cov` would reach `find` as two start points."""
         host = _make_mock_host("host1", [_product("app", "/opt/My App/cov")])
         host.exec.return_value = CommandResult(Status.Success, value="", command="find", retcode=0)
         fake_config_module(host)
@@ -366,20 +365,16 @@ class TestGcdaFetcher:
         assert host.exec.call_args_list[0].args[0] == (
             "find '/opt/My App/cov' -name '*.gcda' -type f"
         )
-
-        host.exec.reset_mock()
-        await GcdaFetcher(tmp_path / "staging").clean_remote()
-        assert host.exec.call_args_list[0].args[0] == (
-            "find '/opt/My App/cov' -name '*.gcda' -type f -delete"
-        )
+        # The clean path's own quoting (the `-delete` variant of this find) is
+        # ``Product.reset_coverage``'s default, pinned directly in
+        # tests/unit/host/test_product.py.
 
     @pytest.mark.asyncio
     async def test_a_malformed_product_name_never_reaches_the_host(
         self, tmp_path, fake_config_module
     ):
         """A name that is not a single safe path segment is rejected BEFORE any
-        host command is issued — `../x` must not be able to steer a `find`, least
-        of all the one that appends `-delete`."""
+        host command is issued — `../x` must not be able to steer a `find`."""
         from otto.coverage.fetcher.remote import _fetch_one_product
 
         host = _make_mock_host("host1", [_product("../x", "/var/cov")])
@@ -395,39 +390,9 @@ class TestGcdaFetcher:
         # still never ran a command.
         assert await GcdaFetcher(tmp_path / "staging").fetch_all() == {}
         host.exec.assert_not_called()
-
-        with pytest.raises(ValueError, match=r"product name"):
-            await _clean_one_host(host)
-        host.exec.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_clean_remote(self, tmp_path, fake_config_module):
-        host = _make_mock_host()
-        host.exec.return_value = CommandResult(
-            Status.Success, value="", command="find ...", retcode=0
-        )
-        fake_config_module(host)
-
-        fetcher = GcdaFetcher(tmp_path / "staging")
-        await fetcher.clean_remote()
-        host.exec.assert_called_once()
-        assert "-delete" in host.exec.call_args[0][0]
-
-    @pytest.mark.asyncio
-    async def test_clean_remote_deletes_per_instrumented_product(
-        self, tmp_path, fake_config_module
-    ):
-        host = _make_mock_host(
-            "host1", [_product("app", "/var/cov/app"), _product("skip", verdict=False)]
-        )
-        host.exec.return_value = CommandResult(Status.Success, value="", command="find", retcode=0)
-        fake_config_module(host)
-
-        await GcdaFetcher(tmp_path).clean_remote()
-
-        assert [c.args[0] for c in host.exec.call_args_list] == [
-            "find /var/cov/app -name '*.gcda' -type f -delete"
-        ]
+        # The clean path's own name check (before `reset_coverage` is called)
+        # lives in ``otto.coverage.collect._reset_products`` now — pinned in
+        # tests/unit/cov/test_clean.py.
 
     @pytest.mark.asyncio
     async def test_prepare_coverage_runs_before_the_find(self, tmp_path, fake_config_module):
@@ -482,46 +447,6 @@ class TestGcdaFetcher:
         host.exec.assert_not_called()
         assert not (tmp_path / "staging" / "host1").exists()
         assert caplog.text == ""
-
-    @pytest.mark.asyncio
-    async def test_clean_calls_each_products_reset_coverage(self, tmp_path, fake_config_module):
-        custom = _product("kmod", "/tmp/kmod")
-        custom.reset_coverage = AsyncMock(return_value=Result(Status.Success))
-        host = _make_mock_host("host1", products=[_product("app", "/var/cov"), custom])
-        host.exec.return_value = CommandResult(Status.Success, value="", command="find", retcode=0)
-        fake_config_module(host)
-        await GcdaFetcher(tmp_path / "staging").clean_remote()
-        # The default hook issued the delete for `app`; the override was awaited for `kmod`.
-        assert [c.args[0] for c in host.exec.call_args_list] == [
-            "find /var/cov -name '*.gcda' -type f -delete"
-        ]
-        custom.reset_coverage.assert_awaited_once_with(host)
-
-    @pytest.mark.asyncio
-    async def test_clean_remote_dry_run_declines_every_product_without_a_warning(
-        self, tmp_path, fake_config_module, caplog
-    ):
-        """A dry run's session answers every ``exec`` with a `NotRunResult`; reading
-        its `.value` inside the warning must not raise `CommandNotRunError` and hide
-        the remaining products' declined-command preview."""
-        import logging
-
-        host = _make_mock_host(
-            "host1", [_product("app", "/var/cov/app"), _product("agent", "/var/cov/agent")]
-        )
-        host.exec = AsyncMock(
-            return_value=NotRunResult(
-                status=Status.NotRun, command="find ...", retcode=-1, host_name="host1"
-            )
-        )
-        fake_config_module(host)
-
-        with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-            await GcdaFetcher(tmp_path / "staging").clean_remote()
-
-        assert host.exec.await_count == 2
-        assert "failed to delete" not in caplog.text.lower()
-        assert "failed to clean" not in caplog.text.lower()
 
     @pytest.mark.asyncio
     async def test_fetch_dry_run_stages_nothing_and_does_not_warn(

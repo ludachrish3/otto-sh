@@ -18,7 +18,7 @@ def test_user_registration_during_test_load_is_refused():
 def test_otto_module_registration_during_test_load_is_allowed():
     r: reg.Registry[int] = reg.Registry("widget", register_hint="x")
     with reg.loading_test_files():
-        r.register("w", 1, origin="otto.host.llext_kind")
+        r.register("w", 1, origin="otto.host.embedded_kind")
     assert "w" in r
 
 

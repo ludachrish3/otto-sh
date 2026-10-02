@@ -92,7 +92,7 @@ async def _collect_one_embedded_host(
     host: "EmbeddedHost",
     staging_root: Path,
 ) -> dict[str, Path] | None:
-    """Dump, decode and stage each instrumented ``llext`` product of one board.
+    """Dump, decode and stage each instrumented ``embedded`` product of one board.
 
     Each product is dumped with its loader's call command
     (``llext call_fn <product> <dump_fn>`` for the hex loader), decoded from
@@ -124,13 +124,15 @@ async def _collect_one_embedded_host(
 
     staged: dict[str, Path] = {}
     for product in products:
-        # Only an llext product exports a dump function; the default lives on
-        # LlextProduct, so anything without one is a product this collector
+        # Only an embedded product exports a dump function; the default lives on
+        # EmbeddedProduct, so anything without one is a product this collector
         # cannot dump rather than one to guess a function name for.
         dump_fn = getattr(product, "dump_fn", None)
         if dump_fn is None:
             logger.warning(
-                "%s on %s has no dump_fn; not an llext product — skipped", product.name, host.id
+                "%s on %s has no dump_fn; not an embedded product — skipped",
+                product.name,
+                host.id,
             )
             continue
 

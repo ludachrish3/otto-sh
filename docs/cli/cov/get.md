@@ -11,9 +11,6 @@ discovered toolchain, and written as one `capture.json` per host per product
 `cov/<host_id>/<product>/` under the command's output directory
 ({ref}`the run tree <run-tree>`).
 
-Nothing instrumented anywhere is an error *before* any host is touched:
-detection is local, and the command refuses with every product's verdict.
-
 By default `otto cov get` targets the lab's sole `e2e`-kind tier and
 writes a capture that is **not** committed anywhere — it lives in the
 output directory, the same as a run's other artifacts.  Selecting a
@@ -30,6 +27,17 @@ otto cov get
 otto cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
 ```
 
+A successful run prints one line per capture, then the summary; `--clean`
+appends one reset line per product it zeroed:
+
+```text
+/path/to/output/cov/test1/myapp/capture.json
+/path/to/output/cov/zephyr37-llext/cov_ext/capture.json
+Coverage captured: 2 product(s) -> /path/to/output/cov
+test1/myapp: counters cleared
+zephyr37-llext/cov_ext: counters cleared
+```
+
 ## Options
 
 | Option | Description | Default |
@@ -37,13 +45,15 @@ otto cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
 | `--output, -o PATH` | Directory to write fetched coverage and per-product captures into | the command's standard per-invocation output directory |
 | `--tier NAME` | Coverage tier to annotate onto each capture | the lab's sole `e2e`-kind tier (error if ambiguous or unknown, listing the configured tiers) |
 | `--ticket STR` | Ticket reference annotated onto each capture. **Required** when `--tier` resolves to a `manual`-kind tier | none |
-| `--note STR` | Free-text note annotated onto each capture (`manual`-kind tiers only) | none |
+| `--note STR` | Free-text note annotated onto each capture | none |
 | `--tester-name STR` | Tester name annotated onto each capture (`manual`-kind tiers only) | `getpass.getuser()` |
 | `--tester-email STR` | Tester email annotated onto each capture (`manual`-kind tiers only) | `git config user.email`, omitted entirely (not annotated empty) when unset |
-| `--clean` | Zero each fetched Unix product's remote `.gcda` counters (under its `cov_dir`) after a successful retrieval — for use before starting a manual session | off |
+| `--clean` | Reset every instrumented product on each host that contributed a capture — Unix and container counters under their `cov_dir`, embedded boards through `reset_fn` — after a successful retrieval — for use before starting a manual session | off |
 
-`--ticket`, `--note`, `--tester-name`, and `--tester-email` are only
-meaningful for a `manual`-kind retrieval; passing them against an
+`--ticket` and `--note` annotate a capture of any kind; only a
+`manual`-kind tier requires `--ticket`. `--tester-name` and
+`--tester-email` are only meaningful for a `manual`-kind retrieval: an
+`e2e`-kind capture records no tester, so passing them against an
 `e2e`-kind tier has no effect.
 
 Retrieval requires a git repository — resolving `base_commit` and, for
@@ -55,6 +65,27 @@ to be the repository root: a SUT checked out as a subdirectory of a
 larger repository (a monorepo layout) anchors its captures against the
 enclosing repo — its `HEAD` is the `base_commit`, and its working-tree
 state decides dirtiness.
+
+## Refusals
+
+`otto cov get` calls {func}`~otto.coverage.get.get_coverage` with exactly its
+parsed flags, so every refusal below is that function's. Before any host is
+touched:
+
+1. no `[coverage]` section, a malformed `hosts` selector, or a selector
+   matching no host
+2. an unknown or ambiguous `--tier`
+3. a `manual`-kind `--tier` with no `--ticket`
+4. nothing instrumented anywhere — the command refuses with every product's
+   verdict
+5. the SUT is not a git checkout
+6. no `--output` and no destination set for this invocation
+
+After that, hosts are touched: collection can still fail if it produced no
+capture at all, naming every host and product searched.
+
+A bad `--tier`, `--ticket`, or `--output` exits `2`; every other refusal —
+including the no-capture case above and a failed `--clean` — exits `1`.
 
 (coverage-dirty-remap)=
 ## Locally-modified builds
@@ -102,8 +133,8 @@ a manual capture — the human metadata:
 `base_commit` is the commit whose coordinates the line numbers mean;
 each file's `blob` is the git blob SHA of that file at `base_commit`
 — the rebase-tolerant anchor {ref}`coverage-validity` checks against.
-An `e2e`-kind capture has the same shape but omits `tester`/`ticket`/
-`note`; at report time its `base_commit` acts as a strict guard — it
+An `e2e`-kind capture has the same shape but records no `tester`, and
+carries `ticket`/`note` only when they were passed; at report time its `base_commit` acts as a strict guard — it
 must equal the tree's current `HEAD` — and a dirty working tree only
 triggers a line-number remap onto the current tree, never the manual
 tier's validity pass (see {ref}`coverage-report-stale-builds`).

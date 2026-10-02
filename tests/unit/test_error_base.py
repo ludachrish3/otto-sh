@@ -46,10 +46,13 @@ from otto.coverage.capture.gitio import (
 )
 from otto.coverage.config import DestinationError
 from otto.coverage.errors import (
+    CoverageCleanError,
     CoverageDataMismatchError,
+    CoverageInputError,
     CoverageNotInstrumentedError,
     CoverageToolVersionError,
     NoCoverageDataError,
+    NoCoverageHostsError,
 )
 from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.tickets import TicketConfigError
@@ -58,7 +61,7 @@ from otto.docker.build_verbs import DockerBuildError
 from otto.docker.resolve import UseCaseResolutionError
 from otto.env import EnvBuildError, EnvExistsError
 from otto.env.backends import BackendUnavailableError
-from otto.errors import EnsureStateError, OttoError
+from otto.errors import EnsureStateError, FieldError, OttoError
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
 from otto.host.errors import (
     ConsoleError,
@@ -131,11 +134,15 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (NotAGitRepoError, RuntimeError),
     (GitCommandFailedError, RuntimeError),
     (EnsureStateError, RuntimeError),
+    (FieldError, Exception),
     (CoverageToolVersionError, RuntimeError),
     (CoverageConfigError, ValueError),
     (CoverageNotInstrumentedError, ValueError),
     (NoCoverageDataError, ValueError),
     (CoverageDataMismatchError, RuntimeError),
+    (CoverageInputError, ValueError),
+    (NoCoverageHostsError, ValueError),
+    (CoverageCleanError, RuntimeError),
     (OverrideConfigError, ValueError),
     (TicketConfigError, ValueError),
     (CredsError, Exception),
@@ -194,6 +201,11 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         BootstrapError,
         DependencyError,
         ProjectScopeError,
+        # The shared base for every input refusal that names its offending
+        # field (DockerBuildError, CoverageInputError): no stdlib type ever
+        # carried a `.field` attribute, so Exception is its honest root —
+        # each concrete subclass still declares its own ValueError/RuntimeError.
+        FieldError,
         # A contradictory ACTIVATION configuration: the labs drop a provider
         # while a kept repo requires it. Sits beside ProjectScopeError above
         # for the same reason it has no stdlib root — the project layer's

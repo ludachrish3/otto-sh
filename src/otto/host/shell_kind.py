@@ -74,7 +74,7 @@ def str_param(
 ) -> str | None:
     """Pop *key* off *params* as a string, or ``None`` when absent.
 
-    Shared by every built-in kind factory (see :mod:`otto.host.llext_kind`),
+    Shared by every built-in kind factory (see :mod:`otto.host.embedded_kind`),
     so the rejection grammar — ``[[seam]] 'name': ...`` — is written once.
     """
     value = params.pop(key, None)

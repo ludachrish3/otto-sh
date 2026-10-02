@@ -400,8 +400,9 @@ async def test_injection_shaped_values_are_quoted_not_executed():
     )
     assert host.exec_calls[-1] == expected_run
     assert (await p.reset_coverage(host)).is_ok
-    expected_delete = f"find {shlex.quote(nasty_cov)} -name '*.gcda' -type f -delete"
-    assert host.run_calls[-1] == (expected_delete, {"sudo": True})
+    cov_q = shlex.quote(nasty_cov)
+    line = f"! test -d {cov_q} || find {cov_q} -name '*.gcda' -type f -delete"
+    assert host.run_calls[-1] == (f"sh -c {shlex.quote(line)}", {"sudo": True})
 
 
 # ── dry-run declines propagate, never crash and never become Error ─────────
@@ -494,7 +495,8 @@ async def test_reset_coverage_deletes_under_sudo():
     host = _DockerHost()
     p = _build(host, image="app:1", cov_dir="/var/cov/app")
     assert (await p.reset_coverage(host)).is_ok
-    assert host.run_calls == [("find /var/cov/app -name '*.gcda' -type f -delete", {"sudo": True})]
+    line = "! test -d /var/cov/app || find /var/cov/app -name '*.gcda' -type f -delete"
+    assert host.run_calls == [(f"sh -c {shlex.quote(line)}", {"sudo": True})]
     assert host.exec_calls == []
 
 

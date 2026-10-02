@@ -421,7 +421,7 @@ console), walking each host's instrumented **products**; it writes the
 `.otto_cov_meta.json` sidecar and produces a `capture.json` per host per
 product — returning a `CollectResult`. A second async call, `run_coverage_report()`,
 renders those captures into a multi-tier HTML report. `collect_coverage`,
-`clean_remote_gcda`, `CollectResult`, and the two named exceptions below
+`clean_coverage`, `CollectResult`, and the two named exceptions below
 (`CoverageConfigError`, `NoCoverageDataError`) are exported at `otto.coverage`;
 `run_coverage_report` lives at `otto.coverage.reporter`.
 
@@ -522,15 +522,45 @@ reaches which exceptions.
 
 ### `clean_after_fetch`
 
-By default `collect_coverage` zeroes the Unix hosts' remote `.gcda` counters
+By default `collect_coverage` zeroes every contributing host's counters —
+Unix and container `.gcda`, an embedded board's `reset_fn` alike —
 immediately after a successful fetch, as `otto test --cov` does. Pass
 `clean_after_fetch=False` to skip that internal clean when you want to own the
 post-fetch reset yourself, as `otto cov get` does: its `--clean` flag zeroes
-only the Unix hosts that actually fetched, never an embedded board on a mixed
-lab. To zero the counters *before* a run instead, call `clean_remote_gcda()`.
+only the hosts that actually fetched a product this call. To zero the
+counters *before* a run instead, call `clean_coverage()`.
 
 See {doc}`../cli/cov/index` for the full CLI workflow, tier configuration, and
 the report format.
+
+## Coverage: get, clean, report
+
+The coverage verbs are library functions first; `otto cov ...` calls them.
+
+```python
+from pathlib import Path
+
+import otto.coverage
+
+report = await otto.coverage.get_coverage(
+    output_dir=Path("coverage-out"), tier="manual", ticket="JIRA-123", clean=True
+)
+print(report.captures, report.manual_captures)
+if not report.ok:
+    for failed in report.clean.failed:
+        print(failed.host, failed.product, failed.reason)
+
+cleared = await otto.coverage.clean_coverage()
+assert cleared.ok, cleared.failed
+```
+
+Every input rule is the library's: an unknown tier, a manual-kind tier without a
+ticket, or no output directory raises
+{class}`~otto.coverage.errors.CoverageInputError` with a `field`. `output_dir`
+may be left out only inside an otto invocation, which supplies its own output
+directory; a standalone script passes one, as above. A failed
+counter reset is never a warning: `clean_coverage` reports it, and `otto test`
+raises {class}`~otto.coverage.errors.CoverageCleanError`.
 
 ## Docker: build, deploy, tear down
 

@@ -242,7 +242,23 @@ path = "otto.coverage"
 # otto.models: the capture artifact's models subclass otto.models.base.OttoModel
 # so their schema builds on first use, not at import. otto.models does not
 # depend on otto.coverage, so this adds no cycle.
-depends_on = ["otto.utils", "otto.host", "otto._webassets", "otto.config", "otto.version", "otto.errors", "otto.models"]
+depends_on = [
+    "otto.utils",
+    "otto.host",
+    "otto._webassets",
+    "otto.config",
+    "otto.version",
+    "otto.errors",
+    "otto.models",
+    # clean_coverage and the product reset hooks build per-product Result
+    # values for the CleanReport. otto.result is a leaf (otto.utils,
+    # otto.errors) that otto.docker already depends on, so no cycle.
+    "otto.result",
+    # get_coverage reads try_get_context() for the per-invocation output
+    # directory, function-locally, as otto.suite.run already does.
+    # otto.context does not depend on otto.coverage, so no cycle.
+    "otto.context",
+]
 
 [[modules]]
 path = "otto.creds"

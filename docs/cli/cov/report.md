@@ -28,6 +28,14 @@ A report whose assembled store ends up **empty** — no captures, no
 harvested counters, no manual store — exits `1` with a one-line error
 naming every location that was searched.
 
+`otto cov report` calls {func}`~otto.coverage.reporter.run_coverage_report`
+with the parsed `OUTPUT_DIRS` and `--tier` pairs, joined into the run-tree
+layout above. A missing run directory, a bad `--tier` (malformed, a
+non-`system` tier with no path, or a repeated name), or a `--dir` that
+cannot be used (none given and no per-invocation directory, or non-empty
+without `--overwrite-dir`) is a usage error and exits `2`; every other
+refusal — including the empty-store case above — exits `1`.
+
 ## Stitching Multiple Runs
 
 To combine coverage from separate test runs into a single report:

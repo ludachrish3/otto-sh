@@ -5,8 +5,10 @@ Covers:
   - Help / no-args behaviour
   - ``otto cov report`` happy path
   - ``otto cov report`` validation errors
-  - ``otto cov get`` validation errors and happy path (fetch layer stubbed)
-  - ``_resolve_tester`` identity defaults (spec decision 15)
+  - ``otto cov get`` and ``otto cov clean``: the flags they pass to the library,
+    how they render its report, and how its refusals become exit codes (the
+    rules themselves are tested in ``tests/unit/cov/test_get.py`` and
+    ``tests/unit/cov/test_clean.py``)
 """
 
 import logging
@@ -18,11 +20,23 @@ from typer.testing import CliRunner
 
 from otto.cli import cov as cov_module
 from otto.cli.cov import cov_app
+from otto.config.coverage_settings import CoverageConfigError
+from otto.config.scope import EmptySelectionError
 from otto.coverage import reporter as reporter_module
-from otto.coverage.capture import produce as produce_module
-from otto.coverage.capture.model import Capture
+from otto.coverage.capture.gitio import NotAGitRepoError
+from otto.coverage.errors import (
+    CoverageDataMismatchError,
+    CoverageInputError,
+    CoverageNotInstrumentedError,
+    NoCoverageDataError,
+    NoCoverageHostsError,
+)
 from otto.coverage.report_inputs import ReportInputs
-from tests._fixtures.gitrepo import TmpGitRepo
+from otto.coverage.reports import CleanReport, GetReport
+from otto.host.errors import HostUnreachableError
+from otto.result import Result
+from otto.utils import Status
+from tests.unit.cli.conftest import _flat
 
 runner = CliRunner()
 
@@ -129,12 +143,69 @@ class TestCovHelp:
 
 
 class TestCovReportValidation:
-    def test_nonexistent_dir_exits_1(self):
-        with patch.object(cov_module.logger, "error") as mock_err:
-            result = runner.invoke(cov_app, ["report", "/no/such/dir"])
-        assert result.exit_code == 1
-        mock_err.assert_called_once()
-        assert "does not exist" in mock_err.call_args[0][0]
+    """The report's input rules are ``run_coverage_report``'s; the leaf only
+    splits ``--tier NAME[=PATH]`` (syntax) and spells a refusal in its flags."""
+
+    @pytest.fixture
+    def run_dir(self, tmp_path):
+        run = tmp_path / "run"
+        (run / "cov").mkdir(parents=True)
+        return run
+
+    def test_a_missing_run_dir_is_a_usage_error_naming_output_dirs(self, tmp_path):
+        missing = tmp_path / "no_such_run"
+        with patch(
+            "otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()
+        ):
+            result = runner.invoke(
+                cov_app, ["report", str(missing), "--dir", str(tmp_path / "out")]
+            )
+        assert result.exit_code == 2
+        out = _flat(result.output)
+        assert "Invalid value for OUTPUT_DIRS" in out
+        assert "output directory does not exist" in out
+        assert not (tmp_path / "out").exists()
+
+    def test_a_non_system_tier_without_a_path_is_a_usage_error(self, run_dir, tmp_path):
+        result = runner.invoke(
+            cov_app,
+            ["report", str(run_dir), "--tier", "unit", "--dir", str(tmp_path / "out")],
+        )
+        assert result.exit_code == 2
+        out = _flat(result.output)
+        assert "Invalid value for --tier" in out
+        assert "Tier 'unit' requires a path (only the 'system' tier may omit a path)" in out
+
+    def test_a_duplicate_tier_name_is_a_usage_error(self, run_dir, tmp_path):
+        result = runner.invoke(
+            cov_app,
+            [
+                "report",
+                str(run_dir),
+                "--tier",
+                "a=x.info",
+                "--tier",
+                "a=y.info",
+                "--dir",
+                str(tmp_path / "out"),
+            ],
+        )
+        assert result.exit_code == 2
+        out = _flat(result.output)
+        assert "Invalid value for --tier" in out
+        assert "Duplicate tier name: 'a'" in out
+
+    @pytest.mark.parametrize("raw", ["=x.info", "unit=", ""])
+    def test_a_malformed_tier_value_is_a_usage_error(self, run_dir, tmp_path, raw):
+        report_mock = AsyncMock()
+        with patch.object(reporter_module, "run_coverage_report", report_mock):
+            result = runner.invoke(
+                cov_app,
+                ["report", str(run_dir), "--tier", raw, "--dir", str(tmp_path / "out")],
+            )
+        assert result.exit_code == 2
+        assert "Invalid value for --tier" in _flat(result.output)
+        report_mock.assert_not_called()
 
     def test_no_gcda_dirs_exits_1(self, tmp_path):
         """Real directory but no cov/ subdirectory → error (git-less legacy path)."""
@@ -462,38 +533,6 @@ class TestCovReportSuccess:
         assert result.exit_code == 0
         names = [name for name, _ in mock.call_args.kwargs["tier_specs"]]
         assert names == ["unit", "system", "integration", "manual"]
-
-    def test_report_non_system_tier_without_path_errors(self, cov_tree):
-        with patch.object(cov_module.logger, "error") as mock_err:
-            result = runner.invoke(
-                cov_app,
-                [
-                    "report",
-                    str(cov_tree),
-                    "--tier",
-                    "unit",  # No path → error (only system may omit)
-                ],
-            )
-        assert result.exit_code == 1
-        mock_err.assert_called_once()
-        assert "requires a path" in mock_err.call_args[0][0]
-
-    def test_report_duplicate_tier_errors(self, cov_tree):
-        with patch.object(cov_module.logger, "error") as mock_err:
-            result = runner.invoke(
-                cov_app,
-                [
-                    "report",
-                    str(cov_tree),
-                    "--tier",
-                    "unit=/a.info",
-                    "--tier",
-                    "unit=/b.info",
-                ],
-            )
-        assert result.exit_code == 1
-        mock_err.assert_called_once()
-        assert "Duplicate --tier name" in mock_err.call_args[0][0]
 
 
 # ── report command — --tickets-json export ───────────────────────────────────
@@ -892,222 +931,180 @@ class TestCovReportCollectionModelErrors:
         assert "not valid TOML" in mock_err.call_args[0][0]
 
 
-# ── _resolve_tester — identity defaults (spec decision 15) ──────────────────
+# ── get command — a thin leaf over get_coverage ─────────────────────────────
+#
+# Every get RULE (tier, ticket, instrumentation, repository, destination, the
+# manual store, the scoped clean) is the library's, tested in
+# tests/unit/cov/test_get.py. These tests own what only the leaf does: pass the
+# parsed flags through, render the report, and turn a refusal into an exit code.
 
 
-class TestResolveTester:
-    def test_explicit_overrides_win(self, monkeypatch, tmp_path):
-        # Should not even consult getpass/git when both are supplied.
-        monkeypatch.setattr("getpass.getuser", lambda: pytest.fail("should not be called"))
-        monkeypatch.setattr(
-            "otto.coverage.capture.gitio.config_value",
-            lambda *a: pytest.fail("should not be called"),
+def _get_report(*, captures=(), clean=None):
+    return GetReport(
+        cov_dir=Path("/o/cov"),
+        tier="system",
+        captures=list(captures),
+        manual_captures=[],
+        clean=clean,
+    )
+
+
+def _not_instrumented_refusal(instrumented):
+    """The refusal ``get_coverage`` raises for a lab of one board with *instrumented*'s verdict."""
+    from otto.coverage.instrumentation import decide_coverage, detect
+
+    board = _embedded_board("board1", products=("app",), instrumented=instrumented)
+    with pytest.raises(CoverageNotInstrumentedError) as e:
+        decide_coverage(True, detect([board]), has_cov_config=True, command="otto cov get")
+    return e.value
+
+
+class TestCovGetLeaf:
+    def test_every_parsed_flag_reaches_get_coverage_unchanged(self):
+        get_mock = AsyncMock(return_value=_get_report(captures=[Path("/o/cov/b/a/capture.json")]))
+        with patch("otto.coverage.get.get_coverage", get_mock):
+            result = runner.invoke(
+                cov_app,
+                [
+                    "get",
+                    "-o",
+                    "/o",
+                    "--tier",
+                    "manual",
+                    "--ticket",
+                    "T-1",
+                    "--note",
+                    "n",
+                    "--tester-name",
+                    "Bob",
+                    "--tester-email",
+                    "bob@x.com",
+                    "--clean",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        get_mock.assert_awaited_once_with(
+            Path("/o"),
+            tier="manual",
+            ticket="T-1",
+            note="n",
+            tester_name="Bob",
+            tester_email="bob@x.com",
+            clean=True,
         )
-        tester = cov_module._resolve_tester("Bob", "bob@x.com", tmp_path)
-        assert tester == {"name": "Bob", "email": "bob@x.com"}
 
-    def test_defaults_from_getpass_and_git_config(self, monkeypatch, tmp_path):
-        monkeypatch.setattr("getpass.getuser", lambda: "alice")
-        monkeypatch.setattr(
-            "otto.coverage.capture.gitio.config_value", lambda root, key: "alice@example.com"
-        )
-        tester = cov_module._resolve_tester(None, None, tmp_path)
-        assert tester == {"name": "alice", "email": "alice@example.com"}
-
-    def test_omits_email_when_git_config_unset(self, monkeypatch, tmp_path):
-        monkeypatch.setattr("getpass.getuser", lambda: "alice")
-        monkeypatch.setattr("otto.coverage.capture.gitio.config_value", lambda root, key: None)
-        tester = cov_module._resolve_tester(None, None, tmp_path)
-        assert tester == {"name": "alice"}
-        assert "email" not in tester
-
-    @pytest.mark.parametrize("failure", ["not_a_repo", "command_failed"])
-    def test_omits_email_when_git_cannot_answer(self, monkeypatch, tmp_path, failure):
-        # Identity defaulting must degrade, not crash, when the sut is not a
-        # repo or `git config` itself fails — both mean "no email to read".
-        from otto.coverage.capture.gitio import GitCommandFailedError, NotAGitRepoError
-
-        exc = NotAGitRepoError if failure == "not_a_repo" else GitCommandFailedError
-        monkeypatch.setattr("getpass.getuser", lambda: "alice")
-
-        def boom(root, key):
-            raise exc("git config user.email failed (rc=128): ...")
-
-        monkeypatch.setattr("otto.coverage.capture.gitio.config_value", boom)
-        tester = cov_module._resolve_tester(None, None, tmp_path)
-        assert tester == {"name": "alice"}
-
-    def test_missing_git_propagates_rather_than_reading_as_no_email(self, monkeypatch, tmp_path):
-        """A box without git is an ENVIRONMENT error, not "this tester has no email".
-
-        Swallowing it here was the conflation the taxonomy split apart.
-        Nothing in ``cov get`` reaches this with git absent — the
-        ``head_commit`` preflight has already proven git runs — so the
-        propagation lands on the top-level CLI handler, which is where an
-        unrunnable git belongs.
-        """
-        from otto.coverage.capture.gitio import GitMissingError
-
-        monkeypatch.setattr("getpass.getuser", lambda: "alice")
-
-        def boom(root, key):
-            raise GitMissingError("git executable not found")
-
-        monkeypatch.setattr("otto.coverage.capture.gitio.config_value", boom)
-        with pytest.raises(GitMissingError):
-            cov_module._resolve_tester(None, None, tmp_path)
-
-    def test_name_override_with_default_email(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(
-            "otto.coverage.capture.gitio.config_value", lambda root, key: "carol@example.com"
-        )
-        tester = cov_module._resolve_tester("Carol", None, tmp_path)
-        assert tester == {"name": "Carol", "email": "carol@example.com"}
-
-    def test_email_reads_sut_repo_not_cwd(self, monkeypatch, tmp_path):
-        # Regression (Tier 0.5): the pre-gitio implementation ran
-        # `git config user.email` in the process CWD, so `otto cov get` from
-        # outside the SUT silently read the wrong repo's identity.
-        def make_repo(name: str, email: str) -> Path:
-            repo = TmpGitRepo(tmp_path / name)
-            # Local (not global) config — the value the product must read back
-            # is the SUT repo's own, so it has to live in that repo's config.
-            repo.git("config", "user.email", email)
-            return repo.root
-
-        sut = make_repo("sut", "sut@example.com")
-        elsewhere = make_repo("elsewhere", "wrong@example.com")
-        monkeypatch.chdir(elsewhere)
-        tester = cov_module._resolve_tester(None, None, sut)
-        assert tester["email"] == "sut@example.com"
-
-
-# ── get command — validation errors ──────────────────────────────────────────
-
-
-class TestCovGetValidation:
-    @staticmethod
-    def _repo(coverage_cfg, sut_dir=None, name="sut"):
-        repo = MagicMock()
-        repo.settings = {"coverage": coverage_cfg} if coverage_cfg is not None else {}
-        repo.sut_dir = sut_dir or Path("/nonexistent/sut")
-        repo.name = name
-        return repo
-
-    @pytest.fixture
-    def git_sut(self, tmp_path):
-        """A real one-commit git repo standing in for the SUT checkout.
-
-        Needed by tests that must get *past* ``_do_get``'s git preflight (a
-        non-git sut fails fast before the fetch) to exercise a later path.
-        """
-        repo = TmpGitRepo(tmp_path / "sut")
-        repo.write("f.c", "int a;\n")
-        repo.commit("init")
-        return repo.root
-
-    def test_no_coverage_config_exits_1(self):
-        repo = self._repo(None)
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch.object(cov_module.logger, "error") as mock_err,
-        ):
+    def test_no_flags_leave_every_default_to_the_library(self):
+        get_mock = AsyncMock(return_value=_get_report(captures=[Path("c")]))
+        with patch("otto.coverage.get.get_coverage", get_mock):
             result = runner.invoke(cov_app, ["get"])
-        assert result.exit_code == 1
-        assert "Traceback" not in result.output
-        assert "coverage" in mock_err.call_args[0][0].lower()
-
-    def test_unknown_tier_lists_configured_tiers(self):
-        repo = self._repo({"hosts": ".*"})
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch.object(cov_module.logger, "error") as mock_err,
-        ):
-            result = runner.invoke(cov_app, ["get", "--tier", "bogus"])
-        assert result.exit_code == 1
-        message = mock_err.call_args[0][0]
-        assert "bogus" in message
-        assert "system" in message
-
-    def test_manual_tier_without_ticket_exits_1(self):
-        repo = self._repo(
-            {
-                "tiers": {
-                    "manual": {"kind": "manual", "precedence": 1},
-                    "system": {"kind": "e2e", "precedence": 2},
-                }
-            }
+        assert result.exit_code == 0, result.output
+        get_mock.assert_awaited_once_with(
+            None,
+            tier=None,
+            ticket=None,
+            note=None,
+            tester_name=None,
+            tester_email=None,
+            clean=False,
         )
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch.object(cov_module.logger, "error") as mock_err,
-        ):
+
+    def test_an_input_refusal_is_a_usage_error_in_flag_spelling(self):
+        err = CoverageInputError(
+            "tier 'manual' is a manual-kind tier and requires a ticket", field="ticket"
+        )
+        with patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=err)):
             result = runner.invoke(cov_app, ["get", "--tier", "manual"])
-        assert result.exit_code == 1
-        message = mock_err.call_args[0][0]
-        assert "ticket" in message.lower()
-        assert "requires --ticket" in message
-
-    def test_ambiguous_default_tier_lists_candidates_exits_1(self):
-        """No --tier given and more than one e2e-kind tier configured is ambiguous."""
-        repo = self._repo(
-            {
-                "tiers": {
-                    "sys_a": {"kind": "e2e", "precedence": 1},
-                    "sys_b": {"kind": "e2e", "precedence": 2},
-                }
-            }
-        )
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch.object(cov_module.logger, "error") as mock_err,
-        ):
-            result = runner.invoke(cov_app, ["get"])
-        assert result.exit_code == 1
-        assert "Traceback" not in result.output
-        message = mock_err.call_args[0][0]
-        assert "sys_a" in message
-        assert "sys_b" in message
+        assert result.exit_code == 2
+        assert "Invalid value for --ticket" in _flat(result.output)
+        assert "requires a ticket" in _flat(result.output)
 
     def test_ambiguous_default_tier_spells_the_remedy_as_a_flag(self):
-        """The library message says "tier=NAME"; the CLI spells it as the
-        flag the user actually has: --tier NAME."""
-        repo = self._repo(
-            {
-                "tiers": {
-                    "sys_a": {"kind": "e2e", "precedence": 1},
-                    "sys_b": {"kind": "e2e", "precedence": 2},
-                }
-            }
+        err = CoverageInputError(
+            "cannot pick a default tier: 2 e2e-kind tiers configured (sys_a, sys_b); "
+            "name one of them",
+            field="tier",
         )
+        with patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=err)):
+            result = runner.invoke(cov_app, ["get"])
+        assert result.exit_code == 2
+        out = _flat(result.output)
+        assert "Invalid value for --tier" in out
+        assert "sys_a, sys_b" in out
+
+    def test_no_output_dir_anywhere_names_the_output_flag(self):
+        err = CoverageInputError(
+            "no output directory was given and none is set for this invocation",
+            field="output_dir",
+        )
+        with patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=err)):
+            result = runner.invoke(cov_app, ["get"])
+        assert result.exit_code == 2
+        assert "Invalid value for --output" in _flat(result.output)
+
+    def test_the_input_refusal_message_passes_through_byte_identical(self):
+        """A message embedding user text is never rewritten: only the hint names the flag."""
+        message = "unknown tier 'tier_name[x]'; configured tiers: system"
+        err = CoverageInputError(message, field="tier")
+        with patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=err)):
+            result = runner.invoke(cov_app, ["get", "--tier", "tier_name[x]"])
+        assert result.exit_code == 2
+        assert message in _flat(result.output)
+
+    def test_a_library_refusal_prints_clean_and_exits_1(self):
         with (
-            patch("otto.config.get_repos", return_value=[repo]),
+            patch(
+                "otto.coverage.get.get_coverage",
+                AsyncMock(side_effect=CoverageConfigError("No [coverage] section found")),
+            ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["get"])
         assert result.exit_code == 1
-        message = mock_err.call_args[0][0]
-        assert "--tier NAME" in message
-        assert "tier=NAME" not in message
+        assert "Traceback" not in result.output
+        assert "[coverage]" in mock_err.call_args[0][0]  # bracket survives escaping
 
-    def test_get_with_no_instrumented_product_exits_1_showing_the_verdict_table(self, git_sut):
-        """``otto cov get`` is a forced-on retrieval: a lab whose products are
-        all uninstrumented is refused before anything is fetched, and the
-        per-product verdicts reach the console as the instrumentation table.
-
-        The logged line is the HEADLINE only. Everything below it in the
-        error's message is the same verdicts in plain text, and printing that
-        under the table would show the reader the same answer twice.
-        """
-        repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
-        board = _embedded_board("board1", products=("app",), instrumented=False)
-
+    @pytest.mark.parametrize(
+        ("error", "logged"),
+        [
+            (EmptySelectionError("sensor", 3), "fullmatches none of the 3 host(s)"),
+            (NotAGitRepoError("not a git repository: /sut"), "not a git repository: /sut"),
+            (
+                NoCoverageDataError("no .gcda counters retrieved from any product (b1:app)"),
+                "no .gcda counters retrieved from any product (b1:app)",
+            ),
+            (CoverageDataMismatchError("stamp"), "Coverage data does not match"),
+            (HostUnreachableError("board1 is down"), "board1 is down"),
+            (RuntimeError("lcov exploded"), "Coverage merge failed: lcov exploded"),
+        ],
+        ids=[
+            "empty-selection",
+            "not-a-git-repo",
+            "no-coverage-data",
+            "data-mismatch",
+            "host-unreachable",
+            "bare-runtime-error",
+        ],
+    )
+    def test_each_library_refusal_is_one_clean_line_and_exit_1(self, error, logged):
         with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[board]),
+            patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=error)),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
-            result = runner.invoke(cov_app, ["get", "-o", str(git_sut.parent / "get_out")])
+            result = runner.invoke(cov_app, ["get"])
+        assert result.exit_code == 1
+        assert not isinstance(result.exception, type(error)), "reached typer unframed"
+        assert logged in " ".join(mock_err.call_args[0][0].split())
+
+    def test_no_instrumented_product_shows_the_verdict_table(self):
+        """The verdicts reach the console as the instrumentation table; the logged
+        line is the HEADLINE only — the rest of the message is the same verdicts
+        in plain text, and printing it under the table would show them twice."""
+        refusal = _not_instrumented_refusal(instrumented=False)
+        with (
+            patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=refusal)),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["get"])
         assert result.exit_code == 1
         assert "Traceback" not in result.output
         message = mock_err.call_args[0][0]
@@ -1117,125 +1114,53 @@ class TestCovGetValidation:
         for cell in ("host", "product", "instrumented", "board1", "app", "no"):
             assert cell in result.output
 
-    def test_get_refusal_table_names_the_override_for_an_unknown_verdict(self, git_sut):
+    def test_the_refusal_table_names_the_override_for_an_unknown_verdict(self):
         """An `unknown` verdict is the one the reader can DO something about."""
-        repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
-        board = _embedded_board("board1", products=("app",), instrumented=None)
-
+        refusal = _not_instrumented_refusal(instrumented=None)
         with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[board]),
+            patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=refusal)),
             patch.object(cov_module.logger, "error"),
         ):
-            result = runner.invoke(cov_app, ["get", "-o", str(git_sut.parent / "unknown_out")])
+            result = runner.invoke(cov_app, ["get"])
         assert result.exit_code == 1
         assert "unknown" in result.output
         assert "Product.instrumented" in result.output
         # The caption's `[[products]]` must survive rich's markup parser.
         assert "[[products]]" in result.output
 
-    def test_zero_counters_exits_1(self, monkeypatch, git_sut):
-        repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
-        board = _embedded_board("board1")
+    def test_success_prints_each_capture_and_the_summary(self):
+        report = _get_report(captures=[Path("/o/cov/t1/app/capture.json")])
+        with patch("otto.coverage.get.get_coverage", AsyncMock(return_value=report)):
+            result = runner.invoke(cov_app, ["get", "-o", "/o"])
+        assert result.exit_code == 0, result.output
+        out = _flat(result.output)
+        assert "/o/cov/t1/app/capture.json" in out
+        assert "Coverage captured: 1 product(s) -> /o/cov" in out
 
-        async def fake_collect(staging_root, pattern=None):
-            return {}
+    def test_a_capture_path_with_brackets_prints_literally(self):
+        report = _get_report(captures=[Path("/o/cov/[t1]/app/capture.json")])
+        with patch("otto.coverage.get.get_coverage", AsyncMock(return_value=report)):
+            result = runner.invoke(cov_app, ["get"])
+        assert result.exit_code == 0, result.output
+        assert "/o/cov/[t1]/app/capture.json" in _flat(result.output)
 
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[board]),
-            patch(
-                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
-                new=fake_collect,
-            ),
-            patch.object(cov_module.logger, "error") as mock_err,
-        ):
-            result = runner.invoke(cov_app, ["get", "-o", str(git_sut.parent / "get_out")])
+    def test_a_successful_clean_prints_each_reset_and_exits_0(self):
+        cleaned = CleanReport(hosts={"t1": {"app": Result(Status.Success)}})
+        report = _get_report(captures=[Path("c")], clean=cleaned)
+        with patch("otto.coverage.get.get_coverage", AsyncMock(return_value=report)):
+            result = runner.invoke(cov_app, ["get", "--clean"])
+        assert result.exit_code == 0, result.output
+        assert "t1/app: counters cleared" in _flat(result.output)
+
+    def test_a_failed_clean_prints_each_reset_and_exits_1(self):
+        bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+        report = _get_report(captures=[Path("c")], clean=bad)
+        with patch("otto.coverage.get.get_coverage", AsyncMock(return_value=report)):
+            result = runner.invoke(cov_app, ["get", "--clean"])
         assert result.exit_code == 1
-        assert "no .gcda" in mock_err.call_args[0][0]
-
-    def test_zero_counters_lists_searched_products(self, monkeypatch, git_sut):
-        """The zero-counter message names what it searched, not just "no data"."""
-        repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
-        board = _embedded_board("zephyr37-fat")
-
-        async def fake_collect(staging_root, pattern=None):
-            return {}
-
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[board]),
-            patch(
-                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
-                new=fake_collect,
-            ),
-            patch.object(cov_module.logger, "error") as mock_err,
-        ):
-            result = runner.invoke(cov_app, ["get", "-o", str(git_sut.parent / "get_out")])
-        assert result.exit_code == 1
-        message = mock_err.call_args[0][0]
-        assert "no .gcda" in message
-        assert "zephyr37-fat" in message
-
-    def test_zero_counters_after_produce_captures_exits_1(self, tmp_path, git_sut):
-        """When produce_captures returns [] despite non-empty product_dirs → error."""
-        repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
-        board = _embedded_board("board1")
-
-        async def fake_collect(staging_root, pattern=None):
-            product_dir = staging_root / "board1" / "app"
-            product_dir.mkdir(parents=True, exist_ok=True)
-            (product_dir / "x.gcda").write_bytes(b"")
-            return {("board1", "app"): product_dir}
-
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[board]),
-            patch(
-                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
-                new=fake_collect,
-            ),
-            patch.object(produce_module, "produce_captures", new=AsyncMock(return_value=[])),
-            patch.object(cov_module.logger, "error") as mock_err,
-        ):
-            result = runner.invoke(cov_app, ["get", "-o", str(tmp_path / "cov_out")])
-        assert result.exit_code == 1
-        assert "Traceback" not in result.output
-        message = mock_err.call_args[0][0]
-        assert "no .gcda" in message
-        assert "board1:app" in message
-
-    def test_non_git_repo_exits_1(self, tmp_path):
-        not_a_repo = tmp_path / "not_a_repo"
-        not_a_repo.mkdir()
-        repo = self._repo({"hosts": ".*"}, sut_dir=not_a_repo)
-        board = _embedded_board("board1")
-
-        async def fake_collect(staging_root, pattern=None):
-            product_dir = staging_root / "board1" / "app"
-            product_dir.mkdir(parents=True)
-            (product_dir / "x.gcda").write_bytes(b"")
-            return {("board1", "app"): product_dir}
-
-        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
-            output.write_text(f"TN:\nSF:{not_a_repo / 'f.c'}\nDA:1,3\nend_of_record\n")
-            return output
-
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[board]),
-            patch(
-                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
-                new=fake_collect,
-            ),
-            patch.object(produce_module.LcovMerger, "capture", fake_capture),
-            patch.object(cov_module.logger, "error") as mock_err,
-        ):
-            result = runner.invoke(cov_app, ["get", "-o", str(tmp_path / "get_out")])
-        assert result.exit_code == 1
-        assert "Traceback" not in result.output
-        assert mock_err.called
-        assert "not a git repository" in mock_err.call_args[0][0]
+        out = _flat(result.output)
+        assert "Coverage captured: 1 product(s)" in out  # the captures were still written
+        assert "t1/app: denied" in out
 
 
 # ── rich-markup escaping — literal brackets must survive the console handler ─
@@ -1256,14 +1181,16 @@ class TestCovMarkupEscaping:
     rendering rather than just the string handed to ``logger.error``.
     """
 
-    def test_no_config_error_renders_literal_brackets(self):
+    @staticmethod
+    def _render_refusal(verb, target):
+        """Invoke *verb* with *target* raising the no-config refusal; return (exit, rendered)."""
         import io
 
         from rich.console import Console
         from rich.highlighter import NullHighlighter
         from rich.logging import RichHandler
 
-        repo = TestCovGetValidation._repo(None)
+        refusal = CoverageConfigError("No [coverage] section found in .otto/settings.toml")
         buf = io.StringIO()
         handler = RichHandler(
             console=Console(file=buf, width=120, force_terminal=False),
@@ -1279,619 +1206,109 @@ class TestCovMarkupEscaping:
         cov_module.logger.setLevel(logging.ERROR)
         cov_module.logger.propagate = False
         try:
-            with patch("otto.config.get_repos", return_value=[repo]):
-                result = runner.invoke(cov_app, ["get"])
+            with patch(target, AsyncMock(side_effect=refusal)):
+                result = runner.invoke(cov_app, [verb])
         finally:
             cov_module.logger.handlers = saved_handlers
             cov_module.logger.setLevel(saved_level)
             cov_module.logger.propagate = saved_propagate
+        return result.exit_code, buf.getvalue()
 
-        assert result.exit_code == 1
-        rendered = buf.getvalue()
+    def test_no_config_error_renders_literal_brackets(self):
+        exit_code, rendered = self._render_refusal("get", "otto.coverage.get.get_coverage")
+        assert exit_code == 1
         assert "[coverage]" in rendered
         assert "No  section found" not in rendered
 
     def test_clean_no_config_error_renders_literal_brackets(self):
-        import io
-
-        from rich.console import Console
-        from rich.highlighter import NullHighlighter
-        from rich.logging import RichHandler
-
-        repo = TestCovGetValidation._repo(None)
-        buf = io.StringIO()
-        handler = RichHandler(
-            console=Console(file=buf, width=120, force_terminal=False),
-            markup=True,
-            highlighter=NullHighlighter(),
-            show_time=False,
-            show_path=False,
-        )
-        saved_handlers = list(cov_module.logger.handlers)
-        saved_level = cov_module.logger.level
-        saved_propagate = cov_module.logger.propagate
-        cov_module.logger.handlers = [handler]
-        cov_module.logger.setLevel(logging.ERROR)
-        cov_module.logger.propagate = False
-        try:
-            with patch("otto.config.get_repos", return_value=[repo]):
-                result = runner.invoke(cov_app, ["clean"])
-        finally:
-            cov_module.logger.handlers = saved_handlers
-            cov_module.logger.setLevel(saved_level)
-            cov_module.logger.propagate = saved_propagate
-
-        assert result.exit_code == 1
-        rendered = buf.getvalue()
+        exit_code, rendered = self._render_refusal("clean", "otto.coverage.collect.clean_coverage")
+        assert exit_code == 1
         assert "[coverage]" in rendered
         assert "No  section found" not in rendered
 
 
-# ── get command — success (fetch layer stubbed at the I/O boundary) ─────────
+# ── clean command — a thin leaf over clean_coverage ─────────────────────────
+#
+# Which hosts are walked, how each product is reset, and every refusal are the
+# library's (tests/unit/cov/test_clean.py). The leaf calls it with no
+# arguments and renders the report.
 
 
-class TestCovGetSuccess:
-    @pytest.fixture
-    def repo(self, tmp_path):
-        """A real tmp_path git repo standing in for the SUT."""
-        repo = TmpGitRepo(tmp_path / "sut")
-        repo.write("f.c", "int a;\nint b;\n")
-        repo.commit("init")
-        return repo.root
-
-    @staticmethod
-    def _repo_mock(sut_dir, coverage_cfg, name="sut"):
-        repo = MagicMock()
-        repo.settings = {"coverage": coverage_cfg}
-        repo.sut_dir = sut_dir
-        repo.name = name
-        return repo
-
-    @staticmethod
-    def _fake_capture(sut_dir):
-        async def _capture(self, gcda_dir, gcno_dir, output, toolchain=None):
-            output.write_text(f"TN:\nSF:{sut_dir / 'f.c'}\nDA:1,3\nend_of_record\n")
-            return output
-
-        return _capture
-
-    @staticmethod
-    def _fake_collect_one_board():
-        """Stand in for the embedded collector: one board, one product dir."""
-
-        async def fake_collect(staging_root, pattern=None):
-            product_dir = staging_root / "board1" / "app"
-            product_dir.mkdir(parents=True)
-            (product_dir / "x.gcda").write_bytes(b"")
-            return {("board1", "app"): product_dir}
-
-        return fake_collect
-
-    def test_get_defaults_to_the_per_invocation_output_dir(self, tmp_path, repo, monkeypatch):
-        """Without --output, `cov get` writes into the standard per-invocation
-        output directory the CLI preamble records on the context — the same
-        free output dir every other lab-touching command gets."""
-        from otto.config.lab import Lab
-        from otto.context import OttoContext, reset_context, set_context
-
-        cov_repo = self._repo_mock(repo, {"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
-        monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr(
-            "otto.config.all_hosts", lambda pattern=None, **kw: iter([_embedded_board()])
-        )
-        monkeypatch.setattr(
-            "otto.coverage.fetcher.embedded.collect_embedded_coverage",
-            self._fake_collect_one_board(),
-        )
-        monkeypatch.setattr(produce_module.LcovMerger, "capture", self._fake_capture(repo))
-
-        invocation_dir = tmp_path / "xdir" / "cov" / "20260703_120000_000_get"
-        invocation_dir.mkdir(parents=True)
-        token = set_context(OttoContext(lab=Lab(name="t"), output_dir=invocation_dir))
-        try:
-            result = runner.invoke(cov_app, ["get"])
-        finally:
-            reset_context(token)
-
+class TestCovCleanLeaf:
+    def test_clean_coverage_is_called_with_no_arguments(self):
+        clean_mock = AsyncMock(return_value=CleanReport(hosts={}))
+        with patch("otto.coverage.collect.clean_coverage", clean_mock):
+            result = runner.invoke(cov_app, ["clean"])
         assert result.exit_code == 0, result.output
-        assert (invocation_dir / "cov" / "board1" / "app" / "capture.json").is_file()
+        clean_mock.assert_awaited_once_with()
 
-    def test_get_without_output_dir_anywhere_exits_1(self, repo, monkeypatch):
-        """No --output and no context output dir (e.g. a programmatic call
-        outside the CLI preamble) fails with a clean one-line error — after
-        config/tier validation, so a config problem is never masked by it."""
-        from otto.config.lab import Lab
-        from otto.context import OttoContext, reset_context, set_context
-
-        cov_repo = self._repo_mock(repo, {"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
-        monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr(
-            "otto.config.all_hosts", lambda pattern=None, **kw: iter([_embedded_board()])
+    def test_every_reset_gets_a_line_and_a_failure_exits_1(self):
+        report = CleanReport(
+            hosts={
+                "t1": {"app": Result(Status.Success)},
+                "zephyr": {"ext": Result(Status.Error, msg="reset_fn 'cov_reset' failed")},
+            }
         )
-
-        token = set_context(OttoContext(lab=Lab(name="t"), output_dir=None))
-        try:
-            with patch.object(cov_module.logger, "error") as mock_err:
-                result = runner.invoke(cov_app, ["get"])
-        finally:
-            reset_context(token)
-
+        with patch("otto.coverage.collect.clean_coverage", AsyncMock(return_value=report)):
+            result = runner.invoke(cov_app, ["clean"])
+        out = _flat(result.output)
+        assert "t1/app: counters cleared" in out
+        assert "zephyr/ext: reset_fn 'cov_reset' failed" in out
         assert result.exit_code == 1
-        assert "Traceback" not in result.output
-        assert "--output" in mock_err.call_args[0][0]
 
-    def test_get_manual_tier_writes_capture_and_manual_store(self, tmp_path, repo, monkeypatch):
-        cov_repo = self._repo_mock(
-            repo,
-            {
-                "tiers": {
-                    "manual": {"kind": "manual", "precedence": 1},
-                    "system": {"kind": "e2e", "precedence": 2},
-                }
-            },
+    def test_every_success_exits_0(self):
+        report = CleanReport(
+            hosts={"t1": {"app": Result(Status.Success), "lib": Result(Status.Success)}}
         )
-
-        monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr(
-            "otto.config.all_hosts", lambda pattern=None, **kw: iter([_embedded_board()])
-        )
-        monkeypatch.setattr(
-            "otto.coverage.fetcher.embedded.collect_embedded_coverage",
-            self._fake_collect_one_board(),
-        )
-        monkeypatch.setattr(produce_module.LcovMerger, "capture", self._fake_capture(repo))
-
-        out_dir = tmp_path / "get_out"
-        result = runner.invoke(
-            cov_app,
-            [
-                "get",
-                "-o",
-                str(out_dir),
-                "--tier",
-                "manual",
-                "--ticket",
-                "T-1",
-                "--note",
-                "session note",
-                "--tester-name",
-                "Bob",
-                "--tester-email",
-                "bob@x.com",
-            ],
-        )
+        with patch("otto.coverage.collect.clean_coverage", AsyncMock(return_value=report)):
+            result = runner.invoke(cov_app, ["clean"])
         assert result.exit_code == 0, result.output
+        out = _flat(result.output)
+        assert "t1/app: counters cleared" in out
+        assert "t1/lib: counters cleared" in out
 
-        capture_path = out_dir / "cov" / "board1" / "app" / "capture.json"
-        assert capture_path.is_file()
-        cap = Capture.load(capture_path)
-        assert cap.tier == "manual"
-        assert cap.ticket == "T-1"
-        assert cap.note == "session note"
-        assert cap.tester == {"name": "Bob", "email": "bob@x.com"}
-
-        manual_dir = repo / ".otto" / "coverage" / "manual"
-        manual_files = list(manual_dir.glob("*.json"))
-        assert len(manual_files) == 1
-        manual_cap = Capture.load(manual_files[0])
-        assert manual_cap.ticket == "T-1"
-
-    def test_get_default_tier_no_manual_store(self, tmp_path, repo, monkeypatch):
-        cov_repo = self._repo_mock(repo, {"hosts": ".*"})
-
-        monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr(
-            "otto.config.all_hosts", lambda pattern=None, **kw: iter([_embedded_board()])
-        )
-        monkeypatch.setattr(
-            "otto.coverage.fetcher.embedded.collect_embedded_coverage",
-            self._fake_collect_one_board(),
-        )
-        monkeypatch.setattr(produce_module.LcovMerger, "capture", self._fake_capture(repo))
-
-        out_dir = tmp_path / "get_out2"
-        result = runner.invoke(cov_app, ["get", "-o", str(out_dir)])
+    def test_a_dry_run_prints_not_run_and_exits_0(self):
+        report = CleanReport(hosts={"t1": {"app": Result(Status.NotRun)}})
+        with patch("otto.coverage.collect.clean_coverage", AsyncMock(return_value=report)):
+            result = runner.invoke(cov_app, ["clean"])
         assert result.exit_code == 0, result.output
+        assert "t1/app: not run (dry run)" in _flat(result.output)
 
-        capture_path = out_dir / "cov" / "board1" / "app" / "capture.json"
-        assert capture_path.is_file()
-        cap = Capture.load(capture_path)
-        assert cap.tier == "system"
-        assert cap.ticket is None
-        assert cap.tester is None
-
-        manual_dir = repo / ".otto" / "coverage" / "manual"
-        assert not manual_dir.exists() or not list(manual_dir.glob("*.json"))
-
-    def test_resolve_get_tier_called_once_across_full_get_flow(self, tmp_path, repo, monkeypatch):
-        """``_do_get`` resolves the tier once; ``collect_coverage`` must not
-        re-resolve it from the name.
-
-        Regression for the double-resolve: before the fix, ``_do_get``
-        resolved the tier via ``resolve_get_tier`` and then passed only the
-        resolved *name* into ``collect_coverage``, which re-resolved it a
-        second time internally. Passing the already-resolved ``TierConfig``
-        object through means ``resolve_get_tier`` runs exactly once for the
-        whole ``otto cov get`` invocation.
-        """
-        from otto.coverage import tiers as tiers_module
-
-        cov_repo = self._repo_mock(repo, {"hosts": ".*"})
-
-        monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr(
-            "otto.config.all_hosts", lambda pattern=None, **kw: iter([_embedded_board()])
-        )
-        monkeypatch.setattr(
-            "otto.coverage.fetcher.embedded.collect_embedded_coverage",
-            self._fake_collect_one_board(),
-        )
-        monkeypatch.setattr(produce_module.LcovMerger, "capture", self._fake_capture(repo))
-
-        resolve_spy = MagicMock(wraps=tiers_module.resolve_get_tier)
-        monkeypatch.setattr(tiers_module, "resolve_get_tier", resolve_spy)
-
-        out_dir = tmp_path / "get_out_resolve_once"
-        result = runner.invoke(cov_app, ["get", "-o", str(out_dir)])
+    def test_a_host_with_no_instrumented_product_gets_one_line(self):
+        report = CleanReport(hosts={"t1": {}})
+        with patch("otto.coverage.collect.clean_coverage", AsyncMock(return_value=report)):
+            result = runner.invoke(cov_app, ["clean"])
         assert result.exit_code == 0, result.output
-        assert resolve_spy.call_count == 1
+        assert "t1: no instrumented products" in _flat(result.output)
 
-    def test_get_clean_calls_clean_remote_when_fetch_hosts_fetched(
-        self, tmp_path, repo, monkeypatch
-    ):
-        """``--clean`` zeroes remote counters via the same fetcher used to fetch."""
-        from otto.host import UnixHost
+    def test_a_failure_reason_with_brackets_prints_literally(self):
+        report = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="perm [denied]")}})
+        with patch("otto.coverage.collect.clean_coverage", AsyncMock(return_value=report)):
+            result = runner.invoke(cov_app, ["clean"])
+        assert result.exit_code == 1
+        assert "t1/app: perm [denied]" in _flat(result.output)
 
-        cov_repo = self._repo_mock(repo, {"hosts": ".*"})
-        unix_host = _host_double("host1", cls=UnixHost)
-
-        out_dir = tmp_path / "get_out3"
-        # _do_get resolves cov_dir = output_dir / "cov"; the mocked fetcher
-        # doesn't touch disk, so the product dir + meta parent must exist here.
-        product_dir = out_dir / "cov" / "host1" / "app"
-        product_dir.mkdir(parents=True)
-        (product_dir / "x.gcda").write_bytes(b"")
-
-        fetcher_instance = MagicMock()
-        fetcher_instance.fetch_all = AsyncMock(return_value={("host1", "app"): product_dir})
-        fetcher_instance.clean_remote = AsyncMock(return_value=None)
-
-        async def fake_embedded(staging_root, pattern=None):
-            return {}
-
+    def test_no_hosts_prints_clean_and_exits_1(self):
+        err = NoCoverageHostsError("No coverage host matched [coverage].hosts — nothing to clean")
         with (
-            patch("otto.config.get_repos", return_value=[cov_repo]),
-            patch("otto.config.all_hosts", return_value=[unix_host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
-            patch(
-                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
-                new=fake_embedded,
-            ),
-            patch.object(produce_module.LcovMerger, "capture", self._fake_capture(repo)),
-        ):
-            result = runner.invoke(cov_app, ["get", "-o", str(out_dir), "--clean"])
-
-        assert result.exit_code == 0, result.output
-        # Each product carries its own remote cov_dir now: clean_remote takes
-        # no directory argument, it walks the instrumented products itself.
-        fetcher_instance.clean_remote.assert_awaited_once_with()
-
-    def test_get_clean_scopes_clean_pattern_to_fetch_hosts_only(self, tmp_path, repo, monkeypatch):
-        """Mixed lab: ``get --clean`` must zero only the fetchable hosts, never
-        the embedded board — the post-fetch clean uses a second fetcher scoped
-        to the fetched ids (clean_remote re-derives its own host set with no
-        EmbeddedHost guard, the exact bug already fixed for `cov clean`)."""
-        from otto.host import UnixHost
-
-        cov_repo = self._repo_mock(repo, {"hosts": ".*"})
-        unix_host = _host_double("zephyr37-llext", cls=UnixHost)
-        embedded_host = _embedded_board("zeph1")
-
-        out_dir = tmp_path / "get_out_clean"
-        product_dir = out_dir / "cov" / "zephyr37-llext" / "app"
-        product_dir.mkdir(parents=True)
-        (product_dir / "x.gcda").write_bytes(b"")
-
-        fetcher_instance = MagicMock()
-        fetcher_instance.fetch_all = AsyncMock(
-            return_value={("zephyr37-llext", "app"): product_dir}
-        )
-        fetcher_instance.clean_remote = AsyncMock(return_value=None)
-
-        async def fake_embedded(staging_root, pattern=None):
-            return {}
-
-        with (
-            patch("otto.config.get_repos", return_value=[cov_repo]),
-            patch("otto.config.all_hosts", return_value=[unix_host, embedded_host]),
-            patch(
-                "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
-            ) as mock_fetcher_cls,
-            patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=fake_embedded),
-            patch.object(produce_module.LcovMerger, "capture", self._fake_capture(repo)),
-        ):
-            result = runner.invoke(cov_app, ["get", "-o", str(out_dir), "--clean"])
-
-        assert result.exit_code == 0, result.output
-        fetcher_instance.clean_remote.assert_awaited_once_with()
-        # The clean fetcher (second construction) is scoped to fetched ids only.
-        clean_pattern = mock_fetcher_cls.call_args_list[-1].kwargs["pattern"]
-        assert clean_pattern.search("zephyr37-llext")
-        assert not clean_pattern.search("zeph1")
-
-
-# ── clean command — validation errors ────────────────────────────────────────
-
-
-class TestCovCleanValidation:
-    @staticmethod
-    def _repo(coverage_cfg, name="sut"):
-        repo = MagicMock()
-        repo.settings = {"coverage": coverage_cfg} if coverage_cfg is not None else {}
-        repo.name = name
-        return repo
-
-    def test_no_coverage_config_exits_1(self):
-        repo = self._repo(None)
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.coverage.collect.clean_coverage", AsyncMock(side_effect=err)),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["clean"])
         assert result.exit_code == 1
         assert "Traceback" not in result.output
-        assert "coverage" in mock_err.call_args[0][0].lower()
+        assert "[coverage].hosts" in mock_err.call_args[0][0]
 
-    def test_no_matching_hosts_exits_1(self):
-        repo = self._repo({"hosts": ".*"})
+    def test_no_coverage_section_prints_clean_and_exits_1(self):
+        err = CoverageConfigError("No [coverage] section found in .otto/settings.toml")
         with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch("otto.coverage.collect.clean_coverage", AsyncMock(side_effect=err)),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["clean"])
         assert result.exit_code == 1
-        assert "Traceback" not in result.output
-        assert "fetchable" in mock_err.call_args[0][0]
-
-    def test_only_unfetchable_hosts_says_so_rather_than_blaming_the_selector(self):
-        """The runner itself can match ``[coverage].hosts`` and is then dropped
-        as unfetchable — the message must say no *fetchable* host matched and
-        name the excluded families, not send the reader back to the regex."""
-        from otto.host.local_host import LocalHost
-
-        repo = self._repo({"hosts": ".*"})
-        runner_host = _host_double("otto-runner", cls=LocalHost)
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[runner_host]),
-            patch.object(cov_module.logger, "error") as mock_err,
-        ):
-            result = runner.invoke(cov_app, ["clean"])
-        assert result.exit_code == 1
-        assert "Traceback" not in result.output
-        message = mock_err.call_args[0][0]
-        assert "fetchable" in message
-        assert "runner" in message
-        assert "embedded" in message
-
-    def test_empty_selection_from_the_hosts_pattern_is_framed(self):
-        """A ``[coverage].hosts`` regex that selects nothing prints a line, not a traceback.
-
-        ``_connect_cov_hosts`` runs BEFORE every one of this command's own
-        checks, and the walk it starts is a generator — so its empty-selection
-        refusal surfaces from inside the ``list(...)``, ahead of any handler
-        that would have framed it. The fake is a generator function to keep
-        that timing honest.
-        """
-        from otto.config.scope import EmptySelectionError
-
-        def _raising_all_hosts(*args, **kwargs):
-            raise EmptySelectionError("sensor", 3)
-            yield  # pragma: no cover — unreachable; makes this a generator function
-
-        repo = self._repo({"hosts": "sensor"})
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", _raising_all_hosts),
-            patch.object(cov_module.logger, "error") as mock_err,
-        ):
-            result = runner.invoke(cov_app, ["clean"])
-        assert result.exit_code == 1
-        assert not isinstance(result.exception, EmptySelectionError), (
-            "the selection error reached typer unframed — the user gets a traceback"
-        )
-        assert "fullmatches none of the 3 host(s)" in " ".join(mock_err.call_args[0][0].split())
-
-
-# ── clean command — success (fetch layer stubbed at the I/O boundary) ───────
-
-
-class TestCovCleanSuccess:
-    @staticmethod
-    def _repo(coverage_cfg, name="sut"):
-        repo = MagicMock()
-        repo.settings = {"coverage": coverage_cfg}
-        repo.name = name
-        return repo
-
-    @staticmethod
-    def _unix_host(host_id="host1"):
-        from otto.host import UnixHost
-
-        host = MagicMock()
-        host.id = host_id
-        host.__class__ = UnixHost
-        return host
-
-    @staticmethod
-    def _embedded_host(host_id="board1"):
-        from otto.host.embedded_host import EmbeddedHost
-
-        host = MagicMock()
-        host.id = host_id
-        host.__class__ = EmbeddedHost
-        return host
-
-    def test_clean_calls_clean_remote(self):
-        """The required TDD case: stubbed fetcher, clean_remote invoked, exit 0."""
-        repo = self._repo({"hosts": ".*"})
-        unix_host = self._unix_host()
-
-        fetcher_instance = MagicMock()
-        fetcher_instance.clean_remote = AsyncMock(return_value=None)
-
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[unix_host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
-        ):
-            result = runner.invoke(cov_app, ["clean"])
-
-        assert result.exit_code == 0, result.output
-        fetcher_instance.clean_remote.assert_awaited_once_with()
-
-    def test_clean_embedded_only_logs_note_and_skips_clean_remote(self):
-        repo = self._repo({"hosts": ".*"})
-        embedded_host = self._embedded_host()
-
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[embedded_host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher") as mock_fetcher_cls,
-            patch.object(cov_module.logger, "info") as mock_info,
-        ):
-            result = runner.invoke(cov_app, ["clean"])
-
-        assert result.exit_code == 0, result.output
-        mock_fetcher_cls.assert_not_called()
-        assert any(
-            "embedded boards not cleaned" in str(c.args[0]) for c in mock_info.call_args_list
-        )
-
-    def test_clean_mixed_hosts_cleans_unix_and_notes_embedded(self):
-        repo = self._repo({"hosts": ".*"})
-        unix_host = self._unix_host()
-        embedded_host = self._embedded_host()
-
-        fetcher_instance = MagicMock()
-        fetcher_instance.clean_remote = AsyncMock(return_value=None)
-
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[unix_host, embedded_host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
-            patch.object(cov_module.logger, "info") as mock_info,
-        ):
-            result = runner.invoke(cov_app, ["clean"])
-
-        assert result.exit_code == 0, result.output
-        fetcher_instance.clean_remote.assert_awaited_once_with()
-        assert any(
-            "embedded boards not cleaned" in str(c.args[0]) for c in mock_info.call_args_list
-        )
-
-    def test_clean_scopes_fetcher_pattern_to_unix_hosts_only(self):
-        """Mixed lab: the fetcher's pattern (which clean_remote()'s own
-        do_for_all_hosts() call re-matches against every lab host, with no
-        EmbeddedHost guard) must only match the unix host, never the
-        embedded one — even though both matched [coverage].hosts."""
-        repo = self._repo({"hosts": ".*"})
-        unix_host = self._unix_host("zephyr37-llext")
-        embedded_host = self._embedded_host("zeph1")
-
-        fetcher_instance = MagicMock()
-        fetcher_instance.clean_remote = AsyncMock(return_value=None)
-
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[unix_host, embedded_host]),
-            patch(
-                "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
-            ) as mock_fetcher_cls,
-            patch.object(cov_module.logger, "info") as mock_info,
-        ):
-            result = runner.invoke(cov_app, ["clean"])
-
-        assert result.exit_code == 0, result.output
-        fetcher_instance.clean_remote.assert_awaited_once_with()
-
-        used_pattern = mock_fetcher_cls.call_args.kwargs["pattern"]
-        assert used_pattern.search("zephyr37-llext")
-        assert not used_pattern.search("zeph1")
-        assert any(
-            "embedded boards not cleaned" in str(c.args[0]) for c in mock_info.call_args_list
-        )
-
-    def test_clean_pattern_does_not_let_prefix_id_collide(self):
-        """A unix host id that is a prefix of another host's id (e.g.
-        "zephyr37-fat" vs. "zephyr37-fat2") must not accidentally match the longer id
-        through an unanchored regex search."""
-        repo = self._repo({"hosts": ".*"})
-        unix_host = self._unix_host("zephyr37-fat")
-        other_host = self._embedded_host("zephyr37-fat2")
-
-        fetcher_instance = MagicMock()
-        fetcher_instance.clean_remote = AsyncMock(return_value=None)
-
-        with (
-            patch("otto.config.get_repos", return_value=[repo]),
-            patch("otto.config.all_hosts", return_value=[unix_host, other_host]),
-            patch(
-                "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
-            ) as mock_fetcher_cls,
-        ):
-            result = runner.invoke(cov_app, ["clean"])
-
-        assert result.exit_code == 0, result.output
-        used_pattern = mock_fetcher_cls.call_args.kwargs["pattern"]
-        assert used_pattern.search("zephyr37-fat")
-        assert not used_pattern.search("zephyr37-fat2")
-
-
-# ── _capture_annotations — tier-aware annotation resolution ────────────────────
-
-
-class TestCaptureAnnotations:
-    """ticket/note annotate every tier kind; tester attribution stays manual-only."""
-
-    def test_e2e_kind_keeps_ticket_and_note_but_no_tester(self):
-        from otto.cli.cov import _capture_annotations
-
-        tester, ticket, note = _capture_annotations(
-            "e2e", "CI-77", "nightly run", "Al", "al@x", Path("/nonexistent")
-        )
-        assert tester is None
-        assert (ticket, note) == ("CI-77", "nightly run")
-
-    def test_manual_kind_resolves_tester(self, monkeypatch):
-        import otto.cli.cov as cov_mod
-
-        monkeypatch.setattr(cov_mod, "_resolve_tester", lambda n, e, d: {"name": n, "email": e})
-        tester, ticket, note = cov_mod._capture_annotations(
-            "manual", "T-1", None, "Al", "al@x", Path("/nonexistent")
-        )
-        assert tester == {"name": "Al", "email": "al@x"}
-        assert (ticket, note) == ("T-1", None)
-
-
-# ── [coverage].hosts selector validation ─────────────────────────────────────
-
-
-class TestConnectCovHostsSelectorValidation:
-    """A non-string ``[coverage].hosts`` is refused by name, not by re.compile."""
-
-    @pytest.mark.asyncio
-    async def test_non_string_hosts_selector_is_refused_by_name(self, monkeypatch):
-        from types import SimpleNamespace
-
-        from otto.cli.cov import _connect_cov_hosts, _CovError
-
-        repo = SimpleNamespace(settings={"coverage": {"hosts": ["host1", "host2"]}})
-        # ``_connect_cov_hosts`` re-imports lazily at call time, so patch the source.
-        monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
-        with pytest.raises(_CovError, match="hosts must be a string"):
-            await _connect_cov_hosts()
+        assert not isinstance(result.exception, CoverageConfigError)
+        assert "[coverage]" in mock_err.call_args[0][0]
 
 
 # ── kmodcov subgroup — export/check are thin over otto.kmodcov, lab-free ────────

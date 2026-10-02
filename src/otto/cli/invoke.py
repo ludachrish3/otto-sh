@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from ..config.repo import Repo
     from ..context import OttoContext
     from ..coverage.config import DestinationError
-    from ..docker.build_verbs import DockerBuildError
+    from ..errors import FieldError
     from ..registry import Registry
     from ..result import Result
     from .registry import CommandSpec
@@ -112,11 +112,11 @@ def spell_flags(text: str, flags: "Mapping[str, str]") -> str:
 
 
 def usage_error_from(
-    exc: "OptionsValidationError | DestinationError | DockerBuildError",
+    exc: "OptionsValidationError | DestinationError | FieldError",
     *,
     flags: "Mapping[str, str] | None" = None,
 ) -> typer.BadParameter:
-    """Translate a library options or destination failure into click's exit-2 usage error.
+    """Translate a library options, destination, or field-named input failure into a usage error.
 
     The one place this translation happens. With *flags* (field name to
     flag) the message is spelled in the command's flags and ``param_hint``
@@ -130,11 +130,10 @@ def usage_error_from(
     is never spelled by rewriting its text: its message is rebuilt from
     scratch via :func:`~otto.coverage.config.destination_message`, passing
     the flag spellings in as the subject/remedy instead of the field names.
-    A ``DockerBuildError``'s message is treated
-    the same way, for the same reason: it can embed a repo or image name the
-    user typed (``'apo'``), and ``spell_flags`` rewriting ``images`` inside
-    that quoted text would corrupt it. The message is passed through
-    untouched; only ``param_hint`` carries the flag.
+    A :class:`~otto.errors.FieldError`'s message (a ``DockerBuildError``, a
+    ``CoverageInputError``) is treated the same way: it can embed text the
+    user typed, so it passes through untouched and only ``param_hint``
+    carries the flag.
 
     Anything else (an :class:`~otto.params.OptionsValidationError`) still
     goes through :func:`spell_flags`, which is a pure text-rewriting helper.
@@ -153,7 +152,7 @@ def usage_error_from(
     hint = None
     if flags:
         from ..coverage.config import DestinationError, destination_message
-        from ..docker.build_verbs import DockerBuildError
+        from ..errors import FieldError
 
         if isinstance(exc, DestinationError):
             message = destination_message(
@@ -163,7 +162,7 @@ def usage_error_from(
                 remedy=f"pass {flags.get(exc.remedy_field, exc.remedy_field)}",
                 reason=exc.reason,
             )
-        elif isinstance(exc, DockerBuildError):
+        elif isinstance(exc, FieldError):
             pass  # the message embeds user text; pass through byte-identical
         else:
             message = spell_flags(message, flags)

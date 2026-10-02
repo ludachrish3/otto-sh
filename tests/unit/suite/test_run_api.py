@@ -349,7 +349,7 @@ def test_run_tests_forced_cov_with_nothing_instrumented_raises(tmp_path, monkeyp
     _use_repo(monkeypatch, _stub_repo(tmp_path))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     pre_clean = AsyncMock()
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", pre_clean)
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", pre_clean)
     _stub_instrumented_lab(monkeypatch, instrumented=False)
 
     with pytest.raises(CoverageNotInstrumentedError):
@@ -386,7 +386,7 @@ def test_run_tests_forced_cov_without_coverage_table_refuses_before_the_run(tmp_
     _use_repo(monkeypatch, _stub_repo(tmp_path))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     pre_clean = AsyncMock()
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", pre_clean)
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", pre_clean)
     monkeypatch.setattr(
         "otto.coverage.instrumentation.detect_for_lab",
         lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
@@ -531,7 +531,7 @@ def _run_tests_report(tmp_path, monkeypatch, *, run_options, log_dir):
     _use_repo(monkeypatch, _stub_repo(tmp_path, sut_dir=log_dir, tests=[log_dir]))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
 
     mock_store = MagicMock()
@@ -621,7 +621,7 @@ def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
 
     _use_repo(monkeypatch, _stub_repo(tmp_path, sut_dir=log_dir, tests=[log_dir]))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
     # cov_report=True now forces cov=True too (construction-time rule), so the
     # fetch machinery runs; stub it out — this test's subject is the report path.
@@ -702,7 +702,7 @@ def test_run_tests_ticket_spec_threaded_from_settings(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
 
     mock_store = MagicMock()
@@ -843,7 +843,7 @@ def test_run_tests_overrides_threaded_from_settings(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
 
     mock_store = MagicMock()
@@ -892,7 +892,7 @@ def test_run_tests_malformed_overrides_file_warns_and_run_still_succeeds(
     )
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
     mock_run_report = AsyncMock()
     monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
@@ -1320,7 +1320,7 @@ def test_run_tests_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypat
     _use_repo(monkeypatch, _stub_repo(tmp_path))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     clean_mock = AsyncMock()
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", clean_mock)
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", clean_mock)
     _stub_instrumented_lab(monkeypatch)
 
     with pytest.raises(DestinationError, match="cov_dir target"):
@@ -1370,7 +1370,7 @@ def test_run_tests_overwrite_cov_dir_true_clears_and_proceeds(tmp_path, monkeypa
 
     _use_repo(monkeypatch, _stub_repo(tmp_path))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
-    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
 
@@ -1381,6 +1381,192 @@ def test_run_tests_overwrite_cov_dir_true_clears_and_proceeds(tmp_path, monkeypa
     )
     assert result.passed
     assert not (cov_dir / "stale.txt").exists()
+
+
+# ── run_tests / _pre_run_cov_clean, _post_run_coverage: a failed clear fails the run ──
+#
+# Chris's ruling: ANY inability to clear coverage counters is a failure, never
+# a warning — including the clean after collection in an otherwise-passing
+# ``otto test --cov`` run. The pre-run clean's failure is raised from inside
+# ``_Sessions._before_tests``, a real pytest hook (``pytest_runtestloop``) a
+# stubbed ``pytest.main`` never fires, so that one test below runs a real
+# nested session (``sut_repo`` + ``real_shell_bytecode``) rather than this
+# file's usual ``pytest_main_returning()`` stub.
+
+
+def test_a_failed_pre_clean_stops_the_run_before_any_test(
+    tmp_path, monkeypatch, sut_repo, real_shell_bytecode
+):
+    """A failed pre-run clean raises before any test, naming the host and product.
+
+    A stubbed ``pytest.main`` (this file's usual harness) never calls
+    ``OttoPlugin.pytest_runtestloop``, so ``_before_tests`` — and the pre-clean
+    it drives — would never run under it; this test runs a real nested session
+    instead, over a SUT repo whose one test writes a marker file if it runs.
+    """
+    from otto.coverage.errors import CoverageCleanError
+    from otto.coverage.instrumentation import InstrumentationReport, InstrumentationRow
+    from otto.coverage.reports import CleanReport
+    from otto.result import Result
+    from otto.utils import Status
+
+    marker = tmp_path / "ran.marker"
+    sut_repo(
+        files={
+            "tests/test_a.py": (
+                "import pathlib\n\n\n"
+                f"def {_ALPHA}():\n"
+                f"    pathlib.Path({str(marker)!r}).write_text('ran')\n"
+            )
+        }
+    )
+    monkeypatch.setattr(
+        "otto.coverage.instrumentation.detect_for_lab",
+        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
+    )
+    monkeypatch.setattr(
+        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ".*"}
+    )
+    bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock(return_value=bad))
+
+    with pytest.raises(CoverageCleanError, match="t1/app: denied"):
+        run_tests(
+            [_ALPHA],
+            run_options=RunOptions(cov=True, cov_clean=True),
+            output_dir=tmp_path / "out",
+        )
+    # The session stopped inside _before_tests, before any test body ran.
+    assert not marker.exists()
+
+
+def test_a_failed_clean_after_collection_fails_a_passing_run(tmp_path, monkeypatch):
+    """A failed clean after collection fails an otherwise-passing run.
+
+    Collection itself succeeded — the captures are already written — but
+    clearing after collection is never best-effort: stale counters would mix
+    into the next run's coverage, so a failed post-collection clean alone
+    must still fail the run.
+    """
+    from otto.coverage.collect import CollectResult
+    from otto.coverage.errors import CoverageCleanError
+    from otto.coverage.reports import CleanReport
+    from otto.result import Result
+    from otto.utils import Status
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
+    _stub_instrumented_lab(monkeypatch)
+    bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+    collected_result = CollectResult(
+        cov_dir=log_dir / "cov", product_dirs={}, captures_written=[], clean=bad
+    )
+    monkeypatch.setattr(
+        "otto.coverage.collect.collect_coverage", AsyncMock(return_value=collected_result)
+    )
+
+    with pytest.raises(CoverageCleanError, match="t1/app: denied"):
+        run_tests([_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir)
+
+
+def test_a_failed_clean_after_collection_still_writes_the_inline_report(tmp_path, monkeypatch):
+    """``--cov --cov-report`` with a failed post-collection clean: report first, then fail.
+
+    The captures are written and the report is best-effort by policy, so the
+    clean's failure is held until the report block has run; the run still
+    fails with the clean's error.
+    """
+    from otto.coverage.collect import CollectResult
+    from otto.coverage.errors import CoverageCleanError
+    from otto.coverage.reports import CleanReport
+    from otto.result import Result
+    from otto.utils import Status
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    _use_repo(monkeypatch, _stub_repo(tmp_path, sut_dir=log_dir, tests=[log_dir]))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
+    _stub_instrumented_lab(monkeypatch)
+    bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+    collected_result = CollectResult(
+        cov_dir=log_dir / "cov", product_dirs={}, captures_written=[], clean=bad
+    )
+    monkeypatch.setattr(
+        "otto.coverage.collect.collect_coverage", AsyncMock(return_value=collected_result)
+    )
+    mock_store = MagicMock()
+    mock_store.overall_pct.return_value = 50.0
+    mock_store.file_count.return_value = 1
+    mock_run_report = AsyncMock(return_value=mock_store)
+    monkeypatch.setattr("otto.coverage.reporter.run_coverage_report", mock_run_report)
+
+    with pytest.raises(CoverageCleanError, match="t1/app: denied"):
+        run_tests(
+            [_ALPHA],
+            run_options=RunOptions(cov=True, cov_clean=False, cov_report=True),
+            output_dir=log_dir,
+        )
+    mock_run_report.assert_awaited_once()
+    assert mock_run_report.call_args.args[0] == [log_dir / "cov"]
+
+
+def test_a_successful_clean_after_collection_logs_one_summary_line(tmp_path, monkeypatch, caplog):
+    """The run log keeps an audit trail of the clean: one INFO line, counted from the report."""
+    from otto.coverage.collect import CollectResult
+    from otto.coverage.reports import CleanReport
+    from otto.result import Result
+    from otto.utils import Status
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
+    _stub_instrumented_lab(monkeypatch)
+    ok = Result(Status.Success)
+    good = CleanReport(hosts={"t1": {"app": ok, "lib": ok}, "t2": {"app": ok}})
+    collected_result = CollectResult(
+        cov_dir=log_dir / "cov", product_dirs={}, captures_written=[], clean=good
+    )
+    monkeypatch.setattr(
+        "otto.coverage.collect.collect_coverage", AsyncMock(return_value=collected_result)
+    )
+
+    with caplog.at_level("INFO", logger="otto.suite.run"):
+        result = run_tests(
+            [_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir
+        )
+    assert result.passed
+    summaries = [r.getMessage() for r in caplog.records if "counters cleared" in r.getMessage()]
+    assert summaries == [
+        "coverage counters cleared after collection on 3 product(s) across 2 host(s)"
+    ]
+
+
+def test_a_collection_failure_after_a_passing_run_still_only_warns(tmp_path, monkeypatch, caplog):
+    """A coverage-collection failure still only warns — never-fail-a-successful-run.
+
+    Distinguishes the two outcomes outside the collection's own try/except: a
+    collection failure (caught inside it) leaves ``result`` ``None`` and stays
+    swallowed exactly as before; only a failed *clean* after a successful
+    collection (the sibling test above) fails the run.
+    """
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
+    _stub_instrumented_lab(monkeypatch)
+    monkeypatch.setattr(
+        "otto.coverage.collect.collect_coverage", AsyncMock(side_effect=ValueError("no .gcda"))
+    )
+
+    with caplog.at_level("WARNING"):
+        result = run_tests(
+            [_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir
+        )
+    assert result.passed
+    assert any("no .gcda" in r.getMessage() for r in caplog.records)
 
 
 def test_run_tests_abandons_hosts_left_on_the_inner_sessions_closed_loops(tmp_path, monkeypatch):

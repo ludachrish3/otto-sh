@@ -936,6 +936,35 @@ def _partition_board_dirs(cov_dirs: list[Path]) -> tuple[list[Path], list[Path]]
     return gcda_dirs, capture_paths
 
 
+def _validate_report_inputs(cov_dirs: list[Path], tier_specs: list[TierSpec] | None) -> None:
+    """Refuse unusable report inputs, by field, before anything is read.
+
+    *cov_dirs* entries name a ``<run dir>/cov`` layout; the check is against
+    the run directory (``cov_dir.parent``), not ``cov/`` itself, so a run
+    without coverage data but with a committed manual store can still
+    produce a report. *tier_specs* mirrors the CLI's own ``--tier``
+    validation minus the flag text, since a library caller has no flag.
+    """
+    from .errors import CoverageInputError
+
+    for cov_dir in cov_dirs:
+        run_dir = cov_dir.parent
+        if not run_dir.is_dir():
+            raise CoverageInputError(
+                f"output directory does not exist: {run_dir}", field="cov_dirs"
+            )
+    seen: set[str] = set()
+    for name, path in tier_specs or []:
+        if path is None and name != TIER_SYSTEM:
+            raise CoverageInputError(
+                f"Tier {name!r} requires a path (only the {TIER_SYSTEM!r} tier may omit a path)",
+                field="tier_specs",
+            )
+        if name in seen:
+            raise CoverageInputError(f"Duplicate tier name: {name!r}", field="tier_specs")
+        seen.add(name)
+
+
 async def run_coverage_report(
     cov_dirs: list[Path],
     output_dir: Path,
@@ -1002,7 +1031,15 @@ async def run_coverage_report(
     Returns:
         The populated :class:`~otto.coverage.store.model.CoverageStore`, or
         ``None`` when the legacy path found no coverage data.
+
+    Raises:
+        CoverageInputError: a *cov_dirs* entry's run directory does not
+            exist (``field="cov_dirs"``), or *tier_specs* names a
+            non-``system`` tier with no path or repeats a tier name
+            (``field="tier_specs"``) — both before anything is read.
     """
+    _validate_report_inputs(cov_dirs, tier_specs)
+
     from .config import prepare_destination
 
     prepare_destination(

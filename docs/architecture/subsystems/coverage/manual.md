@@ -37,9 +37,9 @@ rather than a number:
 
 Tester identity is manual-only. `_resolve_tester` fills the name from
 `getpass.getuser()` and the email from `git config user.email`, with CLI
-flags winning over both; `_capture_annotations` passes `None` for every
-other kind, because an automated run has no human session to attribute.
-Ticket and note, by contrast, annotate every kind.
+flags winning over both; {func}`otto.coverage.get.get_coverage` passes
+`None` for every other kind, because an automated run has no human session
+to attribute. Ticket and note, by contrast, annotate every kind.
 
 ## The validity engine
 

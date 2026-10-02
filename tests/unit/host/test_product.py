@@ -1,6 +1,9 @@
 """Unit tests for the Product lifecycle strategy and orchestration."""
 
+import asyncio
 import os
+import shlex
+import shutil
 from pathlib import Path
 
 import pytest
@@ -592,7 +595,10 @@ async def test_reset_coverage_default_deletes_every_gcda_under_the_quoted_cov_di
     result = await p.reset_coverage(host)
     assert result.is_ok
     assert host.exec_calls == [
-        ("find '/opt/My App/cov' -name '*.gcda' -type f -delete", {"timeout": 60})
+        (
+            "! test -d '/opt/My App/cov' || find '/opt/My App/cov' -name '*.gcda' -type f -delete",
+            {"timeout": 60},
+        )
     ]
 
 
@@ -600,7 +606,9 @@ async def test_reset_coverage_default_deletes_every_gcda_under_the_quoted_cov_di
 async def test_reset_coverage_default_uses_the_default_cov_dir_when_unset():
     host = _ExecHost()
     await _DummyShellProduct(artifact=Path("/b/app"), name="app").reset_coverage(host)
-    assert host.exec_calls[0][0] == "find /tmp/app -name '*.gcda' -type f -delete"
+    assert host.exec_calls[0][0] == (
+        "! test -d /tmp/app || find /tmp/app -name '*.gcda' -type f -delete"
+    )
 
 
 @pytest.mark.asyncio
@@ -643,7 +651,8 @@ async def test_sudo_gcda_delete_deletes_under_sudo():
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
     result = await sudo_gcda_delete(p, host)
     assert result.is_ok
-    assert host.run_calls == [("find /var/cov/app -name '*.gcda' -type f -delete", {"sudo": True})]
+    line = "! test -d /var/cov/app || find /var/cov/app -name '*.gcda' -type f -delete"
+    assert host.run_calls == [(f"sh -c {shlex.quote(line)}", {"sudo": True})]
 
 
 @pytest.mark.asyncio
@@ -664,7 +673,8 @@ async def test_sudo_gcda_delete_failure_includes_the_commands_output():
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
     result = await sudo_gcda_delete(p, host)
     assert not result.is_ok
-    assert result.msg == "app: deleting .gcda under /var/cov/app failed: permission denied"
+    # The consumer prefixes `<host>/<product>: `; the reason never repeats the name.
+    assert result.msg == "deleting .gcda under /var/cov/app failed: permission denied"
 
 
 @pytest.mark.asyncio
@@ -673,6 +683,154 @@ async def test_sudo_gcda_delete_propagates_a_dry_run_decline():
     p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir="/var/cov/app")
     result = await sudo_gcda_delete(p, host)
     assert result.status is Status.NotRun
+
+
+# A cov_dir that does not exist yet (/tmp/<name> after a reboot, or a product
+# deployed but never run) has nothing to clear; a present one keeps find's own
+# verdict. These run the generated line through a REAL shell, so the `!`/`||`
+# composition is exercised, not just spelled.
+
+_ELEVATED_MARK = "OTTO_TEST_ELEVATED"
+
+
+class _ShellHost:
+    """Host double that runs each command through a real ``sh`` on this machine.
+
+    ``exec`` runs the line as-is. ``run(..., sudo=True)`` models how
+    ``otto.host.privilege.PosixPrivilege._elevate`` elevates: sudo takes an
+    ARGV TAIL, so the line is appended raw after a prefix — here ``env
+    OTTO_TEST_ELEVATED=1``, which (like sudo) execs only the first word of
+    what follows. Anything after a top-level ``||`` therefore runs unelevated,
+    exactly as it would on a real host. ``bin_dir`` goes first on PATH so a
+    test can stand in its own ``find``.
+    """
+
+    def __init__(self, bin_dir: Path | None = None):
+        self.id = "h1"
+        self._env = dict(os.environ)
+        if bin_dir is not None:
+            self._env["PATH"] = f"{bin_dir}{os.pathsep}{self._env.get('PATH', '')}"
+        self._env.pop(_ELEVATED_MARK, None)
+
+    async def _sh(self, line):
+        proc = await asyncio.create_subprocess_shell(
+            line,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=self._env,
+        )
+        out, _ = await proc.communicate()
+        status = Status.Success if proc.returncode == 0 else Status.Error
+        return CommandResult(status, value=out.decode(), command=line, retcode=proc.returncode)
+
+    async def exec(self, cmd, **kwargs):
+        return await self._sh(cmd)
+
+    async def run(self, cmd, *, sudo=False, **kwargs):
+        assert sudo, "the shared delete is always elevated"
+        return Results.collect([await self._sh(f"env {_ELEVATED_MARK}=1 {cmd}")])
+
+
+def _fake_find(tmp_path: Path, body: str) -> Path:
+    """Write a ``find`` stand-in into a fresh bin dir and return that dir."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    find = bin_dir / "find"
+    find.write_text(f"#!/bin/sh\n{body}\n")
+    find.chmod(0o755)
+    return bin_dir
+
+
+def _failing_find(tmp_path: Path) -> Path:
+    return _fake_find(tmp_path, "echo 'find: permission denied' >&2\nexit 1")
+
+
+@pytest.mark.asyncio
+async def test_reset_coverage_default_treats_a_missing_cov_dir_as_cleared(tmp_path):
+    host = _ShellHost()
+    absent = tmp_path / "never-created"
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(absent))
+    result = await p.reset_coverage(host)
+    assert result.status is Status.Success, result
+    assert not absent.exists()
+
+
+@pytest.mark.asyncio
+async def test_reset_coverage_default_fails_when_find_fails_on_a_present_cov_dir(tmp_path):
+    host = _ShellHost(bin_dir=_failing_find(tmp_path))
+    present = tmp_path / "cov"
+    present.mkdir()
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(present))
+    result = await p.reset_coverage(host)
+    assert result.status is Status.Error
+    assert "permission denied" in result.value
+
+
+@pytest.mark.asyncio
+async def test_sudo_gcda_delete_treats_a_missing_cov_dir_as_cleared(tmp_path):
+    host = _ShellHost()
+    absent = tmp_path / "never-created"
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(absent))
+    result = await sudo_gcda_delete(p, host)
+    assert result.status is Status.Success, result.msg
+
+
+@pytest.mark.asyncio
+async def test_sudo_gcda_delete_fails_when_find_fails_on_a_present_cov_dir(tmp_path):
+    host = _ShellHost(bin_dir=_failing_find(tmp_path))
+    present = tmp_path / "cov"
+    present.mkdir()
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(present))
+    result = await sudo_gcda_delete(p, host)
+    assert result.status is Status.Error
+    assert "permission denied" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_sudo_gcda_delete_runs_the_whole_guarded_line_elevated(tmp_path):
+    # A find that only succeeds elevated: the files are root's. Were the
+    # guard spliced raw after sudo, sudo would exec `!` and the `||` tail —
+    # the find — would run as the session user and fail here.
+    real_find = shutil.which("find")
+    assert real_find is not None
+    bin_dir = _fake_find(
+        tmp_path,
+        f'[ "${_ELEVATED_MARK}" = 1 ] || {{ echo "find: not elevated" >&2; exit 1; }}\n'
+        f'exec {real_find} "$@"',
+    )
+    present = tmp_path / "cov"
+    present.mkdir()
+    (present / "a.gcda").write_bytes(b"")
+    p = _DummyShellProduct(artifact=Path("/b/app"), name="app", cov_dir=str(present))
+    result = await sudo_gcda_delete(p, _ShellHost(bin_dir=bin_dir))
+    assert result.status is Status.Success, result.msg
+    assert not (present / "a.gcda").exists()
+
+
+@pytest.mark.asyncio
+async def test_gcda_delete_cmd_in_a_real_shell(tmp_path):
+    from otto.host.product import gcda_delete_cmd
+
+    async def sh(line):
+        proc = await asyncio.create_subprocess_shell(
+            line, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+        )
+        out, _ = await proc.communicate()
+        return proc.returncode, out.decode()
+
+    # Absent: nothing to clear, success.
+    rc, out = await sh(gcda_delete_cmd(str(tmp_path / "no such dir")))
+    assert (rc, out) == (0, "")
+
+    # Present: every .gcda goes, at any depth; nothing else is touched.
+    cov = tmp_path / "my cov"  # a space: the quoting is load-bearing
+    (cov / "sub").mkdir(parents=True)
+    (cov / "a.gcda").write_bytes(b"")
+    (cov / "sub" / "b.gcda").write_bytes(b"")
+    (cov / "a.gcno").write_bytes(b"")
+    rc, out = await sh(gcda_delete_cmd(str(cov)))
+    assert (rc, out) == (0, "")
+    assert sorted(p.name for p in cov.rglob("*") if p.is_file()) == ["a.gcno"]
 
 
 @pytest.mark.asyncio

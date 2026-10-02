@@ -44,7 +44,7 @@ local and remote machines.
    product
    dev_tool
    shell_kind
-   llext_kind
+   embedded_kind
    kmod_kind
    kmod_tool_kind
    docker_image_kind

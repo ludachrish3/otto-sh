@@ -10,7 +10,7 @@ the same ``try`` — the first lexical match wins.
 DEFINES, not raises, and the difference is not small: otto also raises plain
 stdlib exceptions at hundreds of sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 70 NAMED failures", not "anything otto
+therefore means "one of otto's 74 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -24,15 +24,15 @@ rather than offering a comforting near-miss:
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
 * ``except (ValueError, RuntimeError)`` covers most of those raise sites,
-  and 48 of the 70 named classes. Of the other 22, fourteen are rooted at
+  and 51 of the 74 named classes. Of the other 23, fifteen are rooted at
   plain ``Exception`` (the bootstrap, project-activation,
-  project-instruction, lab-context, lab-repository, inventory, creds and
-  reservation errors), seven sit under
+  project-instruction, lab-context, lab-repository, inventory, creds,
+  reservation and field errors), seven sit under
   ``OSError`` (``AppShellTimeoutError``, ``ConsoleError``, ``LoginProxyError``,
   ``NcPortSharedError``, ``RetryAttemptTimeoutError``, ``SessionSetupError``,
   ``WaitTimeoutError``), and one sits under ``LookupError``
   (``OptionsNotAvailableError``, for ``ctx.options(Cls)`` asked of a class
-  with no bound value) — 48 + 14 + 7 + 1 = 70, so the split accounts for
+  with no bound value) — 51 + 15 + 7 + 1 = 74, so the split accounts for
   every named class.
 
 The class counts are measured, not maintained by arithmetic, and gated
@@ -133,6 +133,21 @@ def is_containable(exc: BaseException) -> bool:
 
 class OttoError(Exception):
     """Base class for every exception otto defines (not every one it raises)."""
+
+
+class FieldError(OttoError):
+    """An input refusal that names the offending field; its message is never rewritten.
+
+    ``field`` is the library parameter at fault, or ``None`` for a refusal
+    about the inputs as a whole. A CLI spells it in its own flags at one
+    site (:func:`otto.cli.invoke.usage_error_from`) by naming the flag as the
+    hint, never by rewriting the message, which may embed text the user
+    typed.
+    """
+
+    def __init__(self, message: str, *, field: "str | None") -> None:
+        super().__init__(message)
+        self.field = field
 
 
 class EnsureStateError(OttoError, RuntimeError):

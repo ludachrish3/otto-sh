@@ -1,13 +1,14 @@
 """Unit tests for ``otto.coverage.collect`` — the composed collection workflow.
 
 These exercise the single canonical fetch/metadata/capture implementation
-(:func:`otto.coverage.collect.collect_coverage`) and the pre-run cleanup
-(:func:`otto.coverage.collect.clean_remote_gcda`). Moved here (library-extraction
-Task 15) from ``tests/unit/cli/test_test.py``'s coverage-collection suites and
-adapted to the new fail-loud contract: ``collect_coverage`` never swallows —
-the "collected nothing", ambiguous-tier, and non-git cases now *raise*, and the
-never-fail-a-successful-run swallow policy lives one layer up in
-:func:`otto.suite.run._post_run_coverage` (see ``TestPostRunSwallowPolicy``).
+(:func:`otto.coverage.collect.collect_coverage`), which calls the one clean
+path (:func:`otto.coverage.collect.clean_coverage`, exercised directly in
+``test_clean.py``) after a successful collection. Moved here (a library
+extraction) from ``tests/unit/cli/test_test.py``'s coverage-collection suites
+and adapted to the new fail-loud contract: ``collect_coverage`` never
+swallows — the "collected nothing", ambiguous-tier, and non-git cases now
+*raise*, and the never-fail-a-successful-run swallow policy lives one layer up
+in :func:`otto.suite.run._post_run_coverage` (see ``TestPostRunSwallowPolicy``).
 """
 
 import asyncio
@@ -18,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.coverage.collect import CollectResult, collect_coverage
+from otto.coverage.reports import CleanReport
 from otto.host.element import Element
 from tests._fixtures.gitrepo import git_env
 
@@ -32,11 +34,25 @@ def _product(name: str, cov_dir: str | None = None, verdict: bool | None = True)
 
 
 def _empty_fetcher() -> MagicMock:
-    """A ``GcdaFetcher`` double that fetches nothing and records its cleans."""
+    """A ``GcdaFetcher`` double that fetches nothing."""
     fetcher = MagicMock()
     fetcher.fetch_all = AsyncMock(return_value={})
-    fetcher.clean_remote = AsyncMock(return_value=None)
     return fetcher
+
+
+@pytest.fixture(autouse=True)
+def _stub_post_fetch_clean(monkeypatch):
+    """Stub the post-fetch clean path for every test in this module.
+
+    ``collect_coverage``'s own post-fetch ``clean_coverage`` call is exercised
+    directly (and its real host walk tested) in ``test_clean.py``; these
+    fetch/metadata/capture tests only need it to not reach out to real hosts.
+    ``TestCleanAfterFetch`` overrides this with its own patch to inspect the
+    call.
+    """
+    mock = AsyncMock(return_value=CleanReport(hosts={}))
+    monkeypatch.setattr("otto.coverage.collect.clean_coverage", mock)
+    return mock
 
 
 @pytest.fixture
@@ -363,11 +379,13 @@ class TestProductsOnly:
 
 
 class TestCleanAfterFetch:
-    """``clean_after_fetch`` gates ``collect_coverage``'s *internal* post-fetch
-    remote clean. Default ``True`` preserves ``otto test --cov`` semantics (zero
-    the remotes right after a successful Unix fetch); ``False`` skips that clean
-    so a caller (``otto cov get``) can own the post-fetch clean itself, scoped to
-    its own host selection. Either way the fetch itself is unchanged."""
+    """``clean_after_fetch`` gates whether ``collect_coverage`` calls the one
+    clean path (:func:`~otto.coverage.collect.clean_coverage`) after a
+    successful collection. Default ``True`` preserves ``otto test --cov``
+    semantics (zero the counters right after a successful fetch); ``False``
+    skips that internal clean so a caller (``otto cov get``) can own the
+    post-fetch clean itself, scoped to its own host selection. Either way the
+    fetch itself is unchanged."""
 
     def _run(self, cov_dir, *, clean_after_fetch=True):
         from otto.host import UnixHost
@@ -383,7 +401,8 @@ class TestCleanAfterFetch:
 
         fetcher_instance = MagicMock()
         fetcher_instance.fetch_all = AsyncMock(return_value={("test1", "app"): board})
-        fetcher_instance.clean_remote = AsyncMock(return_value=None)
+
+        clean_mock = AsyncMock(return_value=CleanReport(hosts={}))
 
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
@@ -393,6 +412,7 @@ class TestCleanAfterFetch:
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
             ),
+            patch("otto.coverage.collect.clean_coverage", clean_mock),
             # get_cov_repo None short-circuits the metadata + capture tail so the
             # test pins only the fetch/clean seam.
             patch("otto.config.coverage_settings.get_cov_repo", return_value=None),
@@ -400,24 +420,26 @@ class TestCleanAfterFetch:
             result = asyncio.run(
                 collect_coverage(cov_dir, repos=[repo], clean_after_fetch=clean_after_fetch)
             )
-        return result, fetcher_instance, board
+        return result, clean_mock, board, repo
 
-    def test_true_default_calls_clean_remote_when_products_fetched(self, tmp_path):
+    def test_true_default_calls_clean_coverage_scoped_to_contributing_hosts(self, tmp_path):
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        result, fetcher_instance, board = self._run(cov_dir)  # default True
-        # clean_remote takes no arguments: it re-walks each host's instrumented
-        # products and deletes under each product's own cov_dir.
-        fetcher_instance.clean_remote.assert_awaited_once_with()
+        result, clean_mock, board, repo = self._run(cov_dir)  # default True
+        # Scoped to the hosts that actually contributed a product, through the
+        # same repo list collect_coverage itself resolved.
+        clean_mock.assert_awaited_once_with([repo], host_ids=["test1"])
         assert result.product_dirs == {("test1", "app"): board}
+        assert result.clean == CleanReport(hosts={})
 
-    def test_false_skips_internal_clean_remote(self, tmp_path):
+    def test_false_skips_the_internal_clean(self, tmp_path):
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        result, fetcher_instance, board = self._run(cov_dir, clean_after_fetch=False)
-        fetcher_instance.clean_remote.assert_not_awaited()
+        result, clean_mock, board, _repo = self._run(cov_dir, clean_after_fetch=False)
+        clean_mock.assert_not_awaited()
         # The fetch still happened and its dirs are reported unchanged.
         assert result.product_dirs == {("test1", "app"): board}
+        assert result.clean is None
 
 
 # ── Embedded collection + metadata sidecar (moved from TestRunCoverageEmbedded)
@@ -752,7 +774,6 @@ class TestFetchedToolchainMetadata:
 
         fetcher = MagicMock()
         fetcher.fetch_all = AsyncMock(return_value=fetched)
-        fetcher.clean_remote = AsyncMock(return_value=None)
 
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
@@ -1126,7 +1147,7 @@ class TestTierPassthrough:
     """Passing an already-resolved :class:`~otto.coverage.tiers.TierConfig` as
     ``tier=`` is used directly — ``resolve_get_tier`` (and the ``load_tiers``
     call that feeds it) never runs. This is what lets ``otto cov get`` resolve
-    the tier exactly once instead of twice (``_do_get`` resolves; the old
+    the tier exactly once instead of twice (``get_coverage`` resolves; the old
     ``collect_coverage`` re-resolved from the name)."""
 
     def test_tierconfig_object_skips_resolve_get_tier(self, tmp_path):
@@ -1226,85 +1247,3 @@ class TestPostRunSwallowPolicy:
 
         assert not (cov_dir / "board1" / "app" / "capture.json").exists()
         assert any("Coverage collection failed" in rec.message for rec in caplog.records)
-
-
-# ── clean_remote_gcda (pre-run cleanup) ────────────────────────────────────────
-
-
-class TestCleanRemoteGcda:
-    """``clean_remote_gcda`` zeroes remote counters when configured.
-
-    It never rebuilds a host's connections: that would abandon the live shells
-    the clean just opened, unclosed. The caller's loop closes them when it
-    ends, and a host reconnects on whatever loop uses it next."""
-
-    def test_cleans_when_configured_and_leaves_connections_alone(self):
-        from otto.coverage.collect import clean_remote_gcda
-        from otto.host import UnixHost
-
-        host = MagicMock(spec=UnixHost)
-        fetcher_instance = MagicMock()
-        fetcher_instance.clean_remote = AsyncMock(return_value=None)
-
-        with (
-            patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
-            patch("otto.config.all_hosts", return_value=[host]),
-            patch(
-                "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
-            ) as fetcher_cls,
-        ):
-            asyncio.run(clean_remote_gcda([MagicMock()]))
-
-        fetcher_cls.assert_called_once()
-        # The selector rides along so the clean walks exactly the coverage hosts.
-        assert fetcher_cls.call_args.kwargs["pattern"].pattern == ".*"
-        # No argument: the clean re-walks each host's instrumented products.
-        fetcher_instance.clean_remote.assert_awaited_once_with()
-        host.rebuild_connections.assert_not_called()
-
-    def test_no_config_skips_the_clean(self):
-        from otto.coverage.collect import clean_remote_gcda
-        from otto.host import UnixHost
-
-        host = MagicMock(spec=UnixHost)
-        with (
-            patch("otto.config.coverage_settings.get_cov_config", return_value={}),
-            patch("otto.config.all_hosts", return_value=[host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher") as fetcher_cls,
-        ):
-            asyncio.run(clean_remote_gcda([MagicMock()]))
-
-        fetcher_cls.assert_not_called()
-        host.rebuild_connections.assert_not_called()
-
-    def test_no_hosts_in_the_lab_skips_the_clean(self):
-        """A configured lab with no hosts has nothing to clean — and no fetcher
-        is built for it (the clean would fan out over an empty host walk)."""
-        from otto.coverage.collect import clean_remote_gcda
-
-        with (
-            patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
-            patch("otto.config.all_hosts", return_value=[]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher") as fetcher_cls,
-        ):
-            asyncio.run(clean_remote_gcda([MagicMock()]))
-
-        fetcher_cls.assert_not_called()
-
-    def test_a_malformed_selector_is_refused_by_name(self):
-        """The ``[coverage].hosts`` loader runs here too, so a wrong shape is
-        refused before any host is touched — as it is in ``collect_coverage``."""
-        from otto.config.coverage_settings import CoverageConfigError
-        from otto.coverage.collect import clean_remote_gcda
-        from otto.host import UnixHost
-
-        host = MagicMock(spec=UnixHost)
-        with (
-            patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": 123}),
-            patch("otto.config.all_hosts", return_value=[host]),
-            patch("otto.coverage.fetcher.remote.GcdaFetcher") as fetcher_cls,
-            pytest.raises(CoverageConfigError, match="hosts must be a string"),
-        ):
-            asyncio.run(clean_remote_gcda([MagicMock()]))
-
-        fetcher_cls.assert_not_called()

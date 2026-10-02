@@ -14,6 +14,7 @@
  * Lifecycle (mirrors repo1's Unix product): load (`llext load_hex`) ->
  * initialise (`call_fn cov_init`) -> exercise (`call_fn op_*`) -> collect
  * (`call_fn cov_dump`, which prints the .gcda as a serial hexdump) -> unload.
+ * `otto cov clean` zeroes the counters in place with `call_fn cov_reset`.
  */
 #include <stdint.h>
 #include <zephyr/llext/symbol.h>
@@ -54,6 +55,10 @@ void op_div_zero(void) { g_acc += math_div(10, 0); }
 /* Dump this extension's gcov counters as a .gcda hexdump over the console. */
 void cov_dump(void) { __gcov_exit(); }
 
+/* Zero this extension's gcov counters in place (embedded-gcov's __gcov_clear,
+ * compiled in by GCOV_OPT_PROVIDE_CLEAR_COUNTERS in gcov_public.h). */
+void cov_reset(void) { __gcov_clear(); }
+
 /* Run gcc's gcov constructor for this TU (registers the gcov_info with the
  * embedded-gcov runtime). LLEXT 3.7 does not run .init_array, and the ctor is a
  * local symbol, so alias it and call it explicitly via this exported entry. */
@@ -66,3 +71,4 @@ LL_EXTENSION_SYMBOL(op_div_ok);
 LL_EXTENSION_SYMBOL(op_div_zero);
 LL_EXTENSION_SYMBOL(cov_init);
 LL_EXTENSION_SYMBOL(cov_dump);
+LL_EXTENSION_SYMBOL(cov_reset);

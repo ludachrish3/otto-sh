@@ -18,9 +18,9 @@ directory structure used by the remote fetcher — `cov/<host_id>/<product>/`,
 per {ref}`the run tree <run-tree>`.
 
 From there, `otto cov get` produces a `capture.json` per board per product
-exactly as it does for a Unix host.
-`otto cov clean` does not reach embedded boards — see
-{ref}`coverage-tier-kinds` on the main page.
+exactly as it does for a Unix host.  `otto cov clean` reaches an embedded
+board the same way it reaches a Unix host — see {ref}`coverage-embedded-reset`
+below.
 
 ## Setting up a product
 
@@ -78,14 +78,15 @@ Build the extension and run the report's cross-`gcov` with the **same** GCC
 so mixing compiler versions across those steps reintroduces exactly the
 failures the patch fixes.
 
-### Entry points: `cov_init` and `cov_dump`
+### Entry points: `cov_init`, `cov_dump` and `cov_reset`
 
 GCC registers each instrumented TU by emitting an `.init_array` constructor
 that calls `__gcov_init` — but Zephyr 3.7's LLEXT loader never runs an
 extension's constructors, and the constructor is a *local* symbol that
 `llext call_fn` cannot reach by name. The fix (possible because the
 extension is a single TU) is an exported wrapper that calls the constructor
-through an assembler alias:
+through an assembler alias. The same pattern exports a reset entry point, so
+one complete set of exports looks like this:
 
 ```c
 /* Verify the generated ctor name with:  nm <ext>.llext | grep _sub_I  */
@@ -93,16 +94,68 @@ extern void gcov_ctor(void) __asm__("_sub_I_00100_0");
 void cov_init(void) { gcov_ctor(); }        /* registers this TU */
 
 void cov_dump(void) { __gcov_exit(); }      /* hexdump over the console */
+void cov_reset(void) { __gcov_clear(); }    /* zero the counters in place */
 
 LL_EXTENSION_SYMBOL(cov_init);
 LL_EXTENSION_SYMBOL(cov_dump);
+LL_EXTENSION_SYMBOL(cov_reset);
 ```
 
 The runtime lifecycle over the console is then:
 `llext load_hex` → `call_fn <ext> cov_init` → exercise the product →
-`call_fn <ext> cov_dump`. Otto issues all of them: the load and `cov_init`
-are the `llext` product's `install`, and the dump is collection's — see
-configuration below.
+`call_fn <ext> cov_dump`, and `call_fn <ext> cov_reset` whenever counters are
+cleared (`otto cov clean`, `otto cov get --clean`, `otto test --cov
+--cov-clean`, and after an `otto test --cov` collection). Otto issues all of
+them: the load and `cov_init` are the `embedded` product's `install`, the
+dump is collection's, and the reset belongs to {doc}`../clean` — see
+configuration below and {ref}`coverage-embedded-reset` for the reset export
+in full.
+
+(coverage-embedded-reset)=
+### Resetting counters
+
+An extension's counters live in its own memory, not on a filesystem: nothing
+zeroes them on its own, and they only restart at zero on an unload/reload or
+a board reboot. The single function behind `otto cov clean`, `otto cov get
+--clean`, `otto test --cov --cov-clean`, and the clean an `otto test --cov`
+run does after collection (see {doc}`../clean`) reaches an embedded product
+the same way it reaches a Unix one: instead of deleting a `.gcda` file, it
+calls the product's exported `reset_fn` (`llext call_fn <product>
+<reset_fn>`, default `cov_reset`).
+
+`void cov_reset(void) { __gcov_clear(); }` works because embedded-gcov's
+`gcov_public.h` defines `GCOV_OPT_PROVIDE_CLEAR_COUNTERS` by default — a
+project that turned that option off has to turn it back on for the reset to
+exist at all. Set the `[[products]]` entry's `reset_fn` param to use a
+different exported name.
+
+The real boards forced two rules on what counts as a reset:
+
+- **A reset only counts when the board confirms it.** `__gcov_clear()`
+  prints a `gcov_clear` status line under embedded-gcov's
+  `GCOV_OPT_PRINT_STATUS` (on by default), and that line is the only proof a
+  reset actually ran: the Zephyr shell reports `llext call_fn` on a function
+  the extension does not export as a silent **success**, so a successful
+  call with no output is still reported as a failed reset.
+- **An extension that is not loaded has nothing to clear.** Its counters only
+  exist while it is resident, and a fresh load always starts at zero, so the
+  board's own "not loaded" answer is a successful no-op, not a failure.
+
+A missing export (or `GCOV_OPT_PRINT_STATUS` compiled out) fails the reset
+with the host, the product, and the fix all named; `otto cov clean` exits `1`
+reporting it. For a `cov_ext` product whose `cov_reset` is not exported, the
+reset's own message is:
+
+```text
+reset_fn 'cov_reset' failed: the board did not confirm the reset (it printed nothing). Either the extension does not export 'cov_reset' (the Zephyr shell reports an unknown function as a silent success), or embedded-gcov was built without GCOV_OPT_PRINT_STATUS. An extension resets its counters by exporting `void cov_reset(void) { __gcov_clear(); }` (built with GCOV_OPT_PROVIDE_CLEAR_COUNTERS); set reset_fn to use another name.
+```
+
+`otto cov clean` (see {doc}`../clean`) prints that message prefixed with the
+host and product that failed, e.g. on the `zephyr37-llext` board:
+
+```text
+zephyr37-llext/cov_ext: reset_fn 'cov_reset' failed: the board did not confirm the reset (it printed nothing). Either the extension does not export 'cov_reset' (the Zephyr shell reports an unknown function as a silent success), or embedded-gcov was built without GCOV_OPT_PRINT_STATUS. An extension resets its counters by exporting `void cov_reset(void) { __gcov_clear(); }` (built with GCOV_OPT_PROVIDE_CLEAR_COUNTERS); set reset_fn to use another name.
+```
 
 ### Build: instrument only the extension
 
@@ -190,13 +243,13 @@ on 64-bit Unix hosts).
 ## Embedded coverage configuration
 
 The instrumented extension is a **product**, declared with the built-in
-`llext` kind — so a board carries products, is scanned for instrumentation,
+`embedded` kind — so a board carries products, is scanned for instrumentation,
 and lands in the run tree exactly like any other host:
 
 ```toml
 [[products]]
 name = "my_product_cov"
-kind = "llext"
+kind = "embedded"
 artifact = "product/build/zephyr/my_product_cov.stripped.llext"
 call_after_load = ["cov_init"]
 match = { os_name = "Zephyr" }
@@ -210,13 +263,15 @@ loader and then calls each `call_after_load` function in order — `cov_init`
 runs the embedded-gcov constructor, which has to happen before any dump.
 `uninstall` unloads it, and `is_installed` asks the loader's own list command
 what is resident. `dump_fn` names the exported function the collector calls
-to dump counters, defaulting to `cov_dump`.
+to dump counters, defaulting to `cov_dump`. `reset_fn` names the export
+`clean_coverage` calls to zero them, defaulting to `cov_reset` — see
+{ref}`coverage-embedded-reset` above.
 
 {doc}`../../../configuration/declared-products-tools` has the full param
 list, the loader requirement, and how two entries sharing one `name` give a
 per-Zephyr-version artifact its own board.
 
-Collection then walks each embedded coverage host's instrumented `llext`
+Collection then walks each embedded coverage host's instrumented `embedded`
 products and issues `llext call_fn <product> <dump_fn>` per product, staging
 into `cov/<host_id>/<product>/`.  Which boards are walked is the optional
 `[coverage].hosts` selector; non-embedded hosts (Unix, Docker) take the

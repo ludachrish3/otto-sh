@@ -248,6 +248,10 @@ _RETIRED_KINDS: dict[str, str] = {
         "kind 'file' was renamed 'shell' (its verbs are the shell commands "
         "you write); update the entry"
     ),
+    "llext": (
+        "kind 'llext' is now 'embedded' (change `kind = \"llext\"` to "
+        '`kind = "embedded"`); update the entry'
+    ),
 }
 """Kind names that no longer exist, each with the message that names its
 replacement. A settings file written for a retired name fails at lab load

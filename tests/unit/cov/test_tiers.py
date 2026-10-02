@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.coverage.errors import CoverageInputError
 from otto.coverage.tiers import load_tiers, resolve_get_tier
 
 
@@ -65,13 +66,15 @@ def test_resolve_ambiguous_e2e_raises() -> None:
             "sys_b": {"kind": "e2e", "precedence": 2},
         }
     }
-    with pytest.raises(ValueError, match=r"sys_a.*sys_b|sys_b.*sys_a"):
+    with pytest.raises(CoverageInputError, match=r"sys_a.*sys_b|sys_b.*sys_a") as exc:
         resolve_get_tier(load_tiers(cov), None)
+    assert exc.value.field == "tier"
 
 
 def test_resolve_unknown_name_raises() -> None:
-    with pytest.raises(ValueError, match="nope"):
+    with pytest.raises(CoverageInputError, match="nope") as exc:
         resolve_get_tier(load_tiers({}), "nope")
+    assert exc.value.field == "tier"
 
 
 def test_ambiguous_get_tier_names_the_library_remedy() -> None:
@@ -81,7 +84,7 @@ def test_ambiguous_get_tier_names_the_library_remedy() -> None:
             "sys_b": {"kind": "e2e", "precedence": 2},
         }
     }
-    with pytest.raises(ValueError, match="choose one with tier=NAME"):
+    with pytest.raises(CoverageInputError, match="name one of them"):
         resolve_get_tier(load_tiers(cov), None)
 
 

@@ -3,10 +3,11 @@
 from typing import TYPE_CHECKING
 
 from ..config.coverage_settings import CoverageConfigError
-from ..errors import OttoError
+from ..errors import FieldError, OttoError
 
 if TYPE_CHECKING:  # pragma: no cover — typing only; see CoverageNotInstrumentedError
     from .instrumentation import InstrumentationReport
+    from .reports import CleanReport
 
 
 class CoverageToolVersionError(OttoError, RuntimeError):
@@ -74,6 +75,29 @@ class NoCoverageDataError(OttoError, ValueError):
     data. The message names every ``host:product:cov_dir`` triple searched,
     or says that no host carried an instrumented product at all.
     """
+
+
+class CoverageInputError(FieldError, ValueError):
+    """A coverage verb's input is unusable; nothing was touched.
+
+    ``field`` is the parameter at fault: ``tier``, ``ticket`` or
+    ``output_dir`` (:func:`~otto.coverage.get.get_coverage`), ``cov_dirs`` or
+    ``tier_specs`` (:func:`~otto.coverage.reporter.run_coverage_report`).
+    """
+
+
+class NoCoverageHostsError(OttoError, ValueError):
+    """No host but the otto runner itself matched ``[coverage].hosts``; nothing to clear."""
+
+
+class CoverageCleanError(OttoError, RuntimeError):
+    """Some coverage counters could not be cleared; its ``report`` attribute says which."""
+
+    def __init__(self, report: "CleanReport") -> None:
+        """Frame *report*'s per-host/product failures as one summary message."""
+        reasons = "; ".join(f"{f.host}/{f.product}: {f.reason}" for f in report.failed)
+        super().__init__(f"could not clear coverage counters: {reasons}")
+        self.report = report
 
 
 class CoverageDataMismatchError(OttoError, RuntimeError):
