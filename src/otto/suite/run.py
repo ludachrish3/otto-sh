@@ -371,12 +371,12 @@ def prepare_run(opts: RunOptions, *, dry_run: bool = False) -> None:
     under the run's output directory need no check: creating that
     directory was the check. A script can call this before a long run.
 
-    Called ahead of :func:`resolve_coverage` in :func:`run_tests`, so an
-    ``overwrite_cov_dir``/``overwrite_cov_report_dir`` clear already
-    happened here, before the coverage decision — a run that
-    :func:`resolve_coverage` then refuses (for example, no ``[coverage]``
-    table configured) has already cleared its destination. That is the
-    ordering this design chose: fail on destinations before touching hosts.
+    :func:`run_tests` calls it twice: under *dry_run* ahead of
+    :func:`resolve_coverage`, so a bad destination is refused before the
+    instrumentation scan, then for real once coverage is decided, so a run
+    the decision refuses (for example, no ``[coverage]`` table configured)
+    never clears an ``overwrite_cov_dir``/``overwrite_cov_report_dir``
+    destination. Both calls come before any host is touched.
 
     Raises:
         otto.coverage.config.DestinationError: a destination is not a
@@ -1614,11 +1614,13 @@ def run_tests(
             raise NoTestsMatchedError("No tests matched the selection.")
 
         # Destination and tickets preflight: local checks only, so they fail
-        # before the instrumentation scan. The remote pre-clean waits for the
-        # first session that is committed to running tests
-        # (_Sessions._before_tests).
-        prepare_run(opts)
+        # before the instrumentation scan. Check-only here: an overwrite
+        # clear waits for the coverage decision, so a refused run never
+        # empties a destination. The remote pre-clean waits for the first
+        # session that is committed to running tests (_Sessions._before_tests).
+        prepare_run(opts, dry_run=True)
         opts = resolve_coverage(opts, repos, command=_cov_command_label(opts, "otto test"))
+        prepare_run(opts)
         session_ctx.cov_decision = bool(opts.cov)
         if opts.random_order:
             # One seed for every session of the run, said once: it is what

@@ -329,27 +329,27 @@ in, temporarily, when it has none).
 
 ### Preflight
 
-`run_tests` calls {func}`~otto.suite.run.prepare_run` right after binding
-the verb options and checking there is something to run — before the
-coverage decision and the instrumentation scan, and before any host is
-touched. It prepares an explicit `cov_dir` and `cov_report_dir` (created,
-or cleared under `overwrite_cov_dir` / `overwrite_cov_report_dir`), proves
-they can be written, and refuses `cov_tickets_json` without a
-`[coverage.tickets]` table. Leave `cov_dir` / `cov_report_dir` unset (the
-default) to collect into `<output_dir>/cov` / `<output_dir>/cov_report`,
-which are always fresh — the default destinations need no check, since
-creating the run's own output directory already was one. A script can call
-`prepare_run` itself before a long run.
+{func}`~otto.suite.run.prepare_run` prepares an explicit `cov_dir` and
+`cov_report_dir` (created, or cleared under `overwrite_cov_dir` /
+`overwrite_cov_report_dir`), proves they can be written, and refuses
+`cov_tickets_json` without a `[coverage.tickets]` table. `run_tests` calls
+it twice, both times before any host is touched: check-only right after
+binding the verb options and checking there is something to run, so a bad
+destination is refused before the instrumentation scan; then for real once
+coverage is decided on, so a run refused for coverage (no `[coverage]`
+table configured, say) never clears a destination. Leave `cov_dir` /
+`cov_report_dir` unset (the default) to collect into `<output_dir>/cov` /
+`<output_dir>/cov_report`, which are always fresh — the default
+destinations need no check, since creating the run's own output directory
+already was one. A script can call `prepare_run` itself before a long run.
 
 A refusal is a {class}`~otto.coverage.config.DestinationError` (names the
 field and the path, and — only when the destination is non-empty — the
 `overwrite_*` field that would clear it) or an
 {class}`~otto.params.OptionsValidationError` (a `cov_tickets_json` with no
 `[coverage.tickets]` table); `otto test` prints the same message spelled as
-flags. Under `overwrite_*`, the clear happens here, inside `prepare_run`,
-before the coverage decision — so a run that gets refused right after, for
-having no `[coverage]` table configured at all, has already cleared its
-destination:
+flags. A script that calls `prepare_run` itself clears an `overwrite_*`
+destination on the spot:
 
 ```python
 from pathlib import Path

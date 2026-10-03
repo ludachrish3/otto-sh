@@ -1332,7 +1332,7 @@ def test_run_tests_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypat
 
 
 def test_run_tests_refuses_a_bad_report_dir_before_the_instrumentation_scan(tmp_path, monkeypatch):
-    """``prepare_run`` runs ahead of ``resolve_coverage`` in ``run_tests``: a bad
+    """``prepare_run``'s check-only call runs ahead of ``resolve_coverage``: a bad
     ``cov_report_dir`` must fail before the instrumentation scan, not after it.
 
     The repo double is given a real ``[coverage]`` table so ``resolve_coverage``
@@ -1381,6 +1381,36 @@ def test_run_tests_overwrite_cov_dir_true_clears_and_proceeds(tmp_path, monkeypa
     )
     assert result.passed
     assert not (cov_dir / "stale.txt").exists()
+
+
+def test_run_tests_a_refused_coverage_run_leaves_an_overwrite_dir_untouched(tmp_path, monkeypatch):
+    """``overwrite_cov_dir`` clears only once coverage is decided on.
+
+    A destination forces coverage, so ``resolve_coverage`` either keeps it on
+    or refuses; here it refuses (no ``[coverage]`` table). The destination
+    the user asked to overwrite must still hold its contents: the preflight
+    before the decision only checks, and the clear comes after it. Proven red
+    by moving the clearing ``prepare_run(opts)`` back ahead of
+    ``resolve_coverage``: ``stale.txt`` is gone.
+    """
+    from otto.config.coverage_settings import CoverageConfigError
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    cov_dir = tmp_path / "cov_dir"
+    cov_dir.mkdir()
+    (cov_dir / "stale.txt").write_text("stale")
+    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: {})
+
+    with pytest.raises(CoverageConfigError, match=r"\[coverage\] table"):
+        run_tests(
+            [_ALPHA],
+            run_options=RunOptions(cov_dir=cov_dir, overwrite_cov_dir=True),
+            output_dir=log_dir,
+        )
+    assert (cov_dir / "stale.txt").read_text() == "stale"
 
 
 # ── run_tests / _pre_run_cov_clean, _post_run_coverage: a failed clear fails the run ──
