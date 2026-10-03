@@ -31,7 +31,6 @@ from otto.docker.compose import (
     _stack_already_up,
     compose_down,
     compose_down_project,
-    compose_ps,
     compose_up,
     composed,
     get_container_host,
@@ -1755,31 +1754,6 @@ def _make_bare_repo(tmp: Path, *, name: str = "bare1") -> Repo:
 
 
 # ---------------------------------------------------------------------------
-# compose_ps
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_compose_ps_parses_json_lines(tmp_path):
-    """Valid JSON lines are parsed; blank lines and non-JSON lines are skipped."""
-    host = _capable_host()
-    _wire_parent_mock(host)
-    host.exec.return_value = _ok('{"ID":"a"}\n\n{"ID":"b"}\nnot-json\n')  # type: ignore[union-attr]
-    result = await compose_ps(host)
-    assert result == [{"ID": "a"}, {"ID": "b"}]
-
-
-@pytest.mark.asyncio
-async def test_compose_ps_non_ok_returns_empty():
-    """A non-ok parent response returns an empty list without raising."""
-    host = _capable_host()
-    _wire_parent_mock(host)
-    host.exec.return_value = _fail("boom")  # type: ignore[union-attr]
-    result = await compose_ps(host)
-    assert result == []
-
-
-# ---------------------------------------------------------------------------
 # get_container_host
 # ---------------------------------------------------------------------------
 
@@ -2119,31 +2093,6 @@ async def test_composed_does_not_even_probe_when_it_owns_the_stack(tmp_path):
     # compose_up's own probe still runs (unknown -> convergent `up -d`), but
     # composed() adds none of its own.
     assert project_probes == 1, "composed(own=True) must not probe for a value it discards"
-
-
-@pytest.mark.asyncio
-async def test_compose_ps_warns_when_a_daemon_cannot_be_reached(caplog):
-    """Still best-effort — `otto docker ps` tables the whole fleet — but LOUD.
-
-    An empty list is otherwise indistinguishable from a host that simply has
-    no containers running.
-    """
-    host = _capable_host()
-    _wire_parent_mock(host)
-    host.exec.return_value = _fail("cannot connect to the docker daemon")  # type: ignore[union-attr]
-
-    with caplog.at_level(logging.WARNING, logger="otto.docker.compose"):
-        result = await compose_ps(host)
-
-    assert result == []
-    # The host id is the entire point of this warning in a fleet-wide table.
-    assert any(
-        "could not list containers" in r.message
-        and host.id in r.message
-        and r.levelno == logging.WARNING
-        and r.name == "otto.docker.compose"
-        for r in caplog.records
-    ), caplog.text
 
 
 @pytest.mark.asyncio

@@ -55,8 +55,8 @@ host each one lands on), and env assembly (the three channels merged into one
 mapping). Purity is the design constraint, not an accident: it is what lets
 `otto docker use-cases` render an inventory without contacting a device, and
 what lets `--dry-run` print the *exact* compose command rather than a
-description of one. Placement has one owner: `deployment._resolve`, shared
-by `compose build`, `compose up` and `compose down`.
+description of one. Placement has one owner: `deployment.resolve_use_case`, shared
+by `compose build`, `compose up`, `compose down`, `compose ps` and `compose logs`.
 
 Resolution refuses rather than guesses. An ambiguous role, a provider tie, a
 pin naming a host this lab does not have — each is a configuration error

@@ -98,7 +98,7 @@ def test_the_new_names_are_lazily_exported():
     for name in (
         "build_on",
         "compose_build",
-        "DockerBuildError",
+        "DockerVerbError",
         "BuildReport",
         "RepoBuild",
         "FailedImage",

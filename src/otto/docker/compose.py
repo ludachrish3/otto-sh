@@ -5,7 +5,6 @@ The public surface (re-exported from :mod:`otto.docker`) is:
 - :func:`compose_up` — bring a stack up; returns ``{service: DockerContainerHost}``.
 - :func:`compose_down` — stop a stack and remove its container hosts from the lab.
 - :func:`composed` — async context manager wrapping the above.
-- :func:`compose_ps` — list running stacks on a parent.
 - :func:`get_container_host` — lab lookup by id (typed convenience).
 - :func:`get_user_compose_project` — name a stack so concurrent runs don't collide.
 """
@@ -13,17 +12,15 @@ The public surface (re-exported from :mod:`otto.docker`) is:
 import asyncio
 import contextlib
 import getpass
-import json
 import logging
 import re
 import shlex
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import replace
-from typing import Any
 
 from ..config.lab import Lab
 from ..config.repo import DockerCompose, Repo
-from ..host.docker_host import DockerContainerHost
+from ..host.docker_host import DockerContainerHost, compose_container_probe
 from ..host.errors import HostCommandError
 from ..host.factory import apply_providers
 from ..host.host import Host, is_dry_run, refuse_declined_fact
@@ -238,11 +235,7 @@ async def _resolve_container_id(
     be spent waiting for a container nobody asked docker about.
     """
     for attempt in range(_CONTAINER_ID_RESOLVE_ATTEMPTS):
-        result = await parent.exec(
-            f"docker ps -q "
-            f"--filter label=com.docker.compose.project={shlex.quote(project_name)} "
-            f"--filter label=com.docker.compose.service={shlex.quote(service)}"
-        )
+        result = await parent.exec(compose_container_probe(project_name, service))
         refuse_declined_fact(result, asked=f"resolve_container_id({project_name}/{service})")
         if result.status.is_ok:
             cid = result.value.strip().splitlines()
@@ -873,48 +866,6 @@ async def composed(
                 compose_down(repo, lab, on=on, project_name=proj),
                 what=f"docker compose down {proj}",
             )
-
-
-async def compose_ps(parent: Host) -> list[dict[str, Any]]:
-    """Return a list of dicts describing running containers on *parent*.
-
-    Uses ``docker ps --format '{{json .}}'`` so the output is structured.
-
-    Best-effort by contract, like :func:`~otto.link.manage.read_link_states`:
-    ``otto docker ps`` builds ONE table across every docker-capable host, so a
-    single unreachable daemon must not hide the rest of the fleet. It does
-    warn, though — an empty list is otherwise indistinguishable from a host
-    that simply has no containers, which is the same silent-wrong shape this
-    module is being swept for.
-
-    The best-effort fold stops at a dry run's decline, for the reason the
-    paragraph above already gives about the empty list. No arm at the top:
-    ``docker ps`` IS this function's only device touch, so the refusal below
-    already names the right thing, and letting the call reach the primitive
-    keeps its ``[DRY RUN]`` announcement.
-
-    Raises:
-        ~otto.result.CommandNotRunError: this is a dry run.
-    """
-    result = await parent.exec("docker ps --format '{{json .}}'")
-    refuse_declined_fact(result, asked=f"compose_ps({parent.id})")
-    if not result.status.is_ok:
-        logger.warning(
-            rf"\[docker] could not list containers on {parent.id} — reporting none "
-            f"for it: {result.value}"
-        )
-        return []
-    out: list[dict[str, Any]] = []
-    for raw_line in result.value.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            logger.debug(rf"\[docker] unparseable `docker ps` row on {parent.id}: {line!r}")
-            continue
-    return out
 
 
 def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:

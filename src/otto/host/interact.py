@@ -671,12 +671,17 @@ async def _run_bridge(
     on_output_line: Callable[[str], None],
     banner: str | None = None,
     prelude: bytes | None = None,
-) -> None:
+) -> bool:
     """Shared interactive bridge loop used by SSH and telnet login paths.
 
     Sets up raw mode, the threaded stdin reader, the SIGWINCH forwarder,
     and runs the two pump coroutines until one finishes. Guaranteed to
     restore the local terminal state on exit, even on exception.
+
+    Returns:
+        ``True`` when the remote side's pump finished (the remote ended the
+        session), ``False`` when the user ended it (the escape byte or stdin
+        EOF).
 
     If *banner* is provided, it is written to stderr **after** raw mode is
     applied. Printing the banner before raw mode opens a window where a
@@ -734,7 +739,8 @@ async def _run_bridge(
                 [stdin_task, remote_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if remote_task in pending:
+            remote_ended = remote_task not in pending
+            if not remote_ended:
                 # stdin finished first (user hit the escape byte). Give the remote
                 # pump a bounded window to drain any bytes still in flight — e.g.
                 # the echoed response to a command the user just sent — so they
@@ -764,6 +770,30 @@ async def _run_bridge(
                     uninstall_sigwinch()
             finally:
                 _restore_terminal(stdin_fd, saved_attrs)
+    return remote_ended
+
+
+def _bridged_exit_status(process: Any) -> int | None:
+    """Report a finished bridged SSH process as its status, ``128 + signal``, or ``None``.
+
+    asyncssh's ``returncode`` is the exit status, or the negative of the
+    signal's number when the remote ended by one (``asyncio``'s convention),
+    or ``None`` when neither was sent. A name its table lacks -- one Python
+    does not know, or one sent with a ``SIG`` prefix against RFC 4254's bare
+    spelling -- comes back as ``-99``, which is no signal: ``None`` rather
+    than a guess.
+    """
+    rc = process.returncode
+    if rc is None or rc >= 0:
+        return rc
+    try:
+        return 128 + signal.Signals(-rc).value
+    except ValueError:
+        return None
+
+
+_STATUS_WAIT_S = 5.0
+"""How long a remote-ended bridge waits for the exit status, which precedes the close."""
 
 
 async def run_ssh_login(
@@ -778,8 +808,19 @@ async def run_ssh_login(
     landing_frame: "CommandFrame | None" = None,
     target_frame: "CommandFrame | None" = None,
     creds: "list[Cred] | None" = None,
-) -> None:
+) -> int | None:
     """Open a PTY-backed SSH shell on ``conn`` and bridge it to the terminal.
+
+    Returns the remote process's own exit status when it ended on its own (a
+    *command* that finished, a shell that exited); ``128 + signal`` when it
+    died by a signal, as a shell reports it (Ctrl-C reaches the remote PTY as
+    SIGINT, so a bridged ``docker logs -f`` ended by Ctrl-C returns 130); and
+    ``None`` when the bridge ended without either: the user disconnected with
+    Ctrl+], stdin hit EOF, or the channel closed with no status. When the
+    remote ended the session the status is waited for (up to five seconds: it
+    always precedes the channel close); when the user did, only 0.2 s. Callers that
+    only want the human at a shell ignore it; a caller bridging one command
+    (``otto docker logs -f``) exits with it.
 
     The process requests ``term_type`` from ``$TERM`` so remote TUIs
     recognize the terminal capabilities. On local ``SIGWINCH`` the new
@@ -884,7 +925,7 @@ async def run_ssh_login(
                 log_line=log_file_effective.write_line,
                 term="ssh",
             )
-        await _run_bridge(
+        remote_ended = await _run_bridge(
             write_remote=write_remote,
             read_remote=read_remote,
             install_sigwinch=install_sigwinch,
@@ -892,6 +933,17 @@ async def run_ssh_login(
             banner=f"[otto] interactive session with {host_name} (ssh). Press Ctrl+] to disconnect.",  # noqa: E501 — long banner string
             prelude=prelude,
         )
+        # The exit-status message follows the stream's EOF and precedes the
+        # channel close; a remote that just ended can still be short of it
+        # on a slow link, and the close is guaranteed to come after it, so
+        # wait for the close, generously. A user-ended bridge (Ctrl+], stdin
+        # EOF) has no status coming and pays only a short bound.
+        if process.returncode is None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(
+                    process.wait_closed(), timeout=_STATUS_WAIT_S if remote_ended else 0.2
+                )
+        return _bridged_exit_status(process)
     finally:
         with contextlib.suppress(Exception):
             process.close()

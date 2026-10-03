@@ -30,8 +30,11 @@ from tests.e2e.docker._honesty import (
     MARK,
     names_a_missing_image,
     parse_built_line,
+    parse_compose_ps_names,
     parse_daemon_rows,
+    parse_images_rows,
     parse_project_image_ids,
+    parse_ps_ids,
     project_image_ids_command,
 )
 
@@ -282,3 +285,122 @@ def test_names_a_missing_image_is_false_for_a_stack_that_came_up_or_failed_other
         "Error response from daemon: driver failed programming external connectivity",
     ]:
         assert not names_a_missing_image(text), text
+
+
+# `otto docker ps` / `images` fan-outs, in docker's real column layout. Text
+# before the first header belongs to no host and must not be read as a row.
+_PS_FAN_OUT = """\
+0123456789ab   stray      line before any header
+== test3 ==
+CONTAINER ID   IMAGE              COMMAND   CREATED         STATUS         PORTS   NAMES
+3f1c2a9b7d10   repo1-api:latest   "api"     2 minutes ago   Up 2 minutes           repo1-api-1
+
+== test1 ==
+CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+"""
+
+_IMAGES_FAN_OUT = """\
+stray        latest    cafecafecafe   before any header   1MB
+== test3 ==
+REPOSITORY   TAG       IMAGE ID       CREATED         SIZE
+repo1-api    latest    cbd8571d4b6e   2 minutes ago   148MB
+<none>       <none>    0123456789ab   3 days ago      1MB
+
+== test1 ==
+REPOSITORY   TAG       IMAGE ID       CREATED         SIZE
+"""
+
+
+# The new layout, verbatim from a lab daemon's `docker images`, plus a dangling row.
+_NEW_LAYOUT_WARNING = (
+    "WARNING: This output is designed for human readability. "
+    "For machine-readable output, please use --format."
+)
+_IMAGES_NEW_LAYOUT = f"""\
+== test1 ==
+{_NEW_LAYOUT_WARNING}
+IMAGE                          ID             DISK USAGE   CONTENT SIZE   EXTRA
+alpine:3.20                     d9e853e87e55       13.7MB         4.17MB
+centos:7                        be65f488b776        434MB          108MB
+repo1-api:65af53dc0cb421d6      775f6229be55       18.9MB         4.95MB
+repo1-api:latest                47973a8d470c       18.9MB         4.95MB
+repo2-worker:latest             ec32860faf18       13.6MB         4.09MB
+<none>:<none>                   0123456789ab       1.2MB          1MB
+
+== test2 ==
+{_NEW_LAYOUT_WARNING}
+IMAGE  ID   DISK USAGE   CONTENT SIZE   EXTRA
+"""
+
+
+def test_parse_ps_ids_reads_each_hosts_rows_and_ignores_text_before_a_header():
+    assert parse_ps_ids(_PS_FAN_OUT) == {"test3": ["3f1c2a9b7d10"], "test1": []}
+
+
+def test_parse_images_rows_skips_dangling_rows_and_ignores_text_before_a_header():
+    assert parse_images_rows(_IMAGES_FAN_OUT) == {
+        "test3": {"repo1-api:latest": "cbd8571d4b6e"},
+        "test1": {},
+    }
+
+
+def test_parse_images_rows_reads_the_new_layout_and_skips_its_warning_header_and_dangling_row():
+    assert parse_images_rows(_IMAGES_NEW_LAYOUT) == {
+        "test1": {
+            "alpine:3.20": "d9e853e87e55",
+            "centos:7": "be65f488b776",
+            "repo1-api:65af53dc0cb421d6": "775f6229be55",
+            "repo1-api:latest": "47973a8d470c",
+            "repo2-worker:latest": "ec32860faf18",
+        },
+        "test2": {},
+    }
+
+
+def test_the_parsers_read_what_the_renderer_prints(capsys):
+    from otto.docker.observe import HostOutput, ObserveReport
+
+    def _out(host: str, text: str) -> HostOutput:
+        return HostOutput(host, "docker ps", CommandResult(Status.Success, value=text, retcode=0))
+
+    ps = "CONTAINER ID   IMAGE   NAMES\n3f1c2a9b7d10   img     c1\n"
+    images = "REPOSITORY   TAG      IMAGE ID       SIZE\nr            latest   cbd8571d4b6e   1MB\n"
+    docker_cli._render_observe(ObserveReport([_out("test3", ps), _out("alt2", "")]), header=True)
+    assert parse_ps_ids(capsys.readouterr().out) == {"test3": ["3f1c2a9b7d10"], "alt2": []}
+    docker_cli._render_observe(ObserveReport([_out("test3", images)]), header=True)
+    assert parse_images_rows(capsys.readouterr().out) == {"test3": {"r:latest": "cbd8571d4b6e"}}
+
+
+# `otto docker compose ps` fan-out, in compose's real column layout. Text before
+# the first header belongs to no host and must not be read as a row.
+_COMPOSE_PS_FAN_OUT = """\
+stray-name   stray line before any header
+== test3 ==
+NAME                 IMAGE        COMMAND   SERVICE   CREATED         STATUS         PORTS
+unix-repo1-e2e-api   repo1-api    "api"     api       2 minutes ago   Up 2 minutes
+unix-repo1-e2e-db    repo1-db     "db"      db        2 minutes ago   Up 2 minutes   5432/tcp
+
+== test1 ==
+NAME      IMAGE     COMMAND   SERVICE   CREATED   STATUS    PORTS
+"""
+
+
+def test_parse_compose_ps_names_reads_each_hosts_rows_and_ignores_text_before_a_header():
+    assert parse_compose_ps_names(_COMPOSE_PS_FAN_OUT) == {
+        "test3": ["unix-repo1-e2e-api", "unix-repo1-e2e-db"],
+        "test1": [],
+    }
+
+
+def test_parse_compose_ps_names_reads_what_the_renderer_prints(capsys):
+    from otto.docker.observe import HostOutput, ObserveReport
+
+    text = (
+        "NAME                 IMAGE   COMMAND   SERVICE   CREATED   STATUS   PORTS\n"
+        "unix-repo1-x-api-1   img     cmd       api       1m ago    Up 1 minute\n"
+    )
+    done = CommandResult(Status.Success, value=text, retcode=0)
+    docker_cli._render_observe(
+        ObserveReport([HostOutput("test3", "docker compose ps", done)]), header=True
+    )
+    assert parse_compose_ps_names(capsys.readouterr().out) == {"test3": ["unix-repo1-x-api-1"]}

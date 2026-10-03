@@ -9,13 +9,15 @@ The user-facing model these modules implement -- fragments, provider
 competition, placement and the env channels -- is documented in
 :doc:`/cli/docker/use-cases`.
 
-The build verbs and the reports they and ``teardown`` return are imported
-from the package::
+The build verbs, the observe verbs and the reports they and ``teardown``
+return are imported from the package::
 
     from otto.docker import (
         build_on,
         compose_build,
-        DockerBuildError,
+        list_containers,
+        container_logs,
+        DockerVerbError,
         BuildReport,
         RepoBuild,
         FailedImage,
@@ -24,13 +26,13 @@ from the package::
     )
 
 .. automodule:: otto.docker
-   :exclude-members: model_config, DockerBuildError
+   :exclude-members: model_config, DockerVerbError
 
 ..
-   DockerBuildError is excluded above because it is documented at its
-   defining module (build_verbs.rst) -- indexing it again here under
-   ``otto.docker.DockerBuildError`` gave ``DockerBuildError`` two targets,
-   which made any bare ``DockerBuildError`` xref elsewhere (e.g. a type
+   DockerVerbError is excluded above because it is documented at its
+   defining module (observe.rst) -- indexing it again here under
+   ``otto.docker.DockerVerbError`` gave ``DockerVerbError`` two targets,
+   which made any bare ``DockerVerbError`` xref elsewhere (e.g. a type
    annotation in invoke.py) ambiguous and -W-fatal.
 
 .. toctree::
@@ -41,6 +43,7 @@ from the package::
    compose
    deployment
    mounts
+   observe
    reports
    resolve
    staging

@@ -742,6 +742,7 @@ def _fake_process() -> MagicMock:
     proc.stdout.read = AsyncMock(return_value=b"")
     proc.change_terminal_size = MagicMock()
     proc.close = MagicMock()
+    proc.returncode = None
     return proc
 
 

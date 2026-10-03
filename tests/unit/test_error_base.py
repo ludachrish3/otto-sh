@@ -56,7 +56,7 @@ from otto.coverage.errors import (
 from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.tickets import TicketConfigError
 from otto.creds.errors import CredsError
-from otto.docker.build_verbs import DockerBuildError
+from otto.docker.observe import DockerVerbError
 from otto.docker.resolve import UseCaseResolutionError
 from otto.env import EnvBuildError, EnvExistsError
 from otto.env.backends import BackendUnavailableError
@@ -170,7 +170,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (TicketConfigError, ValueError),
     (CredsError, Exception),
     (UseCaseResolutionError, ValueError),
-    (DockerBuildError, ValueError),
+    (DockerVerbError, ValueError),
     (ParseMismatch, ValueError),
     (HostUnreachableError, RuntimeError),
     (HostCommandError, RuntimeError),
@@ -225,7 +225,7 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         DependencyError,
         ProjectScopeError,
         # The shared base for every input refusal that names its offending
-        # field (DockerBuildError, CoverageInputError): no stdlib type ever
+        # field (DockerVerbError, CoverageInputError): no stdlib type ever
         # carried a `.field` attribute, so Exception is its honest root —
         # each concrete subclass still declares its own ValueError/RuntimeError.
         FieldError,

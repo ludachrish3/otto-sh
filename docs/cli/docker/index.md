@@ -5,7 +5,8 @@ lab's docker-capable hosts. The containers it brings up become first-class lab
 hosts: they appear in `--list-hosts` and accept every `otto host` verb.
 
 A use-case is one named deployment that several active repos contribute
-fragments to; `compose build`, `compose up` and `compose down` all speak it.
+fragments to; `compose build`, `compose up`, `compose down`, `compose ps` and
+`compose logs` all speak it.
 {doc}`use-cases` is the workflow home for that model — start there.
 
 ```{raw} html
@@ -18,11 +19,15 @@ fragments to; `compose build`, `compose up` and `compose down` all speak it.
 | otto | docker analogue | scope | `--on` |
 | --- | --- | --- | --- |
 | `otto docker build --on HOST [--repo NAME] [IMAGE...] [-t REF]... [--no-cache] [--pull] [--build-arg K=V]... [--target STAGE]` | `docker build` | the selected repos' images, on one host | required |
-| `otto docker ps [--on HOST]` | `docker ps` | containers per host | optional |
+| `otto docker ps [-a] [--on HOST]` | `docker ps` | containers per host, as docker prints them | optional |
+| `otto docker images [--on HOST]` | `docker images` | images per host, as docker prints them | optional |
+| `otto docker logs CONTAINER [--tail N] [--since T] [-t] [-f|--follow] [--on HOST]` | `docker logs` | one container's log, found by host id or named on a host | optional |
 | `otto docker use-cases [USE_CASE]` | none | declared inventory, config only | none |
 | `otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]... [--no-cache] [--pull] [--build-arg K=V]...` | `docker compose build` | the images `up` would deploy, placed by the engine | optional collapse |
 | `otto docker compose up [USE_CASE [SERVICE]...] [--on HOST] [--build] [--force-recreate] [--pull POLICY] [--provide]... [--env]... [--env-file]...` | `docker compose up` | deploy a use-case | optional collapse |
 | `otto docker compose down [USE_CASE [SERVICE]...] [--on HOST] [--provide]...` | `docker compose down` | tear a use-case down | optional collapse |
+| `otto docker compose ps [USE_CASE] [-a] [--on HOST] [--provide]...` | `docker compose ps` | the use-case's containers per host, as docker prints them | optional collapse |
+| `otto docker compose logs [USE_CASE [SERVICE]...] [--tail N] [--since WHEN] [-t] [-f|--follow] [--on HOST] [--provide]...` | `docker compose logs` | the use-case's logs per host, as docker prints them | optional collapse |
 
 `build` builds images and nothing else: it needs a host (`--on`), not a
 use-case. Everything use-case-scoped is a `compose` verb, mirroring docker's
@@ -30,12 +35,21 @@ own `docker build` / `docker compose` split.
 
 Both build verbs take `docker build`'s own flags; {doc}`build` is the one home for them.
 
+A curated verb exists only where otto adds something docker cannot do from the host's shell: resolving a container host id ({doc}`logs`) or a use-case ({doc}`compose/ps`, {doc}`compose/logs`) to the real container or project, or fanning out over the lab's docker hosts ({doc}`ps`, {doc}`images`). Each prints what docker printed: every verb that may reach several hosts prints it under one `== host ==` line per host (whether one host or ten answered); `logs`, one container on one host, prints docker's lines alone. Everything else is `otto host <HOST> exec "docker …"`:
+
+```text
+otto host test3 exec "docker ps --format '{{.ID}} {{.Names}}'"
+```
+
 ## Synopsis
 
 ```text
 otto docker build     --on HOST [--repo NAME] [IMAGE...] [-t/--tag REF]... [--no-cache]
                       [--pull] [--build-arg K=V]... [--target STAGE]
-otto docker ps        [--on HOST]
+otto docker ps        [-a|--all] [--on HOST]
+otto docker images    [--on HOST]
+otto docker logs      CONTAINER [--tail N] [--since T] [-t|--timestamps] [-f|--follow]
+                      [--on HOST]
 otto docker use-cases [USE_CASE]
 otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]...
                           [--no-cache] [--pull] [--build-arg K=V]...
@@ -43,6 +57,10 @@ otto docker compose up    [USE_CASE [SERVICE]...] [--on HOST] [--build] [--force
                           [--pull POLICY] [--provide CAP=REPO]... [--env K=V]...
                           [--env-file PATH]...
 otto docker compose down  [USE_CASE [SERVICE]...] [--on HOST] [--provide CAP=REPO]...
+otto docker compose ps    [USE_CASE] [-a|--all] [--on HOST] [--provide CAP=REPO]...
+otto docker compose logs  [USE_CASE [SERVICE]...] [--tail N] [--since WHEN]
+                          [-t|--timestamps] [-f|--follow] [--on HOST]
+                          [--provide CAP=REPO]...
 ```
 
 ## Container hosts
@@ -256,6 +274,8 @@ that caused it. otto does not warn about a missing absolute bind source.
 
 build
 ps
+images
+logs
 ```
 
 ```{toctree}
@@ -265,6 +285,8 @@ ps
 compose/build
 compose/up
 compose/down
+compose/ps
+compose/logs
 ```
 
 ```{toctree}

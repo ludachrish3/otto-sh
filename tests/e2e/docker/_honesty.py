@@ -135,3 +135,74 @@ def names_a_missing_image(text: str) -> bool:
     missing *command* (``sh: 1: docker: not found``) says it too.
     """
     return _MISSING_IMAGE.search(" ".join(text.lower().split())) is not None
+
+
+_PS_ID = re.compile(r"^(?P<id>[0-9a-f]{12})\s")
+_IMAGE_ROW = re.compile(r"^(?P<repo>\S+)\s+(?P<tag>\S+)\s+(?P<id>[0-9a-f]{12})\s")
+_IMAGE_REF_ROW = re.compile(r"^(?P<ref>\S*:\S*)\s+(?P<id>[0-9a-f]{12})\s")
+
+
+def parse_ps_ids(text: str) -> "dict[str, list[str]]":
+    """``host id -> container ids`` from an ``otto docker ps`` fan-out: a row is
+    a line starting with docker's 12-hex id under the last ``== host ==`` header."""
+    rows: dict[str, list[str]] = {}
+    host = ""
+    for line in text.splitlines():
+        if line.startswith("== ") and line.endswith(" =="):
+            host = line[3:-3]
+            rows.setdefault(host, [])
+            continue
+        found = _PS_ID.match(line)
+        if host and found:
+            rows[host].append(found["id"])
+    return rows
+
+
+def parse_images_rows(text: str) -> "dict[str, dict[str, str]]":
+    """``host id -> {reference: short id}`` from an ``otto docker images`` fan-out.
+
+    Reads both layouts docker prints under a ``== host ==`` header. The classic
+    one is ``REPOSITORY  TAG  IMAGE ID  ...``, a row being ``<repo> <tag> <12-hex id>``,
+    keyed ``repo:tag``. The newer one is ``IMAGE  ID  DISK USAGE  ...`` (preceded by a
+    ``WARNING:`` line), a row being ``<repo:tag> <12-hex id>``, keyed by its first field.
+    Anything matching neither (the warning, the header rows, blank lines) is ignored,
+    and a dangling ``<none>:<none>`` row is skipped in both layouts.
+    """
+    rows: dict[str, dict[str, str]] = {}
+    host = ""
+    for line in text.splitlines():
+        if line.startswith("== ") and line.endswith(" =="):
+            host = line[3:-3]
+            rows.setdefault(host, {})
+            continue
+        classic = _IMAGE_ROW.match(line)
+        if classic:
+            key, short_id = f"{classic['repo']}:{classic['tag']}", classic["id"]
+        else:
+            by_ref = _IMAGE_REF_ROW.match(line)
+            if not by_ref:
+                continue
+            key, short_id = by_ref["ref"], by_ref["id"]
+        if host and key != "<none>:<none>":  # dangling images share one key; skip, never collapse
+            rows[host][key] = short_id
+    return rows
+
+
+def parse_compose_ps_names(text: str) -> "dict[str, list[str]]":
+    """``host id -> container names`` from an ``otto docker compose ps`` fan-out.
+
+    Compose prints ``NAME  IMAGE  COMMAND  SERVICE  CREATED  STATUS  PORTS``; under the
+    last ``== host ==`` header, every line with at least two fields whose first
+    field is not ``NAME`` is a container, and its first field is its name.
+    """
+    rows: dict[str, list[str]] = {}
+    host = ""
+    for line in text.splitlines():
+        if line.startswith("== ") and line.endswith(" =="):
+            host = line[3:-3]
+            rows.setdefault(host, [])
+            continue
+        fields = line.split()
+        if host and len(fields) >= 2 and fields[0] != "NAME":
+            rows[host].append(fields[0])
+    return rows

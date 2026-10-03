@@ -351,4 +351,4 @@ For `up` that is the exact `up` command, carrying `--force-recreate` and
 `otto docker use-cases` opts out of the seam's generic stop as well, because it
 is already a configuration-only inventory: under `--dry-run` it prints the same
 tables, displacement lines and placement problems as without, and exits with
-the same code. `otto docker ps` keeps the seam default.
+the same code. `otto docker ps` and `otto docker images` keep the seam default.

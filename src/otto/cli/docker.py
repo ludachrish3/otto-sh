@@ -12,14 +12,20 @@ Subcommands::
                                  [--force-recreate] [--pull POLICY]
                                  [--provide CAP=REPO] [--env K=V] [--env-file FILE]
     otto docker compose down    [USE_CASE [SERVICE...]] [--on H] [--provide CAP=REPO]
-    otto docker ps              [--on H]
+    otto docker ps              [-a] [--on H]
+    otto docker images          [--on H]
+    otto docker logs            CONTAINER [--tail N] [--since T] [-t] [-f] [--on H]
+    otto docker compose ps      [USE_CASE] [-a] [--on H] [--provide CAP=REPO]
+    otto docker compose logs    [USE_CASE [SERVICE...]] [--tail N] [--since T] [-t] [-f]
+                                 [--on H] [--provide CAP=REPO]
 
 ``compose build``/``compose up``/``compose down`` speak USE-CASES (spec §10): one named,
 cross-repo deployment resolved by the provider competition (§4) and placed by
 role (§5), not a per-repo loop over ``[[docker.composes]]``. ``build`` builds
 images only: it stages a repo's declared images onto one lab host and knows
 nothing about a composition, so it takes ``--on`` (required), never a
-use-case; ``ps`` is unchanged.
+use-case. ``ps``, ``images``, ``logs``, ``compose ps`` and ``compose logs`` print
+docker's output as docker printed it.
 
 Every leaf is a thin wrapper around the library API in :mod:`otto.docker`,
 which is also what instructions and suites import directly.
@@ -48,6 +54,7 @@ if TYPE_CHECKING:
 
     from ..config.repo import DockerUseCase
     from ..docker.deployment import UseCaseStack
+    from ..docker.observe import LogsTarget, ObserveReport
     from ..docker.reports import BuildReport, HostReport
     from ..docker.resolve import Displacement
 
@@ -56,7 +63,8 @@ _T = TypeVar("_T")
 docker_app = typer.Typer(
     name="docker",
     help=(
-        "Build images (`build`), inspect (`ps`, `use-cases`) and run use-case stacks (`compose`)."
+        "Build images (`build`), inspect (`ps`, `images`, `logs`, `use-cases`) "
+        "and run use-case stacks (`compose`: build, up, down, ps, logs)."
     ),
     no_args_is_help=True,
     context_settings={
@@ -66,7 +74,10 @@ docker_app = typer.Typer(
 
 compose_app = typer.Typer(
     name="compose",
-    help="Build, deploy and tear down use-case stacks (docker compose, one layer up).",
+    help=(
+        "Build, deploy, inspect (`ps`, `logs`) and tear down use-case stacks "
+        "(docker compose, one layer up)."
+    ),
     no_args_is_help=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
@@ -149,7 +160,7 @@ def _default_use_case(use_case: str | None) -> str:
     Omitting it is only unambiguous when exactly one use-case is declared.
     Zero and many are both hard errors (exit 1) rather than a quiet no-op —
     the same loudness contract every build verb's refusal carries one layer
-    down (:class:`~otto.docker.build_verbs.DockerBuildError`).
+    down (:class:`~otto.docker.observe.DockerVerbError`).
     """
     if use_case is not None:
         return use_case
@@ -246,11 +257,15 @@ _DECLINED = _Declined()
 """Sentinel distinguishing "a dry run declined" from a verb that returns None."""
 
 
-_BUILD_FLAGS: "dict[str, str]" = {
+_DOCKER_FLAGS: "dict[str, str]" = {
     "host": "--on",
     "repo": "--repo",
     "images": "IMAGE",
     "tag": "--tag",
+    "container": "CONTAINER",
+    "follow": "--follow",
+    "use_case": "USE_CASE",
+    "services": "SERVICE",
 }
 
 
@@ -269,7 +284,7 @@ async def _run_docker(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
       refusal (an ``--on`` naming no lab host, a provider tie, an unresolvable
       role). The LIBRARY's phrase is what reaches the user, verbatim: this
       layer keeps no second copy that could drift from it.
-    * :class:`~otto.docker.build_verbs.DockerBuildError` — a build verb's
+    * :class:`~otto.docker.observe.DockerVerbError` — a docker verb's
       input refusal, field-named. Spelled in this command's flags at this one
       site via :func:`~otto.cli.invoke.usage_error_from` (exit 2), the way
       ``otto test`` spells a bad ``--cov-dir``.
@@ -279,7 +294,7 @@ async def _run_docker(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
     ``isinstance(report, _Declined)`` narrowing is unambiguous regardless of
     what the library call itself returns on success.
     """
-    from ..docker.build_verbs import DockerBuildError
+    from ..docker.observe import DockerVerbError
     from ..docker.resolve import UseCaseResolutionError
     from ..host.host import is_dry_run
     from ..result import CommandNotRunError
@@ -299,8 +314,8 @@ async def _run_docker(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
         return _DECLINED
     except UseCaseResolutionError as e:
         fail(e)
-    except DockerBuildError as e:
-        raise usage_error_from(e, flags=_BUILD_FLAGS) from e
+    except DockerVerbError as e:
+        raise usage_error_from(e, flags=_DOCKER_FLAGS) from e
 
 
 def _render_build_report(report: "BuildReport") -> None:
@@ -724,46 +739,270 @@ def _env_key_names(frag: "DockerUseCase") -> str:
     return ", ".join(names) or "-"
 
 
+def _render_observe(report: "ObserveReport", *, header: bool) -> None:
+    """Print each host's docker output whole; exit 1 when any host's command failed.
+
+    *header* adds ``== <host> ==`` above each host and a blank line between
+    hosts -- the fan-out verbs' shape, stable whether one host or ten were
+    asked. ``logs`` passes False: one container, one host, docker's lines
+    alone, and its failure exits with docker's own code (as ``--follow``
+    does). ``print``, never ``rprint``: docker's text is not markup and a
+    table wider than the terminal is docker's to wrap, not Rich's.
+    """
+    for index, host in enumerate(report.hosts):
+        if header:
+            if index:
+                print()  # noqa: T201 -- docker's text, not markup; see the docstring
+            print(f"== {host.host_id} ==")  # noqa: T201
+        text = host.result.value
+        if text:
+            print(text, end="" if text.endswith("\n") else "\n")  # noqa: T201
+    if not report.ok:
+        code = 1
+        if not header:
+            code = max(report.hosts[0].result.retcode, 1)
+        raise typer.Exit(code)
+
+
 async def _ps(
+    all_: Annotated[
+        bool,
+        typer.Option("--all", "-a", help="Show every container, not only the running ones."),
+    ] = False,
     on: Annotated[
         str | None,
         typer.Option(
             "--on",
-            help="Specific docker-capable host to query (default: all).",
+            help="Docker-capable host to ask (default: every one).",
             autocompletion=_docker_host_completer,
         ),
     ] = None,
 ) -> None:
-    """List running containers on docker-capable lab hosts."""
-    from rich.table import Table
+    """Print `docker ps` from every docker-capable host, as docker printed it."""
+    from ..docker.observe import list_containers
 
-    from ..config.fleet import get_lab
-    from ..docker import compose_ps
-    from ..host.unix_host import UnixHost
+    report = await _run_docker(list_containers(on=on, all=all_))
+    if isinstance(report, _Declined):
+        return
+    _render_observe(report, header=True)
 
-    lab = get_lab()
-    parents: list[UnixHost] = []
-    if on:
-        # --on is a CLI host-id input, same as `otto host`.
-        host = lab.hosts.get(on)
-        if not isinstance(host, UnixHost) or not host.docker_capable:
-            fail(f"{on!r} is not a docker-capable lab host.")
-        parents = [host]
-    else:
-        parents = [h for h in lab.hosts.values() if isinstance(h, UnixHost) and h.docker_capable]
 
-    table = Table("host", "container_id", "image", "status", "names")
-    for parent in parents:
-        rows = await compose_ps(parent)
-        for row in rows:
-            table.add_row(
-                parent.id,
-                str(row.get("ID", ""))[:12],
-                str(row.get("Image", "")),
-                str(row.get("Status", "")),
-                str(row.get("Names", "")),
+async def _images(
+    on: Annotated[
+        str | None,
+        typer.Option(
+            "--on",
+            help="Docker-capable host to ask (default: every one).",
+            autocompletion=_docker_host_completer,
+        ),
+    ] = None,
+) -> None:
+    """Print `docker images` from every docker-capable host, as docker printed it."""
+    from ..docker.observe import list_images
+
+    report = await _run_docker(list_images(on=on))
+    if isinstance(report, _Declined):
+        return
+    _render_observe(report, header=True)
+
+
+async def _follow(resolve: "Coroutine[Any, Any, list[LogsTarget]]") -> None:
+    """Resolve the logs targets, then follow them live and exit with docker's status.
+
+    Both awaits go through :func:`_run_docker`, so a refusal at either step
+    reaches the user the way every docker verb's does. A status of ``None``
+    (Ctrl+] or stdin EOF ended it, no status reported) or ``0`` is a normal return.
+    """
+    from ..docker.observe import follow_logs
+
+    targets = await _run_docker(resolve)
+    if isinstance(targets, _Declined):
+        return
+    status = await _run_docker(follow_logs(targets))
+    if isinstance(status, int) and status != 0:
+        raise typer.Exit(status)
+
+
+async def _logs(
+    container: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "A container host id (test3.integration.web), "
+                "or with --on a docker container name or id."
             )
-    rprint(table)
+        ),
+    ],
+    tail: Annotated[
+        str | None,
+        typer.Option("--tail", help="Number of lines from the end of the log (docker's --tail)."),
+    ] = None,
+    since: Annotated[
+        str | None,
+        typer.Option(
+            "--since",
+            help="Logs since a timestamp or a relative time, e.g. 10m (docker's --since).",
+        ),
+    ] = None,
+    timestamps: Annotated[
+        bool, typer.Option("--timestamps", "-t", help="Show timestamps (docker's -t).")
+    ] = False,
+    follow: Annotated[
+        bool,
+        typer.Option(
+            "--follow", "-f", help="Follow the log output live (docker's -f); Ctrl-C ends it."
+        ),
+    ] = False,
+    on: Annotated[
+        str | None,
+        typer.Option(
+            "--on",
+            help="The host CONTAINER is a docker name or id on.",
+            autocompletion=_docker_host_completer,
+        ),
+    ] = None,
+) -> None:
+    """Print one container's `docker logs`, as docker printed it."""
+    from ..docker.observe import container_logs
+
+    if follow:
+        from ..docker.observe import resolve_logs
+
+        async def _target() -> "list[LogsTarget]":
+            return [
+                await resolve_logs(
+                    container, on=on, tail=tail, since=since, timestamps=timestamps, follow=follow
+                )
+            ]
+
+        await _follow(_target())
+        return
+    report = await _run_docker(
+        container_logs(container, on=on, tail=tail, since=since, timestamps=timestamps)
+    )
+    if isinstance(report, _Declined):
+        return
+    _render_observe(report, header=False)
+
+
+async def _compose_ps(
+    use_case: Annotated[
+        str | None,
+        typer.Argument(
+            help="Use-case whose stacks to list (default: the only one declared).",
+            autocompletion=_use_case_completer,
+        ),
+    ] = None,
+    all_: Annotated[
+        bool,
+        typer.Option(
+            "--all", "-a", help="Show every container of the project, not only the running ones."
+        ),
+    ] = False,
+    on: Annotated[
+        str | None,
+        typer.Option(
+            "--on",
+            help="Collapse every fragment onto this lab host (as compose up resolves it).",
+            autocompletion=_docker_host_completer,
+        ),
+    ] = None,
+    provide: Annotated[
+        list[str] | None,
+        typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
+    ] = None,
+) -> None:
+    """Print `docker compose ps` for a use-case's project on every host it is placed on."""
+    from ..docker.observe import compose_ps
+
+    name = _default_use_case(use_case)
+    report = await _run_docker(compose_ps(name, all=all_, on=on, provide=_parse_provide(provide)))
+    if isinstance(report, _Declined):
+        return
+    _render_observe(report, header=True)
+
+
+async def _compose_logs(
+    use_case: Annotated[
+        str | None,
+        typer.Argument(
+            help="Use-case whose logs to print (default: the only one declared).",
+            autocompletion=_use_case_completer,
+        ),
+    ] = None,
+    service: Annotated[
+        list[str] | None,
+        typer.Argument(help="Only these services' logs (requires an explicit use-case)."),
+    ] = None,
+    tail: Annotated[
+        str | None,
+        typer.Option("--tail", help="Number of lines from the end of each log (docker's --tail)."),
+    ] = None,
+    since: Annotated[
+        str | None,
+        typer.Option(
+            "--since",
+            help="Logs since a timestamp or a relative time, e.g. 10m (docker's --since).",
+        ),
+    ] = None,
+    timestamps: Annotated[
+        bool, typer.Option("--timestamps", "-t", help="Show timestamps (docker's -t).")
+    ] = False,
+    follow: Annotated[
+        bool,
+        typer.Option(
+            "--follow", "-f", help="Follow the log output live (docker's -f); Ctrl-C ends it."
+        ),
+    ] = False,
+    on: Annotated[
+        str | None,
+        typer.Option(
+            "--on",
+            help="Collapse every fragment onto this lab host (as compose up resolves it).",
+            autocompletion=_docker_host_completer,
+        ),
+    ] = None,
+    provide: Annotated[
+        list[str] | None,
+        typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
+    ] = None,
+) -> None:
+    """Print `docker compose logs` for a use-case's project on every host it is placed on."""
+    from ..docker.observe import compose_logs
+
+    name = _default_use_case(use_case)
+    if follow:
+        from ..docker.observe import resolve_compose_logs
+
+        provide_map = _parse_provide(provide)
+
+        async def _targets() -> "list[LogsTarget]":
+            return resolve_compose_logs(
+                name,
+                service or [],
+                on=on,
+                provide=provide_map,
+                tail=tail,
+                since=since,
+                timestamps=timestamps,
+            )
+
+        await _follow(_targets())
+        return
+    report = await _run_docker(
+        compose_logs(
+            name,
+            service or [],
+            on=on,
+            provide=_parse_provide(provide),
+            tail=tail,
+            since=since,
+            timestamps=timestamps,
+        )
+    )
+    if isinstance(report, _Declined):
+        return
+    _render_observe(report, header=True)
 
 
 @dataclass(frozen=True)
@@ -784,7 +1023,7 @@ class _Verb:
     preview this workstream exists to ship, and the build verbs likewise print their plan.
     ``use-cases`` opts out too: it is a read-only inventory of configuration that
     contacts no host, so its body is its own dry-run answer and prints identically
-    either way. ``ps`` keeps the safe default.
+    either way. ``ps`` and the other observe verbs keep the safe default.
     """
 
 
@@ -796,10 +1035,14 @@ class _Verb:
 _VERBS: "list[_Verb]" = [
     _Verb("build", "docker", _build, dry_run_preview=True),
     _Verb("ps", "docker", _ps, output_dir=False),
+    _Verb("images", "docker", _images, output_dir=False),
+    _Verb("logs", "docker", _logs, output_dir=False),
     _Verb("use-cases", "docker", _use_cases, output_dir=False, dry_run_preview=True),
     _Verb("build", "compose", _compose_build, dry_run_preview=True),
     _Verb("up", "compose", _compose_up, dry_run_preview=True),
     _Verb("down", "compose", _compose_down, dry_run_preview=True),
+    _Verb("ps", "compose", _compose_ps, output_dir=False),
+    _Verb("logs", "compose", _compose_logs, output_dir=False),
 ]
 _GROUPS: "dict[str, typer.Typer]" = {"docker": docker_app, "compose": compose_app}
 

@@ -9,7 +9,9 @@ import pytest
 from otto.docker import build_verbs as verbs_mod
 from otto.docker import deployment as deploy_mod
 from otto.docker.build import BuildOptions
-from otto.docker.build_verbs import DockerBuildError, build_on, compose_build
+from otto.docker.build_verbs import build_on, compose_build
+from otto.docker.deployment import UseCaseResolution
+from otto.docker.observe import DockerVerbError
 from otto.docker.reports import BuildReport, ImageBuild
 from otto.docker.resolve import Displacement, SelectedFragment, Selection, UseCaseResolutionError
 from otto.result import CommandNotRunError, CommandResult
@@ -87,7 +89,7 @@ def builds():
 @pytest.mark.asyncio
 async def test_two_selected_repos_declaring_one_image_name_are_refused(install, builds):
     repos = [_repo("a", images=("api",)), _repo("b", images=("api", "db"))]
-    with install(repos), pytest.raises(DockerBuildError) as excinfo:
+    with install(repos), pytest.raises(DockerVerbError) as excinfo:
         await build_on("test3")
     message = str(excinfo.value)
     assert excinfo.value.field == "images"
@@ -117,7 +119,7 @@ async def test_a_clash_outside_the_selected_images_is_not_this_builds_problem(in
 @pytest.mark.asyncio
 async def test_two_images_of_one_repo_sharing_a_staging_key_are_refused(install, builds):
     repos = [_repo("a", images=("team/api", "team_api"))]
-    with install(repos), pytest.raises(DockerBuildError) as excinfo:
+    with install(repos), pytest.raises(DockerVerbError) as excinfo:
         await build_on("test3")
     message = str(excinfo.value)
     assert excinfo.value.field == "images"
@@ -190,7 +192,7 @@ async def test_builds_every_docker_repo_on_the_named_host_in_dependency_order(in
 async def test_host_is_required(install):
     with (
         install([_repo("a", images=("api",))]),
-        pytest.raises(DockerBuildError, match=r"host is required.*\['alt2', 'test3'\]") as e,
+        pytest.raises(DockerVerbError, match=r"host is required.*\['alt2', 'test3'\]") as e,
     ):
         await build_on(None)  # type: ignore[arg-type]
     assert e.value.field == "host"
@@ -201,13 +203,13 @@ async def test_a_host_outside_the_lab_or_not_docker_capable_is_refused(install, 
     lab.hosts["test3"].docker_capable = False
     with (
         install([_repo("a", images=("api",))]),
-        pytest.raises(DockerBuildError, match=r"'ghost' is not a docker-capable") as e,
+        pytest.raises(DockerVerbError, match=r"'ghost' is not a docker-capable") as e,
     ):
         await build_on("ghost")
     assert e.value.field == "host"
     with (
         install([_repo("a", images=("api",))]),
-        pytest.raises(DockerBuildError, match=r"'test3' is not a docker-capable.*\['alt2'\]"),
+        pytest.raises(DockerVerbError, match=r"'test3' is not a docker-capable.*\['alt2'\]"),
     ):
         await build_on("test3")
 
@@ -220,7 +222,7 @@ async def test_repo_narrows_and_an_unknown_repo_is_refused(install, builds):
     assert [rb.repo for rb in report.repos] == ["b"]
     with (
         install([a, b]),
-        pytest.raises(DockerBuildError, match=r"repo 'c' is not a loaded repo.*\['a', 'b'\]") as e,
+        pytest.raises(DockerVerbError, match=r"repo 'c' is not a loaded repo.*\['a', 'b'\]") as e,
     ):
         await build_on("test3", repo="c")
     assert e.value.field == "repo"
@@ -266,7 +268,7 @@ async def test_a_duplicated_image_name_builds_once(install, builds):
 async def test_an_image_no_selected_repo_declares_is_refused(install):
     with (
         install([_repo("a", images=("api",))]),
-        pytest.raises(DockerBuildError, match=r"'apo'.*declared: \['api'\]") as e,
+        pytest.raises(DockerVerbError, match=r"'apo'.*declared: \['api'\]") as e,
     ):
         await build_on("test3", images=["apo"])
     assert e.value.field == "images"
@@ -286,7 +288,7 @@ async def test_a_repo_declaring_no_images_is_a_no_images_entry(install, builds):
 async def test_nothing_to_build_is_refused_before_any_host_is_touched(install, builds):
     with (
         install([_repo("a"), _repo("b")]),
-        pytest.raises(DockerBuildError, match=r"nothing to build.*\['a', 'b'\]") as e,
+        pytest.raises(DockerVerbError, match=r"nothing to build.*\['a', 'b'\]") as e,
     ):
         await build_on("test3")
     assert e.value.field is None
@@ -333,12 +335,16 @@ def _uc_repo(name, *fragments, images=()):
 
 
 def _resolved(lab, placed, *, displaced=(), order=None):
-    """Patch deployment._resolve to a fixed placement: {host_id: [SelectedFragment...]}."""
+    """Patch deployment.resolve_use_case to a fixed placement: {host_id: [SelectedFragment...]}."""
     frags = [sf for sfs in placed.values() for sf in sfs]
     selection = Selection("integration", frags, displaced=list(displaced))
     repos = {sf.repo.name: sf.repo for sf in frags}
     order_map = order or {name: i for i, name in enumerate(repos)}
-    return patch.object(deploy_mod, "_resolve", return_value=(lab, selection, placed, order_map))
+    return patch.object(
+        deploy_mod,
+        "resolve_use_case",
+        return_value=UseCaseResolution(lab, selection, placed, order_map),
+    )
 
 
 @pytest.mark.asyncio
@@ -360,7 +366,7 @@ async def test_compose_build_builds_the_winners_per_host_in_dependency_order(lab
 
 @pytest.mark.asyncio
 async def test_compose_build_shares_resolve_with_deploy(lab):
-    """The placement call is deployment._resolve with the same on/provide."""
+    """The placement call is deployment.resolve_use_case with the same on/provide."""
     a = _uc_repo("a", _frag(), images=("api",))
     placed = {"test3": [SelectedFragment(a, a.docker_settings.use_cases[0])]}
     with (
@@ -393,7 +399,7 @@ async def test_an_image_only_a_displaced_repo_declares_is_refused(lab, builds):
     placed = {"test3": [SelectedFragment(a, a.docker_settings.use_cases[0])]}
     with (
         _resolved(lab, placed),
-        pytest.raises(DockerBuildError, match=r"'mockdb'.*declared: \['api'\]") as e,
+        pytest.raises(DockerVerbError, match=r"'mockdb'.*declared: \['api'\]") as e,
     ):
         await compose_build("integration", images=["mockdb"])
     assert e.value.field == "images"
@@ -421,7 +427,9 @@ async def test_a_winner_without_images_is_a_no_images_entry_and_the_other_host_b
 async def test_compose_build_placement_refusal_is_the_engines(lab):
     with (
         patch.object(
-            deploy_mod, "_resolve", side_effect=UseCaseResolutionError("role 'edge' is ambiguous")
+            deploy_mod,
+            "resolve_use_case",
+            side_effect=UseCaseResolutionError("role 'edge' is ambiguous"),
         ),
         pytest.raises(UseCaseResolutionError, match="ambiguous"),
     ):
@@ -483,7 +491,7 @@ async def test_build_on_hands_the_flags_to_every_build(install, builds):
 @pytest.mark.asyncio
 async def test_a_tag_with_two_selected_images_is_refused_before_anything_runs(install, builds):
     repos = [_repo("a", images=("api", "db"))]
-    with install(repos), pytest.raises(DockerBuildError) as excinfo:
+    with install(repos), pytest.raises(DockerVerbError) as excinfo:
         await build_on("test3", tags=["x:1"])
     assert excinfo.value.field == "tag"
     assert "api" in str(excinfo.value)
@@ -515,7 +523,7 @@ async def test_a_missing_archive_context_is_refused_before_any_host_is_touched(i
         name="a",
         docker_settings=SimpleNamespace(images=(missing,), composes=(), use_cases=()),
     )
-    with install([repo]), pytest.raises(DockerBuildError, match=r"/nonexistent/ctx\.tar") as e:
+    with install([repo]), pytest.raises(DockerVerbError, match=r"/nonexistent/ctx\.tar") as e:
         await build_on("test3")
     assert "is not a file" in str(e.value)
     assert e.value.field == "images"

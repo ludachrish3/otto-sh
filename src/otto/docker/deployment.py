@@ -133,10 +133,10 @@ def _canonical_on(lab: "Lab", on: "str | None") -> "str | None":
     return host.id
 
 
-def _parent_for(lab: "Lab", host_id: str) -> UnixHost:
+def parent_for(lab: "Lab", host_id: str) -> UnixHost:
     """Return the docker-capable parent behind a resolved placement, or refuse.
 
-    Only called for a host :func:`_acting_hosts` decided this call actually
+    Only called for a host :func:`acting_hosts` decided this call actually
     touches — a host whose services were all narrowed away by ``services=``
     is never handed here, so it never has to be a docker-capable unix host
     for THIS call to succeed. Deliberate: a use-case spanning several hosts
@@ -270,9 +270,7 @@ def _declared_services(frags: "list[SelectedFragment]", *, report: bool = False)
     return _declared(frags, report=report).services
 
 
-def _validated_services(
-    selection: Selection, services: "Sequence[str] | None"
-) -> "set[str] | None":
+def validated_services(selection: Selection, services: "Sequence[str] | None") -> "set[str] | None":
     """Check a ``services`` narrowing against the whole selection's declarations."""
     if services is None:
         return None
@@ -506,7 +504,7 @@ def _unit_services(unit: _RepoUnit) -> "set[str]":
 
 
 @dataclass
-class _ActingHost:
+class ActingHost:
     """One host this call will actually touch, and what it will run there."""
 
     host_id: str
@@ -521,14 +519,14 @@ class _ActingHost:
     """
 
 
-def _acting_hosts(
+def acting_hosts(
     placed: "dict[str, list[SelectedFragment]]",
     order: "Mapping[str, int]",
     services_filter: "set[str] | None",
     *,
     use_case: str,
     report: bool = False,
-) -> "list[_ActingHost]":
+) -> "list[ActingHost]":
     """Resolve which hosts this call touches, and each one's service set.
 
     ONE answer, shared by ``deploy`` and ``deployed``, because they must agree
@@ -536,10 +534,10 @@ def _acting_hosts(
     and probing a host ``deploy`` then SKIPS (its services were all narrowed
     away) lets an unrelated stack on that host make ``was_up`` true and
     suppress a teardown that was owed. Same reason ``teardown`` shares
-    ``_resolve``: the two halves of a deployment must not disagree about what
+    ``resolve_use_case``: the two halves of a deployment must not disagree about what
     the deployment is.
     """
-    acting: "list[_ActingHost]" = []
+    acting: "list[ActingHost]" = []
     for host_id, host_frags in placed.items():
         frags = _ordered(host_frags, order)
         declared = _declared(frags, report=report)
@@ -552,7 +550,7 @@ def _acting_hosts(
                 )
             continue
         acting.append(
-            _ActingHost(
+            ActingHost(
                 host_id=host_id,
                 fragments=frags,
                 services=wanted,
@@ -582,12 +580,24 @@ async def _build_for(units: "list[_RepoUnit]", parent: UnixHost) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _resolve(
+@dataclass(frozen=True)
+class UseCaseResolution:
+    """What :func:`resolve_use_case` decided, before any device is touched."""
+
+    lab: "Lab"
+    selection: Selection
+    placed: "dict[str, list[SelectedFragment]]"
+    """Each placed host id to the fragments that win on it."""
+    order: "dict[str, int]"
+    """Repo name to its dependency-order position."""
+
+
+def resolve_use_case(
     use_case: str,
     *,
     on: "str | None",
     provide: "Mapping[str, str] | None",
-) -> "tuple[Lab, Selection, dict[str, list[SelectedFragment]], dict[str, int]]":
+) -> UseCaseResolution:
     """Run the pure prefix `deploy`, `teardown` and `deployed` all share.
 
     Shared so ``--on`` and ``--provide`` cannot mean one thing on the way up
@@ -599,7 +609,7 @@ def _resolve(
     selection = select_fragments(use_case, get_repos(), provide=provide)
     placed = resolve_placement(selection, lab, on=on_id)
     order = {repo.name: i for i, repo in enumerate(get_ordered_repos())}
-    return lab, selection, placed, order
+    return UseCaseResolution(lab, selection, placed, order)
 
 
 def _ordered(
@@ -669,8 +679,8 @@ async def deploy(
             above the first build/stage/up, which are the first device
             touches.
     """
-    lab, selection, placed, order = _resolve(use_case, on=on, provide=provide)
-    services_filter = _validated_services(selection, services)
+    resolution = resolve_use_case(use_case, on=on, provide=provide)
+    services_filter = validated_services(resolution.selection, services)
 
     # Read once: every host's branch below must agree about which run this is.
     dry = is_dry_run()
@@ -678,14 +688,16 @@ async def deploy(
     # reports it through the plan its decline carries (`_plan`), which the
     # caller prints. Logging it on a dry run as well showed each one twice.
     if not dry:
-        _log_displacements(use_case, selection)
-    stack = UseCaseStack(use_case=use_case, selection=selection)
+        _log_displacements(use_case, resolution.selection)
+    stack = UseCaseStack(use_case=use_case, selection=resolution.selection)
     brought_up: "list[tuple[UnixHost, str]]" = []
     previews: "list[tuple[str, str]]" = []  # (host id, the command it would run)
     try:
-        for acting in _acting_hosts(placed, order, services_filter, use_case=use_case, report=True):
+        for acting in acting_hosts(
+            resolution.placed, resolution.order, services_filter, use_case=use_case, report=True
+        ):
             host_id, frags, wanted = acting.host_id, acting.fragments, acting.services
-            parent = _parent_for(lab, host_id)
+            parent = parent_for(resolution.lab, host_id)
             proj = project_name or use_case_project(parent.source_lab, use_case)
             units = _units(frags)
             # Planned BEFORE the build, so a dry run reaches the render
@@ -693,9 +705,9 @@ async def deploy(
             # bad adapter or an unreadable compose file in seconds rather than
             # after minutes of image building.
             plan = _plan_host(
-                selection=selection,
-                placed=placed,
-                lab=lab,
+                selection=resolution.selection,
+                placed=resolution.placed,
+                lab=resolution.lab,
                 host_id=host_id,
                 frags=frags,
                 compose_project=proj,
@@ -761,7 +773,7 @@ async def deploy(
             if not result.is_ok:
                 _refuse_failed_up(proj, parent.id, result.value)
             hosts = await register_stack_hosts(
-                lab,
+                resolution.lab,
                 parent,
                 compose_project=proj,
                 id_project=use_case,
@@ -776,13 +788,13 @@ async def deploy(
         # Only what THIS call brought up, on every host it reached — the
         # multi-host generalization of compose_up's rollback. A stack that
         # was already running belongs to someone else and is left alone.
-        await _rollback(lab, brought_up)
+        await _rollback(resolution.lab, brought_up)
         raise
     if dry:
         raise CommandNotRunError(
             f"deploy({use_case})",
-            ", ".join(sorted(placed)),
-            f"{_plan(placed, selection)} {_command_preview(previews)}",
+            ", ".join(sorted(resolution.placed)),
+            f"{_plan(resolution.placed, resolution.selection)} {_command_preview(previews)}",
         )
     return stack
 
@@ -929,20 +941,20 @@ async def teardown(
             than inherited, for ``compose_down``'s reason: the second half of
             this verb mutates ``lab.hosts``, which a dry run must leave alone.
     """
-    lab, selection, placed, order = _resolve(use_case, on=on, provide=provide)
-    services_filter = _validated_services(selection, services)
+    resolution = resolve_use_case(use_case, on=on, provide=provide)
+    services_filter = validated_services(resolution.selection, services)
 
     if is_dry_run():
         raise CommandNotRunError(
             f"teardown({use_case})",
-            ", ".join(sorted(placed)),
-            f"{_plan(placed, selection)} No container was stopped and no host was "
-            f"unregistered from the lab.",
+            ", ".join(sorted(resolution.placed)),
+            f"{_plan(resolution.placed, resolution.selection)} No container was stopped "
+            f"and no host was unregistered from the lab.",
         )
 
     hosts: "dict[str, list[CommandResult]]" = {}
-    for host_id, host_frags in placed.items():
-        parent = _parent_for(lab, host_id)
+    for host_id, host_frags in resolution.placed.items():
+        parent = parent_for(resolution.lab, host_id)
         proj = project_name or use_case_project(parent.source_lab, use_case)
         prefix = f"{parent.id}.{use_case.lower()}."
         if services_filter is None:
@@ -951,11 +963,15 @@ async def teardown(
             # cannot be blocked by one that has since been edited away).
             hosts[host_id] = [
                 await compose_down_project(
-                    parent, proj, lab=lab, remove_ids_under=prefix, stop_timeout=stop_timeout
+                    parent,
+                    proj,
+                    lab=resolution.lab,
+                    remove_ids_under=prefix,
+                    stop_timeout=stop_timeout,
                 )
             ]
             continue
-        declared = _declared_services(_ordered(host_frags, order), report=False)
+        declared = _declared_services(_ordered(host_frags, resolution.order), report=False)
         wanted = [s for s in declared if s in services_filter]
         if not wanted:
             continue
@@ -970,7 +986,7 @@ async def teardown(
                     rf"\[docker] `{action.split()[0]}` failed for {proj} on "
                     f"{parent.id}: {result.value}"
                 )
-        await unregister_container_hosts(lab, prefix, services=wanted)
+        await unregister_container_hosts(resolution.lab, prefix, services=wanted)
         hosts[host_id] = ran
     return TeardownReport(hosts=hosts, use_case=use_case)
 
@@ -1004,13 +1020,14 @@ async def deployed(
             compensating action never masks the real failure, so a body
             exception always wins and the teardown failure is logged instead.
     """
-    lab, selection, placed, order = _resolve(use_case, on=kw.get("on"), provide=kw.get("provide"))
-    services_filter = _validated_services(selection, kw.get("services"))
+    resolution = resolve_use_case(use_case, on=kw.get("on"), provide=kw.get("provide"))
+    services_filter = validated_services(resolution.selection, kw.get("services"))
     if is_dry_run():
         raise CommandNotRunError(
             f"deployed({use_case})",
-            ", ".join(sorted(placed)),
-            f"{_plan(placed, selection)} No stack was brought up, so none was torn down either.",
+            ", ".join(sorted(resolution.placed)),
+            f"{_plan(resolution.placed, resolution.selection)} No stack was brought up, "
+            f"so none was torn down either.",
         )
 
     project_name = kw.get("project_name")
@@ -1021,8 +1038,10 @@ async def deployed(
         # touches, and an unrelated stack sitting under the same project name
         # there would otherwise make `was_up` true and suppress a teardown
         # this context manager owed for the hosts it DID deploy to.
-        for acting in _acting_hosts(placed, order, services_filter, use_case=use_case):
-            parent = _parent_for(lab, acting.host_id)
+        for acting in acting_hosts(
+            resolution.placed, resolution.order, services_filter, use_case=use_case
+        ):
+            parent = parent_for(resolution.lab, acting.host_id)
             proj = project_name or use_case_project(parent.source_lab, use_case)
             probed = await _stack_already_up(parent, proj)
             if probed is None:

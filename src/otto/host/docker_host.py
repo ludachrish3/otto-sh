@@ -63,6 +63,28 @@ from .session import Expect, HostSession, SessionManager, ShellSession, _DockerS
 logger = logging.getLogger(__name__)
 
 
+def compose_container_probe(
+    project: str,
+    service: str,
+    *,
+    all: bool = False,  # noqa: A002 -- docker's flag name
+) -> str:
+    """Build the ``docker ps`` command that finds one compose service's container id.
+
+    Matches by the compose project and service labels. ``oneoff=False`` keeps a
+    ``docker compose run`` one-off, which carries the same two labels, from
+    being taken for the service's container. *all* adds ``-a`` so a stopped
+    container is found too.
+    """
+    flags = "-aq" if all else "-q"
+    return (
+        f"docker ps {flags} "
+        f"--filter label=com.docker.compose.project={shlex.quote(project)} "
+        f"--filter label=com.docker.compose.service={shlex.quote(service)} "
+        "--filter label=com.docker.compose.oneoff=False"
+    )
+
+
 @dataclass(slots=True, kw_only=True)
 class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     """A Docker container exposed as a first-class otto host.
@@ -319,10 +341,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 about this container's state was measured.
         """
         result = await self.parent.exec(
-            f"docker ps -q "
-            f"--filter label=com.docker.compose.project={shlex.quote(self.compose_project)} "
-            f"--filter label=com.docker.compose.service={shlex.quote(self.service)}",
-            log=log,
+            compose_container_probe(self.compose_project, self.service), log=log
         )
         refuse_declined_fact(result, asked=f"is_running({self.id})")
         if result.status.is_ok and result.value.strip():

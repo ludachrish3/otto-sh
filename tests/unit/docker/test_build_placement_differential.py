@@ -3,8 +3,8 @@ exactly the hosts deploy deploys to. It turns red the day either verb grows a pl
 rule of its own (issue #494 was that day, once).
 
 Verified red when written: temporarily changing compose_build's
-``deployment._resolve(use_case, on=on, provide=provide)`` call to
-``deployment._resolve(use_case, on=None, provide=provide)`` and re-running this file failed
+``deployment.resolve_use_case(use_case, on=on, provide=provide)`` call to
+``deployment.resolve_use_case(use_case, on=None, provide=provide)`` and re-running this file failed
 the ``collapse`` row (compose_build then built ``b`` on ``alt2`` instead of collapsing it onto
 ``test3`` the way ``deploy`` did), confirming the differential actually depends on
 compose_build sharing deploy's placement rather than merely resembling it.

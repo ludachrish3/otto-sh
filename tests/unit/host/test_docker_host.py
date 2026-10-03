@@ -2240,3 +2240,15 @@ async def test_get_recursive_lists_inside_the_container_then_stages_per_level(tm
     assert (tmp_path / "data" / "sub").is_dir()
     assert parent.get.await_count == 2
     assert result.value[Path("/data")].value[Path("sub/b")].value == tmp_path / "data" / "sub" / "b"
+
+
+def test_compose_container_probe_quotes_its_values_and_skips_one_offs():
+    from otto.host.docker_host import compose_container_probe
+
+    running = compose_container_probe("p x", "web")
+    assert running == (
+        "docker ps -q --filter label=com.docker.compose.project='p x' "
+        "--filter label=com.docker.compose.service=web "
+        "--filter label=com.docker.compose.oneoff=False"
+    )
+    assert compose_container_probe("p x", "web", all=True).startswith("docker ps -aq ")

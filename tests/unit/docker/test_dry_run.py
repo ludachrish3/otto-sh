@@ -19,7 +19,7 @@ Two mechanisms, one per shape, and the split is the point:
   return protects the actions below it -- a hardened return value protects
   only the caller that branches on it.
 * the verbs that READ a device fact (``_stack_already_up``,
-  both ``_resolve_container_id``s, ``compose_ps``) let the call reach the
+  both ``_resolve_container_id``s, ``run_on``) let the call reach the
   primitive -- keeping its ``[DRY RUN]`` announcement -- and refuse the
   ANSWER, via ``refuse_declined_fact``. Their return types (``bool``, ``str``,
   ``list``) cannot carry "I did not look".
@@ -41,7 +41,6 @@ Nothing here runs docker, docker compose, or touches a lab address: the parent
 is a real ``UnixHost`` at a non-lab address whose ``exec``/``put`` are spies.
 """
 
-import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -55,10 +54,10 @@ from otto.docker.compose import _resolve_container_id as _compose_resolve_contai
 from otto.docker.compose import (
     _stack_already_up,
     compose_down,
-    compose_ps,
     compose_up,
     composed,
 )
+from otto.docker.observe import run_on
 from otto.docker.staging import stage_compose_files, stage_image_context
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
@@ -312,8 +311,8 @@ class TestTheReadProbesRefuseInsteadOfInventing:
     """Each probe is fed the REAL decline, then the real device answers.
 
     The control half is the load-bearing one here: these probes have genuine
-    falsy answers (no such image; the stack is down; the daemon errored and
-    ``compose_ps`` reports none for that host) and the refusal must not have
+    falsy answers (no such image; the stack is down; a daemon errored and
+    ``run_on`` reports its error for that host) and the refusal must not have
     swallowed any of them. So every test asserts the decline raises AND that
     the ordinary answers still come back unchanged, through the same seam.
     """
@@ -356,22 +355,24 @@ class TestTheReadProbesRefuseInsteadOfInventing:
         assert await _compose_resolve_container_id(parent, "proj", "api") == "abc123def456"
 
     @pytest.mark.asyncio
-    async def test_compose_ps_refuses_a_decline_and_keeps_its_best_effort_fold(self):
-        """The empty list is this module's own named silent-wrong shape."""
+    async def test_run_on_refuses_a_decline_and_keeps_a_failed_daemons_error(self):
+        """An empty listing is a fact about a daemon; a decline measured none."""
         parent = _bare_parent()
-        parent.exec = AsyncMock(return_value=await _real_decline())  # type: ignore[method-assign]
+        parent.exec = AsyncMock(return_value=await _real_decline("docker ps"))  # type: ignore[method-assign]
 
-        with pytest.raises(CommandNotRunError, match="compose_ps"):
-            await compose_ps(parent)
+        with pytest.raises(CommandNotRunError, match="list_containers"):
+            await run_on([parent], "docker ps", asked="list_containers")
 
-        # POSITIVE CONTROLS, same seam: a failed probe still folds to [] (one
-        # unreachable daemon must not hide the fleet), and a real answer still
-        # parses. The refusal is scoped to the non-measurement alone.
+        # POSITIVE CONTROLS, same seam: a failed daemon is reported, not hidden
+        # and not refused; a real listing comes back whole.
         parent.exec = AsyncMock(return_value=_fail("permission denied"))  # type: ignore[method-assign]
-        assert await compose_ps(parent) == []
-        row = {"ID": "abc123", "Image": "alpine", "Status": "Up", "Names": "api"}
-        parent.exec = AsyncMock(return_value=_ok(json.dumps(row) + "\n"))  # type: ignore[method-assign]
-        assert await compose_ps(parent) == [row]
+        report = await run_on([parent], "docker ps", asked="list_containers")
+        assert not report.ok
+        assert report.hosts[0].result.value == "permission denied"
+        parent.exec = AsyncMock(return_value=_ok("CONTAINER ID\n"))  # type: ignore[method-assign]
+        report = await run_on([parent], "docker ps", asked="list_containers")
+        assert report.ok
+        assert report.hosts[0].result.value == "CONTAINER ID\n"
 
 
 class TestIsRunningStopsAnsweringForAContainerItNeverAskedAbout:
@@ -449,12 +450,24 @@ class TestEveryPublicDockerExportIsAdjudicated:
             "composed",
             "deploy",
             "deployed",
+            "follow_logs",
             "teardown",
         }
     )
 
-    #: Reach the primitive, keep its announcement, refuse the ANSWER.
-    REFUSING_PROBE = frozenset({"compose_ps"})
+    #: Reach the primitive and refuse the ANSWER. With ``LogMode.QUIET`` the
+    #: observe execs' ``[DRY RUN]`` announcement goes to ``verbose.log`` only;
+    #: the refusal still names the probe (``list_containers(test3)``).
+    REFUSING_PROBE = frozenset(
+        {
+            "list_containers",
+            "list_images",
+            "compose_ps",
+            "compose_logs",
+            "container_logs",
+            "resolve_logs",
+        }
+    )
 
     #: No device contact at all -- pure configuration, lab lookup, or a
     #: data/exception type that never itself runs a command.
@@ -465,7 +478,12 @@ class TestEveryPublicDockerExportIsAdjudicated:
             "get_container_host",
             "get_user_compose_project",
             "register_compose_adapter",
-            "DockerBuildError",
+            "DockerVerbError",
+            "HostOutput",
+            "ObserveReport",
+            "LogsTarget",
+            "resolve_compose_logs",
+            "docker_parents",
             "BuildOptions",
             "BuildReport",
             "FailedImage",
@@ -486,13 +504,24 @@ class TestEveryPublicDockerExportIsAdjudicated:
             "nobody had asked the question of any of them."
         )
 
-    @pytest.mark.parametrize("sub", ["ps"])
+    @pytest.mark.parametrize(
+        ("argv", "seam"),
+        [
+            (["ps"], "otto.docker.observe.list_containers"),
+            (["images"], "otto.docker.observe.list_images"),
+            (["compose", "ps", "integration"], "otto.docker.observe.compose_ps"),
+            (["compose", "logs", "integration"], "otto.docker.observe.compose_logs"),
+            (["logs", "x"], "otto.docker.observe.container_logs"),
+        ],
+        ids=lambda v: " ".join(v) if isinstance(v, list) else None,
+    )
     @pytest.mark.parametrize("dry", [True, False])
-    def test_the_cli_never_reaches_the_library_under_a_dry_run(self, sub, dry):
+    def test_the_cli_never_reaches_the_library_under_a_dry_run(self, argv, seam, dry):
         """WHY this hazard is library-only, pinned rather than asserted in prose.
 
-        ``ps`` registers with the safe default -- no ``dry_run_preview`` -- so
-        the CLI dry-run seam validates, prints the block and exits 0 above its body.
+        ``ps``, ``images``, ``compose ps`` and ``compose logs`` register with the
+        safe default -- no ``dry_run_preview`` -- so the CLI dry-run seam validates,
+        prints the block and exits 0 above its body.
         That is what makes the package's dry-run holes a LIBRARY-surface
         concern (suites, instructions and third-party embedders that import
         ``otto.docker`` directly), and it is the reason the arms above are
@@ -508,53 +537,99 @@ class TestEveryPublicDockerExportIsAdjudicated:
         behavior by ``TestTheDeployVerbsOwnTheirDryRunPreview`` below -- so the
         parameters removed here did not just vanish.
 
-        ``get_lab`` is the seam: it is the first statement of ``ps``'s body,
-        and the patch is on ``otto.cli.docker``'s name for it, so the
-        preamble's own lab access cannot be mistaken for the body's. Both
-        halves are asserted in the same test -- 0 calls under ``-n``, 1
-        without -- because "the body did not run" is satisfied just as well by
-        a dispatch that ran nothing at all.
+        The verb's library function is the seam: it is patched at its home in
+        ``otto.docker.observe`` (the leaf imports it inside its body, so the
+        preamble cannot be mistaken for the body). Both halves are asserted in
+        the same test -- never reached under ``-n``, reached once without --
+        because "the body did not run" is satisfied just as well by a dispatch
+        that ran nothing at all.
         """
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from otto.cli.docker import docker_app
+        from otto.docker.observe import ObserveReport
         from otto.utils import DRY_RUN_HEADLINE
         from tests._fixtures.dispatch import DispatchRunner
 
-        lab = Lab(name="test")
-        get_lab = MagicMock(return_value=lab)
+        verb = " ".join(argv)
         reached: list[str] = []
 
         async def spy(*_a, **_kw):
-            reached.append(sub)
-            return {}
+            reached.append(verb)
+            return ObserveReport([])
 
         with (
-            active_context(lab=lab, dry_run=dry),
-            patch("otto.config.fleet.get_lab", get_lab),
-            patch("otto.docker.compose_ps", AsyncMock(side_effect=spy)),
+            active_context(lab=Lab(name="test"), dry_run=dry),
+            patch(seam, AsyncMock(side_effect=spy)),
         ):
             result = DispatchRunner().invoke(
-                docker_app, [sub], spec_name="docker", async_leaves=True
+                docker_app, argv, spec_name="docker", async_leaves=True
             )
 
-        assert reached == [], f"`otto docker {sub}` reached the library: {reached}"
         if dry:
+            assert reached == [], f"`otto docker {verb} -n` reached the library: {reached}"
             assert result.exit_code == 0, result.output
-            assert get_lab.call_count == 0, f"`otto docker {sub} -n` ran its body"
             # SUPPRESS THE PAYLOAD, NEVER THE ANNOUNCEMENT: an empty dry run
             # is a bug, so the stop has to say what it stopped.
             assert DRY_RUN_HEADLINE in result.output, result.output
-            assert f"would run: docker {sub}" in " ".join(result.output.split())
+            assert f"would run: docker {verb}" in " ".join(result.output.split())
         else:
-            assert get_lab.call_count == 1, (
-                f"`otto docker {sub}` did not run its body even WITHOUT --dry-run, "
-                f"so the zero above proves nothing about the seam"
+            assert reached == [verb], (
+                f"`otto docker {verb}` did not run its body even WITHOUT --dry-run, "
+                f"so the absence above proves nothing about the seam"
             )
             assert DRY_RUN_HEADLINE not in result.output
-            # `ps` lists docker-capable hosts straight off the (unmocked,
-            # empty) lab, not repos -- a genuine, quiet "nothing to show".
             assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize(
+        ("argv", "resolver"),
+        [
+            (["logs", "x", "-f"], "otto.docker.observe.resolve_logs"),
+            (["compose", "logs", "integration", "-f"], "otto.docker.observe.resolve_compose_logs"),
+        ],
+        ids=lambda v: " ".join(v) if isinstance(v, list) else None,
+    )
+    @pytest.mark.parametrize("dry", [True, False])
+    def test_a_follow_never_reaches_the_bridge_under_a_dry_run(self, argv, resolver, dry):
+        """``logs -f`` is two seams: the resolver, then the bridge.
+
+        The parametrized reach test above patches one seam, and without ``-n``
+        a ``-f`` leaf stops at the resolver (which would find no lab), so the
+        follow gets its own pair: the bridge seam is never reached under
+        ``-n`` and is reached once without it.
+        """
+        from unittest.mock import patch
+
+        from otto.cli.docker import docker_app
+        from otto.docker.observe import LogsTarget
+        from otto.utils import DRY_RUN_HEADLINE
+        from tests._fixtures.dispatch import DispatchRunner
+
+        target = LogsTarget(object(), "docker logs x")
+        resolved = (
+            patch(resolver, AsyncMock(return_value=target))
+            if resolver.endswith("resolve_logs")
+            else patch(resolver, return_value=[target])
+        )
+        follow = AsyncMock(return_value=None)
+        with (
+            active_context(lab=Lab(name="test"), dry_run=dry),
+            resolved,
+            patch("otto.docker.observe.follow_logs", follow),
+        ):
+            result = DispatchRunner().invoke(
+                docker_app, argv, spec_name="docker", async_leaves=True
+            )
+
+        assert result.exit_code == 0, result.output
+        assert follow.await_count == (0 if dry else 1)
+        if dry:
+            assert DRY_RUN_HEADLINE in result.output, result.output
+            # the preview spells the flag in its long form
+            would = " ".join(argv).replace(" -f", " --follow")
+            assert f"would run: docker {would}" in " ".join(result.output.split())
+        else:
+            assert DRY_RUN_HEADLINE not in result.output
 
     def test_the_pure_exports_stay_usable_under_a_dry_run(self):
         """SUPPRESS THE PAYLOAD, NEVER THE ANNOUNCEMENT: a preview needs these.

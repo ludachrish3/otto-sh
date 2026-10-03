@@ -10,13 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import typer
 
-from otto import docker as docker_pkg
 from otto.cli import docker as docker_cli
 from otto.config import fleet as fleet_mod
 from otto.config.lab import Lab
 from otto.config.repo import DockerUseCase, Repo
-from otto.docker.build_verbs import DockerBuildError
 from otto.docker.deployment import UseCaseStack
+from otto.docker.observe import DockerVerbError
 from otto.docker.reports import BuildReport, ImageBuild, RepoBuild, TeardownReport
 from otto.docker.resolve import Displacement, Selection
 from otto.host.element import Element
@@ -194,7 +193,7 @@ def test_a_tag_with_several_images_is_spelled_as_tag():
     from otto.cli.docker import docker_app
     from tests._fixtures.dispatch import DispatchRunner
 
-    err = DockerBuildError("tags name one image, and 2 are selected (api, db)", field="tag")
+    err = DockerVerbError("tags name one image, and 2 are selected (api, db)", field="tag")
     with patch("otto.docker.build_verbs.build_on", AsyncMock(side_effect=err)):
         result = DispatchRunner().invoke(
             docker_app, ["build", "--on", "test3", "-t", "x:1"], spec_name="docker"
@@ -304,7 +303,7 @@ def test_rebuild_is_not_an_option(argv):
 def test_build_without_on_is_a_usage_error_spelled_as_the_flag():
     """The rule is the library's; the CLI only spells it.
 
-    ``usage_error_from`` does not run ``spell_flags`` on a ``DockerBuildError``
+    ``usage_error_from`` does not run ``spell_flags`` on a ``DockerVerbError``
     (its message can embed user text, e.g. a repo or image name) -- the
     message passes through byte-identical and only ``param_hint`` carries the
     flag, so click renders ``Invalid value for --on: <message verbatim>``.
@@ -320,7 +319,7 @@ def test_build_without_on_is_a_usage_error_spelled_as_the_flag():
     from otto.cli.docker import docker_app
     from tests._fixtures.dispatch import DispatchRunner
 
-    err = DockerBuildError(
+    err = DockerVerbError(
         "host is required; docker-capable hosts in lab 'unix': ['test3']", field="host"
     )
     with patch("otto.docker.build_verbs.build_on", AsyncMock(side_effect=err)):
@@ -333,7 +332,7 @@ def test_build_unknown_image_is_spelled_as_IMAGE():  # noqa: N802 — IMAGE is t
     from otto.cli.docker import docker_app
     from tests._fixtures.dispatch import DispatchRunner
 
-    err = DockerBuildError(
+    err = DockerVerbError(
         "no selected repo declares an image named 'apo'; declared: ['api']", field="images"
     )
     with patch("otto.docker.build_verbs.build_on", AsyncMock(side_effect=err)):
@@ -436,8 +435,8 @@ def test_a_docker_build_error_is_never_rewritten_only_hinted(message, field, hin
     byte-identical."""
     from otto.cli.invoke import usage_error_from
 
-    exc = DockerBuildError(message, field=field)
-    err = usage_error_from(exc, flags=docker_cli._BUILD_FLAGS)
+    exc = DockerVerbError(message, field=field)
+    err = usage_error_from(exc, flags=docker_cli._DOCKER_FLAGS)
     assert err.message == message
     assert err.param_hint == hint
 
@@ -1200,127 +1199,6 @@ def test_use_case_completer_filters_by_prefix():
         return_value={"docker_use_cases": ["soak", "integration", "install"]},
     ):
         assert docker_cli._use_case_completer(MagicMock(), "ins") == ["install"]
-
-
-# ---------------------------------------------------------------------------
-# _ps command
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_ps_all_hosts_table(tmp_path):
-    """_ps queries compose_ps for a docker-capable host and passes row data to Table."""
-    host = MagicMock(spec=UnixHost)
-    host.id = "test3"
-    host.docker_capable = True
-
-    lab = Lab(name="unix")
-    lab.hosts["test3"] = host
-
-    rows = [
-        {
-            "ID": "abc123def456xyz",
-            "Image": "myimg",
-            "Status": "Up 2 hours",
-            "Names": "ctr1",
-        }
-    ]
-    mock_compose_ps = AsyncMock(return_value=rows)
-
-    mock_table_instance = MagicMock()
-    mock_table_cls = MagicMock(return_value=mock_table_instance)
-
-    mock_rprint = MagicMock()
-
-    with (
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch.object(docker_pkg, "compose_ps", mock_compose_ps),
-        patch("rich.table.Table", mock_table_cls),
-        patch.object(docker_cli, "rprint", mock_rprint),
-    ):
-        await docker_cli._ps(on=None)
-
-    # Table should have been called with column headers
-    mock_table_cls.assert_called_once()
-    # add_row should have been called with parsed values
-    mock_table_instance.add_row.assert_called_once()
-    call_args = mock_table_instance.add_row.call_args[0]
-    assert call_args[0] == "test3"  # host id
-    assert call_args[1] == "abc123def456"  # first 12 chars of ID
-    assert call_args[2] == "myimg"  # Image
-    assert call_args[3] == "Up 2 hours"  # Status
-    assert call_args[4] == "ctr1"  # Names
-
-
-@pytest.mark.asyncio
-async def test_ps_bad_host_exits():
-    """_ps raises Exit(1) when --on names a non-docker-capable host."""
-    # Create a host that is NOT docker_capable
-    host = MagicMock(spec=UnixHost)
-    host.docker_capable = False
-
-    lab = Lab(name="unix")
-    lab.hosts["meh_host"] = host
-
-    with (
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch.object(docker_cli, "rprint", MagicMock()),
-        pytest.raises(typer.Exit) as exc,
-    ):
-        await docker_cli._ps(on="ghost")
-
-    assert exc.value.exit_code == 1
-
-
-@pytest.mark.asyncio
-async def test_ps_all_docker_capable_hosts():
-    """_ps (no --on) queries all docker-capable hosts in the lab."""
-    capable = MagicMock(spec=UnixHost)
-    capable.id = "cap_host"
-    capable.docker_capable = True
-
-    not_capable = MagicMock(spec=UnixHost)
-    not_capable.docker_capable = False
-
-    lab = Lab(name="unix")
-    lab.hosts["cap_host"] = capable
-    lab.hosts["nocap_host"] = not_capable
-
-    mock_compose_ps = AsyncMock(return_value=[])
-    mock_rprint = MagicMock()
-
-    with (
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch.object(docker_pkg, "compose_ps", mock_compose_ps),
-        patch.object(docker_cli, "rprint", mock_rprint),
-    ):
-        await docker_cli._ps(on=None)
-
-    # compose_ps must be called for the capable host only
-    mock_compose_ps.assert_called_once_with(capable)
-
-
-@pytest.mark.asyncio
-async def test_ps_specific_capable_host():
-    """_ps --on <host> queries only the named docker-capable host."""
-    capable = MagicMock(spec=UnixHost)
-    capable.id = "cap_host"
-    capable.docker_capable = True
-
-    lab = Lab(name="unix")
-    lab.hosts["cap_host"] = capable
-
-    mock_compose_ps = AsyncMock(return_value=[])
-    mock_rprint = MagicMock()
-
-    with (
-        patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch.object(docker_pkg, "compose_ps", mock_compose_ps),
-        patch.object(docker_cli, "rprint", mock_rprint),
-    ):
-        await docker_cli._ps(on="cap_host")
-
-    mock_compose_ps.assert_called_once_with(capable)
 
 
 # ---------------------------------------------------------------------------

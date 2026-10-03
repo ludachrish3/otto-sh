@@ -20,12 +20,13 @@ Every name is exported lazily (PEP 562), including ``AdapterResult`` /
 ``register_compose_adapter`` (repo-registered compose adapters, spec §7),
 ``deploy`` / ``teardown`` / ``deployed`` / ``UseCaseStack`` (the use-case
 deploy pipeline, spec §8/§11), and ``build_on`` / ``compose_build`` /
-``DockerBuildError`` with the report types they and ``teardown`` return
+``DockerVerbError`` with the report types they and ``teardown`` return
 (``BuildReport``, ``RepoBuild``, ``ImageBuild``, ``FailedImage``,
-``HostReport``, ``TeardownReport``): a caller pays for the one module that defines
-the name it asks for. Every command that loads a lab imports ``.compose`` to
-place the declared container hosts, and must not pay for ``.build`` and its
-build-context staging with it.
+``HostReport``, ``TeardownReport``), and the read-only observe verbs
+``list_containers`` / ``list_images`` with their ``ObserveReport``: a caller
+pays for the one module that defines the name it asks for. Every command that
+loads a lab imports ``.compose`` to place the declared container hosts, and
+must not pay for ``.build`` and its build-context staging with it.
 
 The deploy pipeline lives in ``.deployment``, NOT ``.deploy``, and the name
 is load-bearing: a submodule and a lazy export sharing one name is resolved
@@ -44,11 +45,9 @@ if TYPE_CHECKING:
     from .adapter import register_compose_adapter as register_compose_adapter
     from .build import BuildOptions as BuildOptions
     from .build import build_images as build_images
-    from .build_verbs import DockerBuildError as DockerBuildError
     from .build_verbs import build_on as build_on
     from .build_verbs import compose_build as compose_build
     from .compose import compose_down as compose_down
-    from .compose import compose_ps as compose_ps
     from .compose import compose_up as compose_up
     from .compose import composed as composed
     from .compose import get_container_host as get_container_host
@@ -57,6 +56,19 @@ if TYPE_CHECKING:
     from .deployment import deploy as deploy
     from .deployment import deployed as deployed
     from .deployment import teardown as teardown
+    from .observe import DockerVerbError as DockerVerbError
+    from .observe import HostOutput as HostOutput
+    from .observe import LogsTarget as LogsTarget
+    from .observe import ObserveReport as ObserveReport
+    from .observe import compose_logs as compose_logs
+    from .observe import compose_ps as compose_ps
+    from .observe import container_logs as container_logs
+    from .observe import docker_parents as docker_parents
+    from .observe import follow_logs as follow_logs
+    from .observe import list_containers as list_containers
+    from .observe import list_images as list_images
+    from .observe import resolve_compose_logs as resolve_compose_logs
+    from .observe import resolve_logs as resolve_logs
     from .reports import BuildReport as BuildReport
     from .reports import FailedImage as FailedImage
     from .reports import HostReport as HostReport
@@ -70,11 +82,9 @@ _LAZY_ATTRS: dict[str, str] = {
     "register_compose_adapter": "otto.docker.adapter",
     "BuildOptions": "otto.docker.build",
     "build_images": "otto.docker.build",
-    "DockerBuildError": "otto.docker.build_verbs",
     "build_on": "otto.docker.build_verbs",
     "compose_build": "otto.docker.build_verbs",
     "compose_down": "otto.docker.compose",
-    "compose_ps": "otto.docker.compose",
     "compose_up": "otto.docker.compose",
     "composed": "otto.docker.compose",
     "get_container_host": "otto.docker.compose",
@@ -83,6 +93,19 @@ _LAZY_ATTRS: dict[str, str] = {
     "deploy": "otto.docker.deployment",
     "deployed": "otto.docker.deployment",
     "teardown": "otto.docker.deployment",
+    "DockerVerbError": "otto.docker.observe",
+    "HostOutput": "otto.docker.observe",
+    "LogsTarget": "otto.docker.observe",
+    "ObserveReport": "otto.docker.observe",
+    "compose_logs": "otto.docker.observe",
+    "compose_ps": "otto.docker.observe",
+    "container_logs": "otto.docker.observe",
+    "docker_parents": "otto.docker.observe",
+    "follow_logs": "otto.docker.observe",
+    "list_containers": "otto.docker.observe",
+    "list_images": "otto.docker.observe",
+    "resolve_compose_logs": "otto.docker.observe",
+    "resolve_logs": "otto.docker.observe",
     "BuildReport": "otto.docker.reports",
     "FailedImage": "otto.docker.reports",
     "HostReport": "otto.docker.reports",
@@ -110,10 +133,13 @@ __all__ = [
     "AdapterResult",
     "BuildOptions",
     "BuildReport",
-    "DockerBuildError",
+    "DockerVerbError",
     "FailedImage",
+    "HostOutput",
     "HostReport",
     "ImageBuild",
+    "LogsTarget",
+    "ObserveReport",
     "RepoBuild",
     "TeardownReport",
     "UseCaseStack",
@@ -121,13 +147,21 @@ __all__ = [
     "build_on",
     "compose_build",
     "compose_down",
+    "compose_logs",
     "compose_ps",
     "compose_up",
     "composed",
+    "container_logs",
     "deploy",
     "deployed",
+    "docker_parents",
+    "follow_logs",
     "get_container_host",
     "get_user_compose_project",
+    "list_containers",
+    "list_images",
     "register_compose_adapter",
+    "resolve_compose_logs",
+    "resolve_logs",
     "teardown",
 ]

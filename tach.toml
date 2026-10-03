@@ -315,6 +315,10 @@ depends_on = [
     # §5). otto.registry is a zero-import leaf too (see otto.bootstrap's note
     # above), so the same no-cycle argument holds.
     "otto.registry",
+    # The observe verbs run docker's own command with LogMode.QUIET so the
+    # console does not relay a listing the verb then prints itself. otto.logger
+    # depends only on otto.console, so this edge cannot make a cycle.
+    "otto.logger",
 ]
 
 [[modules]]

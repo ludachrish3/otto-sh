@@ -136,7 +136,7 @@ def usage_error_from(
     is never spelled by rewriting its text: its message is rebuilt from
     scratch via :func:`~otto.coverage.config.destination_message`, passing
     the flag spellings in as the subject/remedy instead of the field names.
-    A :class:`~otto.errors.FieldError`'s message (a ``DockerBuildError``, a
+    A :class:`~otto.errors.FieldError`'s message (a ``DockerVerbError``, a
     ``CoverageInputError``) is treated the same way: it can embed text the
     user typed, so it passes through untouched and only ``param_hint``
     carries the flag.

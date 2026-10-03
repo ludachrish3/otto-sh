@@ -653,9 +653,13 @@ if not torn.ok:
 `build_on("test3", images=["api"])` builds one host's images without a
 use-case, the way `otto docker build --on test3 api` does. Every input rule
 is the library's: a missing host, an unknown repo or image name raises
-{class}`~otto.docker.build_verbs.DockerBuildError` with a `field`, and a
+{class}`~otto.docker.observe.DockerVerbError` with a `field`, and a
 placement refusal is {class}`~otto.docker.resolve.UseCaseResolutionError`,
 identical to `deploy`'s.
+
+The observe verbs are the same shape: {func}`~otto.docker.observe.list_containers`,
+{func}`~otto.docker.observe.compose_logs` and the rest return an
+{class}`~otto.docker.observe.ObserveReport` holding docker's text per host, whole.
 
 As a fixture, {func}`~otto.docker.deployed` deploys on entry and tears down
 on exit; a failed teardown raises `HostCommandError` naming the host, so a

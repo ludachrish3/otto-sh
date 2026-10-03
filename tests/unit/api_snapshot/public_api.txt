@@ -51,14 +51,16 @@ otto.docker.compose:get_container_host
 otto.docker:
 otto.docker:AdapterResult
 otto.docker:BuildReport
-otto.docker:DockerBuildError
+otto.docker:DockerVerbError
 otto.docker:FailedImage
 otto.docker:HostReport
 otto.docker:RepoBuild
 otto.docker:TeardownReport
 otto.docker:build_on
 otto.docker:compose_build
+otto.docker:container_logs
 otto.docker:deployed
+otto.docker:list_containers
 otto.docker:register_compose_adapter
 otto.examples.lab_repository:ExampleLabRepository
 otto.examples.monitor:UptimeParser

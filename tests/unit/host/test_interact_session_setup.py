@@ -1,6 +1,7 @@
 """The login bridge runs the session-setup hook before the pumps start."""
 
 import asyncio
+import signal
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -76,6 +77,7 @@ def _ssh_process(console: _Console) -> MagicMock:
     proc.stdin.write = write
     proc.stdout.read = lambda _n: console.read_remote()
     proc.close = MagicMock()
+    proc.returncode = None
     return proc
 
 
@@ -246,6 +248,7 @@ async def test_run_ssh_login_without_a_hook_takes_todays_path(hook):
     proc.stdin.write = MagicMock()
     proc.stdout.read = AsyncMock(return_value=b"")
     proc.close = MagicMock()
+    proc.returncode = None
     conn = MagicMock()
     conn.create_process = AsyncMock(return_value=proc)
     with (
@@ -265,11 +268,85 @@ async def test_run_ssh_login_without_a_hook_takes_todays_path(hook):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("returncode", "late_returncode", "remote_ended", "expected", "bound"),
+    [
+        (0, None, True, 0, None),
+        (1, None, True, 1, None),
+        (None, None, True, None, 5.0),
+        # asyncssh answers the negative signal number for a signal death, and
+        # -99 for a signal name this Python does not know: no number to report.
+        (-int(signal.SIGINT), None, True, 130, None),
+        (-int(signal.SIGTERM), None, True, 143, None),
+        (-99, None, True, None, None),
+        # The status arrives only after the channel closes: a remote that
+        # ended waits for the close, generously, and returns it.
+        (None, 1, True, 1, 5.0),
+        # The user ended the bridge: no status is coming, so the wait is short.
+        (None, None, False, None, 0.2),
+        (None, 1, False, 1, 0.2),
+    ],
+    ids=[
+        "zero",
+        "one",
+        "none",
+        "sigint",
+        "sigterm",
+        "unknown-signal",
+        "status-after-close",
+        "user-ended-none",
+        "user-ended-late-status",
+    ],
+)
+async def test_run_ssh_login_returns_the_remote_exit_status(
+    hook, returncode, late_returncode, remote_ended, expected, bound
+):
+    """The bridge ended; what the remote process said is the caller's to use."""
+    proc = MagicMock()
+    proc.stdin.write = MagicMock()
+    proc.stdout.read = AsyncMock(return_value=b"")
+    proc.close = MagicMock()
+    proc.returncode = returncode
+
+    async def _wait_closed():
+        if late_returncode is not None:
+            proc.returncode = late_returncode
+
+    proc.wait_closed = AsyncMock(side_effect=_wait_closed)
+    conn = MagicMock()
+    conn.create_process = AsyncMock(return_value=proc)
+    bounds: list[float] = []
+    real_wait_for = asyncio.wait_for
+
+    async def _spy_wait_for(aw, timeout=None):
+        bounds.append(timeout)
+        return await real_wait_for(aw, timeout=timeout)
+
+    with (
+        patch.dict(sys.modules, {"asyncssh": _make_fake_asyncssh()}),
+        patch.object(interact, "_run_bridge", new=AsyncMock(return_value=remote_ended)),
+        patch.object(interact, "_replay_proxy_hops", new=AsyncMock()),
+        patch.object(interact, "_setup_raw_mode", return_value=None),
+        patch.object(interact, "_restore_terminal"),
+        patch.object(interact.sys, "stdin"),
+        patch.object(interact.asyncio, "wait_for", new=_spy_wait_for),
+    ):
+        interact.sys.stdin.isatty = lambda: False
+        interact.sys.stdin.fileno = lambda: 0
+        assert await interact.run_ssh_login(conn=conn, host_name="h") == expected
+    # Only an absent status is waited for; a present one is read as is.
+    assert proc.wait_closed.await_count == (1 if bound is not None else 0)
+    assert bounds == ([] if bound is None else [bound])
+    proc.close.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_run_ssh_login_with_a_hook_uses_the_bridge_session(hook):
     proc = MagicMock()
     proc.stdin.write = MagicMock()
     proc.stdout.read = AsyncMock(return_value=b"")
     proc.close = MagicMock()
+    proc.returncode = None
     conn = MagicMock()
     conn.create_process = AsyncMock(return_value=proc)
     residual = b"admin@lab:~$ "
@@ -610,6 +687,7 @@ async def test_run_ssh_login_names_the_ssh_term_to_the_hook_bridge(hook):
     proc.stdin.write = MagicMock()
     proc.stdout.read = AsyncMock(return_value=b"")
     proc.close = MagicMock()
+    proc.returncode = None
     conn = MagicMock()
     conn.create_process = AsyncMock(return_value=proc)
     with (

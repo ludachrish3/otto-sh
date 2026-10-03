@@ -4,7 +4,7 @@ import pytest
 
 from otto.cli.invoke import usage_error_from
 from otto.coverage.errors import CoverageInputError, NoCoverageHostsError
-from otto.docker.build_verbs import DockerBuildError
+from otto.docker.observe import DockerVerbError
 from otto.errors import FieldError, OttoError
 
 
@@ -15,7 +15,7 @@ def test_field_error_carries_its_field():
     assert str(e) == "tier 'x' is unknown"
 
 
-@pytest.mark.parametrize("cls", [CoverageInputError, DockerBuildError])
+@pytest.mark.parametrize("cls", [CoverageInputError, DockerVerbError])
 def test_every_field_error_is_a_value_error_and_a_field_error(cls):
     e = cls("m", field="f")
     assert isinstance(e, FieldError)

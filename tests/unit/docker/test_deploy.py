@@ -373,7 +373,7 @@ async def test_a_host_left_with_no_named_service_is_skipped(tmp_path):
 @pytest.mark.asyncio
 async def test_skipped_host_log_names_the_use_case(tmp_path, caplog):
     """The skip log must name WHICH use-case left the host with nothing to
-    do — `_acting_hosts` is shared by `deploy`, `teardown` and `deployed`,
+    do — `acting_hosts` is shared by `deploy`, `teardown` and `deployed`,
     so a bare host id with no use-case name is ambiguous the moment more
     than one use-case is ever in play."""
     a = _repo(
@@ -570,7 +570,7 @@ def test_canonical_on_resolves_through_the_labs_host_table():
     no handle-resolution layer any more (spec 2026-09-05 §2.4, §7).
 
     Exercised directly against `_canonical_on` rather than through the whole
-    `deploy()` pipeline: `_parent_for` (further down that same pipeline) does
+    `deploy()` pipeline: `parent_for` (further down that same pipeline) does
     its own `lab.hosts.get(host_id)` with the same key, so a spy installed
     once on `lab.hosts` and checked only for "test3" being *somewhere* in it
     cannot tell "`_canonical_on` looked it up" from "something downstream did
@@ -1001,11 +1001,11 @@ async def test_a_non_docker_capable_parent_is_refused(single):
 
 @pytest.mark.asyncio
 async def test_a_fully_narrowed_away_host_is_never_docker_capable_checked(single):
-    """_parent_for (see its docstring) is only consulted for a host
-    _acting_hosts decided this call actually touches. `on=` collapses every
+    """parent_for (see its docstring) is only consulted for a host
+    acting_hosts decided this call actually touches. `on=` collapses every
     fragment onto one host, so narrowing `services=` down to nothing for it
     (an explicit empty list, as opposed to naming an unknown service — which
-    _validated_services refuses earlier) makes that host act on ZERO
+    validated_services refuses earlier) makes that host act on ZERO
     services. `deploy` must not then refuse it merely for not being
     docker-capable — it was never going to be touched either way."""
     single.host.docker_capable = False
@@ -1495,8 +1495,8 @@ async def test_dry_run_command_is_narrowed_by_services(tmp_path):
 def test_a_preview_with_no_acting_host_says_so_rather_than_showing_nothing():
     """M6: the documented-unreachable arm, exercised rather than ledgered.
 
-    `_acting_hosts` cannot return empty from a resolvable selection (a winner
-    always participates, and `_validated_services` already refused a narrowing
+    `acting_hosts` cannot return empty from a resolvable selection (a winner
+    always participates, and `validated_services` already refused a narrowing
     nothing declares), so the arm is driven directly. SUPPRESS THE PAYLOAD,
     NEVER THE ANNOUNCEMENT: an empty command list must still say why, not
     render as a plan that trails off.
