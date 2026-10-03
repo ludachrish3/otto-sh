@@ -18,7 +18,7 @@ pytestmark = pytest.mark.hostless
 
 
 def test_init_then_full_verification_flow(tmp_path: Path) -> None:
-    """``otto init --all`` then every command its own "Next steps" banner suggests."""
+    """``otto init --all`` then every command its own "Next steps" panel suggests."""
     repo = tmp_path / "widget"
     repo.mkdir()
     xdir = tmp_path / "xdir"

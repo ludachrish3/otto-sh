@@ -831,7 +831,7 @@ def test_a_referenced_hosts_store_password_never_reaches_the_error_text(tmp_path
     """spec 2026-09-06 creds-store §6.1/§9: LabRepositoryError text is not a leak either.
 
     Mirrors ``test_a_referenced_hosts_store_password_never_reaches_the_report``
-    in ``tests/unit/cli/test_init_validate.py``, at the loader instead of the
+    in ``tests/unit/init/test_init_doctor.py``, at the loader instead of the
     doctor: ``resolve_host_entry`` appends a referenced host's STORE creds
     LAST when the entry has none inline, so the resolved dict's
     ``str(ValidationError)`` — the ``LabRepositoryError`` text this wraps —

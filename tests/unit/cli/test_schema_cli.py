@@ -53,3 +53,25 @@ def test_export_out_flag_still_honored(tmp_path):
     result = runner.invoke(schema_app, ["export", "--out", str(out)])
     assert result.exit_code == 0, result.output
     assert (out / "settings.schema.json").is_file()
+
+
+def test_export_prunes_an_orphan_from_the_default_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / ".otto" / "schemas"
+    out.mkdir(parents=True)
+    (out / "retired-host.schema.json").write_text("{}")
+    result = runner.invoke(schema_app, ["export"])
+    assert result.exit_code == 0, result.output
+    assert not (out / "retired-host.schema.json").exists()
+    assert "pruned" in result.output
+    assert "retired-host.schema.json" in result.output
+
+
+def test_export_prints_a_pruned_name_literally_not_as_markup(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / ".otto" / "schemas"
+    out.mkdir(parents=True)
+    (out / "[bold]x.schema.json").write_text("{}")
+    result = runner.invoke(schema_app, ["export"])
+    assert result.exit_code == 0, result.output
+    assert "[bold]x.schema.json" in result.output

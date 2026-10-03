@@ -1,1022 +1,27 @@
-"""``otto init`` — scaffold a new otto repo or validate an existing one.
+"""``otto init`` — scaffold a new otto repo, or check an existing one.
 
-Each *area* (settings, schemas, lab, tests, instructions) can be detected,
-validated (existing artifacts are checked via the SAME ingestion code
-bootstrap uses — never modified, except the otto-owned schemas area, which
-``--schemas`` refreshes even when already present), or scaffolded.
-Interactive by default; ``--all`` or per-area flags skip prompts. See
-docs/configuration/settings.md.
+The doctor and the scaffolder are the :mod:`otto.init` library; this leaf
+parses the flags, asks its questions before anything is written, renders the
+library's reports, and prints the Next steps panel. See docs/cli/init.md.
 """
 
 import dataclasses
-import json
 import os
-import re
-from collections.abc import Callable
-from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated
 
-import tomli
 import typer
 
-from .init_templates import (
-    CONFTEST_TEMPLATE,
-    CREDS_JSON_TEMPLATE,
-    EXAMPLE_LAB_NAME,
-    INSTRUCTIONS_TEMPLATE,
-    INVENTORY_JSON_TEMPLATE,
-    KMODCOV_DEV_TOOL_TEMPLATE,
-    KMODCOV_STARTER_KBUILD_TEMPLATE,
-    KMODCOV_STARTER_README_TEMPLATE,
-    LAB_JSON_TEMPLATE,
-    LAB_README_TEMPLATE,
-    SETTINGS_TEMPLATE,
-    TEST_EXAMPLE_TEMPLATE,
-    VSCODE_EXTENSIONS_TEMPLATE,
-    VSCODE_SETTINGS_TEMPLATE,
-)
-
 if TYPE_CHECKING:
-    # Annotation-only: importing ``otto.inventory`` for real pulls ~77 otto
-    # modules (see ``otto/inventory/config.py``'s module docstring), and
-    # ``init.py`` sits on a budgeted CLI surface (scripts/import_budget.py).
-    # Every real use below is a function-local import.
-    from ..host.element import Element
-    from ..inventory import Inventory
-
-
-@dataclasses.dataclass(frozen=True)
-class InitConfig:
-    """Values prompts/flags feed into the settings template."""
-
-    name: str
-    version: str
-    kmodcov_dir: str = "third_party/otto_kmodcov"
-    """Where ``--kmodcov`` vendors the otto_kmodcov library, relative to the repo root."""
-
-    @property
-    def module_base(self) -> str:
-        """``name`` sanitized into a valid module-name base (``my-repo`` -> ``my_repo``)."""
-        base = re.sub(r"\W", "_", self.name)
-        return f"_{base}" if base[:1].isdigit() else base
-
-    @property
-    def init_module(self) -> str:
-        """The init module the scaffold writes and ``settings.toml``'s ``init`` names."""
-        return f"{self.module_base}_instructions"
-
-
-@dataclasses.dataclass(frozen=True)
-class Area:
-    """One scaffoldable/validatable unit of otto repo setup."""
-
-    name: str
-    detect: Callable[[Path], bool]
-    validate: Callable[[Path], list[str]]
-    scaffold: Callable[[Path, InitConfig], list[Path]]
-
-
-def _settings_data(root: Path) -> dict[str, Any] | None:
-    """Return the raw parsed ``.otto/settings.toml`` (``None`` if absent/unparseable).
-
-    Returning ``None`` (rather than raising) is what lets every doctor check
-    fall back to the conventional layout on a repo otto has not scaffolded
-    yet; the settings area itself reports the parse error.
-    """
-    settings_path = root / ".otto" / "settings.toml"
-    if not settings_path.is_file():
-        return None
-    try:
-        return tomli.loads(settings_path.read_text())
-    except (tomli.TOMLDecodeError, OSError):
-        return None
-
-
-def _settings_paths(root: Path) -> dict[str, list[Path]] | None:
-    """Parse ``.otto/settings.toml`` and anchor its ``tests``/``libs`` lists to *root*.
-
-    Returns ``None`` when the settings file is absent or fails to parse, so
-    callers fall back to the conventional path instead of erroring.
-
-    Applies phase 1 anchoring via :func:`otto.utils.anchor_path`: ``~`` expands
-    to the user's home, and whatever is still relative afterwards is anchored
-    to *root*. Host data is NOT one of these lists — it is declared as
-    ``[[lab.sources]]`` entries and read through :func:`_lab_files`.
-    """
-    from ..utils import anchor_path
-
-    data = _settings_data(root)
-    if data is None:
-        return None
-    resolved: dict[str, list[Path]] = {}
-    for key in ("tests", "libs"):
-        values = data.get(key, [])
-        if not isinstance(values, list):
-            continue
-        paths = [Path(str(v)) for v in values]
-        resolved[key] = [anchor_path(p, root) for p in paths]
-    return resolved
-
-
-def _lab_file_groups(root: Path) -> list[list[Path]]:
-    """Every lab file this repo's json ``[[lab.sources]]`` entries name, ONE LIST PER SOURCE.
-
-    THE single reader of a repo's host-data declaration inside ``otto init``:
-    detection and validation both go through it (via :func:`_lab_files`), so
-    the doctor can never disagree with the runtime — or with itself — about
-    which files hold this repo's hosts. Compiles the entries with the SAME
-    :func:`otto.labs.sources.compile_lab_sources` ``Repo.parse_settings``
-    uses, then asks each json source for its files (a directory entry
-    contributes its ``lab.json``; a ``.json`` entry IS the file; a glob
-    contributes every match).
-
-    The grouping is load-bearing for the duplicate rules, which are per SOURCE:
-    two files of ONE source declaring the same lab is a typo, the same
-    declaration in two SOURCES is the documented override seam (spec §2.4).
-    Callers that only need "which files exist" flatten it through
-    :func:`_lab_files`.
-
-    Falls back to the conventional ``lab_data/lab.json`` only when there is no
-    readable ``settings.toml`` at all — init must work on a repo it has not
-    scaffolded yet. Settings that parse but declare no ``[lab]`` table declare
-    no host data, so they yield no files; a malformed ``[lab]`` yields none
-    either, because the settings area validates the very same file through
-    ``SettingsModel`` and reports the pydantic error itself.
-    """
-    from ..labs.json_repository import LAB_FILENAME
-    from ..labs.sources import compile_lab_sources
-    from ..models.settings import LabConfigSpec
-
-    data = _settings_data(root)
-    if data is None:
-        return [[root / "lab_data" / LAB_FILENAME]]
-    lab = data.get("lab")
-    if lab is None:
-        return []
-    try:
-        # pydantic's ValidationError IS a ValueError, so one arm covers both
-        # the envelope check and compile_lab_sources' own shape errors.
-        sources = compile_lab_sources(
-            LabConfigSpec.model_validate(lab),
-            repo_name=str(data.get("name") or root.name),
-            sut_dir=root,
-        )
-    except ValueError:
-        return []
-    return [src.lab_files() for src in sources if src.backend == "json"]
-
-
-def _lab_files(root: Path) -> list[Path]:
-    """Every lab file this repo's json sources name, flattened in source order.
-
-    The "does this repo have host data, and where" view, for detection and for
-    any caller that does not care which source a file came from. See
-    :func:`_lab_file_groups` for the per-source view the duplicate rules need.
-    """
-    return [lab_file for group in _lab_file_groups(root) for lab_file in group]
-
-
-def _schemas_dir(root: Path) -> Path:
-    return root / ".otto" / "schemas"
-
-
-def _detect_schemas(root: Path) -> bool:
-    return next(_schemas_dir(root).glob("*.schema.json"), None) is not None
-
-
-def _scaffold_schemas(root: Path, cfg: InitConfig) -> list[Path]:  # noqa: ARG001 — cfg unused, uniform Area signature
-    """Write the generated editor schemas — same product as ``otto schema export``."""
-    from ..models.jsonschema import build_schemas
-
-    out = _schemas_dir(root)
-    out.mkdir(parents=True, exist_ok=True)
-    created: list[Path] = []
-    for stem, doc in build_schemas().items():
-        target = out / f"{stem}.schema.json"
-        target.write_text(json.dumps(doc, indent=2) + "\n")
-        created.append(target)
-    created.extend(_scaffold_editor_wiring(root))
-    created.extend(_scaffold_snippets(root))
-    return created
-
-
-def _scaffold_snippets(root: Path) -> list[Path]:
-    """Write the generated VS Code snippets — otto-owned, so ALWAYS refreshed.
-
-    ``.vscode/*.code-snippets`` is auto-loaded by VS Code, so this file needs
-    no wiring in ``settings.json``. It is generated from the live models
-    (spec 2026-08-27 lab-definition-v2 §12), which makes it otto's to
-    overwrite — unlike the user-owned ``.vscode/settings.json``, which
-    :func:`_scaffold_editor_wiring` only ever creates when absent. It is
-    deliberately NOT checked by :func:`_validate_schemas`: an editor
-    convenience going stale is not a broken repo.
-    """
-    from ..models.snippets import build_snippets
-
-    vscode = root / ".vscode"
-    vscode.mkdir(parents=True, exist_ok=True)
-    target = vscode / "otto.code-snippets"
-    target.write_text(json.dumps(build_snippets(), indent=2) + "\n")
-    return [target]
-
-
-def _scaffold_editor_wiring(root: Path) -> list[Path]:
-    """Write ``.vscode`` schema wiring, strictly only-if-absent.
-
-    VS Code settings are JSONC (comments, trailing commas) — merging
-    programmatically risks corrupting a user file, so an existing
-    ``settings.json`` is never touched; the docs snippet covers manual
-    wiring. These files are scaffold-only: `_validate_schemas` must never
-    look at them (user-owned editor config once created).
-    """
-    created: list[Path] = []
-    vscode = root / ".vscode"
-    targets = [
-        (vscode / "settings.json", VSCODE_SETTINGS_TEMPLATE),
-        (vscode / "extensions.json", VSCODE_EXTENSIONS_TEMPLATE),
-    ]
-    for target, content in targets:
-        if target.exists():
-            if target.name == "settings.json":
-                typer.echo(
-                    "existing .vscode/settings.json left untouched — see "
-                    "docs/cli/schema/editors.md for the schema associations"
-                )
-            continue
-        vscode.mkdir(exist_ok=True)
-        target.write_text(content)
-        created.append(target)
-    return created
-
-
-def _drift_problem(path: Path, data: object, doc: dict[str, Any], remedy: str) -> str:
-    """Describe one on-disk schema that differs from the freshly generated one.
-
-    An otto upgrade is the overwhelmingly common cause — schemas are written
-    once, at ``otto init``, and then drift as otto moves on (spec 2026-08-27
-    lab-definition-v2 §12) — so when the ``x-otto-version`` stamps disagree the
-    problem names both versions rather than leaving the reader to wonder
-    whether their own edit or their upgrade caused it. A file with no stamp
-    (written by an otto from before the stamp existed) reads as
-    ``<unstamped>``. *data* is whatever the file parsed to and need not be a
-    JSON object at all, so it is probed defensively — a malformed-but-parsable
-    schema is still just a problem line, never a traceback.
-    """
-    stamped = data.get("x-otto-version") if isinstance(data, dict) else None
-    if stamped != doc["x-otto-version"]:
-        return (
-            f"{path}: generated by otto {stamped or '<unstamped>'}, "
-            f"installed otto is {doc['x-otto-version']} — {remedy}"
-        )
-    return f"{path}: stale (differs from installed otto's models) — {remedy}"
-
-
-def _validate_schemas(root: Path) -> list[str]:
-    """Staleness doctor: regenerate in-memory and diff structurally against disk.
-
-    Parsed-JSON comparison (never bytes) so a reformatted-but-equal file stays
-    green. Missing, differing, orphaned, and unparsable ``*.schema.json`` files
-    each get a problem naming both remedies; a differing file is split by its
-    ``x-otto-version`` stamp (see :func:`_drift_problem`). Mirrors the docs'
-    "regenerate after upgrading otto" note, mechanically.
-    """
-    from ..models.jsonschema import build_schemas
-
-    out = _schemas_dir(root)
-    remedy = "re-run `otto init --schemas` or `otto schema export`"
-    expected = build_schemas()
-    on_disk = {p.name: p for p in out.glob("*.schema.json")}
-    problems: list[str] = []
-    for stem, doc in expected.items():
-        name = f"{stem}.schema.json"
-        path = on_disk.pop(name, None)
-        if path is None:
-            problems.append(f"{out / name}: missing — {remedy}")
-            continue
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError) as e:  # per-file resilience
-            problems.append(f"{path}: unparsable ({e}) — {remedy}")
-            continue
-        if data != doc:
-            problems.append(_drift_problem(path, data, doc, remedy))
-    problems.extend(
-        f"{path}: orphaned (installed otto emits no such schema) — {remedy}"
-        for _, path in sorted(on_disk.items())
-    )
-    return problems
-
-
-def _scaffold_settings(root: Path, cfg: InitConfig) -> list[Path]:
-    target = root / ".otto" / "settings.toml"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        SETTINGS_TEMPLATE.format(name=cfg.name, version=cfg.version, init_module=cfg.init_module)
-    )
-    # Pre-wired paths must exist so later area scaffolds (and bootstrap) never
-    # trip over a missing conventional dir.
-    for d in ("lab_data", "tests", "pylib"):
-        (root / d).mkdir(exist_ok=True)
-    return [target]
-
-
-def _write_if_absent(target: Path, text: str, *, mode: int | None = None) -> bool:
-    """Write *text* to *target* unless it exists; ``mode`` (e.g. ``0o600``) is set at creation."""
-    if target.exists():
-        return False
-    if mode is None:
-        target.write_text(text)
-    else:
-        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
-        with os.fdopen(fd, "w") as f:
-            f.write(text)
-        target.chmod(mode)  # umask cannot widen 0o600, but be explicit
-    return True
-
-
-def _scaffold_lab(root: Path, cfg: InitConfig) -> list[Path]:  # noqa: ARG001 — cfg unused, uniform Area signature
-    """Write the three-file lab area (spec 2026-09-06 creds-store §8.1); never overwrite."""
-    lab_dir = root / "lab_data"
-    lab_dir.mkdir(parents=True, exist_ok=True)
-    planned = [
-        (lab_dir / "lab.json", json.dumps(LAB_JSON_TEMPLATE, indent=4) + "\n", None),
-        (lab_dir / "inventory.json", json.dumps(INVENTORY_JSON_TEMPLATE, indent=4) + "\n", None),
-        (lab_dir / "creds.json", json.dumps(CREDS_JSON_TEMPLATE, indent=4) + "\n", 0o600),
-        (lab_dir / "README.md", LAB_README_TEMPLATE, None),
-    ]
-    return [target for target, text, mode in planned if _write_if_absent(target, text, mode=mode)]
-
-
-def _scaffold_tests(root: Path, cfg: InitConfig) -> list[Path]:
-    """Write the example tests; they import ``RepoOptions`` from the init module.
-
-    That is the repo's first ``init`` module (:func:`_tests_init_module`).
-    """
-    tests_dir = root / "tests"
-    tests_dir.mkdir(parents=True, exist_ok=True)
-    example = tests_dir / "test_example.py"
-    example.write_text(TEST_EXAMPLE_TEMPLATE.format(init_module=_tests_init_module(root, cfg)))
-    conftest = tests_dir / "conftest.py"
-    conftest.write_text(CONFTEST_TEMPLATE)
-    return [example, conftest]
-
-
-def _scaffold_instructions(root: Path, cfg: InitConfig) -> list[Path]:
-    """Write the init module: ``RepoOptions``, registered by its decorator, and ``smoke``."""
-    module_dir = root / "pylib" / cfg.init_module
-    module_dir.mkdir(parents=True, exist_ok=True)
-    init_file = module_dir / "__init__.py"
-    init_file.write_text(INSTRUCTIONS_TEMPLATE.format(name=cfg.name))
-    return [init_file]
-
-
-def _existing_settings_name(root: Path) -> str | None:
-    """Read ``name`` from an already-scaffolded ``.otto/settings.toml``, if any.
-
-    Used so later area scaffolds (e.g. ``--instructions`` run after settings
-    already exists) derive module names from the repo's recorded ``name``
-    rather than falling back to the directory basename. Error-tolerant like
-    :func:`_detect_instructions`: any parse failure yields ``None`` so callers
-    fall back to ``root.name`` as before.
-    """
-    settings_path = root / ".otto" / "settings.toml"
-    if not settings_path.is_file():
-        return None
-    try:
-        data = tomli.loads(settings_path.read_text())
-    except (tomli.TOMLDecodeError, OSError):
-        return None
-    name = data.get("name")
-    return name if isinstance(name, str) and name else None
-
-
-def _tests_init_module(root: Path, cfg: InitConfig) -> str:
-    """Return the init module the example tests import ``RepoOptions`` from.
-
-    The first entry of an existing ``settings.toml``'s ``init`` list when there
-    is one: that module is imported at startup, and it is the one a found
-    instructions area holds. Otherwise the module the scaffold writes.
-    Error-tolerant like :func:`_existing_settings_name`.
-    """
-    settings_path = root / ".otto" / "settings.toml"
-    try:
-        data = tomli.loads(settings_path.read_text()) if settings_path.is_file() else {}
-    except (tomli.TOMLDecodeError, OSError):
-        data = {}
-    init_modules = data.get("init")
-    if isinstance(init_modules, list) and init_modules and isinstance(init_modules[0], str):
-        return init_modules[0]
-    return cfg.init_module
-
-
-def _detect_settings(root: Path) -> bool:
-    return (root / ".otto" / "settings.toml").is_file()
-
-
-def _detect_lab(root: Path) -> bool:
-    return any(lab_file.is_file() for lab_file in _lab_files(root))
-
-
-def _detect_tests(root: Path) -> bool:
-    paths = _settings_paths(root)
-    tests_dirs = paths["tests"] if paths is not None else [root / "tests"]
-    return any(next(tests_dir.glob("test_*.py"), None) is not None for tests_dir in tests_dirs)
-
-
-def _detect_instructions(root: Path) -> bool:
-    settings_path = root / ".otto" / "settings.toml"
-    if not settings_path.is_file():
-        return False
-    try:
-        data = tomli.loads(settings_path.read_text())
-    except (tomli.TOMLDecodeError, OSError):
-        return False
-    init_modules = data.get("init", [])
-    if not isinstance(init_modules, list) or not init_modules:
-        return False
-    paths = _settings_paths(root)
-    lib_dirs = paths["libs"] if paths is not None else [root / "pylib"]
-    return any((lib_dir / str(mod)).is_dir() for lib_dir in lib_dirs for mod in init_modules)
-
-
-def _validate_settings(root: Path) -> list[str]:
-    """Parse+validate ``.otto/settings.toml`` the same way :meth:`Repo.parse_settings` does.
-
-    Reuses :class:`otto.models.settings.SettingsModel` directly (the same
-    model ``Repo.parse_settings`` calls ``model_validate`` on) rather than
-    re-implementing the schema. Problems are the ``pydantic.ValidationError``
-    text, one block per file, prefixed with the settings path.
-    """
-    from pydantic import ValidationError
-
-    from ..models.settings import SettingsModel
-
-    settings_path = root / ".otto" / "settings.toml"
-    try:
-        data = tomli.loads(settings_path.read_text())
-    except (tomli.TOMLDecodeError, OSError) as e:
-        return [f"{settings_path}: {e}"]
-    try:
-        SettingsModel.model_validate(data)
-    except ValidationError as e:
-        return [f"{settings_path}: {e}"]
-    return []
-
-
-def _inventory_for(
-    root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
-) -> "Inventory | None":
-    """Return the inventory bootstrap would build for *root*: its own override, else the user file.
-
-    Raises ``InventoryError`` / ``ValueError`` for a broken declaration — the
-    caller reports that as a problem naming the file; the doctor must never
-    traceback on a broken ``[inventory]`` table or user settings file.
-
-    *cache* memoises the result (inventory, ``None``, or the raised
-    exception) per *root* — one ``otto init`` run asks this up to three times
-    (the "lab" area's own validation, the warnings pass, the label line), and
-    while today's construction is I/O-free, a real backend (the netbox one,
-    still to land) would otherwise pay a whole-set fetch three times over. A
-    plain dict an owning caller creates and threads through by hand — never a
-    module global, which would outlive one invocation and leak across
-    processes or tests that import this module.
-    """
-    if cache is not None and root in cache:
-        cached = cache[root]
-        if isinstance(cached, Exception):
-            raise cached
-        return cached
-
-    from ..config.user_settings import load_user_settings
-    from ..inventory import InventoryDeclaration, InventoryError, build_inventory_from_declarations
-
-    data = _settings_data(root) or {}
-    table = data.get("inventory") or {}
-    creds_table = data.get("creds") or {}
-    declarations = (
-        [
-            InventoryDeclaration(
-                origin=str(root / ".otto" / "settings.toml"),
-                anchor_dir=root,
-                table=dict(table) if isinstance(table, dict) else {},
-                creds_table=dict(creds_table) if isinstance(creds_table, dict) else {},
-            )
-        ]
-        if (isinstance(table, dict) and table) or (isinstance(creds_table, dict) and creds_table)
-        else []
-    )
-    try:
-        result = build_inventory_from_declarations(declarations, user_settings=load_user_settings())
-    except (InventoryError, ValueError) as e:
-        if cache is not None:
-            cache[root] = e
-        raise
-    if cache is not None:
-        cache[root] = result
-    return result
-
-
-def _print_inventory_label(
-    root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
-) -> None:
-    """Print ``inventory: <label>`` when one resolves for *root*; silent otherwise.
-
-    A separate function (rather than inline in :func:`init_command`) so the
-    try/except does not count against that function's own cyclomatic budget.
-    A broken declaration prints nothing here — it is already a problem in the
-    verdict table via :func:`_validate_lab`, and repeating it would be noise.
-    Prints a second ``creds:`` row naming the store when one resolves (spec
-    2026-09-06 §7.1).
-    """
-    from rich import print as rprint
-    from rich.markup import escape
-
-    from ..inventory import CredsOverlay, InventoryError
-
-    try:
-        inventory = _inventory_for(root, cache)
-    except (InventoryError, ValueError):
-        return
-    if inventory is not None:
-        rprint(f"inventory: {escape(inventory.label)}")
-        if isinstance(inventory, CredsOverlay):
-            rprint(f"creds:     {escape(inventory.store.label)}")
-
-
-_ParsedLab = tuple[str, dict[str, Any], list[Any], list[Any]]
-"""One parsed lab file: ``(path, labs table, elements, raw links)``."""
-
-
-def _parse_lab_documents(root: Path) -> tuple[list[str], list[_ParsedLab]]:
-    """Parse every lab file the settings name: ``(problems, parsed documents)``.
-
-    The section shape, the ``labs`` table, the ``elements`` entries and the
-    in-source duplicate rules are all applied by the SAME code the runtime
-    loader uses (:func:`otto.labs.json_repository.parse_lab_sections`,
-    :func:`~otto.labs.json_repository.parse_lab_entries`,
-    :func:`~otto.labs.json_repository.parse_elements`,
-    :func:`~otto.labs.json_repository.check_in_source_duplicates`), so the
-    doctor cannot drift from what otto accepts: an unknown ``routes`` section,
-    a v1 top-level ``hosts`` array, a host entry carrying a hoisted key and a
-    lab declared twice within one source are all rejected here exactly as they
-    are at load. A file with a problem is reported and left out of the
-    documents the warnings pass sees — a half-parsed file would only produce
-    warnings about its own breakage.
-
-    The duplicate state is threaded per SOURCE (:func:`_lab_file_groups`), not
-    over the flat file list: two sources may each declare the same lab, which
-    is how ``[[lab.sources]]`` layering works, and rejecting that would fail
-    repos otto loads happily.
-    """
-    from ..labs.errors import LabRepositoryError
-    from ..labs.json_repository import (
-        SeenElement,
-        check_in_source_duplicates,
-        parse_elements,
-        parse_lab_entries,
-        parse_lab_sections,
-    )
-
-    problems: list[str] = []
-    documents: list[_ParsedLab] = []
-    for group in _lab_file_groups(root):
-        # Reset per source: the duplicate rules are in-source rules.
-        seen_labs: dict[str, Path] = {}
-        seen_elements: dict[str, SeenElement] = {}
-        for lab_file in group:
-            if not lab_file.is_file():
-                continue
-            try:
-                data = json.loads(lab_file.read_text())
-            except (OSError, json.JSONDecodeError) as e:
-                problems.append(f"{lab_file}: {e}")
-                continue
-            try:
-                sections = parse_lab_sections(data, str(lab_file))
-                entries = parse_lab_entries(sections["labs"], str(lab_file))
-                elements = parse_elements(sections["elements"], str(lab_file))
-                check_in_source_duplicates(
-                    entries,
-                    elements,
-                    lab_file,
-                    seen_labs=seen_labs,
-                    seen_elements=seen_elements,
-                )
-            except LabRepositoryError as e:
-                problems.append(str(e))
-                continue
-            documents.append((str(lab_file), entries, elements, sections["links"]))
-    return problems, documents
-
-
-def _item_problem(validate: Callable[[Any], object], item: Any, prefix: str) -> list[str]:
-    """Return ``[f"{prefix} <error>"]`` when *validate* rejects *item*, else ``[]``.
-
-    A one-item helper rather than the loop body its callers would otherwise
-    write: a ``try``/``except`` inside a per-item loop is ``PERF203``, and the
-    repo's answer (``otto.labs.json_repository._parse_element``) is to move
-    the ``try`` into a function the loop calls. ``ValueError`` covers both
-    arms — pydantic's ``ValidationError`` is one; ``InventoryError`` covers a
-    third — a host entry's :func:`~otto.inventory.resolve_host_entry` call
-    hitting a dead key or an inventory-owned field declared inline.
-
-    A ``ValidationError`` is rendered through :func:`compact_validation_error`
-    rather than ``str(e)``: *item* here is the RESOLVED host dict, and a
-    referenced host with no inline creds carries its store creds LAST (spec
-    2026-09-06 creds-store §6.2), so ``str(ValidationError)``'s
-    ``input_value=`` repr of the whole dict ends in a store password on the
-    common "one bad field" mistake. ``compact_validation_error`` never reads
-    ``input``.
-    """
-    from pydantic import ValidationError
-
-    from ..inventory import InventoryError
-    from ..models.base import compact_validation_error
-
-    try:
-        validate(item)
-    except ValidationError as e:
-        return [f"{prefix} {compact_validation_error(e)}"]
-    except (ValueError, InventoryError) as e:
-        return [f"{prefix} {e}"]
-    return []
-
-
-def _validate_lab(
-    root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
-) -> list[str]:
-    """Validate every lab file the settings' ``[[lab.sources]]`` name, via the real specs.
-
-    The file shape is :func:`_parse_lab_documents`' job; what is left is the
-    two payloads the wrapper models hold opaquely. Each element's host
-    entries are resolved against this repo's inventory the way the loader
-    resolves them (:func:`otto.inventory.resolve_host_entry`, spec §6, against
-    the element :meth:`otto.models.lab.ElementSpec.to_element` builds), and
-    handed to
-    :func:`otto.host.factory.validate_host_dict`, so a bad ``os_type`` or
-    field name, a dead inventory key, or an inventory-owned field declared
-    inline all surface the same error the loader would raise. Each ``links``
-    entry is validated structurally via :class:`~otto.models.link.LinkSpec`;
-    endpoint cross-references (host ids, interface keys) are resolved at load
-    time, not here.
-
-    A broken ``[inventory]`` declaration (or user settings file) is reported
-    ONCE, as its own problem, rather than once per referencing host entry —
-    those entries are skipped for this pass and resolve once the declaration
-    is fixed. "Those entries" means
-    :func:`~otto.inventory.doctor.references_inventory` (R7): a ``None`` or
-    absent key references nothing and is validated as always regardless of
-    the broken declaration, and a malformed key (the empty string, a
-    non-string) is its own problem independent of the declaration — skipping
-    on mere key PRESENCE would swallow both.
-    """
-    from ..host.factory import validate_host_dict
-    from ..inventory import InventoryError, resolve_host_entry
-    from ..inventory.doctor import references_inventory
-    from ..models.link import LinkSpec
-
-    problems, documents = _parse_lab_documents(root)
-    inventory: "Inventory | None" = None
-    inventory_broken = False
-    try:
-        inventory = _inventory_for(root, cache)
-    except (InventoryError, ValueError) as e:
-        problems.append(f"inventory: {e}")
-        inventory_broken = True
-
-    def _validate_entry(host_data: dict[str, Any], *, element: "Element") -> None:
-        validate_host_dict(resolve_host_entry(host_data, inventory, element).host_data)
-
-    for lab_file, _, elements, links in documents:
-        for element in elements:
-            # Bound rather than passed alongside: _item_problem calls its
-            # validator with the item and nothing else.
-            validate = partial(_validate_entry, element=element.to_element())
-            for idx, host_data in enumerate(element.hosts):
-                if inventory_broken and references_inventory(host_data):
-                    continue  # reported once above; these resolve once it is fixed
-                prefix = f"{lab_file}: element {element.name!r} hosts[{idx}]"
-                problems.extend(_item_problem(validate, host_data, prefix))
-        for idx, link_data in enumerate(links):
-            problems.extend(
-                _item_problem(LinkSpec.model_validate, link_data, f"{lab_file}: links[{idx}]")
-            )
-    return problems
-
-
-def _lab_warnings(
-    root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
-) -> list[str]:
-    """Advisory findings across every lab file — never failing.
-
-    Spec §8.3, §9 and §11, plus the shared-element protection rule of spec
-    2026-08-28 three-level-reservations §7: two labs that share an element
-    neither of them can reserve below the lab level, while their lab-level sets
-    have nothing in common (:func:`otto.labs.doctor.lab_warnings`).
-
-    Separate from :func:`_validate_lab` because the two answer different
-    questions: a problem is "otto will not load this", a warning is "otto will
-    load this and it is probably not what you meant". Only the first sets the
-    exit code. Parsing runs again here rather than being threaded through the
-    ``Area`` protocol, which has one validate hook and no warning channel.
-
-    When an inventory resolves, its own advisory findings — a snapshot served
-    because the backend was unreachable, orphan records
-    (:func:`~otto.inventory.doctor.orphan_warning`), creds-store keys the
-    inventory does not hold, and world-readable creds-store files
-    (:func:`~otto.inventory.doctor.creds_mode_warnings`) — are appended. A
-    broken inventory declaration contributes nothing here: it is already a
-    problem in the verdict table via :func:`_validate_lab`, and repeating it
-    as a warning would be noise.
-
-    The stale-snapshot notice is REPORTED rather than left to the cache's own
-    ``logger.warning``, which fires once per snapshot per process and may
-    already have been spent by an earlier resolution (``entry()``'s
-    completion-cache write runs before the root callback installs a console
-    handler at all). Spec §19.2 pitches ``otto init`` as the dead-reference
-    gate to run in CI, and a green table against a days-old snapshot is exactly
-    what that gate must not print.
-    """
-    from ..inventory import InventoryError, snapshot_cache_of
-    from ..inventory.doctor import (
-        creds_mode_warnings,
-        orphan_creds_warning,
-        orphan_warning,
-        referenced_keys,
-    )
-    from ..labs.doctor import lab_warnings
-
-    _, documents = _parse_lab_documents(root)
-    warnings = lab_warnings([(src, entries, elements) for src, entries, elements, _ in documents])
-    try:
-        inventory = _inventory_for(root, cache)
-    except (InventoryError, ValueError):
-        return warnings  # the problem is already in the verdict table
-    if inventory is not None:
-        try:
-            orphan = orphan_warning(
-                inventory, referenced=referenced_keys(elements for _, _, elements, _ in documents)
-            )
-            orphan_creds = orphan_creds_warning(inventory)
-        except InventoryError as e:
-            orphan = f"inventory '{inventory.label}': could not list records: {e}"
-            orphan_creds = None
-        # Read AFTER the orphan check, never before: the notice is set by the
-        # resolution that check performs, and construction touches nothing.
-        snapshot = snapshot_cache_of(inventory)
-        stale = snapshot.stale_notice if snapshot is not None else None
-        # Staleness first — it is the fact that qualifies every finding under
-        # it, orphan list included.
-        warnings.extend(
-            w for w in (stale, orphan, orphan_creds, *creds_mode_warnings(inventory)) if w
-        )
-    return warnings
-
-
-def _validate_tests(root: Path) -> list[str]:
-    """Light check of configured test dirs: existence, ``test_*.py`` presence, syntax.
-
-    Deliberately does NOT run pytest's collection (``otto test
-    --list-tests``): that imports every test file and conftest, which is too
-    heavy for a doctor check. ``ast.parse`` catches syntax errors without
-    importing user code.
-    """
-    import ast
-
-    paths = _settings_paths(root)
-    tests_dirs = paths["tests"] if paths is not None else [root / "tests"]
-    problems: list[str] = []
-    for tests_dir in tests_dirs:
-        if not tests_dir.is_dir():
-            problems.append(f"tests dir not found: {tests_dir}")
-            continue
-        test_files = sorted(tests_dir.glob("test_*.py"))
-        if not test_files:
-            problems.append(f"no test files found under {tests_dir}")
-            continue
-        for test_file in test_files:
-            try:
-                ast.parse(test_file.read_text(), filename=str(test_file))
-            except SyntaxError as e:  # noqa: PERF203 — per-file resilience, mirrors json_repository.py
-                problems.append(f"{test_file}: {e}")
-    return problems
-
-
-def _validate_instructions(root: Path) -> list[str]:
-    """Check each configured ``init`` module resolves under some ``libs`` dir.
-
-    Path/module-layout checks only — never imports user code (init runs
-    lab-free and may run before ``OTTO_SUT_DIRS`` is set, so importing
-    arbitrary user modules from a doctor command would be a surprising
-    side effect).
-    """
-    settings_path = root / ".otto" / "settings.toml"
-    try:
-        data = tomli.loads(settings_path.read_text())
-    except (tomli.TOMLDecodeError, OSError) as e:
-        return [f"{settings_path}: {e}"]
-    init_modules = data.get("init", [])
-    if not isinstance(init_modules, list):
-        return [f"{settings_path}: 'init' must be a list"]
-    paths = _settings_paths(root)
-    lib_dirs = paths["libs"] if paths is not None else [root / "pylib"]
-    problems: list[str] = [
-        f"libs dir not found: {lib_dir}" for lib_dir in lib_dirs if not lib_dir.is_dir()
-    ]
-    for mod in init_modules:
-        mod_name = str(mod)
-        found = any(
-            (lib_dir / mod_name / "__init__.py").is_file() or (lib_dir / f"{mod_name}.py").is_file()
-            for lib_dir in lib_dirs
-        )
-        if not found:
-            searched = ", ".join(str(lib_dir) for lib_dir in lib_dirs)
-            problems.append(f"init module {mod_name} not found under libs ({searched})")
-    return problems
-
-
-# ── kmodcov ────────────────────────────────────────────────────────────────────
-
-
-def _kmodcov_entries(root: Path) -> list[dict[str, Any]]:
-    """Every ``[[dev_tools]]`` entry of kind ``kmodcov`` the settings declare.
-
-    ``[]`` when there is no readable settings file — mirrors :func:`_settings_data`.
-    """
-    data = _settings_data(root)
-    if data is None:
-        return []
-    entries = data.get("dev_tools", [])
-    if not isinstance(entries, list):
-        return []
-    return [e for e in entries if isinstance(e, dict) and e.get("kind") == "kmodcov"]
-
-
-def _kmodcov_sources(root: Path) -> list[Path]:
-    """Return the vendored directories the kmodcov entries name via ``source``, under *root*."""
-    from ..utils import anchor_path
-
-    return [
-        anchor_path(Path(str(e["source"])), root)
-        for e in _kmodcov_entries(root)
-        if isinstance(e.get("source"), str)
-    ]
-
-
-def _detect_kmodcov(root: Path) -> bool:
-    return (
-        bool(_kmodcov_entries(root))
-        or (root / "third_party" / "otto_kmodcov" / "kmodcov.h").is_file()
-    )
-
-
-def _validate_kmodcov(root: Path) -> list[str]:
-    """Require a declared ``source`` to hold the library.
-
-    Drift from the installed otto is advisory, never a failure — see
-    :func:`_kmodcov_warnings`.
-    """
-    from ..kmodcov import check_tree
-
-    return [
-        f"{source}: a kmodcov dev tool names it as `source`, but there is no otto_kmodcov "
-        f"there — run `otto cov kmodcov export {source}`"
-        for source in _kmodcov_sources(root)
-        if check_tree(source).state == "absent"
-    ]
-
-
-def _kmodcov_warnings(root: Path) -> list[str]:
-    """Vendored copies that differ from the installed otto — reported, never a failure."""
-    from ..kmodcov import check_tree
-
-    warnings: list[str] = []
-    for source in _kmodcov_sources(root):
-        result = check_tree(source)
-        if result.state != "differs":
-            continue
-        origin = f" (exported by otto {result.exported_by})" if result.exported_by else ""
-        names = ", ".join([*result.differing, *result.missing])
-        warnings.append(
-            f"{source}{origin} is not the installed otto's library: {names} — "
-            f"re-export with `otto cov kmodcov export {source}` and review the diff"
-        )
-    return warnings
-
-
-def _kmodcov_dir_path(root: Path, kmodcov_dir: str) -> Path:
-    """Anchor *kmodcov_dir* under *root*, refusing anything that would land outside it.
-
-    ``pathlib`` silently discards *root* when *kmodcov_dir* is absolute
-    (``root / "/etc"`` is just ``/etc``), and a ``../`` value can climb back
-    out of the repo; a degenerate ``"."``/``""`` collapses onto *root*
-    itself, which would export the library into the repo root and drop the
-    consumer starter as a SIBLING of *root* (``starter = vendored.parent /
-    f"{vendored.name}-consumer"``). All three are refused here, before any
-    file is written. Raises ``ValueError`` naming *kmodcov_dir*;
-    :func:`init_command` re-raises it as ``typer.BadParameter``.
-    """
-    vendored = root / kmodcov_dir
-    root_r = root.resolve()
-    vendored_r = vendored.resolve()
-    if root_r not in vendored_r.parents:
-        raise ValueError(
-            f"--kmodcov-dir {kmodcov_dir!r} must be a relative path strictly inside the repo "
-            f"({root}); it resolves to {vendored_r}"
-        )
-    return vendored
-
-
-def _scaffold_kmodcov(root: Path, cfg: InitConfig) -> list[Path]:
-    """Export the library (otto-owned, ALWAYS refreshed), then wire the repo once.
-
-    The settings entry is appended commented, only when no kmodcov entry exists;
-    the consumer starter beside the export is written only where absent —
-    both are the user's once created, unlike the library itself.
-    """
-    from ..kmodcov import SHIPPED_FILES, VERSION_HEADER, export_tree
-
-    vendored = _kmodcov_dir_path(root, cfg.kmodcov_dir)
-    export_tree(vendored)
-    # Every shipped file counts as created: the directory is otto's, refreshed whole.
-    created: list[Path] = [vendored / name for name in (*SHIPPED_FILES, VERSION_HEADER)]
-    settings = root / ".otto" / "settings.toml"
-    settings_present = settings.is_file()
-    already_wired = settings_present and (
-        _kmodcov_entries(root) or '#kind = "kmodcov"' in settings.read_text()
-    )
-    if settings_present and not already_wired:
-        with settings.open("a") as f:
-            f.write(KMODCOV_DEV_TOOL_TEMPLATE.format(kmodcov_dir=cfg.kmodcov_dir))
-        created.append(settings)
-    starter = vendored.parent / f"{vendored.name}-consumer"
-    starter.mkdir(parents=True, exist_ok=True)
-    for name, text in (
-        ("kmodcov_begin.c", '#include "kmodcov.h"\nKMODCOV_SENTINEL_BEGIN;\n'),
-        ("kmodcov_end.c", '#include "kmodcov.h"\nKMODCOV_SENTINEL_END;\n'),
-        ("Kbuild.example", KMODCOV_STARTER_KBUILD_TEMPLATE.format(kmodcov_dir_name=vendored.name)),
-        ("README.md", KMODCOV_STARTER_README_TEMPLATE.format(kmodcov_dir=cfg.kmodcov_dir)),
-    ):
-        if _write_if_absent(starter / name, text):
-            created.append(starter / name)
-    return created
-
-
-AREAS: list[Area] = [
-    Area("settings", _detect_settings, _validate_settings, _scaffold_settings),
-    Area("schemas", _detect_schemas, _validate_schemas, _scaffold_schemas),
-    Area("lab", _detect_lab, _validate_lab, _scaffold_lab),
-    Area("tests", _detect_tests, _validate_tests, _scaffold_tests),
-    Area("instructions", _detect_instructions, _validate_instructions, _scaffold_instructions),
-    Area("kmodcov", _detect_kmodcov, _validate_kmodcov, _scaffold_kmodcov),
-]
-
-OPT_IN_AREAS: frozenset[str] = frozenset({"kmodcov"})
-"""Areas ``--all`` and the interactive prompt never scaffold: only their own flag does.
-
-A kernel-module coverage library does not belong in every new repo."""
-
-AREA_PREREQUISITES: dict[str, list[str]] = {"tests": ["instructions"]}
-"""Areas a scaffolded area cannot run without, scaffolded with it when missing.
-
-The example tests import ``RepoOptions`` from the instructions module — the
-init module ``settings.toml`` names — which declares it and registers it for
-``otto test``. The scaffold loop learns an area's prerequisites as it passes
-that area, so each prerequisite comes after the area that needs it in
-:data:`AREAS`."""
-
-
-def _note_prerequisites_found(found: set[str], root: Path, cfg: InitConfig) -> None:
-    """Say what a scaffolded area needs from a prerequisite area that was already there.
-
-    otto reads no init module to see what it declares, so it names the module
-    the tests import from and exactly what that module must declare.
-    """
-    if "instructions" in found:
-        module = _tests_init_module(root, cfg)
-        typer.echo(
-            f"the example tests import RepoOptions from {module}: make sure {module} "
-            'declares @otto.options(verbs=["run", "test"]) class RepoOptions with a '
-            "`message: str` field (the instructions area otto scaffolds does)."
-        )
-
-
-def _area_wanted(
-    area: Area, *, interactive: bool, all_areas: bool, requested: dict[str, bool]
-) -> bool:
-    """Decide whether *area* scaffolds on this run.
-
-    An opt-in area (:data:`OPT_IN_AREAS`) only ever wants its own flag: neither
-    ``--all`` nor the interactive prompt ever offers it.
-    """
-    if area.name in OPT_IN_AREAS:
-        return requested[area.name]
-    if interactive:
-        return typer.confirm(f"Scaffold the {area.name} area?", default=True)
-    if area.name == "settings":
-        return True  # prerequisite: always accompanies any explicit/all request
-    return all_areas or requested[area.name]
+    # Annotation-only: ``otto.cli.init`` sits on a budgeted CLI surface
+    # (scripts/import_budget.py), so every real ``otto.init`` use below is a
+    # function-local import.
+    from rich.console import RenderableType
+
+    from ..init import DoctorReport, InitConfig, ScaffoldReport
+
+_FLAGS = {"root": "--path", "kmodcov_dir": "--kmodcov-dir"}
+"""Field-to-flag spelling for usage_error_from. No "areas": every area flag names a fixed area."""
 
 
 async def init_command(
@@ -1050,7 +55,11 @@ async def init_command(
         ),
     ] = False,
     instructions: Annotated[
-        bool, typer.Option("--instructions", help="Scaffold the instructions area (pylib module).")
+        bool,
+        typer.Option(
+            "--instructions",
+            help="Scaffold the instructions area (the init module, under the first libs dir).",
+        ),
     ] = False,
     kmodcov: Annotated[
         bool,
@@ -1084,141 +93,288 @@ async def init_command(
     leaf-invoke wrapper's coroutine bridge (``cli/invoke._wrap_invoke``) —
     registration is the only opt-in.
     """
-    root = path.resolve()
-    if not root.is_dir():
-        raise typer.BadParameter(f"{root} is not a directory", param_hint="--path")
+    from ..init import InitInputError, check_repo, scaffold, scaffold_candidates
+    from .invoke import usage_error_from
+
+    requested = [
+        area
+        for area, on in (
+            ("schemas", schemas),
+            ("lab", lab),
+            ("tests", tests),
+            ("instructions", instructions),
+            ("kmodcov", kmodcov),
+        )
+        if on
+    ]
+    interactive = not (all_areas or requested)
     try:
-        _kmodcov_dir_path(root, kmodcov_dir)
-    except ValueError as e:
-        raise typer.BadParameter(str(e), param_hint="--kmodcov-dir") from e
+        config = _config(path, name=name, version=version, kmodcov_dir=kmodcov_dir)
+        candidates = scaffold_candidates(
+            config.root, requested=requested, all_areas=all_areas or interactive
+        )
+        if interactive:
+            answers = _ask(config, candidates, name_given=bool(name))
+            config, candidates = answers.config, answers.areas
+        report = scaffold(config, candidates)
+        doctor = check_repo(config.root)
+    except InitInputError as e:
+        raise usage_error_from(e, flags=_FLAGS) from e
+    _print_report(report, config.root)
+    _print_doctor(doctor, config.root, scaffolded=set(report.areas))
+    from rich import get_console
 
-    requested = {
-        "schemas": schemas,
-        "lab": lab,
-        "tests": tests,
-        "instructions": instructions,
-        "kmodcov": kmodcov,
-    }
-    explicit = any(requested.values())
-    interactive = not (all_areas or explicit)
+    console = get_console()
+    steps = next_steps_panel(
+        config.root, sut_dirs=os.environ.get(_sut_dirs_var(), ""), width=console.width
+    )
+    console.print(steps.renderable, soft_wrap=steps.soft_wrap)
+    if not doctor.ok:
+        raise typer.Exit(code=1)
 
-    missing = [a for a in AREAS if not a.detect(root)]
-    missing_names = {a.name for a in missing}
-    # Generated artifacts are otto-owned, so the explicit flag REFRESHES a
-    # detected schemas area (the doctor's "re-run `otto init --schemas`"
-    # remedy). --all / interactive keep missing-only semantics.
-    refresh_names: set[str] = {"schemas"} if schemas else set()
-    if kmodcov:
-        refresh_names.add("kmodcov")
 
-    if "settings" in missing_names and (all_areas or explicit):
-        typer.echo("settings.toml is the repo marker — scaffolding it first.")
+def _config(path: Path, **kwargs: str) -> "InitConfig":
+    from ..init import InitConfig
 
-    if interactive and "settings" in missing_names:
+    return InitConfig.for_repo(path, **kwargs)
+
+
+@dataclasses.dataclass(frozen=True)
+class _Answers:
+    """The interactive run's answers: the config to scaffold with, and the chosen areas."""
+
+    config: "InitConfig"
+    areas: list[str]
+
+
+def _ask(config: "InitConfig", candidates: list[str], *, name_given: bool) -> _Answers:
+    """Ask every question before anything is written.
+
+    The product name and version only when settings will be scaffolded; then
+    one confirmation per candidate, skipping an area a chosen one already
+    pulls in (the library scaffolds it as a prerequisite).
+    """
+    from ..init import scaffold_prerequisites
+
+    if "settings" in candidates:
         # str() pins what click already guarantees: with a str default and no
         # ``type=``, prompt returns str — but its declared return type is Any.
-        name = name or str(typer.prompt("Product name", default=root.name))
-        version = str(typer.prompt("Version", default=version))
-    cfg = InitConfig(
-        name=name or _existing_settings_name(root) or root.name,
-        version=version,
-        kmodcov_dir=kmodcov_dir,
-    )
-
-    scaffolded: list[str] = []
-    prerequisites: set[str] = set()
-    for area in AREAS:
-        if area.name not in missing_names and area.name not in refresh_names:
+        name = (
+            config.name
+            if name_given
+            else str(typer.prompt("Product name", default=config.root.name))
+        )
+        version = str(typer.prompt("Version", default=config.version))
+        config = dataclasses.replace(config, name=name, version=version)
+    chosen: list[str] = []
+    for area in candidates:
+        if area in scaffold_prerequisites(config.root, chosen):
             continue
-        if area.name in prerequisites and not (all_areas or requested.get(area.name)):
-            typer.echo(
-                f"the {area.name} area is a prerequisite of what you asked for — scaffolding it."
-            )
-        elif not _area_wanted(
-            area, interactive=interactive, all_areas=all_areas, requested=requested
-        ):
-            continue
-        for created in area.scaffold(root, cfg):
-            typer.echo(f"created {created.relative_to(root)}")
-        scaffolded.append(area.name)
-        prerequisites.update(AREA_PREREQUISITES.get(area.name, []))
-    _note_prerequisites_found(prerequisites - set(scaffolded), root, cfg)
+        if typer.confirm(f"Scaffold the {area} area?", default=True):
+            chosen.append(area)
+    return _Answers(config, chosen)
 
+
+def _shown(path: Path, root: Path) -> str:
+    """*path* relative to *root* when inside it (a ``libs`` dir may not be)."""
+    return str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
+
+
+def _print_report(report: "ScaffoldReport", root: Path) -> None:
+    """Print each file the scaffolder touched, then its notices, verbatim."""
+    for write in report.writes:
+        typer.echo(f"{write.outcome} {_shown(write.path, root)}")
+    for notice in report.notices:
+        typer.echo(notice)
+
+
+_STATUS = {
+    "ok": "[green]✓[/green]",
+    "failed": "[red]✗[/red]",
+    "absent": "[yellow]not present[/yellow]",
+    "blocked": "[yellow]blocked[/yellow]",
+}
+"""The verdict table's status cell for each doctor verdict state."""
+
+
+def _print_doctor(doctor: "DoctorReport", root: Path, *, scaffolded: set[str]) -> None:
+    """Render the verdict table, the inventory and creds labels, and the warnings."""
     from rich import print as rprint
     from rich.markup import escape
     from rich.table import Table
-
-    from otto.config.env import SUT_DIRS_ENV_VAR
-
-    steps: list[str] = []
-    current = os.environ.get(SUT_DIRS_ENV_VAR, "")
-    # Split on comma OR os.pathsep (colon on Linux), matching config.env
-    # and settings.OttoEnvSettings convention, then strip each segment
-    current_sep = re.compile(rf"[,{re.escape(os.pathsep)}]")
-    current_dirs = [p.strip() for p in current_sep.split(current) if p.strip()]
-    if str(root) not in current_dirs:
-        steps.append(f"export {SUT_DIRS_ENV_VAR}={root}")
-    steps.append("otto --install-completion")
-    # --install-completion WRITES the script; it does not activate it in the
-    # shell already running, so the pair has to be printed together or the
-    # user concludes completion is broken (spec §12).
-    steps.append("source ~/.bash_completions/otto.sh")
-    steps.append(f"otto --lab {EXAMPLE_LAB_NAME} --list-hosts")
-    steps.append("otto test --list-tests")
-    steps.append(f"otto --lab {EXAMPLE_LAB_NAME} test TestExample")
-    steps.append(f"otto --lab {EXAMPLE_LAB_NAME} test test_example_function")
-    steps.append(f"otto --lab {EXAMPLE_LAB_NAME} run smoke")
-    rprint("\n[bold]Next steps[/bold]")
-    for i, step in enumerate(steps, 1):
-        rprint(f"  {i}. {step}")
-
-    # One inventory per invocation, not per asker: _validate_lab (below),
-    # _print_inventory_label and _lab_warnings each ask _inventory_for the
-    # same question about the same root. A plain dict, owned here and threaded
-    # through by hand — never a module global (see _inventory_for).
-    inventory_cache: "dict[Path, Inventory | Exception | None]" = {}
 
     table = Table(title=f"otto init — {root}", show_header=True)
     table.add_column("area")
     table.add_column("status")
     table.add_column("detail", overflow="fold")
-    failed = False
-    for area in AREAS:
-        if area.name in scaffolded:
-            table.add_row(area.name, "[green]scaffolded[/green]", "")
-        elif not area.detect(root):
-            table.add_row(area.name, "[yellow]skipped[/yellow]", "not requested")
-        else:
-            # The "lab" area's validate hook is _validate_lab, specifically —
-            # it is the one area whose problems come from asking
-            # _inventory_for, so it is the one call routed through the shared
-            # cache rather than the uniform Area.validate(root) the others use.
-            problems = (
-                _validate_lab(root, inventory_cache) if area.name == "lab" else area.validate(root)
-            )
-            if problems:
-                failed = True
-                # escape(): a problem quotes pydantic (`[type=extra_forbidden,
-                # …]`) and the author's own regexes — both tag-shaped, and both
-                # silently swallowed by rich markup if handed over raw.
-                table.add_row(area.name, "[red]✗[/red]", escape("\n".join(problems)))
-            else:
-                table.add_row(area.name, "[green]✓[/green]", "")
+    for verdict in doctor.verdicts:
+        status = (
+            "[green]scaffolded[/green]"
+            if verdict.name in scaffolded and verdict.state == "ok"
+            else _STATUS[verdict.state]
+        )
+        # escape(): a problem quotes pydantic (`[type=extra_forbidden, …]`) and
+        # the author's own regexes — both tag-shaped, and both silently
+        # swallowed by rich markup if handed over raw.
+        table.add_row(verdict.name, status, escape("\n".join(verdict.problems) or verdict.detail))
     rprint(table)
-
-    _print_inventory_label(root, inventory_cache)
-
-    # Advisory only — printed after the verdict table, never folded into it,
-    # and deliberately not part of `failed`.
-    warnings = _lab_warnings(root, inventory_cache)
-    warnings.extend(_kmodcov_warnings(root))
-    if warnings:
+    if doctor.inventory_label is not None:
+        rprint(f"inventory: {escape(doctor.inventory_label)}")
+    if doctor.creds_label is not None:
+        rprint(f"creds:     {escape(doctor.creds_label)}")
+    if doctor.warnings:
+        # Advisory only — printed after the verdict table, never folded into
+        # it, and never part of the exit code.
         rprint("\n[bold yellow]Warnings[/bold yellow]")
-        for warning in warnings:
-            # escape(): a warning quotes the author's own regex, and a
-            # tag-shaped one (`[a-z]+`) would otherwise be swallowed as rich
-            # markup — the pattern is the whole point of the message.
+        for warning in doctor.warnings:
             rprint(f"  [yellow]•[/yellow] {escape(warning)}")
 
-    if failed:
-        raise typer.Exit(code=1)
+
+_COMPLETION_SCRIPT = "~/.bash_completions/otto.sh"
+"""Where typer's bash installer (``otto --install-completion``) writes the completion script."""
+
+_BOX_PAD = 2
+"""The boxed panel's horizontal padding, each side."""
+
+_BOX_OVERHEAD = 2 * (1 + _BOX_PAD)
+"""Columns the box takes from a line: a border and the padding, each side."""
+
+_COMMAND_INDENT = 8
+"""How far the copyable commands are indented under their heading."""
+
+
+def _sut_dirs_var() -> str:
+    from ..config.env import SUT_DIRS_ENV_VAR
+
+    return SUT_DIRS_ENV_VAR
+
+
+def _already_active(root: Path, sut_dirs: str) -> bool:
+    """Return True when *sut_dirs* (an ``OTTO_SUT_DIRS`` value) already names *root*."""
+    from ..config.env import split_path_list
+
+    return any(entry.resolve() == root for entry in split_path_list(sut_dirs))
+
+
+@dataclasses.dataclass(frozen=True)
+class _Line:
+    """One line of the Next steps content; ``command`` marks a line a user copies."""
+
+    text: str = ""
+    style: str = ""
+    indent: int = 0
+    command: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class NextSteps:
+    """The Next steps block, ready to print: ``console.print(renderable, soft_wrap=soft_wrap)``.
+
+    ``soft_wrap`` is True for the unboxed fallback, whose command lines must
+    reach the terminal whole; the boxed panel prints with it off, so its
+    prose wraps inside the box.
+    """
+
+    renderable: "RenderableType"
+    soft_wrap: bool
+
+
+def _next_steps_lines(root: Path, sut_dirs: str) -> list[_Line]:
+    from ..init.templates import EXAMPLE_LAB_NAME
+
+    export = [] if _already_active(root, sut_dirs) else [f"export {_sut_dirs_var()}={root}"]
+    source = f"source {_COMPLETION_SCRIPT}"
+    blank = _Line()
+
+    def heading(text: str) -> _Line:
+        return _Line(text, "bold")
+
+    def sub(text: str) -> _Line:
+        return _Line(text, "bold cyan", 3)
+
+    def prose(*lines: str, style: str = "") -> list[_Line]:
+        return [_Line(line, style, 6) for line in lines]
+
+    def commands(*lines: str) -> list[_Line]:
+        return [_Line(line, "green", _COMMAND_INDENT, command=True) for line in lines]
+
+    bashrc = [
+        "`otto --install-completion` already added the `source` line to",
+        "~/.bashrc, so completion needs nothing more there." + (" Add only:" if export else ""),
+    ]
+    return [
+        heading("1. Activate otto in this shell:"),
+        blank,
+        *commands(*export, "otto --install-completion", source),
+        blank,
+        heading("2. Activate otto in future shells:"),
+        blank,
+        sub("~/.bashrc"),
+        *prose(*bashrc),
+        *([blank, *commands(*export)] if export else []),
+        blank,
+        sub("~/.profile  (if your login shell reads it instead of ~/.bashrc)"),
+        *prose("Add both lines yourself:" if export else "Add this line yourself:"),
+        blank,
+        *commands(*export, source),
+        blank,
+        *prose(
+            "Never put `otto --install-completion` itself in a startup file: it",
+            "rewrites ~/.bashrc every time it runs.",
+            style="yellow",
+        ),
+        blank,
+        heading("3. Try it:"),
+        blank,
+        *commands(
+            f"otto --lab {EXAMPLE_LAB_NAME} --list-hosts",
+            "otto test --list-tests",
+            f"otto --lab {EXAMPLE_LAB_NAME} test TestExample",
+            f"otto --lab {EXAMPLE_LAB_NAME} test test_example_function",
+            f"otto --lab {EXAMPLE_LAB_NAME} run smoke",
+        ),
+    ]
+
+
+def next_steps_panel(root: Path, *, sut_dirs: str, width: int) -> NextSteps:
+    """Build the Next steps block ``otto init`` prints last, for a *width*-column console.
+
+    typer's bash installer writes ``~/.bash_completions/otto.sh`` and appends
+    ``source '<that path>'`` to ``~/.bashrc`` once, so only the current shell
+    needs a manual ``source``; it also rewrites ``~/.bashrc`` every time it
+    runs, so it must never go in a startup file. The ``export`` lines are
+    omitted when *sut_dirs* already names *root*.
+
+    Boxed when every command fits inside the box. Otherwise the same lines
+    print unboxed under a rule, soft-wrapped: rich folds or crops a line that
+    is too long for a box, and a folded ``export`` line pasted line by line
+    runs without error and sets the wrong value.
+    """
+    from rich.console import Group
+    from rich.padding import Padding
+    from rich.panel import Panel
+    from rich.rule import Rule
+    from rich.text import Text
+
+    lines = _next_steps_lines(root, sut_dirs)
+    widest = max(len(line.text) for line in lines if line.command)
+    if widest + _COMMAND_INDENT + _BOX_OVERHEAD <= width:
+        body = [
+            Padding(Text(line.text, style=line.style), (0, 0, 0, line.indent))
+            if line.text
+            else Text("")
+            for line in lines
+        ]
+        panel = Panel(
+            Group(*body),
+            title="[bold]Next steps[/bold]",
+            title_align="left",
+            padding=(1, _BOX_PAD),
+            expand=False,
+        )
+        return NextSteps(panel, soft_wrap=False)
+    # Literal-space indents, no Padding: anything that lays a line out in a
+    # fixed width crops it, soft_wrap or not.
+    unboxed = [Text.assemble(" " * line.indent, (line.text, line.style)) for line in lines]
+    rule = Rule("[bold]Next steps[/bold]", align="left")
+    return NextSteps(Group(rule, Text(""), *unboxed), soft_wrap=True)

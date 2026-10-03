@@ -36,4 +36,12 @@ automatically — each gets its own `<type>-host.schema.json` and an entry in
 `lab.schema.json`. Pass `--builtins-only` to emit just the built-in types
 (`unix`, `embedded`, `zephyr`), excluding any custom ones.
 
+Writing a directory is a refresh: in `.otto/schemas` every `*.schema.json` the
+installed otto no longer emits is deleted (a renamed or removed host type, for
+instance), and `--builtins-only` writes fewer files, so there it also prunes
+the custom host types' schemas. Anywhere else (`--out` elsewhere) only files
+carrying otto's `x-otto-version` stamp are pruned, and a schema file of your
+own outside `.otto/schemas` is never touched. `otto init --schemas` uses the
+same writer.
+
 Point your editor at what this writes — see {doc}`editors`.

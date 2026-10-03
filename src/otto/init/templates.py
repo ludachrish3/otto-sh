@@ -1,10 +1,10 @@
 """Templates ``otto init`` scaffolds into a new repo.
 
-String constants only — all scaffolding logic stays in :mod:`otto.cli.init`.
+String constants only — the scaffolding logic is :mod:`otto.init.areas`.
 ``SETTINGS_TEMPLATE`` follows the sshd_config comment convention: prose
 comments are ``# text`` (hash-space), commented-out TOML is ``#key = value``
-(no space), and the ``#:schema`` editor directive is neither. The drift tests
-in ``tests/unit/cli/test_init_templates.py`` rely on that convention to
+(no space), and the ``#:schema`` editor directive is neither. The
+template drift test under ``tests/unit/init`` relies on that convention to
 uncomment and validate the whole surface against ``SettingsModel``.
 """
 

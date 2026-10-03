@@ -78,6 +78,7 @@ from otto.host.loop_owner import HostLoopError
 from otto.host.recursive_transfer import ListingError
 from otto.host.transfer.nc import NcPortSharedError
 from otto.host.transport import HopTransportTornDownError
+from otto.init.errors import InitInputError
 from otto.instructions import ProjectInstructionError
 from otto.inventory import InventoryError, InventoryKeyError
 from otto.labs.errors import LabNotFoundError, LabRepositoryError
@@ -142,6 +143,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (EnsureStateError, RuntimeError),
     (FieldError, Exception),
     (MonitorInputError, Exception),
+    (InitInputError, Exception),
     (ReviewSourceError, Exception),
     (NoMonitorableHostsError, Exception),
     (MonitorTlsError, Exception),
@@ -225,6 +227,8 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         ReviewSourceError,
         NoMonitorableHostsError,
         MonitorTlsError,
+        # The init library's input refusal: a FieldError subclass, rootless like its base.
+        InitInputError,
         # A contradictory ACTIVATION configuration: the labs drop a provider
         # while a kept repo requires it. Sits beside ProjectScopeError above
         # for the same reason it has no stdlib root — the project layer's

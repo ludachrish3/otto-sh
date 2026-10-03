@@ -39,7 +39,7 @@ STAMP = OUT_DIR / ".stamp"
 
 # Help text and completion candidates can come from anywhere in the package
 # (verb docstrings live on host classes, help strings on CLI modules, the
-# scaffold templates in cli/init.py), so the stamp covers all of src/otto.
+# scaffold templates in otto/init/templates.py), so the stamp covers all of src/otto.
 _STAMP_INPUTS = [Path(__file__).resolve(), REPO_ROOT / "src" / "otto"]
 
 # The fourteen first-party commands, in the order `otto --help` lists them;

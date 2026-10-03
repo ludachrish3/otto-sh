@@ -9,9 +9,11 @@ the same location that ``otto init`` scaffolds and where the doctor checks for
 staleness. Point your editor at the emitted files for autocomplete + typo-catching
 on ``lab.json``, ``settings.toml``, the reservations JSON, and a ``json``
 inventory file. See the "Editor schemas" CLI reference.
+
+Orphaned schemas are pruned: in ``.otto/schemas`` every ``*.schema.json`` this
+otto no longer emits, elsewhere only otto-stamped ones.
 """
 
-import json
 from pathlib import Path
 from typing import Annotated
 
@@ -45,7 +47,8 @@ def export(
             "--builtins-only",
             help=(
                 "Emit only the built-in host types (unix / embedded / zephyr), "
-                "excluding any custom types registered via init modules."
+                "excluding any custom types registered via init modules "
+                "(in .otto/schemas, their schemas are pruned)."
             ),
         ),
     ] = False,
@@ -54,16 +57,22 @@ def export(
 
     Custom host classes registered via `.otto/settings.toml` init modules are
     included automatically; pass `--builtins-only` to emit just the built-in
-    host types.
+    host types. Orphaned schemas are pruned: in `.otto/schemas` every
+    `*.schema.json` this otto no longer emits, elsewhere only otto-stamped
+    ones. `--builtins-only` writes fewer files, so in `.otto/schemas` it
+    prunes the custom types' schemas too.
     """
     # Developer note: custom host classes are already loaded by the time this
     # runs (the otto package applies repo settings at import), which is why they
     # appear without any extra step.
-    from ..models.jsonschema import build_schemas
+    from rich.markup import escape
 
-    out.mkdir(parents=True, exist_ok=True)
-    for stem, doc in build_schemas(builtins_only=builtins_only).items():
-        path = out / f"{stem}.schema.json"
-        path.write_text(json.dumps(doc, indent=2) + "\n")
+    from ..models.jsonschema import write_schemas
+
+    result = write_schemas(out, builtins_only=builtins_only)
+    for path in result.written:
         rprint(f"  wrote [cyan]{path.name}[/cyan]")
+    for path in result.pruned:
+        # escape(): a pruned name came from the directory, not from otto.
+        rprint(f"  pruned [yellow]{escape(path.name)}[/yellow]")
     rprint(f"[green]Wrote schemas to[/green] {out}")

@@ -186,7 +186,20 @@ asyncio; the Typer subcommands run inside an event loop.
 
 ---
 
-## Item 6 — `otto init`: the doctor and the scaffolder become a library
+## Item 6 ✅ — `otto init`: the doctor and the scaffolder become a library
+
+**Done** (branch `worktree-init-library`, squashed onto local main): the
+`otto.init` package owns `InitConfig`, `check_repo` (the loader's own
+`compile_settings` and importlib's `find_init_module`, never raising on a
+malformed repo), and `scaffold_candidates` / `scaffold_prerequisites` /
+`scaffold` writing through one policy (created / refreshed / kept / pruned)
+that never edits a user file or shadows a resolving init module;
+`write_schemas` / `schema_drift` prune orphans for `otto init --schemas`
+and `otto schema export`; the leaf prompts before writing, translates at
+one site behind a differential, and ends with a Next steps panel (unboxed
+when a command would not fit). Nothing is left in this item.
+
+**Spec:** `docs/superpowers/specs/2026-10-03-init-library-design.md`.
 
 **Issues:** #497, #498, #499, #500 (refs #525). **Subsystem:**
 `src/otto/cli/init.py` (the worst drift in the audit: doctor and

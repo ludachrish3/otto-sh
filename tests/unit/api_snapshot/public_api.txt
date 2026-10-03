@@ -137,6 +137,10 @@ otto.host:UnixHost
 otto.host:register_dev_tool_provider
 otto.host:register_product_provider
 otto.host:register_transfer_backend
+otto.init:InitConfig
+otto.init:check_repo
+otto.init:scaffold
+otto.init:scaffold_candidates
 otto.instructions:instruction
 otto.instructions:run_instruction
 otto.inventory:JsonInventory

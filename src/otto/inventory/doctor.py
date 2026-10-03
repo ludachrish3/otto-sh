@@ -1,7 +1,7 @@
 """Inventory findings for the ``otto init`` doctor (spec §11, §13).
 
 Pure — takes an inventory and the keys the lab files reference, returns
-strings — so ``otto.cli.init`` stays the one reader of a repo's files.
+strings — so ``otto.init`` stays the one reader of a repo's files.
 """
 
 import stat
@@ -29,7 +29,7 @@ def references_inventory(host_data: "dict[str, Any]") -> bool:
     inventory" must not gate an unrelated finding (a bogus ``os_type``, a
     malformed key) behind the inventory resolving at all. The single
     definition is shared by :func:`referenced_keys` and
-    ``otto.cli.init._validate_lab``'s broken-declaration skip so the two
+    ``otto.init.doctor._validate_lab``'s broken-declaration skip so the two
     cannot drift apart.
     """
     key = host_data.get("inventory")

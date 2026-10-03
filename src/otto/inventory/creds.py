@@ -87,7 +87,7 @@ def _revalidate_merged_cred(c: dict[str, Any], *, key: "str | None", label: str)
 
     A one-item helper rather than the loop body its caller would otherwise
     write: a ``try``/``except`` inside a per-entry loop is ``PERF203`` (the
-    repo's answer, e.g. ``otto.cli.init._item_problem``, is to move the
+    repo's answer, e.g. ``otto.init.doctor._item_problem``, is to move the
     ``try`` into a function the loop calls). Per-entry, not one
     ``model_validate`` over the whole merged list: a field-level failure
     (``password: 123``) has no ``CredSpec``-authored message to carry the

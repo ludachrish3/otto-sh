@@ -8,6 +8,8 @@ against the repo root — never the process CWD. See
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from otto.config.repo import Repo
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -201,3 +203,11 @@ def test_anchor_path_direct(tmp_path, monkeypatch):
     # Tilde-rooted paths expand to home, not anchored to root
     assert anchor_path(Path("~/pylib"), root) == home / "pylib"
     assert not str(anchor_path(Path("~/pylib"), root)).startswith(str(root))
+
+
+def test_anchor_path_refuses_an_unknown_user_as_a_value_error(tmp_path):
+    """``~nosuchuser/...`` cannot expand: a ValueError naming the path, so pydantic reports it."""
+    from otto.utils import anchor_path
+
+    with pytest.raises(ValueError, match="~nosuchuser_xyz/lib"):
+        anchor_path(Path("~nosuchuser_xyz/lib"), tmp_path)

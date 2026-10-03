@@ -146,8 +146,9 @@ tests
 init
 : List of Python module names (dot-separated) to import at startup.  Use
   this to register instructions (`@instruction()`) and shared option classes.
-  These modules must be importable from one of the `libs` directories.
-  Defaults to `[]`.
+  These modules must be importable from a `libs` directory or `sys.path`.
+  Defaults to `[]`; omitted or `[]` means the repo has no init modules, which
+  is legitimate (`otto init` reports the instructions area as not present).
 
 \[host_preferences\]
 : Optional table of product-wide selector-scoped preferences.  Each

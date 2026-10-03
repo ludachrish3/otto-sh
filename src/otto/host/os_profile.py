@@ -329,6 +329,47 @@ def _slots_for_base(base: str) -> frozenset[str]:
     return _all_slots(build_host_class(base))
 
 
+def check_os_profile(
+    name: str,
+    base: str,
+    defaults: dict[str, Any] | None = None,
+    *,
+    login_prompt: str | None = None,
+    password_prompt: str | None = None,
+) -> None:
+    """Raise every ``ValueError`` :func:`register_os_profile` would raise, and touch no registry.
+
+    ``otto init``'s doctor runs it through :func:`otto.config.repo.compile_settings`,
+    so a typo'd ``defaults`` key fails the doctor exactly as it fails the loader.
+    """
+    if base not in HOST_CLASSES:
+        known = ", ".join(HOST_CLASSES.names())
+        raise ValueError(
+            f"register_os_profile({name!r}): base must name a registered "
+            f"host class (one of {known}), got {base!r}"
+        )
+
+    slots = _slots_for_base(base)
+    unknown = [k for k in (defaults or {}) if k not in slots]
+    if unknown:
+        raise ValueError(
+            f"register_os_profile({name!r}): unknown default field(s) for "
+            f"base {base!r}: {sorted(unknown)}"
+        )
+
+    for field_name, pattern in (
+        ("login_prompt", login_prompt),
+        ("password_prompt", password_prompt),
+    ):
+        if pattern is not None:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(
+                    f"register_os_profile({name!r}): {field_name} is not a valid regex: {exc}"
+                ) from exc
+
+
 def register_os_profile(
     name: str,
     base: str,
@@ -376,37 +417,15 @@ def register_os_profile(
     Raises
     ------
     ValueError
-        If *base* is not a registered host class name; if a ``defaults`` key
-        is not a field on the base class (a likely typo); or if
-        ``login_prompt``/``password_prompt`` is not a valid regex.
+        Raised by :func:`check_os_profile`, which runs first: if *base* is not
+        a registered host class name; if a ``defaults`` key is not a field on
+        the base class (a likely typo); or if ``login_prompt``/``password_prompt``
+        is not a valid regex.
     """
-    if base not in HOST_CLASSES:
-        known = ", ".join(HOST_CLASSES.names())
-        raise ValueError(
-            f"register_os_profile({name!r}): base must name a registered "
-            f"host class (one of {known}), got {base!r}"
-        )
-
+    check_os_profile(
+        name, base, defaults, login_prompt=login_prompt, password_prompt=password_prompt
+    )
     defaults = dict(defaults or {})
-    slots = _slots_for_base(base)
-    unknown = [k for k in defaults if k not in slots]
-    if unknown:
-        raise ValueError(
-            f"register_os_profile({name!r}): unknown default field(s) for "
-            f"base {base!r}: {sorted(unknown)}"
-        )
-
-    for field_name, pattern in (
-        ("login_prompt", login_prompt),
-        ("password_prompt", password_prompt),
-    ):
-        if pattern is not None:
-            try:
-                re.compile(pattern)
-            except re.error as exc:
-                raise ValueError(
-                    f"register_os_profile({name!r}): {field_name} is not a valid regex: {exc}"
-                ) from exc
 
     if name in _BUILTIN_NAMES and name in OS_PROFILES:
         logger.warning(f"register_os_profile: overriding built-in profile {name!r}")

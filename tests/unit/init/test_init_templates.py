@@ -5,7 +5,7 @@ import re
 
 import tomli
 
-from otto.cli.init_templates import (
+from otto.init.templates import (
     CREDS_JSON_TEMPLATE,
     EXAMPLE_HOST_ENTRY,
     EXAMPLE_INVENTORY_KEY,

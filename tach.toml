@@ -48,6 +48,12 @@
 # otto.params and otto.project (also function-scope, in bind_handler_kwargs and
 # run_instruction).
 #
+# 2026-10-03 (thin-CLI series item 6): otto.init (the `otto init` doctor and
+# scaffolder library) JOINS the component through cli -> init -> config, since
+# config -> cli is still the completion-cache DEBT edge. It adds no
+# mutually-importing pair: otto.init imports nothing from otto.cli, and
+# nothing below otto.cli imports otto.init. Not re-measured.
+#
 # RE-MEASURED with forbid_circular_dependencies: TWENTY modules are in the
 # component today — bootstrap, check, cli, config, context, coverage, creds,
 # docker, host, instructions, inventory, labs, lifecycle, link, models,
@@ -170,7 +176,7 @@ path = "otto.cli"
 # retires; tach's ratchet just never carried it (the edge is function-scope,
 # added when project instructions started registering data instead of a
 # make_app factory, and this file was not updated alongside).
-depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live"]
+depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live", "otto.init"]
 
 [[modules]]
 path = "otto.config"
@@ -320,6 +326,22 @@ depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "ot
 path = "otto.filesystem"
 
 [[modules]]
+path = "otto.init"
+# The `otto init` doctor and scaffolder (NOT settings.toml's `init` key, which
+# names init modules). Every edge is a real import, added with the code that
+# introduced it.
+depends_on = [
+    "otto.errors",
+    "otto.config",
+    "otto.utils",
+    "otto.models",
+    "otto.labs",
+    "otto.inventory",
+    "otto.host",
+    "otto.kmodcov",
+]
+
+[[modules]]
 path = "otto.instructions"
 # otto.context, otto.params and otto.project are all function-scope, inside
 # bind_handler_kwargs (context, params) and run_instruction (context, params,
@@ -446,11 +468,13 @@ path = "otto.models"
 depends_on = [
     "otto.utils",
     "otto.link",
-    # ALLOWED LAZILY ONLY, at two kinds of site: to_runtime() bodies import
-    # config.repo at function scope, and LoggingConfigSpec's removed-`capture`
+    # ALLOWED LAZILY ONLY, at three kinds of site: to_runtime() bodies import
+    # config.repo at function scope, LoggingConfigSpec's removed-`capture`
     # validator imports TOML_SETTINGS_PATH inside its error branch (so the
     # cutover message can name the settings file that carried the dead key —
-    # spec 2026-08-30 §4.3). Both are function scope; the module-scope ban is
+    # spec 2026-08-30 §4.3), and OttoEnvSettings' sut_dirs validator imports
+    # config.env.split_path_list (one parser for OTTO_SUT_DIRS). All are
+    # function scope; the module-scope ban is
     # enforced by ast-grep (models-no-module-scope-config-import) since tach
     # cannot distinguish scope.
     "otto.config",

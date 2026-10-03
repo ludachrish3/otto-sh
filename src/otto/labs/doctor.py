@@ -75,8 +75,9 @@ def protected(element: ElementSpec) -> bool:
     a ``resources: [""]`` reads truthy here and this returns "protected" for an
     identifier that reserves nothing. That is not this function's to catch: the
     doctor's own verdict table already fails such a file through
-    ``validate_host_dict`` (``otto.cli.init._validate_entry``), whose host spec
-    rejects a blank identifier at all three levels.
+    ``validate_host_dict`` (``otto.init.doctor._validate_lab``'s
+    ``_validate_entry``), whose host spec rejects a blank identifier at all
+    three levels.
     """
     if element.resources:
         return True

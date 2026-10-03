@@ -1,5 +1,4 @@
 $ otto init --all --name acme --path /tmp/otto-gs/acme
-settings.toml is the repo marker — scaffolding it first.
 created .otto/settings.toml
 created .otto/schemas/unix-host.schema.json
 created .otto/schemas/embedded-host.schema.json
@@ -21,26 +20,50 @@ created lab_data/README.md
 created tests/test_example.py
 created tests/conftest.py
 created pylib/acme_instructions/__init__.py
-
-Next steps
-  1. export OTTO_SUT_DIRS=/tmp/otto-gs/acme
-  2. otto --install-completion
-  3. source ~/.bash_completions/otto.sh
-  4. otto --lab example_lab --list-hosts
-  5. otto test --list-tests
-  6. otto --lab example_lab test TestExample
-  7. otto --lab example_lab test test_example_function
-  8. otto --lab example_lab run smoke
-        otto init — /tmp/otto-gs/acme        
-┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓
-┃ area         ┃ status     ┃ detail        ┃
-┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩
-│ settings     │ scaffolded │               │
-│ schemas      │ scaffolded │               │
-│ lab          │ scaffolded │               │
-│ tests        │ scaffolded │               │
-│ instructions │ scaffolded │               │
-│ kmodcov      │ skipped    │ not requested │
-└──────────────┴────────────┴───────────────┘
+                            otto init — /tmp/otto-gs/acme                            
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ area         ┃ status      ┃ detail                                               ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ settings     │ scaffolded  │                                                      │
+│ schemas      │ scaffolded  │                                                      │
+│ lab          │ scaffolded  │                                                      │
+│ tests        │ scaffolded  │                                                      │
+│ instructions │ scaffolded  │                                                      │
+│ kmodcov      │ not present │ no kmodcov dev tool declared and no vendored library │
+└──────────────┴─────────────┴──────────────────────────────────────────────────────┘
 inventory: json:/tmp/otto-gs/acme/lab_data/inventory.json
 creds:     json:/tmp/otto-gs/acme/lab_data/creds.json
+╭─ Next steps ───────────────────────────────────────────────────────────────╮
+│                                                                            │
+│  1. Activate otto in this shell:                                           │
+│                                                                            │
+│          export OTTO_SUT_DIRS=/tmp/otto-gs/acme                            │
+│          otto --install-completion                                         │
+│          source ~/.bash_completions/otto.sh                                │
+│                                                                            │
+│  2. Activate otto in future shells:                                        │
+│                                                                            │
+│     ~/.bashrc                                                              │
+│        `otto --install-completion` already added the `source` line to      │
+│        ~/.bashrc, so completion needs nothing more there. Add only:        │
+│                                                                            │
+│          export OTTO_SUT_DIRS=/tmp/otto-gs/acme                            │
+│                                                                            │
+│     ~/.profile  (if your login shell reads it instead of ~/.bashrc)        │
+│        Add both lines yourself:                                            │
+│                                                                            │
+│          export OTTO_SUT_DIRS=/tmp/otto-gs/acme                            │
+│          source ~/.bash_completions/otto.sh                                │
+│                                                                            │
+│        Never put `otto --install-completion` itself in a startup file: it  │
+│        rewrites ~/.bashrc every time it runs.                              │
+│                                                                            │
+│  3. Try it:                                                                │
+│                                                                            │
+│          otto --lab example_lab --list-hosts                               │
+│          otto test --list-tests                                            │
+│          otto --lab example_lab test TestExample                           │
+│          otto --lab example_lab test test_example_function                 │
+│          otto --lab example_lab run smoke                                  │
+│                                                                            │
+╰────────────────────────────────────────────────────────────────────────────╯

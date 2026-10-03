@@ -19,6 +19,8 @@ from .scope import ProjectScopeConfig
 from .version import Version
 
 if TYPE_CHECKING:
+    from importlib.machinery import ModuleSpec
+
     import pytest
     from rich.panel import Panel
     from rich.text import Text
@@ -231,6 +233,173 @@ def pytest_config_paths(sut_dir: Path) -> list[Path]:
     ``pytest.ini``.
     """
     return [sut_dir / name for name in PYTEST_CONFIG_NAMES]
+
+
+@dataclass(frozen=True)
+class CompiledSettings:
+    """Every value :meth:`Repo.parse_settings` assigns, compiled from one settings document.
+
+    Produced by :func:`compile_settings`, which registers nothing: the OS
+    profiles travel as validated specs, and only ``Repo.parse_settings``
+    registers them.
+    """
+
+    name: str
+    version: Version
+    lab_sources: list["CompiledLabSource"]
+    project_scope: ProjectScopeConfig | None
+    libs: list[Path]
+    tests: list[Path]
+    init: list[str]
+    declared_dependencies: list["ParsedDependency"]
+    host_preferences: dict[str, dict[str, Any]]
+    logging_levels: dict[str, str]
+    os_profiles: dict[str, "OsProfileSpec"]
+    docker_settings: DockerSettings
+    monitor_settings: MonitorSettings
+    env_backend: str | None
+    declared_products: list["DeclaredEntry"]
+    declared_dev_tools: list["DeclaredEntry"]
+
+
+def _check_os_profile_section(name: str, prof: "OsProfileSpec") -> None:
+    """Check one ``[os_profiles.<name>]`` table, naming the table in a refusal."""
+    from ..host.os_profile import check_os_profile
+
+    try:
+        check_os_profile(name, prof.base, prof.defaults)
+    except ValueError as e:
+        raise ValueError(f"[os_profiles.{name}]: {e}") from e
+
+
+def compile_settings(data: dict[str, Any], sut_dir: Path) -> CompiledSettings:
+    """Validate and compile one parsed ``.otto/settings.toml`` exactly as the loader does.
+
+    Pure: reads no file of its own, registers nothing. The loader
+    (:meth:`Repo.parse_settings`) and ``otto init``'s doctor
+    (:func:`validate_settings`) both call it, so a repo the doctor passes is
+    a repo that loads.
+
+    Raises:
+        pydantic_core.ValidationError: the document does not match ``SettingsModel``.
+        ValueError: a later compile step refused it — a lab source, a
+            dependency entry, or an OS profile (its message starts with the
+            ``[os_profiles.<name>]`` table).
+    """
+    # ``otto.models``'s package __init__ boots otto.host first to avoid an
+    # import cycle (os_profile's eager registration <-> models.host); see the
+    # note in src/otto/models/__init__.py. So these imports are safe here.
+    from ..labs.sources import compile_lab_sources
+    from ..models.dependencies import parse_dependency_entry
+    from ..models.settings import SettingsModel
+
+    model = SettingsModel.model_validate(data, context={"sut_dir": sut_dir})
+    lab_sources = compile_lab_sources(model.lab, repo_name=model.name, sut_dir=sut_dir)
+    # Compiled here, at parse, so an unusable regex is a settings error rather
+    # than a fleet walk that silently matches nothing later on.
+    project_scope = ProjectScopeConfig.from_spec(model.project) if model.project else None
+    declared_dependencies = [
+        parse_dependency_entry(e, required=True) for e in model.dependencies.required
+    ] + [parse_dependency_entry(e, required=False) for e in model.dependencies.optional]
+    for name, prof in model.os_profiles.items():
+        _check_os_profile_section(name, prof)
+    return CompiledSettings(
+        name=model.name,
+        version=Version(model.version),
+        lab_sources=lab_sources,
+        project_scope=project_scope,
+        libs=list(model.libs),
+        tests=list(model.tests),
+        init=list(model.init),
+        declared_dependencies=declared_dependencies,
+        host_preferences={
+            sel: {k: (list(v) if isinstance(v, list) else dict(v)) for k, v in entries.items()}
+            for sel, entries in model.host_preferences.items()
+        },
+        logging_levels=dict(model.logging.levels),
+        os_profiles=dict(model.os_profiles),
+        docker_settings=model.docker.to_runtime(),
+        monitor_settings=model.monitor.to_runtime(),
+        env_backend=model.env.backend,
+        declared_products=[
+            e.to_runtime(owner=model.name, base_dir=sut_dir, seam="products")
+            for e in model.products
+        ],
+        declared_dev_tools=[
+            e.to_runtime(owner=model.name, base_dir=sut_dir, seam="dev_tools")
+            for e in model.dev_tools
+        ],
+    )
+
+
+def validate_settings(root: Path) -> list[str]:
+    """Return ``[]`` when *root*'s settings load, else one problem line naming the file.
+
+    Reads ``.otto/settings.toml`` and runs :func:`compile_settings` — the
+    loader's own compile, so ``otto init``'s doctor cannot pass settings the
+    loader refuses. The line carries the TOML parse error, the pydantic error
+    (rendered by :func:`~otto.models.base.compact_validation_error`, never
+    ``str(ValidationError)``, whose ``input_value=`` can echo a secret), or
+    the compile error.
+    """
+    from pydantic import ValidationError
+
+    from ..models.base import compact_validation_error
+
+    # Absolute, as ``Repo.__post_init__`` makes it, so anchored paths and the
+    # file named in the problem line match what the loader sees.
+    root = root.absolute()
+    path = root / TOML_SETTINGS_PATH
+    try:
+        data = tomli.loads(path.read_bytes().decode())
+    except (tomli.TOMLDecodeError, UnicodeDecodeError, OSError) as e:
+        return [f"{path}: {e}"]
+    try:
+        compile_settings(data, root)
+    except ValidationError as e:
+        return [f"{path}: {compact_validation_error(e)}"]
+    except ValueError as e:
+        return [f"{path}: {e}"]
+    return []
+
+
+def find_init_module(name: str, libs: list[Path]) -> "ModuleSpec | None":
+    """Find init module *name* the way the loader will import it, executing nothing.
+
+    The loader appends each ``libs`` directory to ``sys.path`` and calls
+    :func:`importlib.import_module`; this asks the same finder,
+    :class:`importlib.machinery.PathFinder`, over ``[*sys.path, *libs]`` —
+    ``sys.path`` first, then ``libs``, because bootstrap appends them. A
+    dotted name is walked one segment at a time through each parent's
+    ``submodule_search_locations``, so a package, a single-file module, a
+    dotted name and a namespace package all resolve, and a name whose parent
+    is a plain module does not. Returns ``None`` when nothing matches. Only
+    ``PathFinder`` is asked, so built-in and frozen modules resolve to
+    ``None`` too (no init module is built in).
+
+    ``importlib.invalidate_caches()`` runs first: ``otto init`` writes a
+    module and checks it in one process, and FileFinder's cached directory
+    listing is keyed on an mtime a fast write can leave unchanged. The
+    empty-segment check before it is a shortcut that skips that invalidation
+    for a name no finder could match.
+    """
+    from importlib.machinery import PathFinder
+
+    parts = name.split(".")
+    if not all(parts):
+        return None
+    importlib.invalidate_caches()
+    search = sys.path + [str(lib) for lib in libs]
+    spec = None
+    for depth in range(1, len(parts) + 1):
+        spec = PathFinder.find_spec(".".join(parts[:depth]), search)
+        if spec is None:
+            return None
+        if depth < len(parts):
+            if spec.submodule_search_locations is None:
+                return None
+            search = list(spec.submodule_search_locations)
+    return spec
 
 
 @dataclass
@@ -492,58 +661,32 @@ class Repo:
         """Read and return the raw text of this repo's ``.otto/settings.toml`` file."""
         otto_settings_path = self.get_otto_settings_path()
 
-        with otto_settings_path.open() as otto_settings_file:
+        with otto_settings_path.open(encoding="utf-8") as otto_settings_file:
             return otto_settings_file.read()
 
     def parse_settings(self) -> None:
-        """Parse + validate the repo's ``.otto/settings.toml`` via SettingsModel."""
-        # ``otto.models``'s package __init__ boots otto.host first to avoid an
-        # import cycle (os_profile's eager registration ↔ models.host); see the
-        # note in src/otto/models/__init__.py. So this import is safe here.
-        from ..models.settings import SettingsModel
-
+        """Parse + validate the repo's ``.otto/settings.toml`` via :func:`compile_settings`."""
         settings_text = self.read_settings()
         self.settings = tomli.loads(settings_text)  # raw — coverage/reservation read it
 
-        model = SettingsModel.model_validate(self.settings, context={"sut_dir": self.sut_dir})
+        compiled = compile_settings(self.settings, self.sut_dir)
 
-        self.name = model.name
-        self.version = Version(model.version)
-        from ..labs.sources import compile_lab_sources
-
-        self.lab_sources = compile_lab_sources(
-            model.lab, repo_name=model.name, sut_dir=self.sut_dir
-        )
-        # Compiled here, at parse, so an unusable regex is a settings error rather
-        # than a fleet walk that silently matches nothing later on.
-        self.project_scope = ProjectScopeConfig.from_spec(model.project) if model.project else None
-        self.libs = list(model.libs)
-        self.tests = list(model.tests)
-        self.init = list(model.init)
-
-        from ..models.dependencies import parse_dependency_entry
-
-        self.declared_dependencies = [
-            parse_dependency_entry(e, required=True) for e in model.dependencies.required
-        ] + [parse_dependency_entry(e, required=False) for e in model.dependencies.optional]
-
-        self.host_preferences = {
-            sel: {k: (list(v) if isinstance(v, list) else dict(v)) for k, v in entries.items()}
-            for sel, entries in model.host_preferences.items()
-        }
-        self.logging_levels = dict(model.logging.levels)
-        self.os_profiles = self._register_os_profiles(model.os_profiles)
-        self.docker_settings = model.docker.to_runtime()
-        self.monitor_settings = model.monitor.to_runtime()
-        self.env_backend = model.env.backend
-        self.declared_products = [
-            e.to_runtime(owner=model.name, base_dir=self.sut_dir, seam="products")
-            for e in model.products
-        ]
-        self.declared_dev_tools = [
-            e.to_runtime(owner=model.name, base_dir=self.sut_dir, seam="dev_tools")
-            for e in model.dev_tools
-        ]
+        self.name = compiled.name
+        self.version = compiled.version
+        self.lab_sources = compiled.lab_sources
+        self.project_scope = compiled.project_scope
+        self.libs = compiled.libs
+        self.tests = compiled.tests
+        self.init = compiled.init
+        self.declared_dependencies = compiled.declared_dependencies
+        self.host_preferences = compiled.host_preferences
+        self.logging_levels = compiled.logging_levels
+        self.os_profiles = self._register_os_profiles(compiled.os_profiles)
+        self.docker_settings = compiled.docker_settings
+        self.monitor_settings = compiled.monitor_settings
+        self.env_backend = compiled.env_backend
+        self.declared_products = compiled.declared_products
+        self.declared_dev_tools = compiled.declared_dev_tools
 
     def _register_os_profiles(
         self,
@@ -559,10 +702,7 @@ class Repo:
 
         result: dict[str, OsProfile] = {}
         for name, prof in profiles.items():
-            try:
-                register_os_profile(name, prof.base, prof.defaults)
-            except ValueError as e:
-                raise ValueError(f"{TOML_SETTINGS_PATH}: [os_profiles.{name}]: {e}") from e
+            register_os_profile(name, prof.base, prof.defaults)
             result[name] = build_os_profile(name)
         return result
 

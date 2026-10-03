@@ -11,7 +11,6 @@ from ``config.repo`` are imported lazily inside ``to_runtime()`` and under
 ``TYPE_CHECKING`` for annotations only.
 """
 
-import os
 import re
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -1095,10 +1094,6 @@ class UserSettingsModel(OttoModel):
 # OttoEnvSettings — typed view of the OTTO_* environment surface
 # ---------------------------------------------------------------------------
 
-# Split OTTO_SUT_DIRS on comma OR the OS path separator (':' on Linux), matching
-# the historical config.env behavior.
-_PATH_LIST_SEP = re.compile(rf"[,{re.escape(os.pathsep)}]")
-
 
 class OttoEnvSettings(BaseSettings):
     """Typed view of the ``OTTO_*`` environment surface; single source of truth for otto's env vars.
@@ -1119,7 +1114,7 @@ class OttoEnvSettings(BaseSettings):
 
     # NoDecode: stop pydantic-settings from JSON-decoding the env string for this
     # "complex" (list) field, so the raw OTTO_SUT_DIRS value reaches the
-    # ``_split_path_list`` validator below (which splits on comma / os.pathsep).
+    # ``_split_path_list`` validator below (``otto.config.env.split_path_list``).
     sut_dirs: Annotated[list[Path], NoDecode] = []
     lab: str | None = None
     xdir: Path | None = None
@@ -1138,5 +1133,8 @@ class OttoEnvSettings(BaseSettings):
     @classmethod
     def _split_path_list(cls, v: object) -> object:
         if isinstance(v, str):
-            return [p for p in _PATH_LIST_SEP.split(v) if p]
+            # Function scope: models may not import otto.config at module scope.
+            from ..config.env import split_path_list
+
+            return split_path_list(v)
         return v

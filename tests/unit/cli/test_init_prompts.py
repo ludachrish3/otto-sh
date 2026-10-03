@@ -129,16 +129,6 @@ def test_tests_beside_an_init_module_of_another_name_import_from_it(tmp_path: Pa
     assert not (tmp_path / "pylib" / "widget_instructions").exists()
 
 
-def test_every_prerequisite_comes_after_the_area_that_needs_it() -> None:
-    """The scaffold loop learns an area's prerequisites as it passes it, in ``AREAS`` order."""
-    from otto.cli.init import AREA_PREREQUISITES, AREAS
-
-    order = [area.name for area in AREAS]
-    for area, needs in AREA_PREREQUISITES.items():
-        for need in needs:
-            assert order.index(need) > order.index(area), (area, need)
-
-
 def test_all_scaffolds_instructions_without_the_prerequisite_note(tmp_path: Path) -> None:
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
@@ -171,25 +161,26 @@ def test_later_area_uses_existing_settings_name(tmp_path: Path) -> None:
 
 def test_epilogue_prints_next_steps(tmp_path: Path) -> None:
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
-    assert f"export OTTO_SUT_DIRS={tmp_path}" in result.output.replace("\n", "")
+    assert f"export OTTO_SUT_DIRS={tmp_path.resolve()}" in result.output
     assert "otto --install-completion" in result.output
     # Installing the completion script does not activate it in the current
-    # shell; the banner has to say so (see test_init_banner.py).
+    # shell; the panel has to say so (see test_init_banner.py).
     assert "source ~/.bash_completions/otto.sh" in result.output
     assert "otto test --list-tests" in result.output
     # These three need a lab to run; the printed lines must name it (like
-    # step 4's `otto --lab example_lab --list-hosts`) or they fail as
-    # printed with "Missing option '--lab'".
-    output = result.output.replace("\n", "")
-    assert "otto --lab example_lab test TestExample" in output
-    assert "otto --lab example_lab test test_example_function" in output
-    assert "otto --lab example_lab run smoke" in output
+    # `otto --lab example_lab --list-hosts`) or they fail as printed with
+    # "Missing option '--lab'".
+    assert "otto --lab example_lab test TestExample" in result.output
+    assert "otto --lab example_lab test test_example_function" in result.output
+    assert "otto --lab example_lab run smoke" in result.output
 
 
 def test_epilogue_skips_sut_dirs_when_already_set(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OTTO_SUT_DIRS", str(tmp_path))
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     assert "export OTTO_SUT_DIRS" not in result.output
+    # Not vacuous: the block itself was printed.
+    assert "source ~/.bash_completions/otto.sh" in result.output
 
 
 def test_second_run_is_pure_report(tmp_path: Path) -> None:
@@ -206,12 +197,25 @@ def test_epilogue_skips_sut_dirs_when_pathsep_separated(tmp_path: Path, monkeypa
     monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else{os.pathsep}{tmp_path}")
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     assert "export OTTO_SUT_DIRS" not in result.output
+    # Not vacuous: the block itself was printed.
+    assert "source ~/.bash_completions/otto.sh" in result.output
 
 
-def test_epilogue_skips_sut_dirs_when_comma_space_separated(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else, {tmp_path}")
+def test_epilogue_skips_sut_dirs_when_comma_separated(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else,{tmp_path}")
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     assert "export OTTO_SUT_DIRS" not in result.output
+    # Not vacuous: the block itself was printed.
+    assert "source ~/.bash_completions/otto.sh" in result.output
+
+
+def test_epilogue_keeps_sut_dirs_when_the_entry_has_a_leading_space(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The loader reads ``, <root>`` as ``" <root>"``, a path that does not exist."""
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else, {tmp_path}")
+    result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
+    assert f"export OTTO_SUT_DIRS={tmp_path.resolve()}" in result.output
 
 
 def test_schemas_flag_refreshes_stale_files(tmp_path: Path) -> None:
@@ -222,3 +226,45 @@ def test_schemas_flag_refreshes_stale_files(tmp_path: Path) -> None:
     result = _invoke(["--schemas", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert json.loads(lab_schema.read_text()).get("title") == "otto lab.json"
+
+
+def test_every_prompt_comes_before_any_write(tmp_path: Path, monkeypatch) -> None:
+    import typer
+
+    seen: list[list[str]] = []
+    real_confirm, real_prompt = typer.confirm, typer.prompt
+
+    def spy(real):
+        def wrapped(*args, **kwargs):
+            seen.append(sorted(p.name for p in tmp_path.iterdir()))
+            return real(*args, **kwargs)
+
+        return wrapped
+
+    monkeypatch.setattr(typer, "confirm", spy(real_confirm))
+    monkeypatch.setattr(typer, "prompt", spy(real_prompt))
+    # One spare answer: a leaf that writes before asking changes what it asks
+    # (instructions stops being a prerequisite once it exists), and the spare
+    # keeps that run alive to reach the listing assertion.
+    result = _invoke(["--path", str(tmp_path)], input="widget\n0.1.0\ny\ny\ny\ny\ny\n")
+    assert result.exit_code == 0, result.output
+    assert seen
+    assert all(listing == [] for listing in seen), seen
+    assert (tmp_path / ".otto" / "settings.toml").is_file()
+
+
+def test_declining_every_area_writes_nothing_and_still_reports(tmp_path: Path) -> None:
+    result = _invoke(["--path", str(tmp_path)], input="widget\n0.1.0\nn\nn\nn\nn\nn\n")
+    assert result.exit_code == 0, result.output
+    assert list(tmp_path.iterdir()) == []
+    assert "repo marker" not in result.output
+    assert "— scaffolding it" not in result.output
+    assert "otto init —" in result.output
+    assert "Next steps" in result.output
+
+
+def test_settings_is_pulled_in_when_declined_but_another_area_is_chosen(tmp_path: Path) -> None:
+    result = _invoke(["--path", str(tmp_path)], input="widget\n0.1.0\nn\nn\ny\nn\nn\n")
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / ".otto" / "settings.toml").is_file()
+    assert "repo marker" in result.output

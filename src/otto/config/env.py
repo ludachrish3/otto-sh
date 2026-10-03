@@ -28,6 +28,20 @@ if TYPE_CHECKING:
     from ..models.settings import OttoEnvSettings
 
 
+def split_path_list(value: str) -> list[Path]:
+    """Split a path-list env value (``OTTO_SUT_DIRS``) into its paths.
+
+    Entries are separated by commas or :data:`os.pathsep`, either or both,
+    and empty entries are dropped. Nothing else is touched: whitespace is
+    part of an entry (``/a, /b`` names ``" /b"``), exactly as the
+    completion-cache environment and the console-script shim split the same
+    variable. The loader and ``otto init``'s "is this repo already on the
+    list" check both read the variable through here, so they cannot disagree
+    about what it names.
+    """
+    return [Path(entry) for entry in _PATH_LIST_SEP.split(value) if entry]
+
+
 def validate_path(
     path: Path | None,
     must_exist: bool = True,

@@ -4,6 +4,7 @@ API Reference
 .. toctree::
 
    host/index
+   init/index
    suite/index
    monitor/index
    cli/index

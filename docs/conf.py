@@ -202,6 +202,9 @@ _SHORT_TYPE_ALIASES = {
     "Path": "pathlib.Path",
     "datetime": "datetime.datetime",
     "timedelta": "datetime.timedelta",
+    # A TYPE_CHECKING-only import in config/repo.py; the class's __module__ is
+    # the private _frozen_importlib, so the stdlib inventory only has it here.
+    "ModuleSpec": "importlib.machinery.ModuleSpec",
     "asyncio.queues.Queue": "asyncio.Queue",
     # A loop's class is documented at its re-export; autodoc names the defining module.
     "asyncio.events.AbstractEventLoop": "asyncio.AbstractEventLoop",
@@ -289,6 +292,13 @@ _INTERNAL_ALIASES = {
     # and registered there as 'attribute' objects; resolve to the package path.
     "TransferProgressHandler": "otto.host.transfer.TransferProgressHandler",
     "TransferProgressFactory": "otto.host.transfer.TransferProgressFactory",
+    # otto.init.areas: scaffolder.py's docstrings say :data:`AREA_NAMES` bare,
+    # relative to their own module, where only areas.py defines it.
+    "AREA_NAMES": "otto.init.areas.AREA_NAMES",
+    # otto.init's package docstring names its two entry points bare, relative
+    # to the package; the pages document them under their defining modules.
+    "check_repo": "otto.init.doctor.check_repo",
+    "scaffold": "otto.init.scaffolder.scaffold",
     # otto.coverage.reporter
     "TierSpec": "otto.coverage.reporter.TierSpec",
     # otto.host.options (referenced via ``rt`` alias in models/options.py)

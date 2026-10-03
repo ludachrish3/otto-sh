@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from .os_profile import OsProfile as OsProfile
     from .os_profile import build_host_class as build_host_class
     from .os_profile import build_os_profile as build_os_profile
+    from .os_profile import check_os_profile as check_os_profile
     from .os_profile import get_host_class as get_host_class
     from .os_profile import get_os_profile as get_os_profile
     from .os_profile import register_host_class as register_host_class
@@ -123,6 +124,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "OsProfile": "otto.host.os_profile",
     "build_host_class": "otto.host.os_profile",
     "build_os_profile": "otto.host.os_profile",
+    "check_os_profile": "otto.host.os_profile",
     "get_host_class": "otto.host.os_profile",
     "get_os_profile": "otto.host.os_profile",
     "register_host_class": "otto.host.os_profile",
@@ -230,6 +232,7 @@ __all__ = [
     "build_power_controller",
     "build_term_backend",
     "build_transfer_backend",
+    "check_os_profile",
     "create_host_from_dict",
     "get_host_class",
     "get_os_profile",

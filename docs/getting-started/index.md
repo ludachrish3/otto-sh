@@ -27,20 +27,33 @@ these docs offline.
 otto --version
 ```
 
+(enabling-tab-completion)=
 ### Enabling tab completion
 
-Otto ships with a Typer-generated shell completion script.  Install it once
-with `--install-completion` and then source the generated script in your
-shell:
+Otto ships with a Typer-generated shell completion script. This is the one
+place completion setup is described; `otto init` ends with the same steps.
+
+**This shell.** Export the path of your project (the one [Project setup](#project-setup) creates — do that first if you have none yet), install the script, and source it:
 
 ```bash
+export OTTO_SUT_DIRS=/path/to/your/project
 otto --install-completion
 source ~/.bash_completions/otto.sh
 ```
 
-To make tab completion available in every new shell, add those two lines to
-your `~/.bashrc` (or `~/.profile`) so they run automatically at login. Type
-`otto ru<Tab>` to check.
+`--install-completion` writes `~/.bash_completions/otto.sh` and appends a
+`source` line for it to `~/.bashrc`; the `source` command above activates it
+in the shell you are already in. Type `otto ru<Tab>` to check.
+
+**Future shells.**
+
+- `~/.bashrc`: the installer already added the `source` line, so add only the
+  `export OTTO_SUT_DIRS=...` line.
+- `~/.profile` (if your login shell reads it instead of `~/.bashrc`): add both
+  the `export` line and `source ~/.bash_completions/otto.sh`.
+
+Never put `otto --install-completion` itself in a startup file: it rewrites
+`~/.bashrc` every time it runs.
 
 ## Project setup
 
@@ -55,10 +68,10 @@ your own name and a path of your own.
 :language: text
 ```
 
-Steps 4 and 6–8 name the lab explicitly (`--lab example_lab`), as every
-example on this page does; {doc}`../cli/index` covers `--lab`, the
-`OTTO_LAB` environment variable that replaces it, and the rest of the global
-options.
+The "Try it" commands that need a lab name it explicitly
+(`--lab example_lab`), as every example on this page does;
+{doc}`../cli/index` covers `--lab`, the `OTTO_LAB` environment variable that
+replaces it, and the rest of the global options.
 
 {doc}`../cli/init` is the flag reference; {doc}`../configuration/settings`
 explains every key `settings.toml` accepts and the one-time

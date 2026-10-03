@@ -39,8 +39,17 @@ def anchor_path(value: Path, root: Path) -> Path:
 
     Deliberately does not ``resolve()``: that would collapse symlinks and
     change path identity for repos reached through symlinked checkouts.
+
+    Raises:
+        ValueError: *value*'s ``~`` cannot be expanded (``~nosuchuser/...``,
+            or no home directory at all). ``expanduser`` raises ``RuntimeError``
+            there; a ``ValueError`` is what a pydantic validator turns into a
+            settings error naming the field, and what tolerant readers catch.
     """
-    value = value.expanduser()
+    try:
+        value = value.expanduser()
+    except RuntimeError as e:
+        raise ValueError(f"cannot expand {value}: {e}") from e
     return value if value.is_absolute() else root / value
 
 

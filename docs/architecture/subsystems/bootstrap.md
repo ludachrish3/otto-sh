@@ -10,26 +10,27 @@ and host classes from every repo land in the same flat registries,
 indistinguishable to the CLI or to `all_hosts()`. See
 {doc}`../../configuration/settings` for the settings a repo contributes and
 what happens at startup from a user's point of view. `otto init`
-(`otto.cli.init`) works one repo at a time: it gets a single repo into
+(`otto.init`, rendered by the
+`otto.cli.init` leaf) works one repo at a time: it gets a single repo into
 the shape bootstrap expects to compose.
 
 ## Areas, not a monolith
 
-The command is organized around five **areas** — `settings`
+The command is organized around six **areas** — `settings`
 (`.otto/settings.toml`), `schemas` (`.otto/schemas/`), `lab`
-(`lab_data/lab.json`), `tests`, and `instructions` — each a small value
-object with three operations:
+(`lab_data/lab.json`), `tests`, `instructions`, and the opt-in `kmodcov`.
+Each has a detect and a scaffold function in `otto.init.areas` and a check in
+`otto.init.doctor`:
 
-- `detect` — does this area already exist here?
-- `validate` — is what exists actually loadable?
-- `scaffold` — write a minimal, working starting point.
+- detect — does this area already exist here?
+- validate — is what exists actually loadable? (the check)
+- scaffold — write a minimal, working starting point.
 
-Interactively it walks the areas and prompts; `--all` or per-area flags
-(`--schemas`, `--lab`, `--tests`, `--instructions`) run non-interactively.
-Existing files are never mutated — except the otto-owned schemas area,
-which `otto init --schemas` refreshes — an area that exists is validated,
-not overwritten — and the run ends with a status table plus a "next steps"
-list, exiting `1` if any validation failed.
+Interactively it prompts per area; the flags are in {doc}`../../cli/init`.
+An area that exists is validated, not overwritten; the write policy (otto-owned
+files refreshed, user-owned files never edited) is in {doc}`../../cli/init`.
+The run ends with a status table plus a "next steps" panel, exiting `1` if any
+validation failed.
 
 ## The doctor is the ingest code
 
@@ -37,8 +38,11 @@ The architecturally important choice: validation reuses the **same boundary
 models bootstrap uses** — settings validate through the settings spec model,
 host entries through the same validator lab loading uses
 ({doc}`data-boundary`). `otto init` cannot drift from what otto actually
-accepts, because there is no second validator to drift. A repo that passes
-`otto init` loads.
+accepts, because there is no second validator to drift: the doctor calls
+`compile_settings`, the loader's own compile, and resolves init modules with
+`find_init_module`, which is not called by the loader but asks the same
+`PathFinder` in the loader's search order. A repo that passes `otto init`
+loads, by construction.
 
 ## Project activation
 
@@ -129,6 +133,7 @@ builds it. Its choices:
   ride the cached result rather than a parallel module global — recomputing
   discovery necessarily recomputes them, so a stale error cannot outlive the
   discovery that produced it
-- `otto.cli.init` — the `otto init` areas (settings, schemas, lab, tests,
-  instructions): detect / validate / scaffold, reusing bootstrap's own
-  ingestion code
+- `otto.init` — the `otto init` doctor and scaffolder over the areas
+  (settings, schemas, lab, tests, instructions, kmodcov): detect / validate /
+  scaffold, reusing bootstrap's own ingestion code; `otto.cli.init` only
+  renders it

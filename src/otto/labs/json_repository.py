@@ -135,7 +135,7 @@ def parse_lab_sections(data: object, source: str) -> dict[str, Any]:
 
     The single source of truth for the ``lab.json`` object contract — shared by
     the runtime loader (``JsonFileLabRepository._load_lab_file``) and the
-    ``otto init`` doctor (``otto.cli.init._validate_lab``) so the doctor
+    ``otto init`` doctor (``otto.init.doctor._validate_lab``) so the doctor
     cannot drift from what otto actually accepts (there is no second validator
     to drift). *data* is the already-parsed JSON value; *source* names its
     origin (a file path) for error messages.
@@ -767,7 +767,7 @@ def check_in_source_duplicates(
     poisons the state for the files after it.
 
     Callers are ``JsonFileLabRepository._load_documents`` and the
-    ``otto init`` doctor (``otto.cli.init._parse_lab_documents``), which is the
+    ``otto init`` doctor (``otto.init.doctor._parse_lab_documents``), which is the
     whole point of it being public: the doctor must refuse exactly what the
     loader refuses, and it can only do that by running this code rather than a
     second copy of it.
