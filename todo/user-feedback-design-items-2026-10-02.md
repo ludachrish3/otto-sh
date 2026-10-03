@@ -244,9 +244,13 @@ What it tripped on, in the order it hit them:
    `settings.md` and a scaffold comment, not on the declared-products page.
 7. `[[docker.images]]` is documented only at the bottom of `settings.md`.
    Neither docker page shows it. There is no "first deploy" sequence.
-8. **It could not verify that its product attached to the host.**
+8. ✅ **It could not verify that its product attached to the host.**
    `--show-lab` elides products and `otto -n run install` names none. This
    is the `--list-products` request (2.3), reached independently.
+   Done: `--list-products` / `--list-tools` (c6764be8) and the install
+   preview — `otto -n run install` now prints every transfer and command
+   per host, with `not checked:` for what needs a host's answer (1103cf2e;
+   spec `docs/superpowers/specs/2026-10-02-install-preview-design.md`).
 9. `--probe` under `--dry-run` opens a connection; the page's first sentence
    reads as "a dry run never touches a device". The reader ran it by
    mistake (against an unroutable test address).
