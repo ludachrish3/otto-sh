@@ -294,9 +294,15 @@ Advanced; one linear from-scratch path on one project; URL redirects (#374).
 
 ## 4. Small standalone decisions
 
-### 4.1 Host id delimiter
+### 4.1 Host id delimiter ✅
 
-The feedback's premise is wrong: element and board both go through `slug()`
+Done 2026-10-03 (`2f40bee6`; spec
+`docs/superpowers/specs/2026-10-03-kebab-host-ids-design.md`): every seam is
+`-` (`test1-bb-0`), a collision is refused naming both declarations,
+container ids keep docker's names and the `.` seam. The record below is
+history.
+
+The feedback's premise was wrong: element and board both go through `slug()`
 (kebab). The `_` is the single structural delimiter between them
 (`element_board<slot>`, `src/otto/host/remote_host.py:89-101`), chosen so
 `a-b` (element) and `a` + `b` (element + board) cannot collide. Changing it
