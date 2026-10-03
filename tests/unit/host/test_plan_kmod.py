@@ -18,7 +18,9 @@ MODULES = "cat /proc/modules"
 @pytest.fixture(autouse=True)
 def _library_speaks_this_interface(monkeypatch):
     """Every .ko here is a stub; the kmodcov kind reads its MODULE_VERSION at build and install."""
-    monkeypatch.setattr("otto.kmodcov.modinfo_version", lambda _path: f"1.0+kmodcov{INTERFACE}")
+    monkeypatch.setattr(
+        "otto.kmodcov.library.modinfo_version", lambda _path: f"1.0+kmodcov{INTERFACE}"
+    )
 
 
 def _kmod(host, tmp_path, artifact="kcov.ko", **params):
@@ -324,7 +326,7 @@ async def test_a_wrong_interface_is_refused_before_anything_is_sent_and_the_plan
     library = _tool(host, tmp_path, kind="kmodcov", name="otto_kmodcov")
     host.dev_tools = [library]
     product = _kmod(host, tmp_path, coverage="module")
-    monkeypatch.setattr("otto.kmodcov.modinfo_version", lambda _path: "1.0+kmodcov0")
+    monkeypatch.setattr("otto.kmodcov.library.modinfo_version", lambda _path: "1.0+kmodcov0")
 
     assert not (await library.install(host)).is_ok
     assert _actions(host.take()) == []

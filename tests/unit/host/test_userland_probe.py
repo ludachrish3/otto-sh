@@ -403,7 +403,7 @@ async def test_a_host_with_no_userland_says_so_instead_of_printing_an_empty_pin(
     async def no_survey(host, *, user=None, scan_ports=None):
         return Survey()
 
-    monkeypatch.setattr("otto.host.survey.run_survey", no_survey)
+    monkeypatch.setattr("otto.host.survey.engine.run_survey", no_survey)
     result = await LocalHost().probe()
 
     assert result.is_ok, "a recorded hole is an answer, not a failure of the command"
@@ -530,7 +530,7 @@ async def test_the_survey_section_follows_the_userland_section(monkeypatch):
         seen["args"] = (user, scan_ports)
         return Survey()
 
-    monkeypatch.setattr("otto.host.survey.run_survey", fake_run_survey)
+    monkeypatch.setattr("otto.host.survey.engine.run_survey", fake_run_survey)
     host = _ScriptedHost(_userland(retcode=0))
     result = await host.probe(user=None, scan_ports="2323")
 
@@ -598,7 +598,7 @@ async def test_a_bad_scan_ports_outranks_the_user_refusal(monkeypatch):
         entered.append((user, scan_ports))
         raise AssertionError("the survey ran on a refused option pair")
 
-    monkeypatch.setattr("otto.host.survey.run_survey", counting_run_survey)
+    monkeypatch.setattr("otto.host.survey.engine.run_survey", counting_run_survey)
     host = EmbeddedHost(
         ip="192.0.2.1",
         element=Element("zephyr37_fat"),
@@ -624,7 +624,7 @@ async def test_dry_run_still_contacts_nothing_and_skips(monkeypatch):
         called.append(1)
         raise AssertionError("contacted")
 
-    monkeypatch.setattr("otto.host.survey.run_survey", boom)
+    monkeypatch.setattr("otto.host.survey.engine.run_survey", boom)
     host = _ScriptedHost(_userland(retcode=0))
     result = await host.probe(user="root", scan_ports="garbage")
 

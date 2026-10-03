@@ -29,7 +29,6 @@ otto.config:do_for_all_hosts
 otto.config:get_host
 otto.config:get_lab
 otto.config:get_repos
-otto.config:load_lab
 otto.config:run_on_all_hosts
 otto.context:OttoContext
 otto.context:reset_context
@@ -180,6 +179,8 @@ otto.reservations:register_reservation_backend
 otto.reservations:resolve_username
 otto.result:CommandNotRunError
 otto.result:Result
+otto.session:build_lab
+otto.session:install_logging
 otto.suite.expect:ExpectCollector
 otto.suite.run:RunOptions
 otto.suite.run:prepare_run

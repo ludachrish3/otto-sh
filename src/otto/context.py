@@ -1205,42 +1205,81 @@ class ProjectContextView:
 async def open_context(
     *,
     lab: "Lab | str | list[str]",
+    include_projects: "list[str] | None" = None,
+    exclude_projects: "list[str] | None" = None,
     dry_run: bool = False,
     log_command_output: bool = True,
-    search_paths: "list[Path] | None" = None,
 ) -> "AsyncIterator[OttoContext]":
-    """Build, install, and tear down an OttoContext for library / script use.
+    """Prepare a run exactly as ``otto --lab ...`` does, install its context, and tear it down.
 
-    Pass a Lab, or a lab name / list of names to load via load_lab. On exit the
-    running loop's host scope closes the hosts that connected on it
-    (:meth:`OttoContext.sweep_loop`) and the contextvar is reset.
-    Does NOT run a reservation check — that is a CLI concern; a script that wants
-    one calls otto.reservations.check_reservations explicitly.
+    The same decisions in the same order as the CLI preamble, from
+    :mod:`otto.session`: the project switches are validated
+    (:func:`~otto.session.select_projects`); a broken ACTIVE repo refuses
+    the run (:func:`~otto.session.check_repos`), and an inactive repo's load
+    error is logged as a warning; the lab is built from the repos'
+    ``[[lab.sources]]``, ``[host_preferences]``, inventory and declared
+    containers (:func:`~otto.session.build_lab`), or a
+    :class:`~otto.config.lab.Lab` you pass is used as given; once the context
+    is installed, an active repo's unmet Python requirement refuses
+    (:func:`~otto.session.check_dependencies`).
+
+    *lab* is a lab name, a ``+``-joined combination, a list of either (each
+    item split like a repeated ``--lab``), or a
+    :class:`~otto.config.lab.Lab`. On exit, the running loop's host scope
+    closes the hosts that connected on it (:meth:`OttoContext.sweep_loop`) and
+    the contextvar is reset. It installs no logging (see
+    :func:`otto.session.install_logging`) and runs no reservation check (a
+    script that wants one calls
+    :func:`otto.reservations.check_reservations
+    <otto.reservations.check.check_reservations>`).
+
+    Raises:
+        ValueError: a malformed lab string, such as ``""`` or ``"a++b"`` (an
+            empty ``+``-segment).
+        otto.session.ProjectSelectionError: an unknown project name, or one
+            in both lists.
+        otto.session.RepoLoadError: an active repo failed to load.
+        otto.session.LabBuildError: no lab, an unknown lab, a bad lab source,
+            or a broken inventory declaration.
+        otto.labs.errors.LabRepositoryError: lab data that fails only at
+            load time (malformed lab data, composite conflicts).
+        otto.session.DependencyRefusedError: an active repo's Python
+            requirement is not met.
     """
     from .bootstrap import bootstrap
+    from .config import get_env
+    from .config.lab import Lab, split_lab_names
+    from .session import build_lab, check_dependencies, check_repos, select_projects
 
     result = bootstrap()  # composition root — idempotent; registers user init components
-    from .config import get_env, load_lab
-
     deadline = get_env().teardown_deadline  # bounds the closing sweep on exit
-    from .config.lab import Lab
-
+    selection = select_projects(result.repos, include_projects or [], exclude_projects or [])
     if isinstance(lab, Lab):
-        resolved_lab = lab
+        labs = list(lab.component_names)
+    elif isinstance(lab, str):
+        labs = split_lab_names(lab)
     else:
-        # Function-local, like every other `otto.inventory` import on a
-        # budgeted surface — and guarded by the `isinstance` above too:
-        # importing it even at function scope but unconditionally still pulls
-        # ~77 otto modules onto every `Lab`-object caller, who never resolves
-        # an inventory at all. The process inventory is resolved from the
-        # SAME repos bootstrap just composed, so a library caller's
-        # referenced entry joins exactly as the CLI's does (spec §6 —
-        # `cli/invoke.py` is the other caller).
-        from .inventory.config import build_inventory
-
-        resolved_lab = load_lab(lab, search_paths or [], inventory=build_inventory(result.repos))
-    ctx = OttoContext(lab=resolved_lab, dry_run=dry_run, log_command_output=log_command_output)
+        # Each item splits on `+`, as each repeated `--lab` value does.
+        labs = [name for item in lab for name in split_lab_names(item)]
+    for demoted in check_repos(result, labs, selection).demoted:
+        logger.warning("%s", demoted.message)
+    # A `Lab` object is used as given: `build_lab` (and the `otto.inventory`
+    # import it makes, ~77 modules) never runs for it.
+    resolved_lab = lab if isinstance(lab, Lab) else build_lab(result.repos, labs)
+    ctx = OttoContext(
+        lab=resolved_lab,
+        dry_run=dry_run,
+        log_command_output=log_command_output,
+        include_projects=tuple(selection.include),
+        exclude_projects=tuple(selection.exclude),
+    )
     token = set_context(ctx)
+    try:
+        for warning in check_dependencies(ctx):
+            logger.warning("%s", warning)
+    except BaseException:
+        reset_context(token)
+        raise
     try:
         yield ctx
     finally:

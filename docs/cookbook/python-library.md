@@ -42,8 +42,22 @@ otto's own built-ins, not anything your project registers in `init`.
 Logging follows the same rule as everything above: importing otto
 configures nothing. A bare `import otto` attaches only a `NullHandler` to
 the `'otto'` logger — no handlers on the root logger, no logger levels
-touched. Opt in with one call, {func}`install <otto.logger.management.install>`
-(undone with {func}`reset <otto.logger.management.reset>`):
+touched. Opt in with one of two calls; either is undone with
+{func}`reset <otto.logger.management.reset>`.
+
+A script that works with your repos calls
+{func}`otto.session.install_logging`, the repo-aware opt-in: otto's console
+plus every repo's {ref}`[logging.levels] <logging-levels>` and the host-output
+filter, as the CLI installs them:
+
+```python
+from otto.session import install_logging
+
+install_logging(log_level="INFO")
+```
+
+Underneath it is {func}`install <otto.logger.management.install>`, the raw
+primitive, which knows nothing of repos:
 
 ```python
 import logging
@@ -78,9 +92,10 @@ long-lived process, and in tests that want a clean slate.
 
 ## Recommended: `open_context()`
 
-`open_context()` is the single entry point for library use. It loads a lab,
-installs the active context, enters the host lifecycle scope, yields the
-context, and tears everything down on exit — even if your code raises.
+`open_context()` is the single entry point for library use. It prepares the
+run `otto --lab` would, installs the active context, enters the host
+lifecycle scope, yields the context, and tears everything down on exit — even
+if your code raises.
 
 ```python
 import asyncio
@@ -88,7 +103,7 @@ import otto
 
 
 async def main():
-    async with otto.open_context(lab="mylab", search_paths=[...]) as ctx:
+    async with otto.open_context(lab="mylab") as ctx:
         results = await ctx.run_on_all_hosts("uname -a")
         for host_id, result in results.items():
             print(host_id, result)
@@ -116,29 +131,69 @@ async with otto.open_context(lab="mylab") as ctx:
 
 | Parameter            | Type                        | Default | Description                               |
 |----------------------|-----------------------------|---------|-------------------------------------------|
-| `lab`                | `Lab \| str \| list[str]`   | —       | A `Lab` object, or lab name(s) to load    |
+| `lab`                | `Lab \| str \| list[str]`   | —       | Lab name(s) as `--lab` takes them (`"a+b"`, or a list, each item like one `--lab`), or a `Lab` object, used as given |
+| `include_projects`   | `list[str] \| None`         | `None`  | Force these projects active (one name per item, no comma lists) |
+| `exclude_projects`   | `list[str] \| None`         | `None`  | Switch these projects off (one name per item)  |
 | `dry_run`            | `bool`                      | `False` | Log commands without executing them       |
 | `log_command_output` | `bool`                      | `True`  | Stream command output to the otto logger  |
-| `search_paths`       | `list[Path] \| None`        | `None`  | Paths to search for lab definitions       |
+
+The project switches follow {doc}`../cli/projects`. Given names, `open_context`
+builds the lab `otto --lab` builds: from the repos' `[[lab.sources]]`, their
+merged `[host_preferences]`, the inventory, and the placeholder hosts of their
+declared containers (see {doc}`../configuration/host-sources`). It refuses
+where the CLI refuses, before your block runs:
+{class}`~otto.session.ProjectSelectionError`,
+{class}`~otto.session.RepoLoadError`, {class}`~otto.session.LabBuildError` or
+{class}`~otto.session.DependencyRefusedError`; {doc}`../api/session` says what
+each one carries. A malformed lab string (`""` or `"a++b"`) raises
+`ValueError`, and lab data that is malformed only when it loads propagates as
+{class}`otto.labs.LabRepositoryError <otto.labs.errors.LabRepositoryError>`. For a lab from somewhere else — built in memory (see
+[In-memory labs](#in-memory-labs-no-lab-file)) or loaded by your own code —
+pass the `Lab` object. It is used as given — no sources, preferences or
+placeholders are added — and the checks still run against it.
+
+What does not refuse is logged as a warning on the `otto.context` logger: the
+load error of a repo that is inactive for this run, and the dependency
+preflight's warnings. Because otto attaches only a `NullHandler` to the
+`'otto'` logger (see [Logging](#logging)), you see them once you configure logging yourself or call
+`otto.session.install_logging`. A refusal carries them too, so they are not lost
+when the block never runs: `RepoLoadError.demoted` and
+`DependencyRefusedError.warnings`.
 
 ## Bring-your-own-CLI: lower-level primitives
 
-`open_context` is these three steps:
+`open_context` runs these steps, and each is public, so you can run them
+yourself (the `otto.session` functions are on {doc}`../api/session`):
 
-1. Build an `OttoContext` with the chosen lab and runtime flags.
-2. Install it as the active context with `set_context()`, which returns a reset
-   token.
-3. Do the work. Each host that connects joins the host scope of the event loop
+1. `bootstrap()` discovers the repos and imports their `init` modules.
+2. {func}`~otto.session.select_projects` validates `include_projects` /
+   `exclude_projects`.
+3. {func}`~otto.session.check_repos` refuses if an active repo failed to load, and
+   returns the load errors of inactive repos, which `open_context` logs.
+4. {func}`~otto.session.build_lab` builds the lab, unless you passed a `Lab` object.
+   It takes component lab names already split (`["a", "b"]`, not `"a+b"`).
+5. Build an `OttoContext` with that lab, the selection's include / exclude
+   (`include_projects=`, `exclude_projects=`) and the runtime flags, and
+   install it as the active context with `set_context()`, which returns a
+   reset token.
+6. {func}`~otto.session.check_dependencies` runs the
+   [dependency preflight](../cli/env/index.md#the-dependency-preflight). It needs
+   the installed context, because whether a repo is active depends on the
+   lab's hosts.
+7. Do the work. Each host that connects joins the host scope of the event loop
    it connects on. On the way out, `ctx.sweep_loop(...)` closes the hosts the
    running loop owns, then `reset_context(token)` restores the prior state.
+
+The smallest version keeps steps 1, 4, 5 and 7:
 
 ```python
 import asyncio
 
+from otto.bootstrap import bootstrap
 from otto.context import OttoContext, reset_context, set_context
-from otto.config import load_lab
+from otto.session import build_lab
 
-lab = load_lab("mylab", search_paths=[...])
+lab = build_lab(bootstrap().repos, ["mylab"])
 ctx = OttoContext(lab=lab, dry_run=False)
 token = set_context(ctx)
 try:
@@ -151,9 +206,13 @@ finally:
         reset_context(token)
 ```
 
-This is exactly what `open_context` does under the hood. Use this form when
-you need fine-grained control — for instance, when a framework drives the
-event loop and you cannot use `async with` at the top level.
+Add the checks you want back in the same order. If you add
+`select_projects`, pass its result into the context as
+`OttoContext(..., include_projects=tuple(selection.include),
+exclude_projects=tuple(selection.exclude))`: `check_dependencies` decides which repos
+are active from the context's switches. Use this form when you need
+fine-grained control — for instance, when a framework drives the event loop
+and you cannot use `async with` at the top level.
 
 To dispatch a registered instruction by name instead of importing and calling
 it directly, see "Calling an instruction by name" in
@@ -299,6 +358,14 @@ for junit in result.junit_paths:
 - **Registrations happen in `bootstrap()`.** It imports each repo's init
   modules, which is where options classes are registered, so call it (or
   `open_context()`, which calls it for you) before `run_tests`.
+- **`bootstrap()` alone skips the CLI's checks.** A script without
+  `open_context` gets no project selection (`-I` / `-E`), no bootstrap gate (a
+  repo whose `init` module failed to import does not stop the run; whatever it
+  would have registered is simply missing), and no dependency preflight. Call
+  {func}`~otto.session.select_projects`, {func}`~otto.session.check_repos` and
+  {func}`~otto.session.check_dependencies` yourself if you want them (see
+  [Bring-your-own-CLI](#bring-your-own-cli-lower-level-primitives) for their
+  order), or run under `open_context()`.
 
 ### `output_dir` precedence
 

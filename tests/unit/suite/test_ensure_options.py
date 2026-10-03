@@ -5,12 +5,11 @@ converge builds each body's options from the ``test`` verb's parsed flags, as
 bound on the context, so a flag registered only for ``run`` takes its default.
 """
 
-import pytest
-
-from otto import options, project
+from otto import options
 from otto.context import get_context
 from otto.params import register_options
-from otto.project import InstallOptions
+from otto.project import InstallOptions, orchestrator
+from otto.project import actions as actions_module
 from otto.result import Result
 from otto.utils import Status
 from tests.unit.suite._inner import run_inner
@@ -59,7 +58,7 @@ def test_a_test_flag_steers_the_install_and_a_run_only_flag_takes_its_default(
         built.append(source.build(WidgetInstall))
         return Result(Status.Success)
 
-    monkeypatch.setattr(project, "ensure_installed", fake_ensure_installed)
+    monkeypatch.setattr(orchestrator, "ensure_installed", fake_ensure_installed)
     run_inner(pytester, otto_plugins, test_e=_ENSURED_TEST).assert_outcomes(passed=1)
     [opts] = built
     assert opts.lab_env == "prod"
@@ -74,15 +73,9 @@ def test_nothing_bound_converges_from_defaults(pytester, otto_plugins, monkeypat
         built.append(source.build(WidgetInstall))
         return Result(Status.Success)
 
-    monkeypatch.setattr(project, "ensure_installed", fake_ensure_installed)
+    monkeypatch.setattr(orchestrator, "ensure_installed", fake_ensure_installed)
     run_inner(pytester, otto_plugins, test_e=_ENSURED_TEST).assert_outcomes(passed=1)
     assert [(o.lab_env, o.variant) for o in built] == [("staging", "field")]
-
-
-@pytest.fixture(autouse=True)
-def _restore_ensure_installed(monkeypatch):
-    """Put ``otto.project.ensure_installed`` back whatever a test replaced it with."""
-    monkeypatch.setattr(project, "ensure_installed", project.ensure_installed)
 
 
 def test_the_getting_started_variant_reaches_the_ensured_install(
@@ -102,7 +95,7 @@ def test_the_getting_started_variant_reaches_the_ensured_install(
     # Only its options classes and its register_options call are under test:
     # outside a repo's init import, register_project_actions refuses the
     # class, so it is stood in for by the identity.
-    monkeypatch.setattr(project, "register_project_actions", lambda cls: cls)
+    monkeypatch.setattr(actions_module, "register_project_actions", lambda cls: cls)
     actions = importlib.import_module("gs_example.actions")
     get_context().bind_verb_options("test", {"variant": "lab"})
     assert get_context().options(actions.BedVariant).variant == "lab"
@@ -112,7 +105,7 @@ def test_the_getting_started_variant_reaches_the_ensured_install(
         built.append(source.build(actions.BedInstall))
         return Result(Status.Success)
 
-    monkeypatch.setattr(project, "ensure_installed", fake_ensure_installed)
+    monkeypatch.setattr(orchestrator, "ensure_installed", fake_ensure_installed)
     run_inner(pytester, otto_plugins, test_e=_ENSURED_TEST).assert_outcomes(passed=1)
     [opts] = built
     assert (opts.variant, opts.ensure) == ("lab", False)

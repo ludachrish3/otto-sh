@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from otto import bootstrap as bs
 from otto.context import (
     LIBRARY_LAB_NAME,
     HostScope,
@@ -400,12 +401,23 @@ async def test_open_context_loads_the_lab_with_the_process_inventory(tmp_path, m
     points at a user settings file naming the worked-example fixture, so
     ``build_inventory`` reads a real file and the json backend a real
     inventory, rather than a patched seam that would pass with the threading
-    still missing.
+    still missing. The lab itself comes from a SUT repo's ``[[lab.sources]]``
+    (a copy of the fixture's lab file), installed as the bootstrap result.
     """
+    import shutil
+
     import otto
+    from otto.config.repo import Repo
     from tests._fixtures.labdata import lab_data_dir
+    from tests._fixtures.sutrepo import make_sut_repo
 
     fixture = lab_data_dir() / "tech1-inventory"
+    sut = make_sut_repo(
+        tmp_path / "repo", extra='[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n'
+    )
+    (sut / "lab").mkdir()
+    shutil.copy(fixture / "lab.json", sut / "lab" / "lab.json")
+    _install_result(monkeypatch, repos=[Repo(sut)])
     home = tmp_path / "home"
     home.mkdir()
     settings = home / "settings.toml"
@@ -417,7 +429,7 @@ async def test_open_context_loads_the_lab_with_the_process_inventory(tmp_path, m
         f'\n[creds]\nbackend = "json"\npath = "{fixture / "creds.json"}"\n'
     )
     monkeypatch.setenv("OTTO_HOME", str(home))
-    async with otto.open_context(lab="unix", search_paths=[fixture]) as ctx:
+    async with otto.open_context(lab="unix") as ctx:
         host = ctx.lab.hosts["test1"]
         assert host.inventory_ref.key == "test1"
         assert host.ip == "10.10.200.11"  # the record's address, not the lab file's
@@ -698,3 +710,261 @@ def test_cov_reads_through_a_repo_view(cov_detection):
     """The repo-scoped view delegates live, so instructions' self.ctx sees it too."""
     ctx = OttoContext(lab=_lab_with("test1"))
     assert ctx.for_repo("acme").cov is True
+
+
+# --- open_context makes the CLI's decisions -------------------------------------
+#
+# The bootstrap result is INSTALLED, the way tests/unit/cli/test_bootstrap_gate.py
+# installs it, so each test decides exactly which repos (and which load errors)
+# open_context sees. The root conftest's `_restore_bootstrap_state` puts the
+# previous result back afterwards.
+
+
+def _install_result(monkeypatch, *, repos=(), errors=()):
+    """Make *repos* and *errors* what ``bootstrap()`` returns for this test."""
+    bs._reset()
+    result = bs.BootstrapResult(
+        env=None,
+        repos=list(repos),
+        errors=list(errors),
+        warnings=[],
+        ordered_repos=list(repos),  # as bootstrap() fills it, so the real preflight sees them
+    )
+    monkeypatch.setattr(bs, "_result", result)
+    return result
+
+
+def _host(element: str, ip: str) -> dict:
+    """One inline lab-json host record, a member of lab ``merged``."""
+    return {
+        "ip": ip,
+        "element": element,
+        "creds": [{"login": "u", "password": "p"}],
+        "resources": [element],
+        "labs": ["merged"],
+    }
+
+
+@pytest.fixture
+def installed_repos(monkeypatch):
+    """Build a real SUT repo from settings + lab files and install it as bootstrap's result."""
+    from otto.config.repo import Repo
+    from tests._fixtures.labdata import write_lab_json
+    from tests._fixtures.sutrepo import make_sut_repo
+
+    def _install(root: Path, extra: str, labfiles: "dict[str, list[dict]]") -> Repo:
+        sut = make_sut_repo(root, name=root.name, extra=extra)
+        for rel, hosts in labfiles.items():
+            write_lab_json(root / rel, hosts)
+        repo = Repo(sut)
+        _install_result(monkeypatch, repos=[repo])
+        return repo
+
+    return _install
+
+
+def _broken_repo(name: str, *, lab_patterns: "list[str] | None" = None):
+    """A discovered repo whose init failed, and its load error (its [project] parsed)."""
+    from types import SimpleNamespace
+
+    from otto.config.scope import ProjectScopeConfig
+
+    scope = (
+        None
+        if lab_patterns is None
+        else ProjectScopeConfig(
+            lab_patterns=[re.compile(p) for p in lab_patterns], host_patterns=[]
+        )
+    )
+    sut_dir = Path(f"/repos/{name}")
+    repo = SimpleNamespace(name=name, sut_dir=sut_dir, project_scope=scope)
+    return repo, bs.DependencyError(str(sut_dir), "dependency 'y' is not satisfied")
+
+
+@pytest.mark.asyncio
+async def test_open_context_builds_the_lab_build_lab_builds(tmp_path, installed_repos, monkeypatch):
+    """The lab parity: sources, preferences and placeholders all come from the repos."""
+    import otto
+    from otto.docker import compose
+    from otto.session import build_lab
+
+    placeholder_labs: "list[Lab]" = []
+    real_register = compose.register_declared_container_hosts
+
+    def _spy(lab, repos):
+        placeholder_labs.append(lab)
+        return real_register(lab, repos)
+
+    monkeypatch.setattr(compose, "register_declared_container_hosts", _spy)
+    repo = installed_repos(
+        tmp_path / "r1",
+        '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n'
+        '[host_preferences.".*".ssh_options]\nport = 2222\n',
+        {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
+    )
+    expected = build_lab([repo], ["merged"])
+    async with otto.open_context(lab="merged") as ctx:
+        assert set(ctx.lab.hosts) == set(expected.hosts)
+        assert "alt1" in ctx.lab.hosts  # the repo's [[lab.sources]] record
+        assert ctx.lab.hosts["alt1"].ssh_options.port == 2222  # the repo's [host_preferences]
+        assert placeholder_labs[-1] is ctx.lab  # the declared containers were registered on it
+
+
+@pytest.mark.asyncio
+async def test_a_combined_lab_string_is_split_before_the_gate(monkeypatch):
+    """'a+b': a repo matching only b is ACTIVE, so its load error is fatal.
+
+    Unsplit, the one name ``a+b`` fullmatches no pattern, the repo reads as
+    out of scope, and its error is merely demoted.
+    """
+    import otto
+    from otto.session import RepoLoadError
+
+    repo, error = _broken_repo("Repo2", lab_patterns=["b"])
+    _install_result(monkeypatch, repos=[repo], errors=[error])
+    with pytest.raises(RepoLoadError) as exc:
+        async with otto.open_context(lab="a+b"):
+            pass
+    assert exc.value.errors == [error]
+    assert try_get_context() is None
+
+
+@pytest.mark.asyncio
+async def test_a_list_of_labs_is_split_like_repeated_lab_flags(monkeypatch):
+    """``["a", "b+c"]`` is three labs, as ``--lab a --lab b+c`` is, for the gate and the build."""
+    import otto
+    from otto.session import projects
+
+    real_check_repos = projects.check_repos
+    seen: "dict[str, list[str]]" = {}
+
+    def _check_repos(result, labs, selection):
+        seen["gate"] = list(labs)
+        return real_check_repos(result, labs, selection)
+
+    def _build_lab(repos, labs):
+        seen["build"] = list(labs)
+        return _lab_with("test1")
+
+    _install_result(monkeypatch)
+    monkeypatch.setattr(projects, "check_repos", _check_repos)
+    monkeypatch.setattr("otto.session.lab.build_lab", _build_lab)
+    async with otto.open_context(lab=["a", "b+c"]):
+        pass
+    assert seen == {"gate": ["a", "b", "c"], "build": ["a", "b", "c"]}
+
+
+@pytest.mark.asyncio
+async def test_a_lab_object_still_runs_the_gate(monkeypatch):
+    """Labs come from component_names; a broken active repo refuses."""
+    import otto
+    from otto.session import RepoLoadError
+
+    repo, error = _broken_repo("Repo2", lab_patterns=["t"])
+    _install_result(monkeypatch, repos=[repo], errors=[error])
+    with pytest.raises(RepoLoadError) as exc:
+        async with otto.open_context(lab=_lab_with("test1")):
+            pass
+    assert exc.value.errors == [error]
+    assert try_get_context() is None
+
+
+@pytest.mark.asyncio
+async def test_a_lab_objects_component_names_are_the_gates_labs(monkeypatch, caplog):
+    """A repo out of scope for every component of the Lab is demoted, not fatal.
+
+    With no labs at all the gate cannot prove the repo inactive, so this
+    passes only if the gate was handed the Lab's ``component_names``.
+    """
+    import otto
+
+    repo, error = _broken_repo("Repo2", lab_patterns=["elsewhere"])
+    _install_result(monkeypatch, repos=[repo], errors=[error])
+    lab = _lab_with("test1")
+    with caplog.at_level(logging.WARNING, logger="otto.context"):
+        async with otto.open_context(lab=lab) as ctx:
+            assert ctx.lab is lab
+    assert "inactive for this run (not applicable to lab(s) [t])" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_demoted_error_is_logged_not_raised(caplog, monkeypatch):
+    import otto
+
+    repo, error = _broken_repo("Repo2")
+    _install_result(monkeypatch, repos=[repo], errors=[error])
+    with caplog.at_level(logging.WARNING, logger="otto.context"):
+        async with otto.open_context(lab=_lab_with("test1"), exclude_projects=["Repo2"]) as ctx:
+            assert ctx.exclude_projects == ("repo2",)
+    assert "inactive for this run (exclude_projects repo2)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_selected_projects_reach_the_context(monkeypatch):
+    """``include_projects`` is normalised and carried on the context, as the CLI carries ``-I``."""
+    import otto
+
+    repo, _ = _broken_repo("My_Repo")
+    _install_result(monkeypatch, repos=[repo])
+    async with otto.open_context(lab=_lab_with("test1"), include_projects=["My_Repo"]) as ctx:
+        assert (ctx.include_projects, ctx.exclude_projects) == (("my-repo",), ())
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_project_is_refused(monkeypatch):
+    import otto
+    from otto.session import ProjectSelectionError
+
+    repo, _ = _broken_repo("Repo2")
+    _install_result(monkeypatch, repos=[repo])
+    with pytest.raises(ProjectSelectionError) as exc:
+        async with otto.open_context(lab=_lab_with("test1"), include_projects=["nope"]):
+            pass
+    assert (exc.value.kind, exc.value.field, exc.value.names) == (
+        "unknown",
+        "include_projects",
+        ["nope"],
+    )
+    assert try_get_context() is None
+
+
+@pytest.mark.asyncio
+async def test_a_dependency_refusal_resets_the_context(monkeypatch):
+    """The check runs with the context installed, and a refusal uninstalls it."""
+    import otto
+    from otto.session import DependencyRefusedError
+
+    seen = []
+
+    def _refuse(ctx):
+        seen.append(try_get_context() is ctx)
+        raise DependencyRefusedError([])
+
+    _install_result(monkeypatch)
+    monkeypatch.setattr("otto.session.dependencies.check_dependencies", _refuse)
+    with pytest.raises(DependencyRefusedError):
+        async with otto.open_context(lab=_lab_with("test1")):
+            pass
+    assert seen == [True]
+    assert try_get_context() is None
+
+
+@pytest.mark.asyncio
+async def test_dependency_warnings_are_logged(monkeypatch, caplog):
+    import otto
+
+    warning = "repo 'r' requires 'x' — not satisfied, but r is inactive for this run"
+    _install_result(monkeypatch)
+    monkeypatch.setattr("otto.session.dependencies.check_dependencies", lambda ctx: [warning])
+    with caplog.at_level(logging.WARNING, logger="otto.context"):
+        async with otto.open_context(lab=_lab_with("test1")):
+            pass
+    assert warning in caplog.text
+
+
+def test_open_context_has_no_search_paths():
+    import inspect
+
+    import otto
+
+    assert "search_paths" not in inspect.signature(otto.open_context.__wrapped__).parameters

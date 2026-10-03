@@ -212,12 +212,14 @@ Three postures cover every way the process gets configured:
   `log_cli`) coexists rather than competing — see "Handler ownership"
   below.
 - **Library mode** — `import otto` configures nothing beyond the
-  `NullHandler`; an embedding process opts in with one call,
-  {func}`otto.logger.install <otto.logger.management.install>`, and undoes
-  it with {func}`otto.logger.reset <otto.logger.management.reset>`. See
-  {doc}`the library page <../../cookbook/python-library>` for the embedder API and
-  {ref}`[logging.levels] <logging-levels>` for the noise-floor table both
-  the CLI and `install()` apply.
+  `NullHandler`; an embedding process opts in with one call, and undoes
+  it with {func}`otto.logger.reset <otto.logger.management.reset>`. The call
+  is {func}`otto.session.install_logging`, which applies the repos'
+  {ref}`[logging.levels] <logging-levels>` noise-floor table as the CLI does,
+  or the raw primitive underneath it,
+  {func}`otto.logger.install <otto.logger.management.install>`, which knows
+  nothing of repos. See {doc}`the library page <../../cookbook/python-library>`
+  for the embedder API.
 
 ### Handler ownership
 

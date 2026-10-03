@@ -35,7 +35,6 @@ import pytest
 
 from otto.bootstrap import BootstrapError, DependencyError, ProjectScopeError
 from otto.check.errors import CheckCommandFailedError, CheckHostUnreachableError
-from otto.cli.invoke import LabContextError, LoggingLevelsConflictError
 from otto.config.coverage_settings import CoverageConfigError
 from otto.config.scope import EmptySelectionError
 from otto.coverage.capture.gitio import (
@@ -107,6 +106,14 @@ from otto.project.orchestrator import InactiveRequiredDependencyError
 from otto.registry import RegistrationRefused
 from otto.reservations.check import MissingReservationError, ReservationBackendError
 from otto.result import CommandNotRunError
+from otto.session import (
+    DependencyRefusedError,
+    InstructionInactiveError,
+    LabBuildError,
+    LoggingLevelsConflictError,
+    ProjectSelectionError,
+    RepoLoadError,
+)
 from otto.suite._retry import RetryAttemptTimeoutError
 from otto.suite.run import NoTestsMatchedError
 from otto.suite.selection import UnknownSelectionError
@@ -131,7 +138,6 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (BackendUnavailableError, RuntimeError),
     (EnvExistsError, RuntimeError),
     (EnvBuildError, RuntimeError),
-    (LabContextError, Exception),
     # A settings error like the model-level ones, which are pydantic
     # ValidationErrors — so an `except ValueError` around config loading
     # catches a cross-repo [logging.levels] conflict too.
@@ -144,6 +150,11 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (FieldError, Exception),
     (MonitorInputError, Exception),
     (InitInputError, Exception),
+    (ProjectSelectionError, ValueError),
+    (RepoLoadError, Exception),
+    (LabBuildError, Exception),
+    (DependencyRefusedError, Exception),
+    (InstructionInactiveError, Exception),
     (ReviewSourceError, Exception),
     (NoMonitorableHostsError, Exception),
     (MonitorTlsError, Exception),
@@ -229,6 +240,15 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         MonitorTlsError,
         # The init library's input refusal: a FieldError subclass, rootless like its base.
         InitInputError,
+        # otto.session's refusals: a run that cannot start because of otto's
+        # own configuration (a repo that fails to load, a lab that cannot be
+        # built, an unmet repo requirement, an inactive repo's instruction) —
+        # otto's concepts, never a stdlib type a caller was already catching.
+        # LabBuildError is a FieldError subclass, rootless like its base.
+        RepoLoadError,
+        LabBuildError,
+        DependencyRefusedError,
+        InstructionInactiveError,
         # A contradictory ACTIVATION configuration: the labs drop a provider
         # while a kept repo requires it. Sits beside ProjectScopeError above
         # for the same reason it has no stdlib root — the project layer's
@@ -243,7 +263,6 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         # already have been catching.
         ProjectInstructionError,
         OptionsCollisionError,
-        LabContextError,
         LabRepositoryError,
         LabNotFoundError,
         # "the inventory backend could not answer" and "it does not hold that

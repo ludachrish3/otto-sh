@@ -158,7 +158,7 @@ def test_info_with_an_unfingerprinted_inventory_promises_no_write(tmp_path, monk
 
     _workspace(tmp_path, monkeypatch, references=["dut-1"])
     unfingerprinted = SimpleNamespace(label="probe:live", fingerprint=lambda: None)
-    monkeypatch.setattr("otto.inventory.build_inventory", lambda _repos: unfingerprinted)
+    monkeypatch.setattr("otto.inventory.config.build_inventory", lambda _repos: unfingerprinted)
 
     result = runner.invoke(cache_app, ["info"])
 

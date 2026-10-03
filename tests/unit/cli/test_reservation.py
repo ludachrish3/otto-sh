@@ -528,10 +528,10 @@ def test_check_without_lab_exits_with_usage_error(capsys):
     """No --lab → check reports the missing option through the shared loud path."""
     from unittest.mock import patch
 
-    from otto.cli.invoke import LabContextError
+    from otto.session import LabBuildError
 
     ctx = _make_ctx({})
-    err = LabContextError("Error: Missing option '--lab'.", exit_code=2, rich=False)
+    err = LabBuildError("x", field="labs", kind="no_labs")
 
     with (
         patch("otto.cli.invoke.ensure_lab_context", side_effect=err),
@@ -539,6 +539,9 @@ def test_check_without_lab_exits_with_usage_error(capsys):
     ):
         check(ctx)
     assert exc.value.exit_code == 2
+    assert (
+        capsys.readouterr().err == "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').\n"
+    )
 
 
 def test_check_builds_backend_on_demand(capsys, monkeypatch):

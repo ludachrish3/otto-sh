@@ -18,7 +18,6 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
-from otto.cli.invoke import LoggingLevelsConflictError, merge_logging_levels
 from otto.cli.main import app
 from otto.cli.registry import register_cli_command
 from otto.config.env import LOG_LVL_ENV_VAR
@@ -458,79 +457,19 @@ class TestLoggerArguments:
 # ── The [logging.levels] noise floor ─────────────────────────────────────────
 
 
-class _LevelsRepo:
-    """A repo double carrying only what ``merge_logging_levels`` reads."""
-
-    def __init__(self, name: str, levels: dict[str, str]) -> None:
-        self.name = name
-        self.logging_levels = levels
-
-
 class TestLoggingLevelsMerge:
-    """Design 2026-08-30 §4.2: repo tables union; a disagreement is an error."""
+    """Design 2026-08-30 §4.2: the CLI session applies every repo's table.
 
-    def test_tables_union_across_repos(self):
-        merged = merge_logging_levels(
-            [
-                _LevelsRepo("alpha", {"asyncssh": "DEBUG"}),
-                _LevelsRepo("beta", {"vendor": "ERROR"}),
-            ]
-        )
-        assert merged == {"asyncssh": "DEBUG", "vendor": "ERROR"}
-
-    def test_the_same_level_twice_is_not_a_conflict(self):
-        """A shared vendor SDK quieted by two repos must not error."""
-        merged = merge_logging_levels(
-            [
-                _LevelsRepo("alpha", {"vendor": "ERROR"}),
-                _LevelsRepo("beta", {"vendor": "ERROR"}),
-            ]
-        )
-        assert merged == {"vendor": "ERROR"}
-
-    def test_a_conflict_names_both_repos_and_the_logger(self):
-        with pytest.raises(LoggingLevelsConflictError) as exc:
-            merge_logging_levels(
-                [
-                    _LevelsRepo("alpha", {"vendor": "DEBUG"}),
-                    _LevelsRepo("beta", {"vendor": "ERROR"}),
-                ]
-            )
-        message = str(exc.value)
-        # The operator has to know WHICH two files to reconcile, and over what.
-        assert "alpha" in message
-        assert "beta" in message
-        assert "vendor" in message
-        assert "DEBUG" in message
-        assert "ERROR" in message
-
-    def test_the_conflict_names_the_repo_that_established_the_value(self):
-        """The operator has to be sent to the file that actually set it.
-
-        With A and B agreeing and C differing, crediting the LAST agreeing repo
-        would point at B — the operator edits B, and the same error re-fires
-        naming A and C. The middle repo is the discriminator, so it is here.
-        """
-        with pytest.raises(LoggingLevelsConflictError) as exc:
-            merge_logging_levels(
-                [
-                    _LevelsRepo("alpha", {"vendor": "DEBUG"}),
-                    _LevelsRepo("beta", {"vendor": "DEBUG"}),
-                    _LevelsRepo("gamma", {"vendor": "ERROR"}),
-                ]
-            )
-        message = str(exc.value)
-        assert "alpha" in message
-        assert "gamma" in message
-        assert "beta" not in message, (
-            "the message credited a repo that merely agreed with the established value"
-        )
+    The merge rule itself (union, a disagreement refuses) is
+    ``otto.session.merge_logging_levels``'s and is tested beside it.
+    """
 
     def test_a_repo_table_reaches_the_live_logger(self, real_main_mocks):
         """The WIRING: ensure_cli_session merges repo tables onto otto's floor.
 
-        Without this, every assertion above would still pass with the call
-        missing from ``ensure_cli_session`` entirely.
+        Without this, the library's merge tests
+        (``tests/unit/session/test_logs.py``) would all still pass with the
+        call missing from ``ensure_cli_session`` entirely.
         """
         real_main_mocks["repo"].logging_levels = {
             "vendor_under_test": "ERROR",

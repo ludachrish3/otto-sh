@@ -124,8 +124,10 @@ Four consequences worth knowing:
   check. The verb the message names always runs.
 - **`--help` and completion never pay for it.** Neither reaches the point where
   the check happens.
-- **Library callers are not checked.** Code driving otto through
-  `open_context` gets no preflight; the check is a CLI gate.
+- **Library callers are checked too.** `open_context` runs the same check
+  ({func}`otto.session.check_dependencies`) once its context is installed, and
+  refuses with {class}`~otto.session.DependencyRefusedError`. A script that
+  skips `open_context` calls `check_dependencies` itself if it wants the check.
 - **An eager import still fails at bootstrap.** If a repo's `init` module
   imports a missing package at module scope, it fails while otto is registering
   the repo — before the check can speak — and you get the generic "failed to

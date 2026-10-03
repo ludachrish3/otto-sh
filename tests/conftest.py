@@ -271,6 +271,10 @@ from tests._fixtures._coverage_preinit import (
     force_coverage_schema_init,
     preinit_failure_message,
 )
+from tests._fixtures._lazy_exports import (
+    evict_leaked_lazy_exports,
+    raise_on_leaked_lazy_exports,
+)
 from tests._fixtures._loop_reaper import (
     LeakedRunningLoopError,
     classify_loop_origin,
@@ -569,13 +573,31 @@ def _live_scoped_runner_loops(item) -> set:
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_teardown(item):
     """After the test and all its fixtures finalize, reap orphaned harness
-    loops. Raises :class:`LeakedProductLoopError` if a product loop leaked.
+    loops. Raises :class:`LeakedProductLoopError` if a product loop leaked, and
+    :class:`~tests._fixtures._lazy_exports.LeakedLazyExportError` if the test
+    left a lazily exported name cached in its package's ``__dict__``.
 
     Loops still owned by a live wider-than-function runner are excluded so the
     reaper never closes a class/module/package/session loop out from under the
     next test in that scope (see :func:`_live_scoped_runner_loops`).
     """
-    result = yield
+    try:
+        result = yield
+        _reap_after_teardown(item)
+    except BaseException:
+        # A failing teardown, or a leaked loop, must not let a lazy-export leak
+        # cascade onto the next test: evict it, and let the first failure stand.
+        evict_leaked_lazy_exports()
+        raise
+    # Here, after every fixture has finalized, and not in an autouse fixture: the
+    # leak is CREATED by monkeypatch's undo, and an autouse fixture's teardown can
+    # run before that undo whenever monkeypatch was set up ahead of it.
+    raise_on_leaked_lazy_exports(item.nodeid)
+    return result
+
+
+def _reap_after_teardown(item) -> None:  # type: ignore[no-untyped-def]
+    """Reap orphaned loops, refuse a still-running one, and report leaked transports."""
     global _loops_reaped  # noqa: PLW0603 — module-level singleton/cache
 
     def origin_of(loop):
@@ -609,7 +631,6 @@ def pytest_runtest_teardown(item):
     # After the reap, so transports bound to a just-reaped function loop are
     # flagged at this very boundary instead of one test later.
     _report_leaked_transports(item)
-    return result
 
 
 @pytest.hookimpl(trylast=True)
@@ -802,21 +823,32 @@ def _reset_otto_context():
     Lives in the *root* conftest so it covers the integration tree too: under
     ``make coverage`` the whole suite runs in one process and ungrouped unit
     tests can land on a worker that previously ran integration tests.
+
+    ``otto.context._cli_token`` is restored with it. ``set_cli_context`` stores
+    its reset token in that module global, and only ``entry()``'s ``finally``
+    clears it, so a test that reaches ``ensure_lab_context`` without ``entry()``
+    (a ``CliRunner`` on ``app``) leaves the token behind. A later ``entry()``
+    then resets that token, which raises ``ValueError: ... was created in a
+    different Context`` whenever the leaking test ran in another contextvars
+    context, an async test for one.
     """
     from otto import context
     from otto.context import _active, _variant
 
     snapshot = _active.get()
+    cli_token = context._cli_token
     variant_snapshot = _variant.get()
-    # The CLI's reset token too: a CliRunner invocation leaves one behind, and
-    # a later test's reset_cli_context() must see the state it started with.
-    token_snapshot = context._variant_token
+    # The CLI's variant reset token too: a CliRunner invocation leaves one
+    # behind, and a later test's reset_cli_context() must see the state it
+    # started with.
+    variant_token = context._variant_token
     try:
         yield
     finally:
         _active.set(snapshot)
+        context._cli_token = cli_token
         _variant.set(variant_snapshot)
-        context._variant_token = token_snapshot
+        context._variant_token = variant_token
 
 
 @pytest.fixture(autouse=True)

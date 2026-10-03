@@ -18,6 +18,7 @@ import importlib
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -473,3 +474,60 @@ def test_plugin_subclasses_a_lazily_exported_builtin_host():
         pass
 
     assert issubclass(Mine, Real)
+
+
+# ── The lazy-export leak guard (tests/_fixtures/_lazy_exports.py) ─────────────
+#
+# The root conftest's teardown fails a test that leaves a lazily exported name
+# cached in its package's __dict__. These pin the guard's reach and its red.
+
+
+def test_the_leak_guard_checks_every_package_with_a_lazy_attrs_table():
+    """A guard whose package scan came back short would pass vacuously."""
+    from tests._fixtures._lazy_exports import lazy_package_names
+
+    declares = re.compile(r"^_LAZY_ATTRS\b", re.MULTILINE)
+    expected = {
+        _package_of(path) for path in _lazy_package_inits() if declares.search(path.read_text())
+    }
+    assert set(lazy_package_names()) == expected
+    assert {"otto.session", *PACKAGES} <= expected
+
+
+def test_a_monkeypatch_on_the_lazy_package_is_caught_and_evicted():
+    """The leak made exactly as monkeypatch makes it: by the UNDO of a package patch."""
+    import otto.session
+    from tests._fixtures._lazy_exports import (
+        LeakedLazyExportError,
+        leaked_lazy_exports,
+        raise_on_leaked_lazy_exports,
+    )
+
+    assert leaked_lazy_exports() == []
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr("otto.session.build_lab", lambda repos, labs: None)
+    patcher.undo()
+    try:
+        assert leaked_lazy_exports() == ["otto.session.build_lab"]
+        with pytest.raises(
+            LeakedLazyExportError,
+            match=re.escape("otto.session.build_lab -> patch otto.session.lab.build_lab"),
+        ):
+            raise_on_leaked_lazy_exports("the-leaking-test")
+        assert "build_lab" not in vars(otto.session)  # evicted, so it cannot cascade
+    finally:
+        vars(otto.session).pop("build_lab", None)
+
+
+def test_a_monkeypatch_on_the_defining_module_leaves_nothing_behind():
+    """The fix the guard's message asks for is itself clean."""
+    import otto.session
+    from tests._fixtures._lazy_exports import leaked_lazy_exports
+
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr("otto.session.lab.build_lab", lambda repos, labs: None)
+    try:
+        assert otto.session.build_lab(None, None) is None  # the package resolves the patch
+    finally:
+        patcher.undo()
+    assert leaked_lazy_exports() == []

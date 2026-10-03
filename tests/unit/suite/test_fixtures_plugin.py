@@ -232,21 +232,24 @@ def _called(*function_names: str, flags: dict[str, Any] | None = None) -> list[t
 
 
 def _stub_ensures(monkeypatch: pytest.MonkeyPatch, calls: list[tuple], outcome: Any) -> list[tuple]:
-    """Replace ALL THREE converge functions on ``otto.project``, each recording its own name.
+    """Replace ALL THREE converge functions, each recording its own name.
 
     All three, not just the one under test: that is what lets ``calls`` catch a
-    step wired to the WRONG converge function. Patched on ``otto.project`` — the
-    package object the plugin reads the name off at call time; a plugin that
-    reached into ``otto.project.orchestrator`` would see through this stub, and
-    should. Also arms the ``_converge_loop`` slot the stubs write to (deleted
-    again on teardown via ``raising=False``).
+    step wired to the WRONG converge function. Each stub sits on the module
+    that defines the name, ``otto.project.orchestrator``, so the plugin sees it
+    whether it reads the name through the package's lazy ``__getattr__`` or
+    straight from the orchestrator. Patching ``otto.project`` instead would
+    leave the real function cached in the package ``__dict__`` when the patch
+    is undone; the root conftest's lazy-export guard refuses that. Also arms
+    the ``_converge_loop`` slot the stubs write to (deleted again on teardown
+    via ``raising=False``).
     """
     from otto.suite.pytest_plugin import OttoFixturesPlugin
 
     monkeypatch.setattr(OttoFixturesPlugin, "_converge_loop", None, raising=False)
     # One otto.project across pytester runs: tests/_fixtures/_pytester_snapshot.py.
     for name in CONVERGE_FUNCTIONS:
-        monkeypatch.setattr(f"otto.project.{name}", _stub(calls, name, outcome))
+        monkeypatch.setattr(f"otto.project.orchestrator.{name}", _stub(calls, name, outcome))
     return calls
 
 

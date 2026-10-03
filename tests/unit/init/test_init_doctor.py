@@ -734,7 +734,7 @@ def test_one_check_repo_constructs_the_inventory_only_once(tmp_path, monkeypatch
     proves every one of those askers is handed the call's one cache — any
     that were not would count the construction again.
     """
-    import otto.inventory as otto_inventory
+    import otto.inventory.config as otto_inventory
 
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)

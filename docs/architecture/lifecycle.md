@@ -367,9 +367,17 @@ async with otto.open_context(lab="my_lab") as ctx:
     result = await ctx.run_on_all_hosts("uname -a")
 ```
 
-{func}`~otto.context.open_context` runs `bootstrap()` (lazily, idempotently),
-loads and merges the requested lab(s), installs the context, and tears
-everything down — scope included — on exit. It does *not* run the reservation
-gate; that is a CLI-preamble concern, and scripts that want it call
-`check_reservations` explicitly. See {doc}`../cookbook/python-library` for the
-user-facing walkthrough.
+{func}`~otto.context.open_context` prepares the run `otto --lab` would, through
+the same {doc}`otto.session <../api/session>` functions in the CLI preamble's
+order:
+
+1. `bootstrap()` (lazily, idempotently);
+2. validate the project switches, and refuse if an active repo failed to load;
+3. build the lab, or take a `Lab` object as given;
+4. install the context, then run the dependency preflight;
+5. yield, and on exit tear everything down, scope included.
+
+See [Bring-your-own-CLI](../cookbook/python-library.md#bring-your-own-cli-lower-level-primitives)
+in the library guide for each step and what it raises. It does *not* run the
+reservation gate; that is a CLI-preamble concern, and scripts that want it call
+`check_reservations` explicitly.

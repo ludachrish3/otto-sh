@@ -3,17 +3,14 @@
 # doc: begin collect-metrics
 import asyncio
 from datetime import timedelta
-from pathlib import Path
 
 import otto
 from otto.monitor.factory import build_monitor_collector
 
-HERE = Path(__file__).resolve().parent
-
 
 async def main() -> None:
     """Collect from bb1350-qemu with whatever parsers the registrations resolved for it."""
-    async with otto.open_context(lab="busybox", search_paths=[HERE / "lab_data"]):
+    async with otto.open_context(lab="busybox"):
         host = otto.get_host("bb1350-qemu")
         collector = build_monitor_collector(hosts=[host])
         try:

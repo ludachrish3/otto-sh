@@ -68,11 +68,24 @@ def otto_plugins_with_monitor(otto_plugins):
 
 
 @pytest.fixture
-def _restore_ensure_installed(monkeypatch):
-    """Put ``otto.project.ensure_installed`` back after an inner test file replaces it."""
+def _restore_ensure_installed():
+    """Undo an inner test file's ``project.ensure_installed = ...`` exactly.
+
+    ``ensure_installed`` is a lazy export, so "exactly" means taking the name
+    back OUT of the package ``__dict__``. Setting the real function back (what
+    ``monkeypatch.setattr`` would do) leaves it cached there, shadowing the
+    package's ``__getattr__`` for the rest of the worker; the root conftest's
+    lazy-export guard fails a test that does.
+    """
     from otto import project
 
-    monkeypatch.setattr(project, "ensure_installed", project.ensure_installed)
+    missing = object()
+    before = vars(project).get("ensure_installed", missing)
+    yield
+    if before is missing:
+        vars(project).pop("ensure_installed", None)
+    else:
+        vars(project)["ensure_installed"] = before
 
 
 @pytest.fixture

@@ -163,9 +163,11 @@ depends_on = ["otto.host", "otto.logger", "otto.version", "otto.errors", "otto.r
 
 [[modules]]
 path = "otto.cli"
-# otto.inventory: invoke.py's `build_lab_from_repos` resolves the process
-# inventory once and hands it to the load (spec 2026-08-28 host-inventory §8).
-# Function-local, because this module is on the budgeted import surfaces.
+# otto.session: the root callback and invoke.py render the library's typed
+# refusals and call its project, repo, lab, dependency and logging decisions.
+# otto.inventory: inventory.py's `otto inventory` verbs build, query and cache
+# the process inventory. (The lab load's inventory is otto.session.build_lab's.)
+# Function-local, because that module is on the budgeted import surfaces.
 # otto.kmodcov: cov.py's `kmodcov export`/`kmodcov check` leaves call
 # export_tree()/check_tree() to vendor or compare the otto_kmodcov library.
 # Function-local, same import-budget reason as otto.inventory above.
@@ -176,7 +178,7 @@ path = "otto.cli"
 # retires; tach's ratchet just never carried it (the edge is function-scope,
 # added when project instructions started registering data instead of a
 # make_app factory, and this file was not updated alongside).
-depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live", "otto.init"]
+depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live", "otto.init", "otto.session"]
 
 [[modules]]
 path = "otto.config"
@@ -256,6 +258,9 @@ depends_on = [
     # OptionsNotAvailableError now lives there too (otto.params already roots
     # its own OptionsRegistrationError/OptionsCollisionError at OttoError).
     "otto.params",
+    # open_context makes the CLI's decisions through otto.session: project
+    # selection, the bootstrap gate, the lab build and the dependency preflight.
+    "otto.session",
 ]
 
 [[modules]]
@@ -342,12 +347,33 @@ depends_on = [
 ]
 
 [[modules]]
+path = "otto.session"
+# The decisions that prepare a run, shared by `otto --lab X <verb>` and
+# `otto.open_context` (thin-CLI series: the library path makes every decision
+# the CLI makes). Every heavy edge (inventory, docker, labs, env, host) is a
+# function-local import, so a Lab-object open_context never pays for them.
+depends_on = [
+    "otto.errors",
+    "otto.bootstrap",
+    "otto.config",
+    "otto.labs",
+    "otto.inventory",
+    "otto.docker",
+    "otto.logger",
+    "otto.host",
+    "otto.context",
+    "otto.models",
+]
+
+[[modules]]
 path = "otto.instructions"
 # otto.context, otto.params and otto.project are all function-scope, inside
 # bind_handler_kwargs (context, params) and run_instruction (context, params,
 # project): the decorator and the registries stay cheap to import, and only
 # calling an instruction pulls the binding machinery and the orchestrator in.
-depends_on = ["otto.registry", "otto.errors", "otto.context", "otto.params", "otto.project"]
+# otto.session: run_instruction asks check_instruction_active whether the owning
+# repo is active in the context. Function-scope, like the edges above.
+depends_on = ["otto.registry", "otto.errors", "otto.context", "otto.params", "otto.project", "otto.session"]
 
 [[modules]]
 path = "otto.host"

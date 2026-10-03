@@ -262,10 +262,10 @@ def _load_host(chain: _ChainParams) -> "tuple[Any, Any]":
     from ..config import get_host, get_repos
     from ..config.fleet import _apply_option_overrides
     from ..context import OttoContext, set_context
-    from .invoke import build_lab_from_repos
+    from ..session import build_lab
 
     repos = get_repos()
-    lab = build_lab_from_repos(repos, chain.labs)
+    lab = build_lab(repos, chain.labs)
     token = set_context(OttoContext(lab=lab))
     try:
         host = get_host(chain.host_id)
@@ -407,9 +407,9 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     from ..context import OttoContext, reset_context, set_context
     from ..host.builtin_hosts import is_builtin_host
     from ..reservations.check import required_resources
-    from .invoke import build_lab_from_repos
+    from ..session import build_lab
 
-    lab = build_lab_from_repos(get_repos(), chain.labs)
+    lab = build_lab(get_repos(), chain.labs)
     ctx = OttoContext(lab=lab)
     token = set_context(ctx)
     try:

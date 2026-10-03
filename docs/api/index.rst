@@ -14,6 +14,7 @@ API Reference
    models/index
    bootstrap
    context
+   session
    layout
    lifecycle
    project

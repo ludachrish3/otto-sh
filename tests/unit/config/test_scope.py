@@ -639,7 +639,7 @@ _INVARIANT_NAMES = ["repo-a", "Repo_A"]
 class TestInactiveImpliesAttributable:
     """Whenever ``active`` says False, the CALLER can always say WHY.
 
-    ``otto.cli.invoke.refuse_inactive_instruction`` reads
+    ``otto.session.check_instruction_active`` reads
     ``ctx.scopes[owner]`` — subscript, not ``.get`` — on the arm where
     :func:`active` returned False and :func:`switched_off` returned False. That
     is sound only because of an invariant spanning the two functions: ``active``
@@ -651,15 +651,16 @@ class TestInactiveImpliesAttributable:
 
     Nothing enforced that. A third False path added ahead of the ``.get`` — a
     "declares no hosts at all" short-circuit, say — would keep both functions
-    individually correct and turn the gate's subscript into a ``KeyError``
+    individually correct and turn the check's subscript into a ``KeyError``
     escaping the leaf preamble as a traceback. This class is the enforcement:
     it asserts the IMPLICATION over the whole table rather than the two
     functions separately, so the invariant fails here, in a scope unit test,
     rather than in a CLI refusal a user is looking at.
 
-    The fix if it ever fires is a new message arm in the gate, NOT a blank
-    fallback: a refusal that names no cause is a plausible, content-free error,
-    which is worse than the loud failure it replaced.
+    The fix if it ever fires is a new ``reason`` literal on
+    :class:`~otto.session.InstructionInactiveError` plus a CLI rendering arm for
+    it, NOT a blank fallback: a refusal that names no cause is a plausible,
+    content-free error, which is worse than the loud failure it replaced.
     """
 
     def _verdicts(self, name):
@@ -706,7 +707,7 @@ class TestInactiveImpliesAttributable:
                     )
                     assert switched_off(name, ctx) or name in ctx.scopes, (
                         f"active() returned False with no attributable cause ({where}). "
-                        "refuse_inactive_instruction subscripts ctx.scopes[owner] on "
+                        "check_instruction_active subscripts ctx.scopes[owner] on "
                         "exactly this arm and would raise KeyError at the user."
                     )
         # The loop above is an IMPLICATION, so it passes vacuously if nothing in

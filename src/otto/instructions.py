@@ -629,11 +629,20 @@ async def run_instruction(ctx: "OttoContext", name: str, opts: list[object] | No
             body class) nor registered for ``run``.
         otto.params.OptionsValidationError: a value fails validation, or a
             required field has none.
+        otto.session.InstructionInactiveError: *name* belongs to a repo that
+            is inactive in *ctx* (excluded, out of the loaded labs' scope,
+            or host-starved).
     """
     from .context import reset_context, set_context, try_get_context
     from .params import flatten_option_instances
 
     entry = INSTRUCTIONS.get(name)
+    from .session import check_instruction_active
+
+    # Before any option is flattened or validated: an inactive repo's
+    # instruction is refused for the reason it is inactive, not for a value
+    # its options would also have rejected — the order `otto run` keeps.
+    check_instruction_active(name, entry.registered_by, ctx)
     instances = list(opts or [])
     extras: list[type] = []
     if entry.project is not None:

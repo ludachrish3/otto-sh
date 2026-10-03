@@ -287,7 +287,7 @@ def _res(resource, start=None, end=None):
 
 def _install_backend(monkeypatch, backend):
     monkeypatch.setattr(
-        "otto.reservations.build_reservation_gate",
+        "otto.reservations.factory.build_reservation_gate",
         lambda *a, **k: SimpleNamespace(backend=backend),
     )
 
@@ -385,7 +385,7 @@ def test_gate_backend_error_propagates_to_the_catch_all(monkeypatch, gate_env):
     def _boom(*a, **k):
         raise ReservationBackendError("scheduler down")
 
-    monkeypatch.setattr("otto.reservations.build_reservation_gate", _boom)
+    monkeypatch.setattr("otto.reservations.factory.build_reservation_gate", _boom)
     with pytest.raises(ReservationBackendError):
         rc._reservation_allows(_chain())
 
@@ -397,7 +397,7 @@ def test_gate_backend_error_stores_no_cache_entry(monkeypatch, gate_env):
     def _boom(*a, **k):
         raise ReservationBackendError("scheduler down")
 
-    monkeypatch.setattr("otto.reservations.build_reservation_gate", _boom)
+    monkeypatch.setattr("otto.reservations.factory.build_reservation_gate", _boom)
     with pytest.raises(ReservationBackendError):
         rc._reservation_allows(_chain())
     assert cached_reservation_ok("carol", {"r1"}, datetime.now(tz=timezone.utc)) is None
@@ -418,7 +418,7 @@ def test_gate_cache_hit_never_builds_backend(monkeypatch, gate_env):
     now = datetime.now(tz=timezone.utc)
     rcc.store_reservations("carol", [_res("r1", start=_ago(1), end=_ahead(1))], now)
     monkeypatch.setattr(
-        "otto.reservations.build_reservation_gate",
+        "otto.reservations.factory.build_reservation_gate",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("backend built on cache hit")),
     )
     assert rc._reservation_allows(_chain()) is True
@@ -430,7 +430,7 @@ def test_gate_cached_refusal_is_honoured(monkeypatch, gate_env):
     now = datetime.now(tz=timezone.utc)
     rcc.store_reservations("carol", [_res("r2", start=_ago(1), end=_ahead(1))], now)
     monkeypatch.setattr(
-        "otto.reservations.build_reservation_gate",
+        "otto.reservations.factory.build_reservation_gate",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("backend built on cache hit")),
     )
     assert rc._reservation_allows(_chain()) is False
@@ -455,7 +455,7 @@ def test_required_for_is_scoped_to_the_fleet_of_interest(monkeypatch, tmp_path):
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
     monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
-    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",))) == {"slot-1"}
 
@@ -481,7 +481,7 @@ def test_required_for_adds_the_targeted_host_when_it_is_outside_the_fleet(monkey
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
     monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
-    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="slot2")) == {"slot-1", "slot-2"}
 
@@ -506,7 +506,7 @@ def test_required_for_ignores_a_target_the_lab_does_not_hold(monkeypatch, tmp_pa
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
     monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
-    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="typo9")) == {"slot-1"}
 
@@ -530,7 +530,7 @@ def test_required_for_adds_the_hop_when_it_is_outside_the_fleet(monkeypatch, tmp
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
     monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
-    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     chain = rc._ChainParams(host_id="slot1", hop="slot2", term=None, labs=["rig"], holder="carol")
     assert rc._required_for(chain) == {"slot-1", "slot-2"}
@@ -558,7 +558,7 @@ def test_required_for_under_an_empty_declared_fleet_returns_the_lab_level_set(
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
     monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
     monkeypatch.setattr("otto.config.get_ordered_repos", lambda: [repo])
-    monkeypatch.setattr("otto.cli.invoke.build_lab_from_repos", lambda repos, labnames: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",))) == {"rack-1"}
 
@@ -571,7 +571,7 @@ def test_gate_never_skips_under_dash_r(monkeypatch, gate_env):
         seen["skip"] = skip_reservation_check
         return SimpleNamespace(backend=_Backend([_res("r1")]))
 
-    monkeypatch.setattr("otto.reservations.build_reservation_gate", _build)
+    monkeypatch.setattr("otto.reservations.factory.build_reservation_gate", _build)
     assert rc._reservation_allows(_chain()) is True
     assert seen["skip"] is False
 

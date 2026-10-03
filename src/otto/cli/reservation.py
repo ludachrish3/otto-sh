@@ -140,12 +140,10 @@ def check(ctx: typer.Context) -> None:
     # that does — the lab defines the required-resource list — so load it here,
     # the same loud way the preamble would. Still touches no remote host.
     if "otto_reservation" not in ctx.meta:
-        from .invoke import LabContextError, ensure_lab_context, report_lab_context_error
+        from .invoke import ensure_lab_context, lab_context_refusals
 
-        try:
+        with lab_context_refusals():
             ensure_lab_context(ctx)
-        except LabContextError as e:
-            report_lab_context_error(e)
 
     res = ctx.meta.get("otto_reservation")
 

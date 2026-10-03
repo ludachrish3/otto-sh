@@ -8,17 +8,18 @@ flags. Factored out of ``cli/run.py`` so both decorators share one
 implementation.
 """
 
+import contextlib
 import dataclasses
 import functools
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from logging import getLogger
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, cast, get_type_hints
 
 import typer
 from rich.markup import escape
-from typing_extensions import override
+from typing_extensions import assert_never, override
 
 from ..errors import OttoError
 from ..params import (
@@ -38,13 +39,18 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
     from typer.core import TyperGroup
 
-    from ..config.lab import Lab
-    from ..config.repo import Repo
     from ..context import OttoContext
     from ..coverage.config import DestinationError
     from ..errors import FieldError
     from ..registry import Registry
+    from ..reservations import ReservationBackendError
     from ..result import Result
+    from ..session import (
+        DemotedRepo,
+        InstructionInactiveError,
+        LabBuildError,
+        ProjectSelectionError,
+    )
     from .registry import CommandSpec
 
 
@@ -460,62 +466,6 @@ def prepare_command_target(
 # ---------------------------------------------------------------------------
 
 
-class LabContextError(OttoError):
-    """A lab-context failure carrying its user-facing message + exit code.
-
-    :func:`ensure_lab_context` raises this instead of printing directly, so a
-    soft probe (:func:`try_ensure_lab`, used by the class-scoped ``otto host``
-    menu) can swallow it silently. The *loud* callers — :func:`command_preamble`
-    and the root ``--show-lab`` / ``--list-hosts`` branch — catch it and print
-    (the ``rich`` flag chooses ``rich.print`` vs a plain stderr ``typer.echo``)
-    before re-raising ``typer.Exit`` with the stored ``exit_code``.
-    """
-
-    def __init__(self, message: str, exit_code: int, *, rich: bool = True) -> None:
-        """Store *message*, *exit_code*, and whether to print with rich markup."""
-        super().__init__(message)
-        self.message = message
-        self.exit_code = exit_code
-        self.rich = rich
-
-
-class LoggingLevelsConflictError(OttoError, ValueError):
-    """Two repos disagree about one logger's ``[logging.levels]`` entry.
-
-    A settings error, so it subclasses ``ValueError`` like the model-level
-    ones — but it cannot live in the model, which validates one repo's
-    ``settings.toml`` and has never seen the others. ``OttoError`` puts it in
-    front of ``otto.cli.main``'s boundary frame, which prints the sentence
-    instead of a traceback.
-    """
-
-
-def merge_logging_levels(repos: list["Repo"]) -> dict[str, str]:
-    """Union every repo's ``[logging.levels]``; a disagreement is an error.
-
-    Design 2026-08-30 §4.2: the same logger set to the same level by two repos
-    is fine (a shared vendor SDK quieted twice), two DIFFERENT levels is not —
-    last-one-wins would make the floor depend on ``OTTO_SUT_DIRS`` order, so
-    the operator is told which two repos to reconcile.
-    """
-    levels: dict[str, str] = {}
-    sources: dict[str, str] = {}
-    for repo in repos:
-        for name, level in repo.logging_levels.items():
-            if name in levels and levels[name] != level:
-                raise LoggingLevelsConflictError(
-                    f"[logging.levels] {name}: {sources[name]} says {levels[name]}, "
-                    f"{repo.name} says {level} — set one value"
-                )
-            levels[name] = level
-            # setdefault, not assignment: with repos A, B (agreeing) and C
-            # (differing), an assignment would credit B for the value A
-            # established, and the operator would edit the wrong file and see
-            # the same error again.
-            sources.setdefault(name, repo.name)
-    return levels
-
-
 def print_error(message: object, *, soft_wrap: bool = False) -> None:
     """Print *message* as a user-facing error, with rich markup ESCAPED.
 
@@ -627,21 +577,92 @@ def fail(message: object, code: int = 1, *, soft_wrap: bool = False) -> "NoRetur
     raise typer.Exit(code) from None
 
 
-def report_lab_context_error(err: "LabContextError") -> None:
-    """Print *err*'s message the loud way, then raise ``typer.Exit`` with its code.
+def report_project_selection_error(err: "ProjectSelectionError") -> "NoReturn":
+    """Render a project-switch refusal in today's words.
 
-    Shared by the loud lab-context callers so the exact user-facing text and
-    exit codes live in one place. Rich messages go through ``rich.print``;
-    non-rich messages (the plain ``Missing option '--lab'`` usage error) go to
-    stderr via ``typer.echo`` to match click's own usage-error stream.
+    An overlap is a usage error (exit 2, click's frame); an unknown name exits
+    2 through :func:`fail`. Formatted from the error's fields, never by
+    rewriting its message: the library says ``include_projects``, the command
+    line said ``-I``.
     """
-    if err.rich:
-        from rich import print as rprint
+    if err.kind == "overlap":
+        raise typer.BadParameter(
+            f"project(s) {', '.join(err.names)} appear in both --include-projects "
+            "and --exclude-projects — pick one",
+            param_hint="--include-projects / --exclude-projects",
+        ) from None
+    hint = f" — did you mean {err.suggestion!r}?" if err.suggestion else ""
+    fail(f"no project {err.names[0]!r}{hint}", 2)
 
-        rprint(err.message)
-    else:
-        typer.echo(err.message, err=True)
-    raise typer.Exit(code=err.exit_code)
+
+@contextlib.contextmanager
+def lab_context_refusals() -> "Iterator[None]":
+    """Render a lab-context refusal the loud way: today's words, today's exit code.
+
+    Wraps the loud callers' :func:`ensure_lab_context` (the preamble, the
+    inline ``--show-lab`` / ``--list-hosts`` branch, ``otto reservation
+    check``): a :class:`~otto.session.LabBuildError` or a
+    :class:`~otto.reservations.check.ReservationBackendError` raised inside goes
+    through :func:`report_lab_context_error`; anything else propagates.
+
+    The two classes are imported when the ``with`` block is entered, not at
+    module scope: keeping them function-local keeps ``otto.session`` and
+    ``otto.reservations`` off this module's import, and this module sits on
+    the CLI's budgeted import surface (``scripts/import_budget.py``), which a
+    bare ``otto --help`` must not pay for.
+    """
+    from ..reservations import ReservationBackendError
+    from ..session import LabBuildError
+
+    try:
+        yield
+    except (LabBuildError, ReservationBackendError) as e:
+        report_lab_context_error(e)
+
+
+def report_lab_context_error(err: "LabBuildError | ReservationBackendError") -> "NoReturn":
+    """Render a lab-context refusal the loud way, in today's words, and exit with today's code.
+
+    Formatted from the error's fields: a missing lab is click's own plain
+    usage line on stderr (exit 2); a bad source or a broken inventory is the
+    bold-red frame (exit 1); an unreachable reservation backend names the
+    ``-R`` break-glass (exit 1). An unknown lab is re-raised: the boundary
+    frame in ``otto.cli.main`` has always printed it (``error: ...``, exit 1).
+    """
+    from rich import print as rprint
+
+    from ..reservations import ReservationBackendError
+    from ..session import LabBuildError
+
+    if isinstance(err, LabBuildError):
+        # Bound once so the type checker narrows the literal across the arms
+        # and `assert_never` fails the build when the library grows a kind.
+        kind = err.kind
+        if kind == "no_labs":
+            # Plain stderr, not rich: click's own usage-error stream. (A *real*
+            # click.UsageError would escape Typer 0.26's vendored click fork
+            # uncaught, hence the manual message.)
+            typer.echo("Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').", err=True)
+            raise typer.Exit(code=2)
+        if kind == "unknown_lab":
+            raise err
+        detail = err.detail or ""
+        if kind == "sources":
+            rprint(f"[bold red]Host source unavailable:[/bold red] {escape(detail)}")
+        elif kind == "inventory":
+            rprint(f"[bold red]Inventory unavailable:[/bold red] {escape(detail)}")
+        else:
+            assert_never(kind)
+        raise typer.Exit(code=1)
+    if isinstance(err, ReservationBackendError):
+        rprint(
+            f"[bold red]Reservation backend unavailable:[/bold red] {escape(str(err))}\n"
+            f"Pass [bold]--skip-reservation-check[/bold] / [bold]-R[/bold] to proceed without the check."  # noqa: E501 — long rich markup string
+        )
+        raise typer.Exit(code=1)
+    # Unreachable for a well-typed caller. A stray error is handed back to the
+    # boundary frame as itself, never dressed up as a reservation failure.
+    raise err
 
 
 def ensure_inline_lab(ctx: typer.Context) -> None:
@@ -667,10 +688,8 @@ def ensure_inline_lab(ctx: typer.Context) -> None:
     validate_project_switches(ctx)
     fail_loud_on_bootstrap_errors(ctx)
     ensure_cli_session(ctx)
-    try:
+    with lab_context_refusals():
         ensure_lab_context(ctx)
-    except LabContextError as e:
-        report_lab_context_error(e)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -765,16 +784,16 @@ def ensure_cli_session(ctx: typer.Context) -> None:
     The console handler itself is NOT news by this point: the root callback
     raised it as soon as it had ``--log-level`` (spec 2026-08-30 §3.1), so
     ``init_cli_logging``'s install is an idempotent re-affirmation. What this
-    call still owns is the per-invocation state the file sinks read later
-    (xdir, retention, rich-file flag), the ``HostFilter``, and the repo
-    overrides below.
+    call owns is the per-invocation state the file sinks read later (xdir,
+    retention, rich-file flag). The repo-aware half — the merged
+    ``[logging.levels]`` overrides and the ``HostFilter`` on the console — is
+    :func:`otto.session.install_logging`, the same call a library caller makes.
     """
     meta = ctx.meta
     if meta.get("_otto_session_ready"):
         return
     meta["_otto_session_ready"] = True
 
-    from ..host import HostFilter
     from ..logger import management
 
     opts = root_options(ctx)
@@ -786,7 +805,6 @@ def ensure_cli_session(ctx: typer.Context) -> None:
         show_time=opts.show_time,
         rich_log_file=opts.rich_log_file,
     )
-    management.attach_console_suppress_filter(HostFilter())
 
     logger = getLogger(__name__)
     if opts.dry_run:
@@ -801,92 +819,32 @@ def ensure_cli_session(ctx: typer.Context) -> None:
         )
         logger.info(f"[magenta][DRY RUN] Commands and file transfers will be skipped. {contact}")
 
-    from ..config import get_repos
+    # The repo-aware half, shared with library callers: every repo's
+    # [logging.levels] over otto's defaults (a conflict refuses), and the
+    # HostFilter on the console. After the dry-run notice, which stays the
+    # first line of a dry run. init_cli_logging above owns the CLI-only file
+    # sinks; this re-affirms the console it installed with the same level.
+    from ..session import install_logging
 
-    repos = get_repos()
-    # The noise floor's second half: install_console already applied otto's
-    # defaults, and this is the first point where every repo's settings are
-    # parsed, so the [logging.levels] overrides go on now. Deliberately AFTER
-    # the dry-run notice, which stays the first line of a dry run.
-    management.apply_library_levels(merge_logging_levels(repos))
-
-
-def build_lab_from_repos(repos: "list[Repo]", labnames: "str | list[str]") -> "Lab":
-    """Aggregate the repos' lab configuration and load the named lab(s).
-
-    The lab-construction slice of :func:`ensure_lab_context`, factored out so
-    completion (``otto.cli.remote_completion``) builds the identical lab the
-    real command would — same sources, preference merge, and host-source
-    backend selection. Raises :class:`LabContextError` when the host source is
-    unavailable.
-
-    Every repo's ``[[lab.sources]]`` entries aggregate, in OTTO_SUT_DIRS
-    order, into one composite: ALL declared sources are live, and a later
-    source's host record overrides an earlier one's. No repo's declaration
-    shadows another's.
-
-    THE one place the process inventory is resolved (spec 2026-08-28
-    host-inventory §8): built here, once, and handed to the load so every
-    source sees the same one. Building it does no I/O, so a lab with no
-    referenced entry never touches the inventory — but a BROKEN declaration
-    is loud here rather than silently "no inventory", which is how a typo'd
-    ``[inventory]`` would otherwise surface as an unexplained
-    "no inventory is configured" against the first referencing host.
-    """
-    from ..config import load_lab
-
-    # Reduce repos' [host_preferences] tables in OTTO_SUT_DIRS order; later repos
-    # overlay earlier ones. Selections (list) are atomic — last repo to set a
-    # (selector, capability) wins it; option tables (dict) merge per key.
-    merged_host_preferences: dict[str, dict[str, Any]] = {}
-    for repo in repos:
-        for selector, entries in repo.host_preferences.items():
-            dest = merged_host_preferences.setdefault(selector, {})
-            for key, val in entries.items():
-                if isinstance(val, list):
-                    dest[key] = list(val)
-                else:
-                    dest.setdefault(key, {}).update(val)
-
-    from ..labs import LabRepositoryError, build_lab_sources
-
-    try:
-        lab_repository = build_lab_sources(repos)
-    except (ValueError, LabRepositoryError) as e:
-        raise LabContextError(
-            f"[bold red]Host source unavailable:[/bold red] {escape(str(e))}",
-            exit_code=1,
-        ) from e
-
-    # Function-local: `otto.inventory` pulls ~77 otto modules, and this module
-    # is on the budgeted CLI surfaces (scripts/import_budget.py). The edge is
-    # real and declared in tach.toml; only the timing is deferred.
-    from ..inventory import InventoryError, build_inventory
-
-    try:
-        inventory = build_inventory(repos)
-    except InventoryError as e:
-        raise LabContextError(
-            f"[bold red]Inventory unavailable:[/bold red] {escape(str(e))}", exit_code=1
-        ) from e
-
-    return load_lab(
-        labnames,
-        preferences=merged_host_preferences,
-        repository=lab_repository,
-        inventory=inventory,
-    )
+    install_logging(log_level=opts.log_level, show_time=opts.show_time)
 
 
 def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     """Load the lab, build reservation state, and install the runtime context (idempotent).
 
-    Enforces ``--lab``, builds the lab repository, loads the lab, synthesizes
-    docker placeholder hosts, resolves reservation state (stashed on
+    Builds the lab through :func:`otto.session.build_lab` (which enforces
+    ``--lab``, aggregates the repos' sources, loads the lab and registers the
+    declared docker placeholder hosts), resolves reservation state (stashed on
     ``ctx.meta['otto_reservation']``), and installs an ``OttoContext`` via
     ``set_cli_context``. Guarded by ``ctx.meta['_otto_lab_ready']`` so repeated calls
     are cheap. No banner, no logging init, no output dir — those belong to
     :func:`ensure_cli_session` / :func:`command_preamble`.
+
+    Raises (never prints) :class:`~otto.session.LabBuildError` or
+    :class:`~otto.reservations.check.ReservationBackendError`: the loud callers wrap
+    the call in :func:`lab_context_refusals`, which renders through
+    :func:`report_lab_context_error`; the soft ``HostGroup`` probe
+    (:func:`try_ensure_lab`) swallows them.
     """
     from ..context import get_context
 
@@ -897,56 +855,27 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     opts = root_options(ctx)
 
     from ..config import get_repos
-
-    # `--lab` is no longer a hard-required Typer option (so lab-free subcommands
-    # can run without it); enforce it here — before any lab side effects — for
-    # everything that does need a lab.
-    if not opts.labs:
-        # Raise (don't print): loud callers report via report_lab_context_error;
-        # the soft HostGroup probe swallows it silently. `rich=False` keeps the
-        # plain "Missing option '--lab'" usage text on stderr — matching click's
-        # own usage-error stream. (A *real* click.UsageError would escape Typer
-        # 0.26's vendored click fork uncaught, hence the manual message.)
-        raise LabContextError(
-            "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').",
-            exit_code=2,
-            rich=False,
-        )
+    from ..session import build_lab
 
     repos = get_repos()
-
-    lab = build_lab_from_repos(repos, opts.labs)
-
-    # Synthesize placeholder Docker container hosts from each repo's
-    # `[docker]` settings. They appear in `--list-hosts` and tab-completion
-    # immediately; operations against them surface a clear "run otto docker
-    # up" error until `compose_up` overwrites the placeholder with a real
-    # entry.
-    from ..docker.compose import register_declared_container_hosts
-
-    register_declared_container_hosts(lab, repos)
+    # `--lab` is not a hard-required Typer option (so lab-free subcommands can
+    # run without it); build_lab refuses an empty selection (`no_labs`) before
+    # any lab side effect, for everything that does need a lab.
+    lab = build_lab(repos, list(opts.labs or []))
+    # build_lab registered the declared container placeholders
 
     # Resolve reservation identity + backend (first repo with a [reservations]
     # section wins). With -R the backend is NOT constructed at all, so a broken
-    # or hanging scheduler can never block lab access (break-glass).
-    from ..reservations import (
-        ReservationBackendError,
-        build_reservation_gate,
-    )
+    # or hanging scheduler can never block lab access (break-glass). A broken
+    # backend's ReservationBackendError propagates to the loud callers.
+    from ..reservations import build_reservation_gate
 
-    try:
-        reservation_gate = build_reservation_gate(
-            repos,
-            holder=opts.holder,
-            skip_reservation_check=opts.skip_reservation_check,
-            cwd_fallback=Path.cwd(),
-        )
-    except ReservationBackendError as e:
-        raise LabContextError(
-            f"[bold red]Reservation backend unavailable:[/bold red] {escape(str(e))}\n"
-            f"Pass [bold]--skip-reservation-check[/bold] / [bold]-R[/bold] to proceed without the check.",  # noqa: E501 — long rich markup string
-            exit_code=1,
-        ) from e
+    reservation_gate = build_reservation_gate(
+        repos,
+        holder=opts.holder,
+        skip_reservation_check=opts.skip_reservation_check,
+        cwd_fallback=Path.cwd(),
+    )
 
     identity = reservation_gate.identity
     if identity is not None and identity.source == "--holder":
@@ -1003,26 +932,25 @@ def validate_project_switches(ctx: typer.Context) -> None:
     PEP-503-normalized from the root callback, so comparing them against a raw
     ``repo.name`` would reject the only spelling the CLI can produce.
 
-    Printed manually + ``typer.Exit(2)`` rather than raised as a
-    ``click.UsageError``: a real one raised after parse escapes Typer 0.26's
-    vendored click fork uncaught, which is why ``ensure_lab_context``
-    hand-writes its missing-``--lab`` usage text too.
+    The rule is :func:`otto.session.select_projects`'s, the same one
+    :func:`~otto.context.open_context` applies; this function only renders its refusal,
+    through :func:`report_project_selection_error`. Printed manually +
+    ``typer.Exit(2)`` rather than raised as a ``click.UsageError``: a real one
+    raised after parse escapes Typer 0.26's vendored click fork uncaught, which
+    is why :func:`report_lab_context_error` hand-writes its missing-``--lab``
+    usage text too. The overlap arm of :func:`report_project_selection_error` is
+    unreachable from here: the root callback has already refused an overlap.
     """
     opts = maybe_root_options(ctx)
     if opts is None or not (opts.include_projects or opts.exclude_projects):
         return
-    import difflib
-
     from ..bootstrap import bootstrap
-    from ..models.dependencies import normalize_name
+    from ..session import ProjectSelectionError, select_projects
 
-    known = {normalize_name(repo.name) for repo in bootstrap().repos}
-    for value in (*opts.include_projects, *opts.exclude_projects):
-        if value in known:
-            continue
-        close = difflib.get_close_matches(value, sorted(known), n=1)
-        hint = f" — did you mean {close[0]!r}?" if close else ""
-        fail(f"no project {value!r}{hint}", 2)
+    try:
+        select_projects(bootstrap().repos, list(opts.include_projects), list(opts.exclude_projects))
+    except ProjectSelectionError as e:
+        report_project_selection_error(e)
 
 
 def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
@@ -1046,76 +974,68 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     so no :class:`~otto.config.repo.Repo` object exists) can never be judged
     inactive and stays fatal. Without *ctx* — library callers, tests — every
     error is fatal, unchanged.
+
+    The rule is :func:`otto.session.check_repos`'s, the same one
+    :func:`~otto.context.open_context` applies; this function only renders its verdict.
     """
     from ..bootstrap import bootstrap
+    from ..session import ProjectSelection, RepoLoadError, check_repos
 
     result = bootstrap()
     if not result.errors:
         return
-
-    fatal = list(result.errors)
     opts = maybe_root_options(ctx)
-    if opts is not None:
-        from ..config.scope import inactive_before_lab
-        from ..models.dependencies import normalize_name
-
-        by_dir = {str(repo.sut_dir): repo for repo in result.repos}
-        fatal = []
-        for err in result.errors:
-            repo = by_dir.get(str(err.sut_dir))
-            if repo is None:
-                fatal.append(err)  # discovery-phase error: nothing to attribute
-                continue
-            name = normalize_name(repo.name)
-            # Include is tested FIRST, where :func:`otto.config.scope.active`
-            # tests exclude first. The two agree only because the tuples are
-            # disjoint, which the root callback guarantees:
-            # ``_refuse_contradictory_switches`` exits 2 on any overlap before
-            # RootOptions is built. A library caller hand-building RootOptions
-            # with a name in both would get "fatal" here and "inactive" there;
-            # the CLI cannot produce that input.
-            if name in opts.include_projects:
-                # -I beats every inference: the operator said this repo is part
-                # of the run, so its failure is the run's failure.
-                fatal.append(err)
-                continue
-            if name in opts.exclude_projects:
-                reason = f"--exclude-projects {name}"
-            elif inactive_before_lab(repo.project_scope, opts.labs):
-                reason = f"not applicable to lab(s) [{', '.join(opts.labs or ())}]"
-            else:
-                fatal.append(err)
-                continue
-            # PRINTED, not logged — and no longer because logging is missing.
-            # The root callback installs the console handler before this gate
-            # runs (spec 2026-08-30 §3.1), so a `logger.warning` here WOULD be
-            # seen. Two reasons that never had anything to do with when
-            # logging starts keep it a print:
-            #
-            # STREAM. `entry()` has already printed `warning: <err>` for this
-            # very error, from `_emit_bootstrap_findings`, which runs before
-            # Typer parses argv and so can never become a log record. That line
-            # goes to stderr; otto's console handler writes to stdout. Logging
-            # this one would put the retraction on a different stream from the
-            # scary line it retracts, where a redirect separates them — and the
-            # run CONTINUES past here, so stdout belongs to the command.
-            #
-            # MARKUP. The lab-inferred reason interpolates the selection in
-            # SQUARE BRACKETS, and both console routes — `rich.print` and the
-            # console handler, a RichHandler with `markup=True` — read `[unix]`
-            # as a style tag and delete it, leaving `lab(s) )`. `typer.echo`
-            # renders the sentence as written.
-            typer.echo(
-                f"warning: repo {repo.name!r} failed to load, but is inactive "
-                f"for this run ({reason}) — continuing without it",
-                err=True,
-            )
-
-    if fatal:
+    # Without root options (a test, a library caller) nothing is selected and
+    # no lab is named, so check_repos demotes nothing: every error is fatal.
+    selection = (
+        ProjectSelection(include=list(opts.include_projects), exclude=list(opts.exclude_projects))
+        if opts is not None
+        else ProjectSelection()
+    )
+    labs = list(opts.labs or []) if opts is not None else []
+    try:
+        check = check_repos(result, labs, selection)
+    except RepoLoadError as e:
+        _echo_demotions(e.demoted)
         from rich import print as rprint
 
         rprint("[red]Cannot run commands while a repo fails to load (see warnings above).[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
+    _echo_demotions(check.demoted)
+
+
+def _echo_demotions(demoted: "list[DemotedRepo]") -> None:
+    """Print each demoted load error as today's stderr ``warning:`` line, in flag spelling."""
+    # PRINTED, not logged — and no longer because logging is missing.
+    # The root callback installs the console handler before this gate
+    # runs (spec 2026-08-30 §3.1), so a `logger.warning` here WOULD be
+    # seen. Two reasons that never had anything to do with when
+    # logging starts keep it a print:
+    #
+    # STREAM. `entry()` has already printed `warning: <err>` for this
+    # very error, from `_emit_bootstrap_findings`, which runs before
+    # Typer parses argv and so can never become a log record. That line
+    # goes to stderr; otto's console handler writes to stdout. Logging
+    # this one would put the retraction on a different stream from the
+    # scary line it retracts, where a redirect separates them — and the
+    # run CONTINUES past here, so stdout belongs to the command.
+    #
+    # MARKUP. The lab-inferred reason interpolates the selection in
+    # SQUARE BRACKETS, and both console routes — `rich.print` and the
+    # console handler, a RichHandler with `markup=True` — read `[unix]`
+    # as a style tag and delete it, leaving `lab(s) )`. `typer.echo`
+    # renders the sentence as written.
+    for d in demoted:
+        reason = (
+            f"--exclude-projects {d.project}"
+            if d.reason == "excluded"
+            else f"not applicable to lab(s) [{', '.join(d.labs)}]"
+        )
+        typer.echo(
+            f"warning: repo {d.repo!r} failed to load, but is inactive "
+            f"for this run ({reason}) — continuing without it",
+            err=True,
+        )
 
 
 def present_reservation_gate(ctx: typer.Context) -> None:
@@ -1163,10 +1083,8 @@ def ensure_lab_session(ctx: typer.Context, spec: "CommandSpec") -> None:
     whether) to call :func:`present_reservation_gate`.
     """
     ensure_cli_session(ctx)
-    try:
+    with lab_context_refusals():
         ensure_lab_context(ctx)
-    except LabContextError as e:
-        report_lab_context_error(e)
 
     leaf_wants_dir = bool(getattr(ctx.command.callback, "__cli_output_dir__", True))
     if spec.output_dir and leaf_wants_dir:
@@ -1224,61 +1142,56 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
     if name not in INSTRUCTIONS:
         return  # a statically-declared `run` child; nobody owns it
     owner = INSTRUCTIONS.get(name).registered_by
-    if owner is None:
-        return  # first-party (or hand-registered) -- never refused
 
-    from ..config.scope import active, switched_off
     from ..context import get_context
+    from ..session import InstructionInactiveError, check_instruction_active
 
-    ctx = get_context()
-    if active(owner, ctx):
-        return
+    try:
+        check_instruction_active(name, owner, get_context())
+    except InstructionInactiveError as e:
+        # Through `fail`, never a hand-rolled `[red]` f-string: the message
+        # interpolates a lab list and the literal table name `[project]`, and rich
+        # DELETES `[word]` as markup unless it is escaped -- the demotion warning
+        # a few functions up was observed rendering "lab(s) [unix]" as "lab(s) )"
+        # for exactly this reason. `print_error` escapes; the
+        # `error-render-through-helper` ast-grep rule keeps this route the only one.
+        # soft_wrap: the hint's whole job is to hand over a runnable switch. Rich
+        # folds between WORDS at the console width, so at 80 columns an ordinary
+        # repo name splits `or: -I firmware-integration` across the fold and the
+        # token cannot be pasted. The detail line above is prose and would be fine
+        # folded; the hint is not, and they share one render.
+        fail(_inactive_instruction_text(e), soft_wrap=True)
 
-    from ..models.dependencies import normalize_name
 
-    switch_name = normalize_name(owner)
-    if switched_off(owner, ctx):
-        detail = f"which was switched off for this run (--exclude-projects {switch_name})"
-        hint = f"  activate it: remove --exclude-projects {switch_name}    or: -I {switch_name}"
+def _inactive_instruction_text(err: "InstructionInactiveError") -> str:
+    """Today's two-line refusal, in flag spelling, formatted from the library's facts."""
+    loaded = ", ".join(err.loaded_labs)
+    # Bound once so the type checker narrows the literal across the arms and
+    # `assert_never` below fails the build when the library grows a reason.
+    reason = err.reason
+    if reason == "excluded":
+        detail = f"which was switched off for this run (--exclude-projects {err.project})"
+        hint = f"  activate it: remove --exclude-projects {err.project}    or: -I {err.project}"
+    elif reason == "out_of_lab_scope":
+        # No loaded lab applies. The fix is a different `-l`, so the hint
+        # names the patterns the repo actually declared.
+        patterns = ", ".join(err.lab_patterns) or "(none)"
+        detail = f"which is inactive for the loaded lab(s) [{loaded}] (lab_patterns: {patterns})"
+        wanted = " / -l ".join(sorted(err.lab_patterns)) or "<a matching lab>"
+        hint = f"  activate it: -l {wanted}    or: -I {err.project}"
+    elif reason == "host_starved":
+        # Labs match, hosts do not. Different cause, different fix -- the
+        # same distinction `otto.config.scope._unusable_scope_message`
+        # draws for the walks, so the two surfaces stay readable together.
+        patterns = ", ".join(err.host_patterns) or "(none)"
+        detail = (
+            f"which is inactive: its [project] host_patterns ({patterns}) "
+            f"match no host in the loaded lab(s) [{loaded}]"
+        )
+        hint = f"  activate it: widen host_patterns, or: -I {err.project}"
     else:
-        # Not switched off, yet not active: `active()` reaches that verdict ONLY
-        # by finding an unusable ProjectScope under the repo's declared name, so
-        # the lookup cannot miss. Subscripting rather than `.get(...) or <blank>`
-        # keeps it that way -- a blanked-out sentence would be a plausible,
-        # content-free error, which is worse than the KeyError it replaced.
-        scope = ctx.scopes[owner]
-        loaded = ", ".join(scope.loaded_labs)
-        if scope.excluded:
-            # No loaded lab applies. The fix is a different `-l`, so the hint
-            # names the patterns the repo actually declared.
-            patterns = ", ".join(scope.lab_patterns) or "(none)"
-            detail = (
-                f"which is inactive for the loaded lab(s) [{loaded}] (lab_patterns: {patterns})"
-            )
-            wanted = " / -l ".join(sorted(scope.lab_patterns)) or "<a matching lab>"
-            hint = f"  activate it: -l {wanted}    or: -I {switch_name}"
-        else:
-            # Labs match, hosts do not. Different cause, different fix -- the
-            # same distinction `otto.config.scope._unusable_scope_message`
-            # draws for the walks, so the two surfaces stay readable together.
-            patterns = ", ".join(scope.host_patterns) or "(none)"
-            detail = (
-                f"which is inactive: its [project] host_patterns ({patterns}) "
-                f"match no host in the loaded lab(s) [{loaded}]"
-            )
-            hint = f"  activate it: widen host_patterns, or: -I {switch_name}"
-    # Through `fail`, never a hand-rolled `[red]` f-string: the message
-    # interpolates a lab list and the literal table name `[project]`, and rich
-    # DELETES `[word]` as markup unless it is escaped -- the demotion warning
-    # a few functions up was observed rendering "lab(s) [unix]" as "lab(s) )"
-    # for exactly this reason. `print_error` escapes; the
-    # `error-render-through-helper` ast-grep rule keeps this route the only one.
-    # soft_wrap: the hint's whole job is to hand over a runnable switch. Rich
-    # folds between WORDS at the console width, so at 80 columns an ordinary
-    # repo name splits `or: -I firmware-integration` across the fold and the
-    # token cannot be pasted. The detail line above is prose and would be fine
-    # folded; the hint is not, and they share one render.
-    fail(f"{name!r} belongs to repo {owner!r}, {detail}\n{hint}", soft_wrap=True)
+        assert_never(reason)
+    return f"{err.instruction!r} belongs to repo {err.owner!r}, {detail}\n{hint}"
 
 
 def refuse_unsatisfied_dependencies() -> None:
@@ -1297,9 +1210,9 @@ def refuse_unsatisfied_dependencies() -> None:
 
     Two consequences of the position, both deliberate:
 
-    * **Library callers are not checked.** ``open_context`` and anything else
-      calling ``bootstrap()`` directly never reach this gate. It is a CLI
-      refusal, not a composition-root one.
+    * **Library callers are checked by the same rule.** ``open_context`` runs
+      the same :func:`otto.session.check_dependencies` once its context is
+      installed; this function only renders the verdict in the CLI's words.
     * **An EAGER import failure never gets here.** ``bootstrap()``'s per-repo
       init loop runs first, so a repo whose init module imports a missing
       package at module scope is already a ``BootstrapError`` and
@@ -1312,12 +1225,9 @@ def refuse_unsatisfied_dependencies() -> None:
     also what keeps ``otto env sync`` -- the verb the refusal names -- outside
     the gate that would otherwise refuse to let you run the fix.
     """
-    from ..bootstrap import bootstrap
-    from ..config.scope import active
     from ..context import get_context
-    from ..env.preflight import preflight
+    from ..session import DependencyRefusedError, check_dependencies
 
-    result = preflight(bootstrap().ordered_repos)
     # PRINTED to stderr, not logged and not through rich -- the same call and
     # the same reasons as the demotion warning in
     # `fail_loud_on_bootstrap_errors`: the run CONTINUES past here so stdout
@@ -1325,47 +1235,34 @@ def refuse_unsatisfied_dependencies() -> None:
     # (`otto-sh[monitor] >= 1`) that every rich-rendering route -- the console
     # handler included -- would delete as a style tag. Not the swallowed-record
     # reason, which the early console handler retired (spec 2026-08-30 §3.1).
-    for warning in result.warnings:
+    try:
+        warnings = check_dependencies(get_context())
+    except DependencyRefusedError as e:
+        for warning in e.warnings:
+            typer.echo(f"warning: {warning}", err=True)
+        lines = [
+            f"error: repo {bad.repo!r} requires {bad.requirement!r} — not satisfied in "
+            f"this environment (found: {bad.found})"
+            for bad in e.unsatisfied
+        ]
+        # `env sync` ALWAYS, and always second: it is the verb that fixes this
+        # whatever the cause, and it is the one an operator who has never built an
+        # orchestration venv needs to be told about. The direct install is third
+        # because it is for the operator who manages the environment by hand --
+        # correct, but it leaves otto's record of the env untouched.
+        lines.append("  fix: otto env sync")
+        installs = " ".join(f"{bad.requirement!r}" for bad in e.unsatisfied)
+        lines.append(f"  or:  uv pip install {installs}")
+        # Through `fail`, never a hand-rolled `[red]` f-string. A requirement
+        # carries brackets whenever it names an extra (`otto-sh[monitor] >= 1`) and
+        # rich DELETES `[word]` as markup -- printing a runnable command for the
+        # wrong package. `print_error` escapes; the `error-render-through-helper`
+        # ast-grep rule keeps this route the only one. soft_wrap because both fix
+        # lines are meant to be PASTED, and rich folds between words at the console
+        # width.
+        fail("\n".join(lines), 1, soft_wrap=True)
+    for warning in warnings:
         typer.echo(f"warning: {warning}", err=True)
-    if not result.unsatisfied:
-        return
-
-    ctx = get_context()
-    blocking = []
-    for bad in result.unsatisfied:
-        if active(bad.repo, ctx):
-            blocking.append(bad)
-            continue
-        typer.echo(
-            f"warning: repo {bad.repo!r} requires {bad.requirement!r} — not satisfied "
-            f"in this environment (found: {bad.found}), but {bad.repo} is inactive for "
-            f"this run — continuing without it",
-            err=True,
-        )
-    if not blocking:
-        return
-
-    lines = [
-        f"error: repo {bad.repo!r} requires {bad.requirement!r} — not satisfied in "
-        f"this environment (found: {bad.found})"
-        for bad in blocking
-    ]
-    # `env sync` ALWAYS, and always second: it is the verb that fixes this
-    # whatever the cause, and it is the one an operator who has never built an
-    # orchestration venv needs to be told about. The direct install is third
-    # because it is for the operator who manages the environment by hand --
-    # correct, but it leaves otto's record of the env untouched.
-    lines.append("  fix: otto env sync")
-    installs = " ".join(f"{bad.requirement!r}" for bad in blocking)
-    lines.append(f"  or:  uv pip install {installs}")
-    # Through `fail`, never a hand-rolled `[red]` f-string. A requirement
-    # carries brackets whenever it names an extra (`otto-sh[monitor] >= 1`) and
-    # rich DELETES `[word]` as markup -- printing a runnable command for the
-    # wrong package. `print_error` escapes; the `error-render-through-helper`
-    # ast-grep rule keeps this route the only one. soft_wrap because both fix
-    # lines are meant to be PASTED, and rich folds between words at the console
-    # width.
-    fail("\n".join(lines), 1, soft_wrap=True)
 
 
 def ensure_help_banner(ctx: typer.Context) -> None:

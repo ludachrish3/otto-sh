@@ -248,13 +248,13 @@ def _refuse_contradictory_switches(
     include: "list[str] | None", exclude: "list[str] | None"
 ) -> None:
     """Exit 2 when a name appears in both -I and -E — a contradictory line is a typo."""
-    overlap = sorted(set(include or ()) & set(exclude or ()))
-    if overlap:
-        raise typer.BadParameter(
-            f"project(s) {', '.join(overlap)} appear in both --include-projects "
-            "and --exclude-projects — pick one",
-            param_hint="--include-projects / --exclude-projects",
-        )
+    from ..session import ProjectSelectionError, check_project_overlap
+    from .invoke import report_project_selection_error
+
+    try:
+        check_project_overlap(include or [], exclude or [])
+    except ProjectSelectionError as e:
+        report_project_selection_error(e)
 
 
 @completion_source(kind="payload", key="projects", sort=False)

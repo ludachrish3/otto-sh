@@ -28,7 +28,7 @@ These options are available on every `otto` command:
 | `--exclude-projects, -E` | | | Switch these projects off for this invocation, overriding lab inference — see {doc}`projects` |
 | `--field / --debug` | `OTTO_FIELD_PRODUCTS` | `--debug` | Install each product's field or debug variant — a `[[products]]` entry's `variant`; see {ref}`product-variants` |
 | `--log-days` | `OTTO_LOG_DAYS` | `30` | Number of days to retain logs |
-| `--log-level` | `OTTO_LOG_LEVEL` | `INFO` | Logging level |
+| `--log-level` | `OTTO_LOG_LEVEL` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING` (or `WARN`), `ERROR`, `CRITICAL` (or `CRIT`), in any case; any other value is a usage error (exit 2) |
 | `--rich-log-file / --no-rich-log-file` | `OTTO_LOG_RICH` | `--no-rich-log-file` | Rich formatting in log files |
 | `--show-time, -t` | | `False` | Show per-line timestamps on the live console (log files are always timestamped) |
 | `--dry-run, -n` | | `False` | Validate, print what would run, and exit 0 **before the command body runs**. Never runs a command on any device — see {doc}`dry-run` |

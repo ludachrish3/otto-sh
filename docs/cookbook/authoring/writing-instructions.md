@@ -597,6 +597,8 @@ any registered `run` class you want to set; for a project instruction, it
 holds its bodies' own options instances and any registered `run` class.
 Either way, an omitted registered class takes its defaults, and the return
 value is the handler's -- nothing is printed and no exit code is derived.
+An instruction whose repo is inactive for the run is refused with
+{class}`~otto.session.InstructionInactiveError`, as `otto run` refuses it.
 
 ```python
 import asyncio

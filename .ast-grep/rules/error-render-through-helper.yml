@@ -22,8 +22,8 @@ note: >
   rather than "remember to escape".
 
   Matched on the STRING, not on a `print` call, so it also catches a message
-  built at a raise site and rendered later (`LabContextError` does exactly
-  that). Three deliberate exemptions, all by construct rather than by path —
+  built at a raise site and rendered later (the retired CLI
+  `LabContextError` did exactly that). Three deliberate exemptions, all by construct rather than by path —
   a path exemption is how the first version of this rule managed to skip the
   file holding the live bug:
 
