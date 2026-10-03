@@ -22,6 +22,13 @@ Principle (Chris, 2026-10-02): the docker layer stays as thin and as honest
 as possible. Anything otto relays about a docker host must be tested against
 what that host's daemon actually reports.
 
+Status (2026-10-03): the spec is
+`docs/superpowers/specs/2026-10-02-docker-thin-honest-design.md`. Landed:
+the honest build (1.1, 1.2, 1.5's first differentials — `ddf16d6f`) and
+`compose up` as `docker compose up` with `--build` / `--force-recreate` /
+`--pull`, `--no-build` deleted (#568 — `1e311a94`). Open as issues: #569
+curated verbs (1.3/1.4), #570 completion, #571 docs.
+
 ### 1.1 Identifiers otto prints that docker does not know
 
 Verified on a real daemon (dev VM, docker 29.1.3):
