@@ -28,8 +28,9 @@ from pathlib import Path
 from typing import Any
 
 from ..declared import DeclaredEntry, MatchValue, declared_for_host, host_matches, surviving_repos
+from ..utils import anchor_path
 from .dev_tool import registered_dev_tool_providers
-from .product import LOGIN_HOME, registered_product_providers
+from .product import LOGIN_HOME, registered_product_providers, scan_for_instrumentation
 
 _SEAMS = {
     "products": {
@@ -54,12 +55,25 @@ LOGIN_HOME_CELL = "login home"
 connected host can name."""
 
 
+ANY_VARIANT = "any"
+"""The variant cell for an entry without a ``variant`` — and for every provider instance,
+since a provider decides per run and otto does not record which branch it took."""
+
+_VERDICT = {True: "yes", False: "no"}
+
+
 @dataclass
 class DeclaredRow:
     """One declared entry, as the no-lab table shows it."""
 
     name: str
     kind: str
+    variant: str
+    """The entry's ``variant``, or :data:`ANY_VARIANT`."""
+
+    instrumented: str
+    """:func:`_declared_instrumented`'s answer for the declared artifact."""
+
     repo: str
     match: str
     """The host selector rendered compactly; :data:`ANY_HOST` when empty."""
@@ -75,6 +89,12 @@ class LabRow:
     name: str
     kind: str
     """The declared kind, or ``code (<ClassName>)`` for a provider-built instance."""
+
+    variant: str
+    """The source entry's ``variant``, or :data:`ANY_VARIANT`."""
+
+    instrumented: str
+    """:func:`instrumented_cell`'s answer for the built item."""
 
     repo: str
     hosts: list[str]
@@ -145,12 +165,62 @@ def _declared_artifact(entry: DeclaredEntry) -> str:
     return ""
 
 
+def _variant_of(item: Any) -> str:
+    entry = getattr(item, "source_entry", None)
+    declared = getattr(entry, "variant", None) if entry is not None else None
+    return declared or ANY_VARIANT
+
+
+def instrumented_cell(item: Any) -> str:
+    """``yes``/``no``/``unknown``/``missing`` for a built product or dev tool.
+
+    Local and synchronous — the item's own ``instrumented()`` (which scans the
+    artifact on the otto machine) or, for an item without one, a scan of its
+    ``artifact`` here — so the listing still contacts no host. The item's
+    verdict comes first, so a declared ``instrumented`` or a docker image
+    reference answers for itself. A ``None`` verdict reads ``missing`` only
+    when the item stages a real artifact that does not exist on this machine,
+    else ``unknown`` (an archive, a registry reference, or a code product that
+    cannot tell), so the reader never has to guess which kind of unknown it is.
+    """
+    artifact = getattr(item, "artifact", None)
+    probe = getattr(item, "instrumented", None)
+    if callable(probe):
+        verdict = probe()
+    elif isinstance(artifact, Path) and artifact.exists():
+        verdict = scan_for_instrumentation(artifact)
+    else:
+        verdict = None
+    if verdict in _VERDICT:
+        return _VERDICT[verdict]
+    staged = getattr(item, "stages_artifact", False)
+    if staged and isinstance(artifact, Path) and not artifact.exists():
+        return "missing"
+    return "unknown"
+
+
+def _declared_instrumented(entry: DeclaredEntry) -> str:
+    """Answer :func:`instrumented_cell` for an unbuilt entry: a declared value wins, else scan."""
+    override = entry.params.get("instrumented")
+    if isinstance(override, bool):
+        return _VERDICT[override]
+    artifact = entry.params.get("artifact")
+    if not isinstance(artifact, str) or not artifact:
+        return "unknown"
+    path = anchor_path(Path(artifact), entry.base_dir)
+    if not path.exists():
+        return "missing"
+    return _VERDICT.get(scan_for_instrumentation(path), "unknown")  # type: ignore[arg-type]
+
+
 def declared_rows(repos: list[Any], seam: str) -> list[DeclaredRow]:
     """One row per *seam* entry across *repos*: repo order, then declaration order."""
     return [
         DeclaredRow(
             name=entry.name,
-            kind=entry.kind,
+            kind=entry.kind_label,
+            variant=entry.variant or ANY_VARIANT,
+            instrumented=_declared_instrumented(entry),
             repo=repo.name,
             match=_match_cell(entry.match),
             artifact=_declared_artifact(entry),
@@ -222,8 +292,12 @@ def _unused_declared(repos: list[Any], seam: str, hosts: list[Any]) -> list[Unus
     the scope gate, those of them :func:`~otto.declared.host_matches` accepts
     matched, and the ones that built are read off the recorded ``source_entry``
     stamps. Entries are tracked by identity (``DeclaredEntry`` holds dicts, so it
-    does not hash).
+    does not hash). An entry whose ``variant`` differs from the run's is
+    passed over by ingest, so it reads ``variant 'x' (run is y)``.
     """
+    from .. import context
+
+    run = context.variant()
     meta = _SEAMS[seam]
     scoped: set[int] = set()
     matched: set[int] = set()
@@ -246,11 +320,13 @@ def _unused_declared(repos: list[Any], seam: str, hosts: list[Any]) -> list[Unus
                 continue
             if key not in scoped and hosts and getattr(repo, "project_scope", None) is not None:
                 reason = f"outside {repo.name}'s [project] scope"
+            elif entry.variant is not None and entry.variant != run:
+                reason = f"variant {entry.variant!r} (run is {run})"
             elif key not in matched:
                 reason = "no host matches"
             else:
                 reason = f"shadowed by an earlier entry named {entry.name!r}"
-            out.append(UnusedEntry(entry.name, entry.kind, repo.name, reason))
+            out.append(UnusedEntry(entry.name, entry.kind_label, repo.name, reason))
     return out
 
 
@@ -269,15 +345,8 @@ def _unused_providers(seam: str, hosts: list[Any]) -> list[UnusedEntry]:
         for _host_id, item in getattr(host, meta["shadowed"], []):
             if (getattr(item, "owner", None), item.name) in carried:
                 continue
-            holder = next(
-                (i for i in getattr(host, meta["attached"], []) if i.name == item.name), None
-            )
-            if holder is not None and getattr(holder, "origin", "provider") == "declared":
-                reason = f"shadowed by the declared entry named {item.name!r}"
-            else:
-                reason = f"shadowed by an earlier entry named {item.name!r}"
-            # One line per provider product, however many hosts dropped it: the
-            # first reason met (lab order) stands.
+            reason = f"shadowed by an earlier entry named {item.name!r}"
+            # One line per provider product, however many hosts dropped it.
             key = (getattr(item, "owner", None) or "", item.name)
             if key not in seen:
                 seen.add(key)
@@ -288,25 +357,43 @@ def _unused_providers(seam: str, hosts: list[Any]) -> list[UnusedEntry]:
 def lab_rows(lab: Any, repos: list[Any], seam: str) -> LabListing:
     """Describe what ingest attached to *lab*'s hosts for *seam*, and what it left out.
 
-    One row per distinct (repo, name, kind, artifact, stage dir), rows in order
-    of first appearance walking the lab's hosts, each carrying the ids of the
-    hosts that have it. ``unused`` lists declared entries that built on no host
-    (with the reason), then provider instances dropped for a taken name that no
-    host carried. Reads recorded state only: nothing here asks a host anything.
+    One row per distinct (repo, name, kind, variant, instrumented, artifact,
+    stage dir), rows in order of first appearance walking the lab's hosts,
+    each carrying the ids of the hosts that have it. ``unused`` lists declared
+    entries that built on no host (with the reason), then provider instances
+    dropped for a taken name that no host carried. Reads recorded state only:
+    nothing here asks a host anything.
     """
     hosts = list(lab.hosts.values())
     roots = {r.name: Path(r.sut_dir) for r in repos if getattr(r, "sut_dir", None) is not None}
-    by_key: dict[tuple[str, str, str, str, str], LabRow] = {}
+    by_key: dict[tuple[str, str, str, str, str, str, str], LabRow] = {}
+    # Each host builds its own instance of a shared definition; scan an artifact
+    # once per listing, not once per host that carries it. A definition is the
+    # entry that built it, or — for a provider instance — its class, name and
+    # artifact together: two products of one class are not one definition.
+    instrumented_memo: dict[Any, str] = {}
     for host in hosts:
         for item in getattr(host, _SEAMS[seam]["attached"], []):
             repo = getattr(item, "owner", None) or ""
             kind = _kind_cell(item)
             artifact = _artifact_cell(item, roots)
             stage = _stage_cell(item, host)
-            key = (repo, item.name, kind, artifact, stage)
+            variant = _variant_of(item)
+            entry = getattr(item, "source_entry", None)
+            memo_key = (
+                id(entry)
+                if entry is not None
+                else (type(item), item.name, str(getattr(item, "artifact", "")))
+            )
+            if memo_key not in instrumented_memo:
+                instrumented_memo[memo_key] = instrumented_cell(item)
+            instrumented = instrumented_memo[memo_key]
+            key = (repo, item.name, kind, variant, instrumented, artifact, stage)
             row = by_key.get(key)
             if row is None:
-                by_key[key] = LabRow(item.name, kind, repo, [host.id], artifact, stage)
+                by_key[key] = LabRow(
+                    item.name, kind, variant, instrumented, repo, [host.id], artifact, stage
+                )
             elif host.id not in row.hosts:
                 row.hosts.append(host.id)
     return LabListing(

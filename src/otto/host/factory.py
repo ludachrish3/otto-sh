@@ -220,10 +220,10 @@ def create_host_from_dict(
     # invisible to exactly the code that needs it.
     host.source_lab = lab_name or ""
     host.inventory_ref = inventory_ref if inventory_ref is not None else InventoryRef()
-    # Declared before providers, per seam: the provider loops' name-dedup then
-    # skips any code instance whose name a settings entry already claimed —
-    # config wins, code is the fallback (spec 2026-09-01 §7). Both run after
-    # the source_lab stamp above, because both gates read it.
+    # Declared before providers, per seam: that order is what lets the provider
+    # loops refuse a code instance whose name a settings entry already holds
+    # (a name is defined in data OR in code). Both run after the source_lab
+    # stamp above, because both gates read it.
     apply_providers(host)
     return host
 
@@ -231,8 +231,9 @@ def create_host_from_dict(
 def apply_providers(host: "RemoteHost | Any") -> None:
     """Attach declared + provider products and dev tools, then finish each product.
 
-    The single ingest chokepoint: declared entries first per seam (config
-    wins, code fills the gaps), then the kmodcov binding check
+    The single ingest chokepoint: declared entries first per seam (so a
+    provider instance reusing a declared name is refused, naming both; two
+    providers with one name keep first-wins), then the kmodcov binding check
     (:func:`otto.host.kmod_tool_kind.check_kmodcov_bindings` — a host matching
     two ``kmodcov`` dev-tool entries is refused here, and so is one whose
     ``coverage = "module"`` product matches none), then the product-only

@@ -28,6 +28,7 @@ authoring/options-classes
 extending/extending-cli
 extending/cli-exposed-verbs
 extending/custom-host-classes
+extending/product-providers
 extending/extending-backends
 extending/extending-embedded
 extending/lab-source-backends

@@ -19,9 +19,9 @@ Products are customized in repo config or code, never lab data: a
 ``[[products]]`` entry in ``.otto/settings.toml`` declares the common cases
 (see :mod:`otto.declared` and :func:`register_product_kind`), and a
 :func:`register_product_provider` callback from a ``.otto`` init module
-remains the code fallback for whatever the match table cannot express —
-declared entries apply first at ingest, so a provider product whose name a
-declared entry claimed stands down. Lab data stays product-agnostic and
+remains the code route for whatever the match table cannot express. A product
+is defined in data OR in code: a provider product whose name a declared entry
+holds is refused at ingest, naming both (:func:`defined_twice`). Lab data stays product-agnostic and
 evolves independently of product code; declaring products *in* lab data is
 deliberately **not** supported.
 """
@@ -32,7 +32,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import override
 
@@ -710,7 +710,10 @@ def register_product_provider(provider: ProductProvider) -> None:
 
 
 PRODUCT_KINDS: KindRegistry["Product"] = KindRegistry(
-    "product kind", register_hint="otto.host.product.register_product_kind()"
+    "product kind",
+    register_hint="otto.host.product.register_product_kind()",
+    class_factory=Ref("otto.host.shell_kind:class_entry"),
+    class_resolver=Ref("otto.host.shell_kind:resolve_class"),
 )
 """Named factories for settings-declared products (spec 2026-09-01 §5-§6).
 
@@ -745,9 +748,9 @@ def apply_declared_products(host: "Host") -> None:
     """Attach the settings-declared products admitted for *host*.
 
     Called at the ingest chokepoint BEFORE :func:`apply_product_providers`:
-    running first is the fallback contract — the provider loop's name-dedup
-    then skips any code product whose name a declared entry already claimed,
-    so config wins and code fills the gaps. Entry collection and the §5
+    running first is what lets the provider loop enforce the one-definition
+    rule: a provider instance whose name a declared entry holds is refused,
+    naming both. Entry collection and the §5
     ``[project]`` gate live in :func:`otto.declared.declared_for_host`;
     matching, first-match-wins and owner stamping in
     :meth:`~otto.declared.KindRegistry.build`. A product whose name the host
@@ -764,6 +767,28 @@ def apply_declared_products(host: "Host") -> None:
         seen.add(product.name)
 
 
+def defined_twice(
+    seam: str, holder: Any, provider: Callable[..., Any], provider_owner: str | None
+) -> str:
+    """Return the one-definition refusal: a name a declared entry holds, a provider returns too.
+
+    Names both sites — the entry by seam, name and declaring repo; the provider
+    by ``module:qualname`` and registering repo — and says what to do instead.
+    Shared by both seams so the sentence is written once.
+    """
+    where = (
+        f"{getattr(provider, '__module__', '<unknown>')}:"
+        f"{getattr(provider, '__qualname__', repr(provider))}"
+    )
+    noun = "dev tool" if seam == "dev_tools" else "product"
+    registered = f"repo {provider_owner}" if provider_owner else "registered outside any repo"
+    return (
+        f"[[{seam}]] {holder.name!r} (repo {holder.owner}) is also defined by provider "
+        f"{where} ({registered}) — a {noun} is defined in data OR in code; to give "
+        'a declared entry custom behaviour, set `class = "pkg.mod:Class"` on it'
+    )
+
+
 def apply_product_providers(host: "Host") -> None:
     """Run every registered provider against *host*, attaching their products.
 
@@ -771,7 +796,9 @@ def apply_product_providers(host: "Host") -> None:
     (:func:`otto.host.factory.create_host_from_dict`). Providers run in
     registration order and their results are concatenated onto
     ``host.products``. A product whose :attr:`Product.name` already appears on
-    the host is skipped (deduplication guards two overlapping providers). A
+    the host is skipped (deduplication guards two overlapping providers) —
+    unless the holder is a declared entry, which is a refusal: a name is
+    defined in data OR in code (:func:`defined_twice`). A
     provider that raises propagates — a misconfigured provider fails ingest
     loudly.
 
@@ -819,6 +846,9 @@ def apply_product_providers(host: "Host") -> None:
             product.kind = "code"
             product.origin = "provider"
             if product.name in seen:
+                holder = next((p for p in host.products if p.name == product.name), None)
+                if holder is not None and getattr(holder, "origin", "provider") == "declared":
+                    raise ValueError(defined_twice("products", holder, provider, provider_owner))
                 logger.debug(
                     "product provider: skipping duplicate %r on host %s",
                     product.name,

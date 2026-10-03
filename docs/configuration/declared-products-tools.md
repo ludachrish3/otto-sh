@@ -2,11 +2,9 @@
 
 `[[products]]` and `[[dev_tools]]` entries in `.otto/settings.toml` attach
 products and dev tools to hosts without writing a provider. The two arrays
-share one schema and one behavior; only the seam differs. Code providers
-({func}`~otto.host.product.register_product_provider`,
-{func}`~otto.host.dev_tool.register_dev_tool_provider`) remain the fallback:
-declared entries apply first at lab ingest, and a provider instance whose
-name a declared entry already claimed stands down.
+share one schema and one behavior; only the seam differs. Code providers ({doc}`../cookbook/extending/product-providers`) are for products
+that must be computed; a name is defined in data **or** in code
+({ref}`one-definition`).
 
 To see which hosts a product lands on, run `otto --lab X --list-products`
 (`--list-tools` for dev tools); see {ref}`list-products-flag`.
@@ -40,10 +38,13 @@ artifact = "tools/probe.sh"
 match = { id = "bb.*", os_version = ">=3.7" }
 ```
 
-Reserved keys: `name` (the product/tool identity), `kind` (which registered
-kind builds it), `match` (which hosts get it). Every other key is a parameter
-of the kind, and a built-in kind **refuses** a key it does not know — the entry
-fails to load, naming the unknown key and listing the valid ones.
+Reserved keys: `name` (the product/tool identity), `match` (which hosts get
+it), `variant` (which run selects it — {ref}`product-variants`), and exactly
+one of `kind` (which registered kind builds it) or `class` (which
+`DeclaredProduct` subclass does — {ref}`class-entries`). Every other key is a
+parameter of the kind or a field of the class. A built-in kind (and any
+`class =` entry) **refuses** a key it does not know — the entry fails to load,
+naming the unknown key and listing the valid ones.
 
 ## Kinds
 
@@ -126,6 +127,8 @@ serves.
 (30 seconds) — the `shell` kind passes no `timeout` to `host.run`. An install
 that needs longer belongs to a repo-registered kind instead.
 
+(declared-placeholders)=
+
 ### Placeholders
 
 `install`, `uninstall` and `check` are expanded before they run, for
@@ -162,6 +165,96 @@ positional field, is refused when the lab loads, naming the entry and the two
 valid placeholders — never quietly rewritten into the command that runs on the
 host. A literal brace is doubled, `{{` and `}}`, which is what an `awk
 '{{print $1}}'` program or a shell `${{VAR}}` needs.
+
+(class-entries)=
+
+## `class` — a declared entry with its own behaviour
+
+`class = "package.module:ClassName"` names a subclass of
+{class}`~otto.host.declared_product.DeclaredProduct` importable from the
+repo's `libs`. The entry's other keys are the class's fields: every `shell`
+key (`artifact`, `stage_dir`, `install`, `uninstall`, `check`, `cov_dir`,
+`debug_log_globs`, `instrumented`) and any field the subclass adds with
+`@dataclass`. A `str`, `int`, `bool`, `Path` or `list[str]` field is checked
+against the TOML value; any other annotation takes the value as written. A
+field without a default must be set (a subclass that adds one uses
+`@dataclass(kw_only=True)`). An unknown key, a missing required field, an
+import that fails or a class that is not a `DeclaredProduct` subclass each
+refuse the entry, naming it.
+
+```toml
+[[products]]
+name = "firmware"
+class = "acme.products:Firmware"
+artifact = "build/fw.bin"
+stage_dir = "/opt/fw"
+check = "test -f /opt/fw/fw.bin"
+```
+
+```python
+from otto.host import DeclaredProduct
+
+
+class Firmware(DeclaredProduct):
+    async def install(self, host):
+        return await host.run(f"fwload {self.stage_dir}/{self.artifact.name}")
+```
+
+`otto -n run install` previews the declared strings; a hook the subclass
+replaced is reported unchecked — `install: Firmware.install (code; no plan)` —
+never as a string that will not run. A subclass that wants a real preview
+overrides `plan`. `--list-products` shows the class path as the kind.
+
+A registered kind ({ref}`custom-kinds`) is still the tool when a factory
+needs the host to decide what to build, or when many entries share one shape;
+`class` is for one entry that needs one method.
+
+(one-definition)=
+
+## One definition
+
+A product (or dev tool) name is defined by a declared entry **or** by a
+provider, never both. When a provider returns a name a declared entry placed
+on the host, the lab refuses to load:
+
+```text
+[[products]] 'firmware' (repo acme) is also defined by provider acme.init:products (repo acme) — a product is defined in data OR in code; to give a declared entry custom behaviour, set `class = "pkg.mod:Class"` on it
+```
+
+Two entries with one name are selection, not two definitions: declaration
+order, first match wins. Two providers with one name keep registration
+order; the loser is listed as shadowed.
+
+(product-variants)=
+
+## Variants
+
+`variant = "debug"` or `"field"` marks an entry for one run variant; an
+entry without it matches any run. The root `--field/--debug` flag (env
+`OTTO_FIELD_PRODUCTS`, default `--debug`) selects the run's; a Python caller
+that never set it (`otto.context.set_variant`) reads `debug`. A variant entry
+is a more specific entry and goes before its fallback, exactly as a `match`
+does:
+
+```toml
+[[products]]
+name = "fw"
+kind = "shell"
+variant = "field"
+artifact = "build/fw-field.bin"
+
+[[products]]            # fallback: any variant
+name = "fw"
+kind = "shell"
+artifact = "build/fw-debug.bin"
+```
+
+`otto run install` stages `fw-debug.bin`; `otto --field run install` stages
+`fw-field.bin`. An entry passed over for its variant is listed under *not
+used* by `otto --lab X --list-products` as `variant 'field' (run is debug)`,
+and the listing's `instrumented` column says whether each artifact carries
+coverage instrumentation — the question a debug variant exists to answer
+({ref}`list-products-flag`).
 
 ## The `embedded` kind
 
@@ -371,6 +464,8 @@ so it too reads `unknown` unless `instrumented` says otherwise. See
 tarball/reference split, and how a docker-compose service under test
 (`[docker.use_cases]`) differs from this kind.
 
+(custom-kinds)=
+
 ## Custom kinds
 
 Needs beyond the built-ins are a custom kind:
@@ -391,3 +486,5 @@ Register from an init module listed in `settings.toml`, like every other
 extension hook. The factory gets the parsed entry (`entry.params` carries
 the non-reserved keys; `entry.base_dir` anchors local paths) and the
 matched host, and returns the instance to attach.
+
+For one entry that needs one method, `class` ({ref}`class-entries`) needs no registration.

@@ -901,21 +901,37 @@ class DeclaredEntrySpec(OttoModel):
     The one sanctioned ``extra='allow'`` beyond the historical-data readers:
     every non-reserved key is a param for the entry's *kind*, whose factory —
     not this spec — knows the param schema. Reserved keys are ``name``,
-    ``kind`` and ``match``; ``match`` is validated here, at parse, because a
-    match table is static (the :class:`ProjectScopeSpec` compile-at-parse
-    rule). Builds a :class:`~otto.declared.DeclaredEntry` via
-    :meth:`to_runtime`; the caller supplies what the TOML cannot know — the
-    declaring repo, its root, and which array the entry came from.
+    ``match``, ``variant`` and exactly one of ``kind``/``class``; ``match`` is
+    validated here, at parse, because a match table is static (the
+    :class:`ProjectScopeSpec` compile-at-parse rule). Builds a
+    :class:`~otto.declared.DeclaredEntry` via :meth:`to_runtime`; the caller
+    supplies what the TOML cannot know — the declaring repo, its root, and
+    which array the entry came from.
     """
 
     model_config = ConfigDict(extra="allow")
 
     name: str
-    kind: str
+    kind: str | None = None
+    cls: str | None = Field(default=None, alias="class")
     match: dict[str, MatchLeaf | list[MatchLeaf]] = Field(default_factory=dict)
+    variant: str | None = None
 
     @model_validator(mode="after")
-    def _validate_match(self) -> "DeclaredEntrySpec":
+    def _validate_reserved_keys(self) -> "DeclaredEntrySpec":
+        if (self.kind is None) == (self.cls is None):
+            raise ValueError(f"entry {self.name!r}: set exactly one of `kind` or `class`")
+        if self.cls is not None:
+            module, sep, attr = self.cls.partition(":")
+            if not sep or not module or not attr:
+                raise ValueError(
+                    f"entry {self.name!r}: class must be 'package.module:ClassName', "
+                    f"got {self.cls!r}"
+                )
+        if self.variant is not None and self.variant not in ("debug", "field"):
+            raise ValueError(
+                f"entry {self.name!r}: variant must be 'debug' or 'field', got {self.variant!r}"
+            )
         try:
             validate_match_table(self.match)
         except ValueError as e:
@@ -927,6 +943,8 @@ class DeclaredEntrySpec(OttoModel):
         return DeclaredEntry(
             name=self.name,
             kind=self.kind,
+            cls=self.cls,
+            variant=self.variant,
             seam=seam,
             owner=owner,
             base_dir=base_dir,
@@ -1100,7 +1118,7 @@ class OttoEnvSettings(BaseSettings):
 
     The six CLI-option vars are read by Typer's ``envvar=`` at parse time; this model
     documents the whole surface and is the reader for the non-CLI reads: sut_dirs,
-    field_default, compose_suffix, and the completion-cache xdir.
+    compose_suffix, and the completion-cache xdir.
 
     sut_dirs existence-checking is done by ``config.env.load_otto_env`` so a
     missing dir raises ``FileNotFoundError`` (not a wrapped ValidationError).
@@ -1125,7 +1143,6 @@ class OttoEnvSettings(BaseSettings):
     teardown_deadline: float = 10.0
     """Seconds an interrupted command's graceful cleanup may run before it is
     abandoned (second Ctrl+C / SIGTERM abandons it sooner). OTTO_TEARDOWN_DEADLINE."""
-    field_default: str | None = None
     field_products: str | None = None
     compose_suffix: str | None = None
 

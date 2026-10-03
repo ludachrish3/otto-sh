@@ -12,50 +12,94 @@ Two things do, and they are the same shape:
   never part of the installed-or-not answer.
 
 Neither is ever named in lab data: lab data describes machines, and what goes
-on them lives in the project's code. The project registers a **provider**: a
-function otto runs once per host as it is ingested, which returns the products
-(or dev tools) that host should carry.
+on them lives in the project. Most products need no code at all.
 
 ## A product
 
-A product knows how to get onto a host, how to install, how to come off,
-whether it is installed right now — and, for a coverage build, whether its
-artifact carries the compiler's instrumentation.
+A product is one artifact, where it stages on the host, and three command
+strings — install, uninstall, and a check that answers "is it installed right
+now". Declare it in `.otto/settings.toml`. `kind` says which built-in
+behaviour drives the verbs: `shell` runs the command strings, and the
+{doc}`configuration page <../configuration/declared-products-tools>` lists the
+others.
 
-```{literalinclude} ../examples/getting-started/libs/gs_example/products.py
-:language: python
+```toml
+[[products]]
+name = "agent"
+kind = "shell"
+artifact = "build/agent"
+stage_dir = "/opt/agent"
+install = "chmod +x /opt/agent/agent && /opt/agent/agent --install"
+uninstall = "/opt/agent/agent --uninstall; rm -rf /opt/agent"
+check = "test -x /opt/agent/agent"
+match = { os_type = "unix" }
+```
+
+`match` picks the hosts; `install`/`uninstall`/`check` run on each. Leave a
+string out and otto takes the honest default: no `install` means staging was
+the install, no `check` means otto assumes the product is not installed and
+stages again. Every key is in {doc}`../configuration/declared-products-tools`.
+
+Declaring a product makes the `[project]` table required — the repo has to say
+which labs and hosts it is speaking for. The worked example declares it as
+`lab_patterns = ["busybox"]` and `host_patterns = ["bb.*-qemu"]`, both
+fullmatched regexes, defined in {ref}`project-scope` in
+{doc}`../configuration/lab-config`.
+
+### When a command string is not enough
+
+A command string can do a lot: `{cov_dir}` expands in it, so an install can set
+`GCOV_PREFIX` from the product's own coverage directory ({ref}`the placeholders
+<declared-placeholders>`), and the shell can chain checks. What it cannot carry
+is a value that differs per host — the placeholders are only `{cov_dir}` and
+`{name}`, and a `match` table can pick one of a few known values but not carry a
+free-form one. The worked example's install must pass each element's `role` from lab
+metadata to the agent, so that one step is code. The entry names a class, and
+the class overrides the one method:
+
+```{literalinclude} ../examples/getting-started/.otto/settings.toml
+:language: toml
 :start-after: "# doc: begin product"
 :end-before: "# doc: end product"
 ```
 
-`cov_dir` is the one coverage-shaped thing a product declares: the host-side
-directory its instrumented build writes `.gcda` counters into; `install`
-hands it to `GCOV_PREFIX`. Leave it out and it defaults to
-`/tmp/<name>`; either way `self.cov_dir` is concrete by the time a host
-carries the product, so composing a command out of it always works.
-{doc}`coverage` is the whole coverage walkthrough.
+```{literalinclude} ../examples/getting-started/libs/gs_example/products.py
+:language: python
+:start-after: "# doc: begin product-class"
+:end-before: "# doc: end product-class"
+```
 
-The provider is keyed on `os_type`, an attribute of the host that knows
-nothing about products — which is the rule for providers generally: key on the
-host's product-agnostic attributes, and source versions and artifact paths from
-the project's own configuration.
+`DeclaredProduct` is the class every `kind = "shell"` entry builds; a subclass
+inherits staging, the declared strings and the honest defaults, and replaces
+only what it overrides (`stage`, `install`, `uninstall`, `is_installed`,
+`get_logs`). The entry's other keys are the class's fields — `cov_dir` is the
+one coverage-shaped thing a product declares: the host-side directory its
+instrumented build writes `.gcda` counters into ({doc}`coverage` is the whole
+coverage walkthrough). The class is imported from the repo's `libs` when the
+entry is built; it is not listed in `init`. {ref}`class-entries` has the full
+rules, including fields a subclass adds.
 
-Registering a provider makes the `[project]` table in `.otto/settings.toml`
-required — the repo has to say which labs and hosts it is speaking for, and
-otto will not call the provider for a host outside that declaration. The
-worked example declares it as `lab_patterns = ["busybox"]` and
-`host_patterns = ["bb.*-qemu"]` — both fullmatched regexes, defined in
-{ref}`project-scope` in {doc}`../configuration/lab-config`.
+One rule follows: a product name is defined in data **or** in code
+({ref}`one-definition`). A **provider** is a function that computes a host's
+products; the registry refuses a lab in which a `[[products]]` entry and a
+provider both define one name, naming both — the entry's `class` key is how
+data gets custom behaviour. Products that must be computed — one per version,
+one per run variant — are providers, in
+{doc}`../cookbook/extending/product-providers`.
 
 ## A dev tool
 
-The same four methods, a separate registry, a different lifecycle:
+A dev tool has the product's shape and a different lifecycle. Declare it the
+same way, in `[[dev_tools]]`:
 
-```{literalinclude} ../examples/getting-started/libs/gs_example/dev_tools.py
-:language: python
+```{literalinclude} ../examples/getting-started/.otto/settings.toml
+:language: toml
 :start-after: "# doc: begin dev-tool"
 :end-before: "# doc: end dev-tool"
 ```
+
+A dev tool that needs code names a `DeclaredProduct` subclass the same way —
+the class serves both products and dev tools.
 
 Dev tools go on with `otto run install-tools` and come off with `otto run
 cleanup`, never with `otto run uninstall`, and `otto run status` never counts
@@ -63,7 +107,7 @@ them: a host carrying nothing but a debug probe does not read as installed.
 
 ## What you get for free
 
-With products registered and nothing else written, six commands already work
+With products declared and nothing else written, six commands already work
 against the lab. Each walks every configured repo in dependency order:
 
 | Command | What it does |
@@ -91,13 +135,10 @@ test marked `@pytest.mark.ensure("installed")` runs before its body.
 order across repos, what `cleanup` does and does not take off the lab, and how
 to read `status`.
 
-## Declaring instead of registering
+## Variants
 
-A provider is code, and the common cases do not need any. A `[[products]]` or
-`[[dev_tools]]` entry in `.otto/settings.toml` attaches a product to the hosts
-a `match` table picks out, with no Python at all; a provider stays the fallback
-for what a match table cannot express. See
-{doc}`../configuration/declared-products-tools`.
+A product can carry a `variant = "debug"` or `"field"` entry beside a generic
+one; `otto --field run install` picks the field one. See {ref}`product-variants`.
 
 ## Next
 

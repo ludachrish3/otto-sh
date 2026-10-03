@@ -1,59 +1,38 @@
-"""What goes on the hosts: the software under test, attached by a provider.
+"""What goes on the hosts: the software under test.
 
-A **product** is a unit of software under test. The project registers a
-provider — a function otto runs once per lab-ingested host — and the provider
-decides which products that host carries, so lab data never names one.
+The ``agent`` product is declared in ``.otto/settings.toml`` — artifact,
+where it stages, how it is checked and removed — and names this class for
+the one step a command string cannot express: passing the element's role from
+lab metadata to the install. A command string can set ``GCOV_PREFIX``
+(``{cov_dir}``) and chain checks with the shell, but a value that differs per
+host is not one of its two placeholders, so that install is code.
 """
 
-# doc: begin product
-from pathlib import Path
+# doc: begin product-class
+import shlex
 
+from otto.host import DeclaredProduct
 from otto.host.host import Host
-from otto.host.product import Product, register_product_provider, scan_for_instrumentation
 from otto.result import Result
-from otto.utils import Status
 
 
-class AgentBinary(Product):
+class AgentBinary(DeclaredProduct):
     """The agent binary every Unix host in the bed runs."""
 
-    name = "agent"
-    cov_dir = "/var/cov/agent"
-
-    async def stage(self, host: Host) -> Result:
-        """Place the locally built binary on the host, installing nothing yet."""
-        return await host.put(Path("build/agent"), Path("/opt/agent"))
-
     async def install(self, host: Host) -> Result:
-        """Turn the staged binary into a running install.
+        """Install the staged binary, telling it the element's role from lab metadata.
 
         ``GCOV_PREFIX`` redirects the instrumented build's ``.gcda`` writes to
         :attr:`cov_dir` — the one directory ``otto cov get`` fetches from —
         and ``GCOV_PREFIX_STRIP`` drops the build machine's leading path
-        components so the tree under it stays shallow.
+        components so the tree under it stays shallow. The role is the one
+        per-host value: it differs by element, so no declared string carries it.
         """
+        binary = (await self.resolved_stage_dir(host)) / self.artifact.name
+        element = host.element
+        role = element.metadata.get("role", "node") if element is not None else "node"
+        env = f"GCOV_PREFIX={self.cov_dir} GCOV_PREFIX_STRIP=3"
         return await host.run(
-            "chmod +x /opt/agent/agent && "
-            f"GCOV_PREFIX={self.cov_dir} GCOV_PREFIX_STRIP=3 /opt/agent/agent --install"
+            f"chmod +x {binary} && {env} {binary} --install --role {shlex.quote(str(role))}"
         )
-
-    async def uninstall(self, host: Host) -> Result:
-        """Take the install back off, leaving nothing behind."""
-        return await host.run("/opt/agent/agent --uninstall; rm -rf /opt/agent")
-
-    async def is_installed(self, host: Host) -> bool:
-        """Answer the question ``otto run status`` folds across the lab."""
-        return (await host.run("test -x /opt/agent/agent")).status is Status.Success
-
-    def instrumented(self) -> bool | None:
-        """Scan the locally built binary for gcov markers."""
-        return scan_for_instrumentation(Path("build/agent"))
-
-
-def agent_for(host: Host) -> list[Product] | None:
-    """Every Unix host carries the agent; anything else carries no product."""
-    return [AgentBinary()] if host.os_type == "unix" else None
-
-
-register_product_provider(agent_for)
-# doc: end product
+        # doc: end product-class

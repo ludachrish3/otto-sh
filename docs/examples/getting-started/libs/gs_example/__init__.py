@@ -3,11 +3,13 @@
 Each section registers one extension the worked example uses; the pages
 include them between the ``# doc: begin`` / ``# doc: end`` markers.
 
-The products, dev tools and project actions this project defines are NOT
-imported here: ``gs_example.products``, ``gs_example.dev_tools`` and
-``gs_example.actions`` are listed in ``init`` in their own right, so the
-inventory twin next door — which shares this package for its login proxy alone
-— does not become a providing repo.
+The project actions this project defines are NOT imported here:
+``gs_example.actions`` is listed in ``init`` in its own right, so the inventory
+twin next door — which shares this package for its login proxy alone — does
+not become a providing repo. The dev tool is a ``[[dev_tools]]`` entry in
+``.otto/settings.toml``, and ``gs_example.products`` is named by the ``agent``
+entry's ``class`` key and imported by the registry when the entry is built,
+not by an init module.
 
 Most sections keep their imports beside their code. The rule that decides
 whether they can is ruff's "imports at the top of the file" (E402): its

@@ -803,13 +803,20 @@ def _reset_otto_context():
     ``make coverage`` the whole suite runs in one process and ungrouped unit
     tests can land on a worker that previously ran integration tests.
     """
-    from otto.context import _active
+    from otto import context
+    from otto.context import _active, _variant
 
     snapshot = _active.get()
+    variant_snapshot = _variant.get()
+    # The CLI's reset token too: a CliRunner invocation leaves one behind, and
+    # a later test's reset_cli_context() must see the state it started with.
+    token_snapshot = context._variant_token
     try:
         yield
     finally:
         _active.set(snapshot)
+        _variant.set(variant_snapshot)
+        context._variant_token = token_snapshot
 
 
 @pytest.fixture(autouse=True)

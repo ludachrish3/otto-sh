@@ -22,9 +22,9 @@ import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar, cast
 
-from .registry import Registry
+from .registry import Ref, Registry, caller_module
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +61,8 @@ class DeclaredEntry:
     name: str
     """Logical identity — the ``Product.name``/``DevTool.name`` role."""
 
-    kind: str
-    """Key into the seam's :class:`KindRegistry`."""
+    kind: str | None
+    """Key into the seam's :class:`KindRegistry`; ``None`` when :attr:`cls` names the class."""
 
     seam: str
     """The TOML array this entry came from (``"products"``/``"dev_tools"``) —
@@ -80,6 +80,19 @@ class DeclaredEntry:
 
     params: dict[str, Any] = field(default_factory=dict)
     """Every non-reserved TOML key, verbatim — the kind's to validate."""
+
+    cls: str | None = None
+    """``class = "package.module:ClassName"`` — a
+    :class:`~otto.host.declared_product.DeclaredProduct` subclass the registry's class factory
+    builds; exactly one of :attr:`kind`/:attr:`cls` is set."""
+
+    variant: str | None = None
+    """``variant = "debug" | "field"``: the run variant this entry is for; ``None`` is any run."""
+
+    @property
+    def kind_label(self) -> str:
+        """Return the kind name, or the ``class =`` path, as the entry's printed kind."""
+        return self.kind if self.kind is not None else (self.cls or "")
 
 
 def _is_metadata_path(key: str) -> bool:
@@ -269,6 +282,58 @@ class KindRegistry(Registry[Callable[[DeclaredEntry, Any], T]], Generic[T]):
     provider registries.
     """
 
+    def __init__(
+        self,
+        kind: str,
+        *,
+        register_hint: str,
+        class_factory: Ref | None = None,
+        class_resolver: Ref | None = None,
+        collision_hint: str | None = None,
+        validate: "Callable[[str, Callable[[DeclaredEntry, Any], T]], None] | None" = None,
+    ) -> None:
+        super().__init__(
+            kind, register_hint=register_hint, collision_hint=collision_hint, validate=validate
+        )
+        # ``Registry.__init__`` recorded THIS frame's module; the owner is whoever built us.
+        self.defined_in = caller_module()
+        if (class_factory is None) != (class_resolver is None):
+            raise ValueError(
+                f"{kind} registry: `class_factory` and `class_resolver` go together — "
+                "a registry that builds `class =` entries needs both"
+            )
+        self._class_refs: dict[str, Ref | None] = {
+            "factory": class_factory,
+            "resolver": class_resolver,
+        }
+        self._class_resolved: dict[str, Callable[..., Any]] = {}
+
+    def _class_hook(self, which: Literal["factory", "resolver"]) -> Callable[..., Any]:
+        """Import one of the two ``class =`` hooks on first use (one cache for both).
+
+        Each is handed in as a :class:`~otto.registry.Ref` so the kind module
+        is not imported until an entry needs it — the same reason the built-in
+        kinds are registered by reference.
+        """
+        if which not in self._class_resolved:
+            ref = self._class_refs[which]
+            if ref is None:
+                raise ValueError(f"{self._kind} registry builds no `class =` entries")
+            self._class_resolved[which] = cast("Callable[..., Any]", ref.resolve())
+        return self._class_resolved[which]
+
+    def class_factory(self) -> Callable[[DeclaredEntry, Any], T]:
+        """Return the factory that builds a ``class =`` entry, imported on first use."""
+        return self._class_hook("factory")
+
+    def class_resolver(self) -> Callable[[DeclaredEntry], object]:
+        """Return the check that imports and validates a ``class =`` entry's class.
+
+        :meth:`build` runs it before any match, so a bad class path fails
+        every ingest.
+        """
+        return self._class_hook("resolver")
+
     def build(self, entries: Iterable[DeclaredEntry], host: Any) -> list[T]:
         """Build the instances *entries* declare for *host*.
 
@@ -282,24 +347,49 @@ class KindRegistry(Registry[Callable[[DeclaredEntry, Any], T]], Generic[T]):
         ``owner`` is None are stamped with the entry's declaring repo (the
         provider loops' carve-out: a factory may hand its instance to another
         repo's ownership). Every built instance is also stamped with the
-        entry's ``kind``, ``origin = "declared"`` and the entry itself
-        (``source_entry``) — recorded here, where the entry is in hand, so
-        ``otto --list-products`` reads facts instead of re-deriving them.
+        entry's ``kind_label`` (the class path for a ``class =`` entry),
+        ``origin = "declared"`` and the entry itself (``source_entry``) —
+        recorded here, where the entry is in hand, so ``otto --list-products``
+        reads facts instead of re-deriving them.
+
+        An entry's ``variant``, when set, must equal the run's
+        (:func:`otto.context.variant`) or the entry is passed over as a
+        non-match — so a variant entry is a more specific entry and goes
+        before its fallback. A ``class =`` entry is built by
+        :meth:`class_factory`; its class is resolved by :meth:`class_resolver`
+        right where a kind is looked up, for the same reason a kind is —
+        a bad class path fails every ingest, whatever the match.
         """
+        from . import context  # function-scope: otto.context imports otto.host at module end
+
+        run = context.variant()
         out: list[T] = []
         taken: set[str] = set()
         for entry in entries:
-            if entry.kind in _RETIRED_KINDS:
+            if entry.kind is not None and entry.kind in _RETIRED_KINDS:
                 raise ValueError(f"[[{entry.seam}]] {entry.name!r}: {_RETIRED_KINDS[entry.kind]}")
-            factory = self.get(entry.kind)
-            if entry.name in taken or not host_matches(entry.match, host):
+            if entry.kind is not None:
+                factory = self.get(entry.kind)
+            elif self._class_refs["factory"] is None:
+                raise ValueError(
+                    f"[[{entry.seam}]] {entry.name!r}: {self._kind} registry builds no "
+                    "`class =` entries"
+                )
+            else:
+                factory = self.class_factory()
+                self.class_resolver()(entry)
+            if entry.name in taken:
+                continue
+            if entry.variant is not None and entry.variant != run:
+                continue
+            if not host_matches(entry.match, host):
                 continue
             obj = factory(entry, host)
             if getattr(obj, "owner", None) is None:
                 # Product/DevTool contract: built instances carry a mutable owner attribute.
                 obj.owner = entry.owner  # ty: ignore[unresolved-attribute]
             # Same contract: Product/DevTool carry mutable kind/origin/source_entry attributes.
-            obj.kind = entry.kind  # ty: ignore[unresolved-attribute]
+            obj.kind = entry.kind_label  # ty: ignore[unresolved-attribute]
             obj.origin = "declared"  # ty: ignore[unresolved-attribute]
             obj.source_entry = entry  # ty: ignore[unresolved-attribute]
             out.append(obj)

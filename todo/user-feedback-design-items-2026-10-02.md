@@ -149,7 +149,9 @@ verb should exist at all.
 
 ---
 
-## 2. Data-driven project setup: products (P1)
+## 2. Data-driven project setup: products (P1) ✅
+
+Every item under §2 is done; what remains open in this file is §1, §3 and §4.
 
 ### 2.1 What exists, and what is actually missing
 
@@ -175,14 +177,14 @@ Missing:
 
 Decisions:
 
-1. The one-definition rule: a product name is defined in data **or** in code.
+1. ✅ (`class =` entries and the one-definition refusal landed.) The one-definition rule: a product name is defined in data **or** in code.
    Both → refusal naming both sites (not a silent skip). Or: code may
    *refine* a declared entry. The feedback leans to "skip data registration
    when code defines it"; the honest version of that is a refusal or an
    explicit `class = "pkg.mod:Class"` key on the entry.
-2. A public default-behaviour base (working name `DeclaredProduct`), so a
+2. ✅ (`otto.host.DeclaredProduct`.) A public default-behaviour base (working name `DeclaredProduct`), so a
    custom product is "subclass, override `install`".
-3. Programmatic definition for version permutations: providers already do
+3. ✅ (the cookbook page `docs/cookbook/extending/product-providers.md`.) Programmatic definition for version permutations: providers already do
    this; it needs a documented pattern (the Advanced section, 3.2).
 
 ### 2.2 Debug vs field
@@ -192,11 +194,11 @@ The root `--field/--debug` flag is **dead**: parsed, documented
 (`src/otto/cli/main.py:539-546`, `# noqa: ARG001`; `OttoEnvSettings.field_*`
 have no readers). Products have no variant notion.
 
-Decision: give products a variant (per-entry `variant = "debug" | "field"`,
-or per-variant param tables) selected by the root flag, or delete the flag.
-A documented flag that does nothing cannot stay.
+✅ Products carry `variant`; `--field/--debug` selects it; `OTTO_FIELD_DEFAULT` deleted; `--list-products` shows `variant` and `instrumented`.
 
-### 2.3 `--list-products` / `--list-tools`
+### 2.3 `--list-products` / `--list-tools` ✅
+
+✅ Landed as the root flags `--list-products` / `--list-tools` (per host: resolved entries, seam, kind, `variant`, `instrumented`, and the entries that matched no host); documented at `list-products-flag` in `docs/cli/index.md`. The original ask follows.
 
 Nothing lists products or dev tools. The useful answer is per host: which
 products resolved, from which repo, declared or provider, which kind, and

@@ -89,7 +89,7 @@ class ArtifactProduct(ShellProduct):
         return True
 
 
-def _entry(repo, name, kind="shell", *, seam="products", match=None, **params):
+def _entry(repo, name, kind="shell", *, seam="products", match=None, variant=None, **params):
     root = ROOT1 if repo == "repo1" else ROOT2
     return DeclaredEntry(
         name=name,
@@ -99,6 +99,7 @@ def _entry(repo, name, kind="shell", *, seam="products", match=None, **params):
         base_dir=root,
         match=match or {},
         params=params,
+        variant=variant,
     )
 
 
@@ -280,26 +281,21 @@ def test_provider_instances_carry_code_kind_and_provider_origin(ingest):
 
 
 def test_a_provider_dropped_for_a_taken_name_is_recorded_on_the_host(ingest):
+    with registering_repo("repo1"):
+        register_product_provider(lambda host: [ProbeProduct("agent")])
+        register_dev_tool_provider(lambda host: [ProbeTool("t")])
     with registering_repo("repo2"):
         register_product_provider(lambda host: [ProbeProduct("agent")])
         register_dev_tool_provider(lambda host: [ProbeTool("t")])
     host = _host("test1")
-    ingest(
-        [
-            _repo(
-                "repo1",
-                products=[_entry("repo1", "agent", artifact="a")],
-                dev_tools=[_entry("repo1", "t", seam="dev_tools", artifact="t")],
-            ),
-            _repo("repo2"),
-        ],
-        [host],
-    )
+    ingest([_repo("repo1"), _repo("repo2")], [host])
     assert [(hid, p.name, p.owner) for hid, p in host.shadowed_products] == [
         ("test1", "agent", "repo2")
     ]
-    assert [(hid, t.name) for hid, t in host.shadowed_dev_tools] == [("test1", "t")]
-    assert [p.kind for p in host.products] == ["shell"]
+    assert [(hid, t.name, t.owner) for hid, t in host.shadowed_dev_tools] == [
+        ("test1", "t", "repo2")
+    ]
+    assert [p.owner for p in host.products] == ["repo1"]
 
 
 # ── With a lab: what each host gets ───────────────────────────────────────────
@@ -489,15 +485,14 @@ def test_a_fallback_entry_used_on_some_host_is_not_reported_unused(ingest):
     assert result.unused == []
 
 
-def test_a_provider_product_dropped_for_a_declared_name_is_reported(ingest):
+def test_a_provider_product_with_a_declared_name_refuses_the_ingest(ingest):
     with registering_repo("repo2"):
         register_product_provider(lambda host: [ProbeProduct("agent")])
     repos = [_repo("repo1", products=[_entry("repo1", "agent", artifact="a")]), _repo("repo2")]
-    lab = ingest(repos, [_host("test1"), _host("test2")])
-    result = listing.lab_rows(lab, repos, "products")
-    assert [(u.name, u.kind, u.repo, u.reason) for u in result.unused] == [
-        ("agent", "code (ProbeProduct)", "repo2", "shadowed by the declared entry named 'agent'")
-    ]
+    with pytest.raises(
+        ValueError, match=r"\[\[products\]\] 'agent' \(repo repo1\) is also defined by provider"
+    ):
+        ingest(repos, [_host("test1")])
 
 
 def test_a_provider_product_dropped_for_an_earlier_provider_reads_an_earlier_entry(ingest):
@@ -513,21 +508,17 @@ def test_a_provider_product_dropped_for_an_earlier_provider_reads_an_earlier_ent
     ]
 
 
-def test_a_provider_product_shadowed_twice_for_different_reasons_is_listed_once(ingest):
+def test_a_provider_product_shadowed_on_several_hosts_is_listed_once(ingest):
     with registering_repo("repo1"):
         register_product_provider(lambda host: [ProbeProduct("probe")])
     with registering_repo("repo2"):
         register_product_provider(lambda host: [ProbeProduct("probe")])
-    repos = [
-        _repo("repo1", products=[_entry("repo1", "probe", artifact="a", match={"id": "test1"})]),
-        _repo("repo2"),
-    ]
+    repos = [_repo("repo1"), _repo("repo2")]
     lab = ingest(repos, [_host("test1"), _host("test2")])
     result = listing.lab_rows(lab, repos, "products")
-    # repo1's provider lands on test2, so only repo2's product is unused; it was
-    # dropped on test1 (declared holder) and on test2 (earlier provider).
+    # repo2's product is dropped on test1 and on test2 and reported once.
     assert [(u.repo, u.reason) for u in result.unused] == [
-        ("repo2", "shadowed by the declared entry named 'probe'")
+        ("repo2", "shadowed by an earlier entry named 'probe'")
     ]
 
 
@@ -560,12 +551,13 @@ def test_an_entry_the_ingest_built_is_never_reported_whatever_the_gate_says(inge
 
 
 def test_a_provider_product_that_lands_elsewhere_is_not_reported_shadowed(ingest):
+    with registering_repo("repo1"):
+        register_product_provider(
+            lambda host: [ProbeProduct("agent")] if host.id == "test1" else []
+        )
     with registering_repo("repo2"):
         register_product_provider(lambda host: [ProbeProduct("agent")])
-    repos = [
-        _repo("repo1", products=[_entry("repo1", "agent", artifact="a", match={"id": "test1"})]),
-        _repo("repo2"),
-    ]
+    repos = [_repo("repo1"), _repo("repo2")]
     lab = ingest(repos, [_host("test1"), _host("test2")])
     result = listing.lab_rows(lab, repos, "products")
     assert sorted((r.repo, r.hosts[0]) for r in result.rows) == [
@@ -591,9 +583,280 @@ def test_listing_never_contacts_a_host(ingest):
         )
     ]
     hosts = [
-        _host("test1", exec=_forbid, run=_forbid, login_home=_forbid, put=_forbid, get=_forbid)
+        _host(
+            "test1",
+            exec=_forbid,
+            run=_forbid,
+            login_home=_forbid,
+            put=_forbid,
+            get=_forbid,
+            connect=_forbid,
+            open=_forbid,
+        )
     ]
     lab = ingest(repos, hosts)
     for seam in ("products", "dev_tools"):
-        assert listing.lab_rows(lab, repos, seam).rows
-        assert listing.declared_rows(repos, seam)
+        rows = listing.lab_rows(lab, repos, seam).rows
+        declared = listing.declared_rows(repos, seam)
+        assert len(rows) == len(declared) == 1
+        for row in (*rows, *declared):
+            assert (row.variant, row.instrumented) == (listing.ANY_VARIANT, "missing")
+
+
+# ── variant and instrumented cells ───────────────────────────────────────────
+
+
+def _artifact(tmp_path, name, body: bytes):
+    path = tmp_path / name
+    path.write_bytes(body)
+    return path
+
+
+def _shell(tmp_path, name, **params):
+    return DeclaredEntry(
+        name=name,
+        kind="shell",
+        seam="products",
+        owner="repo1",
+        base_dir=tmp_path,
+        params=params,
+    )
+
+
+def test_declared_rows_show_the_variant_or_any():
+    entries = [
+        _entry("repo1", "fw", artifact="a", variant="field"),
+        _entry("repo1", "fw", artifact="b"),
+    ]
+    rows = listing.declared_rows([_repo("repo1", products=entries)], "products")
+    assert [r.variant for r in rows] == ["field", listing.ANY_VARIANT]
+
+
+def test_declared_rows_scan_the_anchored_artifact(tmp_path):
+    from otto.host.product import INSTRUMENTATION_MARKERS
+
+    instrumented = _artifact(
+        tmp_path, "yes.bin", b"\x00" + next(iter(INSTRUMENTATION_MARKERS)) + b"\x00"
+    )
+    clean = _artifact(tmp_path, "no.bin", b"plain")
+    (tmp_path / "fw.tar.gz").write_bytes(b"archive")
+    repo = SimpleNamespace(
+        name="repo1",
+        sut_dir=tmp_path,
+        project_scope=None,
+        declared_dev_tools=[],
+        declared_products=[
+            _shell(tmp_path, "a", artifact=instrumented.name),
+            _shell(tmp_path, "b", artifact=clean.name),
+            _shell(tmp_path, "c", artifact="not-built.bin"),
+            _shell(tmp_path, "d", artifact="fw.tar.gz"),
+            DeclaredEntry(
+                name="e",
+                kind="docker_image",
+                seam="products",
+                owner="repo1",
+                base_dir=tmp_path,
+                params={"image": "img"},
+            ),
+            _shell(tmp_path, "f", artifact=clean.name, instrumented=True),
+        ],
+    )
+    rows = listing.declared_rows([repo], "products")
+    assert [(r.name, r.instrumented) for r in rows] == [
+        ("a", "yes"),
+        ("b", "no"),
+        ("c", "missing"),
+        ("d", "unknown"),
+        ("e", "unknown"),
+        ("f", "yes"),
+    ]
+
+
+def test_lab_rows_answer_instrumented_from_the_built_product(ingest, tmp_path):
+    from otto.host.product import INSTRUMENTATION_MARKERS
+
+    hit = _artifact(tmp_path, "hit.bin", next(iter(INSTRUMENTATION_MARKERS)))
+    entries = [
+        _shell(tmp_path, "agent", artifact=hit.name),
+        _shell(tmp_path, "gone", artifact="gone.bin"),
+    ]
+    repos = [
+        SimpleNamespace(
+            name="repo1",
+            sut_dir=tmp_path,
+            project_scope=None,
+            declared_products=entries,
+            declared_dev_tools=[],
+        )
+    ]
+    with registering_repo("repo1"):
+        register_product_provider(lambda host: [ProbeProduct("probe")])
+    lab = ingest(repos, [_host("test1")])
+    rows = listing.lab_rows(lab, repos, "products").rows
+    assert [(r.name, r.instrumented, r.variant) for r in rows] == [
+        ("agent", "yes", listing.ANY_VARIANT),
+        ("gone", "missing", listing.ANY_VARIANT),
+        # the ABC default: a code product that cannot tell
+        ("probe", "unknown", listing.ANY_VARIANT),
+    ]
+
+
+def test_lab_rows_show_the_variant_the_entry_declared(ingest, monkeypatch):
+    from otto import context
+
+    monkeypatch.setattr(context, "variant", lambda: "field")
+    field = _entry("repo1", "fw", artifact="field.bin", variant="field")
+    repos = [_repo("repo1", products=[field, _entry("repo1", "fw", artifact="any.bin")])]
+    lab = ingest(repos, [_host("test1")])
+    rows = listing.lab_rows(lab, repos, "products").rows
+    assert [(r.name, r.variant, r.artifact) for r in rows] == [("fw", "field", "field.bin")]
+
+
+def test_a_variant_skipped_entry_is_unused_with_the_run_named(ingest, monkeypatch):
+    from otto import context
+
+    monkeypatch.setattr(context, "variant", lambda: "debug")
+    field = _entry("repo1", "fw", artifact="field.bin", variant="field")
+    repos = [_repo("repo1", products=[field, _entry("repo1", "fw", artifact="any.bin")])]
+    lab = ingest(repos, [_host("test1")])
+    result = listing.lab_rows(lab, repos, "products")
+    assert [(u.name, u.reason) for u in result.unused] == [("fw", "variant 'field' (run is debug)")]
+
+
+def test_a_product_on_three_hosts_is_scanned_once_per_listing(ingest):
+    calls = []
+
+    class CountedProduct(ProbeProduct):
+        def instrumented(self):
+            calls.append(self.name)
+            return True
+
+    with registering_repo("repo1"):
+        register_product_provider(lambda host: [CountedProduct("agent")])
+    repos = [_repo("repo1")]
+    lab = ingest(repos, [_host("test1"), _host("test2"), _host("test3")])
+    calls.clear()  # ingest itself may ask; count only the listing's scans
+    (row,) = listing.lab_rows(lab, repos, "products").rows
+    assert (row.instrumented, row.hosts) == ("yes", ["test1", "test2", "test3"])
+    assert calls == ["agent"]
+
+
+def test_two_provider_products_of_one_class_keep_their_own_verdicts(ingest):
+    # The memo is per definition, never per class: a shared verdict here would
+    # be a measurement the listing never made.
+    class Verdict(ProbeProduct):
+        def __init__(self, name, answer):
+            super().__init__(name)
+            self.answer = answer
+
+        def instrumented(self):
+            return self.answer
+
+    with registering_repo("repo1"):
+        register_product_provider(lambda host: [Verdict("a", True), Verdict("b", False)])
+    repos = [_repo("repo1")]
+    lab = ingest(repos, [_host("test1")])
+    rows = listing.lab_rows(lab, repos, "products").rows
+    assert [(r.name, r.instrumented) for r in rows] == [("a", "yes"), ("b", "no")]
+
+
+def test_a_declared_product_on_three_hosts_scans_its_artifact_once(ingest, tmp_path, monkeypatch):
+    from otto.host import listing as listing_mod
+
+    artifact = _artifact(tmp_path, "agent.bin", b"plain")
+    scanned: list[Path] = []
+
+    def counting_scan(path):
+        scanned.append(path)
+        return False
+
+    monkeypatch.setattr(listing_mod, "scan_for_instrumentation", counting_scan)
+    monkeypatch.setattr("otto.host.product.scan_for_instrumentation", counting_scan)
+    repos = [
+        SimpleNamespace(
+            name="repo1",
+            sut_dir=tmp_path,
+            project_scope=None,
+            declared_dev_tools=[],
+            declared_products=[_shell(tmp_path, "agent", artifact=artifact.name)],
+        )
+    ]
+    lab = ingest(repos, [_host("test1"), _host("test2"), _host("test3")])
+    scanned.clear()
+    (row,) = listing.lab_rows(lab, repos, "products").rows
+    assert (row.instrumented, row.hosts) == ("no", ["test1", "test2", "test3"])
+    assert scanned == [artifact]
+
+
+def test_instrumented_cell_for_a_code_dev_tool_that_says_so(ingest):
+    class InstrumentedTool(ProbeTool):
+        def instrumented(self):
+            return True
+
+    with registering_repo("repo1"):
+        register_dev_tool_provider(lambda host: [InstrumentedTool("kcov")])
+    repos = [_repo("repo1")]
+    lab = ingest(repos, [_host("test1")])
+    (row,) = listing.lab_rows(lab, repos, "dev_tools").rows
+    assert row.instrumented == "yes"
+
+
+class _CellItem:
+    """A built item double: just what :func:`listing.instrumented_cell` reads."""
+
+    def __init__(self, artifact, *, stages, verdict="absent"):
+        self.artifact = artifact
+        self.stages_artifact = stages
+        if verdict != "absent":
+            self.instrumented = lambda: verdict
+
+
+def test_a_registry_reference_is_unknown_not_missing():
+    item = _CellItem(Path("registry.local/app:1.0"), stages=False, verdict=None)
+    assert listing.instrumented_cell(item) == "unknown"
+
+
+def test_a_declared_verdict_answers_even_for_a_registry_reference():
+    item = _CellItem(Path("registry.local/app:1.0"), stages=False, verdict=True)
+    assert listing.instrumented_cell(item) == "yes"
+
+
+def test_a_declared_verdict_beats_an_absent_artifact():
+    item = _CellItem(Path("/nowhere/fw.bin"), stages=True, verdict=True)
+    assert listing.instrumented_cell(item) == "yes"
+
+
+def test_a_staged_artifact_that_is_absent_and_undecided_is_missing():
+    item = _CellItem(Path("/nowhere/fw.bin"), stages=True, verdict=None)
+    assert listing.instrumented_cell(item) == "missing"
+
+
+def test_a_built_item_without_instrumented_is_scanned_like_the_declared_view(tmp_path):
+    from otto.host.product import INSTRUMENTATION_MARKERS
+
+    hit = _artifact(tmp_path, "hit.ko", b"\x00" + next(iter(INSTRUMENTATION_MARKERS)) + b"\x00")
+    clean = _artifact(tmp_path, "clean.ko", b"plain")
+    absent = tmp_path / "absent.ko"
+    cells = [
+        listing.instrumented_cell(_CellItem(hit, stages=True)),
+        listing.instrumented_cell(_CellItem(clean, stages=True)),
+        listing.instrumented_cell(_CellItem(absent, stages=True)),
+    ]
+    assert cells == ["yes", "no", "missing"]
+
+
+def test_a_plain_dev_tool_is_scanned_through_the_lab_rows(ingest, tmp_path):
+    from otto.host.product import INSTRUMENTATION_MARKERS
+
+    hit = _artifact(tmp_path, "hit.ko", next(iter(INSTRUMENTATION_MARKERS)))
+
+    class ScannedTool(ProbeTool):
+        artifact = hit
+        stages_artifact = True
+
+    with registering_repo("repo1"):
+        register_dev_tool_provider(lambda host: [ScannedTool("kmodlike")])
+    repos = [_repo("repo1")]
+    lab = ingest(repos, [_host("test1")])
+    (row,) = listing.lab_rows(lab, repos, "dev_tools").rows
+    assert row.instrumented == "yes"

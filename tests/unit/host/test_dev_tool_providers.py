@@ -412,3 +412,44 @@ def test_source_lab_is_stamped_before_the_providers_run():
     )
 
     assert seen == ["somelab"], "the provider ran before the lab stamp landed"
+
+
+def _declared(name, owner="declrepo"):
+    """A dev tool the declared loop attached: origin 'declared', owner stamped."""
+    return SimpleNamespace(name=name, owner=owner, origin="declared")
+
+
+def test_a_provider_name_held_by_a_declared_entry_is_refused_naming_both_sites():
+    from otto.registry import registering_repo
+
+    def tools(host):
+        return [_tool("gdbserver")]
+
+    with registering_repo("coderepo"):
+        register_dev_tool_provider(tools)
+    host = _host(dev_tools=[_declared("gdbserver")])
+    with pytest.raises(ValueError, match=r"defined in data OR in code") as e:
+        apply_dev_tool_providers(host)
+    assert str(e.value) == (
+        "[[dev_tools]] 'gdbserver' (repo declrepo) is also defined by provider "
+        f"{tools.__module__}:{tools.__qualname__} (repo coderepo) — a dev tool is "
+        "defined in data OR in code; to give a declared entry custom behaviour, set "
+        '`class = "pkg.mod:Class"` on it'
+    )
+
+
+def test_two_providers_with_one_name_still_shadow_not_refuse():
+    register_dev_tool_provider(lambda host: [_tool("dup")])
+    register_dev_tool_provider(lambda host: [_tool("dup")])
+    host = _host()
+    apply_dev_tool_providers(host)
+    assert [t.name for t in host.dev_tools] == ["dup"]
+    assert [t.name for _h, t in host.shadowed_dev_tools] == ["dup"]
+
+
+def test_a_preexisting_code_tool_still_shadows_a_provider():
+    register_dev_tool_provider(lambda host: [_tool("pre")])
+    host = _host(dev_tools=[SimpleNamespace(name="pre", owner=None, origin="provider")])
+    apply_dev_tool_providers(host)
+    assert [t.name for t in host.dev_tools] == ["pre"]
+    assert len(host.shadowed_dev_tools) == 1

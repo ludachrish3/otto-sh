@@ -22,7 +22,6 @@ from ..config import (
 )
 from ..config.env import (
     DEFAULT_LOG_RETENTION_DAYS,
-    FIELD_DEFAULT_ENV_VAR,
     FIELD_PRODUCT_ENV_VAR,
     LAB_ENV_VAR,
     LOG_DAYS_ENV_VAR,
@@ -59,13 +58,6 @@ so root's level is readable here — but it is process state anything can move
 ``log_cli``), and "did the operator ask for debug?" is a question about this
 invocation rather than about the handler stack it happens to have.
 """
-
-_field_default = os.environ.get(FIELD_DEFAULT_ENV_VAR) is not None
-"""Determines the default for debug or field. If OTTO_FIELD_DEFAULT is set to
-anything at all, then field is the default. A bare env-presence check —
-deliberately NOT ``get_env()``, which runs repo discovery: importing the CLI
-must never parse repo settings, or a malformed ``settings.toml`` would brick
-``otto --help`` before argv is even seen."""
 
 DESCRIPTION = f"""
 O.T.T.O. (Our Trusty Testing Orchestrator)
@@ -536,14 +528,18 @@ def main(  # noqa: PLR0913 — CLI command params
             help="Directory in which to store logs and artifacts.",
         ),
     ] = Path(),
-    debug: Annotated[  # noqa: ARG001 — required by Typer CLI option signature; consumed by framework before function body
+    field: Annotated[
         bool,
         typer.Option(
             "--field/--debug",
             envvar=FIELD_PRODUCT_ENV_VAR,
-            help="Use field or debug products.",
+            help=(
+                "Install the field or the debug variant of each product: a \\[\\[products]] "
+                'entry with `variant = "field"` is used only under --field, one with '
+                '`variant = "debug"` only under --debug, one without under both.'
+            ),
         ),
-    ] = _field_default,
+    ] = False,
     log_days: Annotated[
         int,
         typer.Option(
@@ -713,6 +709,10 @@ def main(  # noqa: PLR0913 — CLI command params
     global _root_log_level  # noqa: PLW0603 — one per-invocation value, read by entry()'s frame
     _root_log_level = log_level
 
+    from ..context import set_cli_variant
+
+    set_cli_variant("field" if field else "debug")
+
     ctx.meta["_otto_root_options"] = RootOptions(
         labs=labs,
         xdir=xdir,
@@ -724,6 +724,7 @@ def main(  # noqa: PLR0913 — CLI command params
         probe=probe,
         holder=holder,
         skip_reservation_check=skip_reservation_check,
+        field=field,
         include_projects=tuple(include_projects or ()),
         exclude_projects=tuple(exclude_projects or ()),
     )

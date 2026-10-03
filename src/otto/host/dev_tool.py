@@ -20,9 +20,10 @@ Dev tools are customized in repo config or code, never lab data: a
 ``[[dev_tools]]`` entry in ``.otto/settings.toml`` declares the common cases
 (see :mod:`otto.declared` and :func:`register_dev_tool_kind`), and a
 :func:`register_dev_tool_provider` callback from a ``.otto`` init module
-remains the code fallback for whatever the match table cannot express —
-declared entries apply first at ingest, so a provider dev tool whose name a
-declared entry claimed stands down. Lab data stays tooling-agnostic and
+remains the code route for whatever the match table cannot express. A dev tool
+is defined in data OR in code: a provider dev tool whose name a declared entry
+holds is refused at ingest, naming both
+(:func:`otto.host.product.defined_twice`). Lab data stays tooling-agnostic and
 evolves independently of dev-tool code; declaring dev tools *in* lab data is
 deliberately **not** supported.
 """
@@ -35,7 +36,7 @@ from typing import TYPE_CHECKING
 from ..declared import KindRegistry, declared_for_host
 from ..registry import Ref, caller_module, get_registering_repo, refuse_during_test_load
 from ..result import Result
-from .product import ProductPlan, unplanned
+from .product import ProductPlan, defined_twice, unplanned
 
 if TYPE_CHECKING:
     from ..declared import DeclaredEntry
@@ -184,7 +185,10 @@ def register_dev_tool_provider(provider: DevToolProvider) -> None:
 
 
 DEV_TOOL_KINDS: KindRegistry["DevTool"] = KindRegistry(
-    "dev tool kind", register_hint="otto.host.dev_tool.register_dev_tool_kind()"
+    "dev tool kind",
+    register_hint="otto.host.dev_tool.register_dev_tool_kind()",
+    class_factory=Ref("otto.host.shell_kind:class_entry"),
+    class_resolver=Ref("otto.host.shell_kind:resolve_class"),
 )
 """Named factories for settings-declared dev tools (spec 2026-09-01 §5-§6).
 
@@ -219,9 +223,9 @@ def apply_declared_dev_tools(host: "Host") -> None:
     """Attach the settings-declared dev tools admitted for *host*.
 
     Called at the ingest chokepoint BEFORE :func:`apply_dev_tool_providers`:
-    running first is the fallback contract — the provider loop's name-dedup
-    then skips any code dev tool whose name a declared entry already claimed,
-    so config wins and code fills the gaps. Entry collection and the §5
+    running first is what lets the provider loop enforce the one-definition
+    rule: a provider instance whose name a declared entry holds is refused,
+    naming both. Entry collection and the §5
     ``[project]`` gate live in :func:`otto.declared.declared_for_host`;
     matching, first-match-wins and owner stamping in
     :meth:`~otto.declared.KindRegistry.build`. A dev tool whose name the host
@@ -252,7 +256,9 @@ def apply_dev_tool_providers(host: "Host") -> None:
     ``host.dev_tools`` — never onto ``host.products``, so the tool lifecycle
     stays out of the product lifecycle's answers. A dev tool whose
     :attr:`DevTool.name` already appears on the host is skipped (deduplication
-    guards two overlapping providers). A provider that raises propagates — a
+    guards two overlapping providers) — unless the holder is a declared entry,
+    which is a refusal: a dev tool is defined in data OR in code
+    (:func:`otto.host.product.defined_twice`). A provider that raises propagates — a
     misconfigured provider fails ingest loudly.
 
     Each attached dev tool is stamped with :attr:`DevTool.owner` — the repo that
@@ -290,6 +296,9 @@ def apply_dev_tool_providers(host: "Host") -> None:
             tool.kind = "code"
             tool.origin = "provider"
             if tool.name in seen:
+                holder = next((t for t in host.dev_tools if t.name == tool.name), None)
+                if holder is not None and getattr(holder, "origin", "provider") == "declared":
+                    raise ValueError(defined_twice("dev_tools", holder, provider, provider_owner))
                 logger.debug(
                     "dev tool provider: skipping duplicate %r on host %s",
                     tool.name,

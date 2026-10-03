@@ -691,6 +691,11 @@ class RootOptions:
     dry_run: bool
     holder: "str | None"
     skip_reservation_check: bool
+    field: bool = False
+    """``--field``: the run installs each product's field variant (spec
+    2026-10-03 §5); ``False`` is ``--debug``, the default. The root callback
+    also writes it to :func:`otto.context.set_cli_variant`, which is what the
+    registry and providers read."""
     probe: bool = False
     """``--probe``: under a dry run, open a connection to each host the command
     names (spec §3). Defaults so a caller that predates the flag still builds;

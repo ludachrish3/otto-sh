@@ -11,8 +11,6 @@ version = "0.1.0"
 libs = ["libs"]
 init = [
     "gs_example",           # frames, parsers, proxies, session setups
-    "gs_example.products",  # the product provider
-    "gs_example.dev_tools", # the dev-tool provider
     "gs_example.actions",   # this repo's ProjectActions
 ]
 # doc: end libs
@@ -28,3 +26,27 @@ paths = ["lab_data"]
 lab_patterns = ["busybox"]
 host_patterns = ["bb.*-qemu"]
 # doc: end project
+
+# doc: begin product
+[[products]]
+name = "agent"
+class = "gs_example.products:AgentBinary"
+artifact = "build/agent"
+stage_dir = "/opt/agent"
+uninstall = "/opt/agent/agent --uninstall; rm -rf /opt/agent"
+check = "test -x /opt/agent/agent"
+cov_dir = "/var/cov/agent"
+match = { os_type = "unix" }
+# doc: end product
+
+# doc: begin dev-tool
+[[dev_tools]]
+name = "trace-probe"
+kind = "shell"
+artifact = "tools/probe.sh"
+stage_dir = "/opt/agent/tools"
+install = "chmod +x /opt/agent/tools/probe.sh"
+uninstall = "rm -f /opt/agent/tools/probe.sh"
+check = "test -x /opt/agent/tools/probe.sh"
+match = { os_type = "unix" }
+# doc: end dev-tool

@@ -392,3 +392,63 @@ def test_source_lab_is_stamped_before_the_providers_run():
     )
 
     assert seen == ["somelab"], "the provider ran before the lab stamp landed"
+
+
+def _declared(name, owner="declrepo"):
+    """A product the declared loop attached: origin 'declared', owner stamped."""
+    return SimpleNamespace(name=name, owner=owner, origin="declared")
+
+
+def test_a_provider_name_held_by_a_declared_entry_is_refused_naming_both_sites():
+    from otto.registry import registering_repo
+
+    def products(host):
+        return [_prod("fw")]
+
+    with registering_repo("coderepo"):
+        register_product_provider(products)
+    host = _host(products=[_declared("fw")])
+    with pytest.raises(ValueError, match=r"defined in data OR in code") as e:
+        apply_product_providers(host)
+    assert str(e.value) == (
+        "[[products]] 'fw' (repo declrepo) is also defined by provider "
+        f"{products.__module__}:{products.__qualname__} (repo coderepo) — a product is "
+        "defined in data OR in code; to give a declared entry custom behaviour, set "
+        '`class = "pkg.mod:Class"` on it'
+    )
+
+
+def test_a_provider_name_held_by_a_declared_entry_is_refused_on_the_first_host_both_reach():
+    register_product_provider(lambda host: [_prod("fw")] if host.id == "h2" else [])
+    # The provider returns nothing on h1, so the shared name is only met on h2.
+    h1 = _host(id="h1", products=[_declared("fw")])
+    apply_product_providers(h1)
+    with pytest.raises(
+        ValueError, match=r"\[\[products\]\] 'fw' \(repo declrepo\) is also defined"
+    ):
+        apply_product_providers(_host(id="h2", products=[_declared("fw")]))
+
+
+def test_two_providers_with_one_name_still_shadow_not_refuse():
+    register_product_provider(lambda host: [_prod("dup")])
+    register_product_provider(lambda host: [_prod("dup")])
+    host = _host()
+    apply_product_providers(host)
+    assert [p.name for p in host.products] == ["dup"]
+    assert [p.name for _h, p in host.shadowed_products] == ["dup"]
+
+
+def test_a_preexisting_code_product_still_shadows_a_provider():
+    # origin 'provider' (the Product default): code-vs-code ordering, as before.
+    register_product_provider(lambda host: [_prod("pre")])
+    host = _host(products=[SimpleNamespace(name="pre", owner=None, origin="provider")])
+    apply_product_providers(host)
+    assert [p.name for p in host.products] == ["pre"]
+    assert len(host.shadowed_products) == 1
+
+
+def test_a_provider_registered_outside_any_repo_is_named_as_such_in_the_refusal():
+    register_product_provider(lambda host: [_prod("fw")])
+    host = _host(products=[_declared("fw")])
+    with pytest.raises(ValueError, match=r"\(registered outside any repo\) — a product is defined"):
+        apply_product_providers(host)

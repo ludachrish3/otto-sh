@@ -7,6 +7,7 @@ can fail for a reader.
 """
 
 import ast
+import sys
 from pathlib import Path
 
 import pytest
@@ -259,3 +260,118 @@ def test_the_twin_is_a_real_repo_that_shares_the_examples_project_code() -> None
     assert [p.name for p in repo.libs] == ["libs"]  # ../getting-started/libs, anchored
     assert repo.libs[0].resolve() == (TWIN / "../getting-started/libs").resolve()
     assert repo.creds_settings["backend"] == "json"
+
+
+def test_the_worked_examples_agent_is_a_declared_class_entry() -> None:
+    from otto.host.declared_product import DeclaredProduct
+
+    repo = Repo(sut_dir=EXAMPLE)
+    (agent,) = [e for e in repo.declared_products if e.name == "agent"]
+    assert agent.cls == "gs_example.products:AgentBinary"
+    assert agent.kind is None
+    assert agent.params["artifact"] == "build/agent"
+    assert agent.params["cov_dir"] == "/var/cov/agent"
+    assert "gs_example.products" not in repo.init
+    # The dev tool is data too: a shell entry, with no provider module left in init.
+    (probe,) = [e for e in repo.declared_dev_tools if e.name == "trace-probe"]
+    assert probe.kind == "shell"
+    assert probe.cls is None
+    assert "gs_example.dev_tools" not in repo.init
+    _import_gs_example()
+    from otto.host.product import PRODUCT_KINDS
+
+    host = type(
+        "H",
+        (),
+        {
+            "id": "bb1350-qemu",
+            "source_lab": "",
+            "os_type": "unix",
+            "default_dest_dir": None,
+            "cached_login_home": None,
+        },
+    )()
+    (built,) = PRODUCT_KINDS.build([agent], host)
+    assert isinstance(built, DeclaredProduct)
+    assert type(built).__name__ == "AgentBinary"
+    assert built.plan(host).unchecked == ["install: AgentBinary.install (code; no plan)"]
+
+
+def test_the_versions_fragment_is_a_working_provider() -> None:
+    # Imported INSIDE the test: the module registers its provider at import,
+    # which is the complete pattern the page shows; a module-scope import would
+    # run at collection inside the test-load guard. The registry snapshot
+    # fixture in the root conftest drops the registration afterwards.
+    from otto import context
+    from otto.host import product as product_mod
+
+    _import_gs_example()
+    saved = list(product_mod._PRODUCT_PROVIDERS)
+    try:
+        import importlib
+
+        versions = importlib.import_module("gs_example.versions")
+        host = type(
+            "H",
+            (),
+            {
+                "id": "test1",
+                "os_type": "unix",
+                "element": type("E", (), {"metadata": {"agent_versions": ["1.2", "1.3"]}})(),
+            },
+        )()
+        token = context.set_variant("field")
+        try:
+            built = versions.agents_for(host)
+        finally:
+            context._variant.reset(token)
+        assert [p.name for p in built] == ["agent-1.2", "agent-1.3"]
+        assert all(str(p.artifact).endswith("-field") for p in built)
+        assert all(p.artifact.is_absolute() for p in built)
+        assert any(fn is versions.agents_for for fn, _owner in product_mod._PRODUCT_PROVIDERS)
+    finally:
+        product_mod._PRODUCT_PROVIDERS[:] = saved
+        sys.modules.pop("gs_example.versions", None)
+
+
+@pytest.mark.parametrize(
+    ("element_metadata", "role"),
+    [({"role": "hub"}, "hub"), ({}, "node"), (None, "node")],
+    ids=["hub", "no-role", "no-element"],
+)
+def test_the_agent_install_passes_the_elements_role(element_metadata, role) -> None:
+    import asyncio
+
+    from otto.host.product import PRODUCT_KINDS
+    from otto.result import CommandResult, Results
+    from otto.utils import Status
+
+    repo = Repo(sut_dir=EXAMPLE)
+    (entry,) = [e for e in repo.declared_products if e.name == "agent"]
+    _import_gs_example()
+    ran: list[str] = []
+    element = None
+    if element_metadata is not None:
+        element = type("E", (), {"metadata": element_metadata})()
+
+    class FakeHost:
+        id = "bb1350-qemu"
+        source_lab = ""
+        os_type = "unix"
+        default_dest_dir = "/opt/agent"
+        cached_login_home = "/root"
+
+        async def run(self, cmd):
+            ran.append(cmd)
+            return Results.collect([CommandResult(Status.Success, value="", command=cmd)])
+
+    FakeHost.element = element
+    host = FakeHost()
+    (agent,) = PRODUCT_KINDS.build([entry], host)
+    result = asyncio.run(agent.install(host))
+    assert result.is_ok
+    expected = (
+        "chmod +x /opt/agent/agent && GCOV_PREFIX=/var/cov/agent GCOV_PREFIX_STRIP=3 "
+        f"/opt/agent/agent --install --role {role}"
+    )
+    assert ran == [expected]

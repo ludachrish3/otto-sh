@@ -24,7 +24,6 @@ _OTTO_ENV_VARS = (
     "OTTO_LAB",
     "OTTO_XDIR",
     "OTTO_COMPOSE_SUFFIX",
-    "OTTO_FIELD_DEFAULT",
     "OTTO_FIELD_PRODUCTS",
     "OTTO_LOG_DAYS",
     "OTTO_LOG_LEVEL",
@@ -564,19 +563,21 @@ def test_otto_env_settings_defaults(clean_otto_env):
     assert env.log_days == 30
     assert env.log_level == "INFO"
     assert env.log_rich is False
-    assert env.field_default is None
     assert env.field_products is None
     assert env.compose_suffix is None
+
+
+def test_otto_field_default_is_gone(clean_otto_env):
+    clean_otto_env.setenv("OTTO_FIELD_DEFAULT", "1")
+    assert not hasattr(OttoEnvSettings(), "field_default")
 
 
 def test_otto_env_settings_reads_prefixed_vars(clean_otto_env, tmp_path):
     clean_otto_env.setenv("OTTO_SUT_DIRS", str(tmp_path))
     clean_otto_env.setenv("OTTO_COMPOSE_SUFFIX", "ci")
-    clean_otto_env.setenv("OTTO_FIELD_DEFAULT", "1")
     env = OttoEnvSettings()
     assert env.sut_dirs == [tmp_path]
     assert env.compose_suffix == "ci"
-    assert env.field_default == "1"
 
 
 def test_otto_env_settings_splits_sut_dirs_comma_and_pathsep(clean_otto_env, tmp_path):
@@ -857,11 +858,9 @@ def test_declared_entry_minimal_and_extras_become_params():
     assert entry.match == {}
 
 
-def test_declared_entry_requires_name_and_kind():
+def test_declared_entry_requires_a_name():
     from otto.models.settings import DeclaredEntrySpec
 
-    with pytest.raises(ValidationError, match=r"(?m)^kind\n\s+Field required"):
-        DeclaredEntrySpec.model_validate({"name": "fw"})
     with pytest.raises(ValidationError, match=r"(?m)^name\n\s+Field required"):
         DeclaredEntrySpec.model_validate({"kind": "file"})
 
@@ -979,3 +978,77 @@ def test_a_tag_after_a_registry_path_is_refused_too():
 @pytest.mark.parametrize("name", ["registry.example:5000/team/api", "team/api", "api"])
 def test_an_image_name_without_a_tag_is_accepted(name):
     assert DockerImageSpec.model_validate(_image_entry(name)).name == name
+
+
+# ---------------------------------------------------------------------------
+# DeclaredEntrySpec — reserved keys: name, match, variant, and kind XOR class
+# ---------------------------------------------------------------------------
+
+
+def test_a_class_entry_parses_and_keeps_its_other_keys_as_params():
+    from otto.models.settings import DeclaredEntrySpec
+
+    spec = DeclaredEntrySpec.model_validate(
+        {"name": "fw", "class": "acme.products:Firmware", "artifact": "build/fw.bin"}
+    )
+    entry = spec.to_runtime(owner="acme", base_dir=Path("/repo"), seam="products")
+    assert (entry.kind, entry.cls, entry.variant) == (None, "acme.products:Firmware", None)
+    assert entry.params == {"artifact": "build/fw.bin"}
+    assert entry.kind_label == "acme.products:Firmware"
+
+
+def test_kind_and_class_together_are_refused_naming_the_entry():
+    from otto.models.settings import DeclaredEntrySpec
+
+    with pytest.raises(ValueError, match=r"entry 'fw': set exactly one of `kind` or `class`"):
+        DeclaredEntrySpec.model_validate({"name": "fw", "kind": "shell", "class": "a.b:C"})
+
+
+def test_neither_kind_nor_class_is_refused_naming_the_entry():
+    from otto.models.settings import DeclaredEntrySpec
+
+    with pytest.raises(ValueError, match=r"entry 'fw': set exactly one of `kind` or `class`"):
+        DeclaredEntrySpec.model_validate({"name": "fw", "artifact": "x"})
+
+
+def test_a_class_path_without_a_colon_is_refused_naming_the_entry():
+    from otto.models.settings import DeclaredEntrySpec
+
+    with pytest.raises(
+        ValueError,
+        match=r"entry 'fw': class must be 'package.module:ClassName', got 'acme.Firmware'",
+    ):
+        DeclaredEntrySpec.model_validate({"name": "fw", "class": "acme.Firmware"})
+
+
+@pytest.mark.parametrize("value", ["debug", "field"])
+def test_a_variant_parses(value):
+    from otto.models.settings import DeclaredEntrySpec
+
+    spec = DeclaredEntrySpec.model_validate({"name": "fw", "kind": "shell", "variant": value})
+    assert spec.to_runtime(owner="a", base_dir=Path("/r"), seam="products").variant == value
+
+
+def test_an_unknown_variant_is_refused_naming_the_entry_and_the_two_values():
+    from otto.models.settings import DeclaredEntrySpec
+
+    with pytest.raises(
+        ValueError, match=r"entry 'fw': variant must be 'debug' or 'field', got 'release'"
+    ):
+        DeclaredEntrySpec.model_validate({"name": "fw", "kind": "shell", "variant": "release"})
+
+
+def test_cls_is_not_a_second_spelling_of_class():
+    from otto.models.settings import DeclaredEntrySpec
+
+    spec = DeclaredEntrySpec.model_validate({"name": "fw", "kind": "shell", "cls": "a.b:C"})
+    assert spec.cls is None
+    entry = spec.to_runtime(owner="a", base_dir=Path("/r"), seam="products")
+    assert entry.params == {"cls": "a.b:C"}
+
+
+def test_a_kind_entry_has_the_kind_as_its_label():
+    from otto.models.settings import DeclaredEntrySpec
+
+    spec = DeclaredEntrySpec.model_validate({"name": "fw", "kind": "shell"})
+    assert spec.to_runtime(owner="a", base_dir=Path("/r"), seam="products").kind_label == "shell"

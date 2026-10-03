@@ -95,6 +95,8 @@ def test_list_products_without_lab_exits_zero_and_prints_the_declared_table(list
     assert [c.strip() for c in header.strip("│").split("│")] == [
         "name",
         "kind",
+        "variant",
+        "instrumented",
         "repo",
         "match",
         "artifact",
@@ -105,6 +107,8 @@ def test_list_products_without_lab_exits_zero_and_prints_the_declared_table(list
     assert [c.strip() for c in agent.strip("│").split("│")] == [
         "agent",
         "shell",
+        "any",
+        "missing",
         "test_repo",
         "any host",
         "build/agent.tar.gz",
@@ -170,6 +174,8 @@ def test_list_products_with_lab_shows_hosts_stage_dir_and_not_used(listing_world
     assert [c.strip() for c in header.strip("│").split("│")] == [
         "name",
         "kind",
+        "variant",
+        "instrumented",
         "repo",
         "hosts",
         "artifact",
@@ -179,6 +185,8 @@ def test_list_products_with_lab_shows_hosts_stage_dir_and_not_used(listing_world
     assert [c.strip() for c in agent.strip("│").split("│")] == [
         "agent",
         "shell",
+        "any",
+        "missing",
         "test_repo",
         "host1, host2",
         "build/agent.tar.gz",
@@ -215,9 +223,11 @@ def test_a_provider_product_row_reads_code_and_its_class(listing_world):
     result = _invoke("--lab", "test_lab", "--list-products")
     assert result.exit_code == 0, result.output
     probe = next(line for line in result.output.splitlines() if "probe" in line)
-    assert [c.strip() for c in probe.strip("│").split("│")][:4] == [
+    assert [c.strip() for c in probe.strip("│").split("│")][:6] == [
         "probe",
         "code (ProbeProduct)",
+        "any",
+        "unknown",
         "test_repo",
         "host1",
     ]
@@ -281,6 +291,21 @@ def _rendered_help() -> str:
     return " ".join(plain.split())
 
 
+def test_the_new_columns_render_under_ci_width(listing_world):
+    _declare_two(listing_world)
+    result = _invoke(
+        "--list-products", env={"GITHUB_ACTIONS": "true", "TERM": "dumb", "FORCE_COLOR": ""}
+    )
+    assert result.exit_code == 0, result.output
+    plain = _ANSI.sub("", result.output)
+    for chrome in "│╭╮╰╯─┬┼┴":
+        plain = plain.replace(chrome, " ")
+    words = " ".join(plain.split())
+    assert "variant" in words
+    assert "instrumented" in words
+    assert "agent shell any missing" in words
+
+
 def test_help_describes_both_flags_in_plain_language():
     text = _rendered_help()
     assert "--list-products" in text
@@ -317,3 +342,20 @@ def test_the_lab_name_in_the_title_is_not_read_as_markup(listing_world):
         result = _invoke("--lab", "test_lab", "--list-products")
     assert result.exit_code == 0, result.output
     assert "products in lab lab[x]" in result.output
+
+
+def test_a_name_defined_in_data_and_by_a_provider_fails_the_lab_load_naming_both(listing_world):
+    repo = listing_world
+    repo.declared_products = [_entry(repo, "agent", artifact="build/agent.tar.gz")]
+    repo.project_scope = ProjectScopeConfig([re.compile("test_lab")], [re.compile("host.*")])
+
+    def products(host):
+        return [ProbeProduct("agent")]
+
+    with registering_repo(repo.name):
+        register_product_provider(products)
+    result = _invoke("--lab", "test_lab", "--list-products")
+    assert result.exit_code != 0
+    text = result.output + str(result.exception or "")
+    assert "[[products]] 'agent' (repo test_repo) is also defined by provider" in text
+    assert f"{products.__module__}:{products.__qualname__}" in text

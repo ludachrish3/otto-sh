@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -192,6 +192,33 @@ def set_context(ctx: "OttoContext") -> "Token[OttoContext | None]":
     return _active.set(ctx)
 
 
+Variant = Literal["debug", "field"]
+VARIANTS: tuple[Variant, ...] = ("debug", "field")
+"""The two product variants a run can select (``--field``/``--debug``)."""
+
+_variant: ContextVar[Variant] = ContextVar("otto_variant", default="debug")
+
+
+def variant() -> Variant:
+    """Return the run's product variant — ``"debug"`` unless root ``--field`` chose field.
+
+    Its own ContextVar rather than a field on :class:`OttoContext`: a lab is
+    ingested — every declared entry built, every provider run — inside the
+    CLI's lab load, before an ``OttoContext`` exists, and the variant must be
+    readable there. Read by :meth:`otto.declared.KindRegistry.build` to pick
+    between same-name entries, and by providers that return per-variant
+    instances. A library caller that never set it reads ``"debug"``.
+    """
+    return _variant.get()
+
+
+def set_variant(value: Variant) -> "Token[Variant]":
+    """Set the run's variant; the root CLI callback's one write, before any lab loads."""
+    if value not in VARIANTS:
+        raise ValueError(f"variant must be 'debug' or 'field', got {value!r}")
+    return _variant.set(value)
+
+
 def reset_context(token: "Token[OttoContext | None]") -> None:
     """Restore the context ContextVar to the value it held before the matching ``set_context``."""
     _active.reset(token)
@@ -214,12 +241,33 @@ def set_cli_context(ctx: "OttoContext") -> None:
     _cli_token = set_context(ctx)
 
 
+_variant_token: "Token[Variant] | None" = None
+
+
+def set_cli_variant(value: Variant) -> None:
+    """Set the CLI invocation's variant, remembering the reset token.
+
+    The root callback writes the variant; the console-script entry's
+    ``finally`` (:func:`reset_cli_context`) undoes it. They share no stack
+    frame, so the token lives module-side, exactly as :func:`set_cli_context`
+    keeps the context's.
+    """
+    global _variant_token  # noqa: PLW0603 — module-level singleton/cache
+    _variant_token = set_variant(value)
+
+
 def reset_cli_context() -> None:
-    """Undo :func:`set_cli_context` if it ran; safe to call unconditionally."""
-    global _cli_token  # noqa: PLW0603 — module-level singleton/cache
-    if _cli_token is not None:
-        reset_context(_cli_token)
-        _cli_token = None
+    """Undo :func:`set_cli_context` and :func:`set_cli_variant` if they ran; safe to call always."""
+    global _cli_token, _variant_token  # noqa: PLW0603 — module-level singleton/cache
+    try:
+        if _cli_token is not None:
+            reset_context(_cli_token)
+            _cli_token = None
+    finally:
+        # Each reset stands on its own: the second runs even if the first throws.
+        if _variant_token is not None:
+            _variant.reset(_variant_token)
+            _variant_token = None
 
 
 # Deferred to here (rather than the top-of-file imports) on purpose: importing

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from .connections import ConnectionManager as ConnectionManager
     from .connections import build_term_backend as build_term_backend
     from .connections import register_term_backend as register_term_backend
+    from .declared_product import DeclaredProduct as DeclaredProduct
     from .dev_tool import DevTool as DevTool
     from .dev_tool import DevToolProvider as DevToolProvider
     from .dev_tool import register_dev_tool_provider as register_dev_tool_provider
@@ -105,6 +106,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "ConnectionManager": "otto.host.connections",
     "build_term_backend": "otto.host.connections",
     "register_term_backend": "otto.host.connections",
+    "DeclaredProduct": "otto.host.declared_product",
     "DevTool": "otto.host.dev_tool",
     "DevToolProvider": "otto.host.dev_tool",
     "register_dev_tool_provider": "otto.host.dev_tool",
@@ -187,6 +189,7 @@ __all__ = [
     "CommandPowerController",
     "CommandResult",
     "ConnectionManager",
+    "DeclaredProduct",
     "DevTool",
     "DevToolProvider",
     "DockerContainerHost",

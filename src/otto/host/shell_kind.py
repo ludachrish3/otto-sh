@@ -2,94 +2,36 @@
 The built-in ``shell`` kind — the zero-code declared product/dev tool.
 
 One artifact, staged via :meth:`~otto.host.host.Host.put`, with optional
-``install``/``uninstall``/``check`` command strings run on the host. One
-class serves BOTH seams: :class:`~otto.host.product.Product` and
-:class:`~otto.host.dev_tool.DevTool` deliberately share the same abstract
-surface, so a single concrete type satisfies the two contracts — which seam
-an instance lives in is decided by the registry that built it, never by the
-type.
+``install``/``uninstall``/``check`` command strings run on the host. The
+runtime form is :class:`~otto.host.declared_product.DeclaredProduct`; this
+module maps an entry's params onto it — and, through :func:`build_declared`,
+onto any ``class =`` subclass — so the two routes cannot drift.
 
-The defaults are the honest floor of today's Host surface: without an
-``install`` command, install is a no-op success (staging placed the
-artifact); without ``check``, ``is_installed`` answers False — otto assumes
-not installed and re-stages, which is safe for the simple cases this kind
-serves. ``host.exists()`` does not exist yet (see
-:class:`~otto.host.product.ShellProduct`); when the remote file-ops phase
-lands, the ``check`` default upgrades to an artifact-existence test.
 Anything richer than this is a repo-registered kind — the mechanism working
 as intended, not a limitation.
 """
 
+import dataclasses
+import importlib
+import inspect
 import string
-from dataclasses import dataclass
+import types
+import typing
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from typing_extensions import override
-
 from ..declared import DeclaredEntry
-from ..result import Result
-from ..utils import Status, anchor_path
-from .dev_tool import DevTool
-from .product import (
-    ProductPlan,
-    ShellProduct,
-    cov_dir_of_name,
-    planned_stage_dir,
-    put_line,
-    validate_stage_dir,
-)
+from ..utils import anchor_path
+from .declared_product import DeclaredProduct
+from .product import cov_dir_of_name, validate_stage_dir
 
 if TYPE_CHECKING:
     from .host import Host
 
 
-@dataclass
-class DeclaredShell(ShellProduct, DevTool):
-    """A ``kind = "shell"`` entry's runtime form (both seams).
-
-    ``stage`` is :class:`~otto.host.product.ShellProduct`'s (``host.put``);
-    the three remaining hooks run the declared command strings, or take the
-    module docstring's honest defaults when a string is absent.
-    """
-
-    install_cmd: str | None = None
-    uninstall_cmd: str | None = None
-    check_cmd: str | None = None
-
-    @override
-    async def install(self, host: "Host") -> Result:
-        if self.install_cmd is None:
-            return Result(Status.Success)
-        return await host.run(self.install_cmd)
-
-    @override
-    async def uninstall(self, host: "Host") -> Result:
-        if self.uninstall_cmd is None:
-            return Result(Status.Success)
-        return await host.run(self.uninstall_cmd)
-
-    @override
-    async def is_installed(self, host: "Host") -> bool:
-        if self.check_cmd is None:
-            return False
-        return (await host.run(self.check_cmd)).status is Status.Success
-
-    @override
-    def plan(self, host: "Host") -> ProductPlan:
-        # The seam the entry was declared in, as the registry stamped it; an
-        # object built by hand carries no entry and reads as a product.
-        seam = self.source_entry.seam if self.source_entry is not None else "products"
-        noun = "dev tool" if seam == "dev_tools" else "product"
-        where = planned_stage_dir(self.stage_dir, host, who=f"{noun} {self.name!r}")
-        if where.refusal is not None:
-            return ProductPlan(unchecked=[where.refusal])
-        return ProductPlan(
-            stage=[put_line(self.artifact, where.directory)],
-            install=[] if self.install_cmd is None else [self.install_cmd],
-            uninstall=[] if self.uninstall_cmd is None else [self.uninstall_cmd],
-            unchecked=[] if where.unchecked is None else [where.unchecked],
-        )
+def _who(entry: DeclaredEntry) -> str:
+    """``kind 'shell'`` or ``class 'pkg.mod:Sub'`` — what the entry wrote."""
+    return f"kind {entry.kind!r}" if entry.kind is not None else f"class {entry.cls!r}"
 
 
 def str_param(
@@ -104,7 +46,7 @@ def str_param(
     if value is None:
         if required:
             raise ValueError(
-                f"[[{entry.seam}]] {entry.name!r}: kind {entry.kind!r} requires an {key!r} param"
+                f"[[{entry.seam}]] {entry.name!r}: {_who(entry)} requires an {key!r} param"
             )
         return None
     if not isinstance(value, str):
@@ -236,8 +178,102 @@ def str_list_param(entry: DeclaredEntry, params: dict[str, Any], key: str) -> li
     return list(value)
 
 
-def _shell_kind(entry: DeclaredEntry, host: "Host") -> DeclaredShell:  # noqa: ARG001 — required by the KindRegistry factory signature Callable[[DeclaredEntry, Host], T]; this simple kind ignores host
-    """Build a :class:`DeclaredShell` from a validated entry's params."""
+_BASE_FIELDS = frozenset(f.name for f in dataclasses.fields(DeclaredProduct))
+"""The fields every DeclaredProduct has: mapped by the shell keys, never by name."""
+
+
+def _own_hints(cls: type[DeclaredProduct]) -> dict[str, Any]:
+    """Resolve the annotations *cls* and its subclass bases declare, never the base's.
+
+    :func:`typing.get_type_hints` on a subclass also evaluates every base's
+    annotations, and the product base names types it only imports under
+    ``TYPE_CHECKING`` — so each class between *cls* and
+    :class:`~otto.host.declared_product.DeclaredProduct` is resolved on its
+    own, in its own module's namespace (a user class may use string annotations).
+    Only names that are dataclass fields are resolved: a ``ClassVar``/``Final``
+    declaration is never a field, and :func:`typing.get_type_hints` refuses it
+    once it is a string.
+    """
+    hints: dict[str, Any] = {}
+    for klass in reversed(cls.__mro__):
+        if klass is DeclaredProduct or not issubclass(klass, DeclaredProduct):
+            continue
+        # The class came in through an import, so its module is loaded by
+        # construction: import_module is the cached lookup, never a question.
+        module = importlib.import_module(klass.__module__)
+        field_names = {f.name for f in dataclasses.fields(klass)}
+        own = {n: a for n, a in inspect.get_annotations(klass).items() if n in field_names}
+        hints.update(
+            typing.get_type_hints(
+                types.SimpleNamespace(__annotations__=own),
+                globalns=vars(module),
+                localns=dict(vars(klass)),
+            )
+        )
+    return hints
+
+
+def _subclass_fields(
+    entry: DeclaredEntry, cls: type[DeclaredProduct], params: dict[str, Any]
+) -> dict[str, Any]:
+    """Pop the keys that are *cls*'s own dataclass fields off *params*, checked by annotation.
+
+    ``str``/``int``/``bool``/``Path``/``list[str]`` annotations are checked
+    (``Path`` is built from a string, in whichever domain the subclass means);
+    any other annotation passes the TOML value through verbatim — the
+    subclass knows what it asked for. A field without a default is required.
+    """
+    who = f"[[{entry.seam}]] {entry.name!r}: class {entry.cls!r}"
+    try:
+        hints = _own_hints(cls)
+    except Exception as e:  # a bad annotation on a user class is a settings error, named
+        raise ValueError(f"{who}: its annotations cannot be resolved ({e})") from e
+    out: dict[str, Any] = {}
+    for f in dataclasses.fields(cls):
+        if f.name in _BASE_FIELDS or not f.init:
+            continue
+        if f.name not in params:
+            if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING:
+                raise ValueError(f"{who} requires a {f.name!r} key")
+            continue
+        value = params.pop(f.name)
+        ann = hints.get(f.name, f.type)
+        if ann is bool:
+            if not isinstance(value, bool):
+                raise ValueError(f"{who}: {f.name!r} must be a bool, got {value!r}")
+        elif ann is int:
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"{who}: {f.name!r} must be an integer, got {value!r}")
+        elif ann is str:
+            if not isinstance(value, str):
+                raise ValueError(f"{who}: {f.name!r} must be a string, got {value!r}")
+        elif ann is Path:
+            if not isinstance(value, str):
+                raise ValueError(f"{who}: {f.name!r} must be a path string, got {value!r}")
+            value = Path(value)
+        elif ann == list[str] and (
+            not isinstance(value, list) or not all(isinstance(v, str) for v in value)
+        ):
+            raise ValueError(f"{who}: {f.name!r} must be a list of strings, got {value!r}")
+        out[f.name] = value
+    return out
+
+
+def _own_field_names(cls: type[DeclaredProduct]) -> list[str]:
+    return [f.name for f in dataclasses.fields(cls) if f.name not in _BASE_FIELDS and f.init]
+
+
+def build_declared(
+    entry: DeclaredEntry,
+    host: "Host",  # noqa: ARG001 — the KindRegistry factory signature; this kind ignores host
+    cls: type[DeclaredProduct],
+) -> DeclaredProduct:
+    """Build *cls* from a validated entry's params.
+
+    *cls* is :class:`~otto.host.declared_product.DeclaredProduct` or a subclass.
+    The ``shell`` kind and a ``class =`` entry share this one mapping, so a
+    key means the same thing on both routes.
+    """
     params = dict(entry.params)
     if entry.seam == "dev_tools":
         for key in _COVERAGE_PARAMS:
@@ -257,17 +293,19 @@ def _shell_kind(entry: DeclaredEntry, host: "Host") -> DeclaredShell:  # noqa: A
         raise ValueError(f"[[{entry.seam}]] {entry.name!r}: 'cov_dir' must not be empty")
     debug_log_globs = str_list_param(entry, params, "debug_log_globs")
     instrumented = bool_param(entry, params, "instrumented")
+    extra = _subclass_fields(entry, cls, params)
     if params:
+        valid = ", ".join([_VALID, *_own_field_names(cls)])
         raise ValueError(
-            f"[[{entry.seam}]] {entry.name!r}: kind 'shell' got unknown param(s): "
-            f"{sorted(params)}; valid: {_VALID}"
+            f"[[{entry.seam}]] {entry.name!r}: {_who(entry)} got unknown param(s): "
+            f"{sorted(params)}; valid: {valid}"
         )
     if entry.seam == "products":
         values = {"cov_dir": cov_dir or cov_dir_of_name(entry.name), "name": entry.name}
         install = substitute_placeholders(entry, "install", install, values)
         uninstall = substitute_placeholders(entry, "uninstall", uninstall, values)
         check = substitute_placeholders(entry, "check", check, values)
-    return DeclaredShell(
+    return cls(
         # Local path: forward slashes in TOML, anchored to the declaring repo
         # (never the CWD); stage_dir stays in the HOST's path domain — host.put
         # resolves it against the host's default_dest_dir (spec §4).
@@ -280,4 +318,38 @@ def _shell_kind(entry: DeclaredEntry, host: "Host") -> DeclaredShell:  # noqa: A
         uninstall_cmd=uninstall,
         check_cmd=check,
         instrumented_override=instrumented,
+        **extra,
     )
+
+
+def _shell_kind(entry: DeclaredEntry, host: "Host") -> DeclaredProduct:
+    """Build the ``shell`` kind: :func:`build_declared` with the base class."""
+    return build_declared(entry, host, DeclaredProduct)
+
+
+def resolve_class(entry: DeclaredEntry) -> type[DeclaredProduct]:
+    """Import a ``class = "pkg.mod:Sub"`` entry's class and check it is a DeclaredProduct subclass.
+
+    The registry runs this before any match, so a typo'd path fails every
+    ingest. It resolves through :class:`~otto.registry.Ref`, so the import
+    runs outside the test-file loading phase like every kind's.
+    """
+    from ..registry import Ref
+
+    if entry.cls is None:  # pragma: no cover — the registry routes only class entries here
+        raise ValueError(f"[[{entry.seam}]] {entry.name!r}: no class to build")
+    try:
+        obj = Ref(entry.cls).resolve()
+    except (ImportError, AttributeError, ValueError) as e:
+        raise ValueError(f"[[{entry.seam}]] {entry.name!r}: class {entry.cls!r} — {e}") from e
+    if not (isinstance(obj, type) and issubclass(obj, DeclaredProduct)):
+        raise ValueError(  # noqa: TRY004 — a settings error, ValueError like every entry refusal
+            f"[[{entry.seam}]] {entry.name!r}: class {entry.cls!r} is not a DeclaredProduct "
+            f"subclass (got {obj!r})"
+        )
+    return obj
+
+
+def class_entry(entry: DeclaredEntry, host: "Host") -> DeclaredProduct:
+    """Build a ``class = "pkg.mod:Sub"`` entry: resolve its class, then :func:`build_declared`."""
+    return build_declared(entry, host, resolve_class(entry))

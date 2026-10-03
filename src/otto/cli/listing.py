@@ -52,12 +52,23 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
         lab = get_context().lab
         result = listing.lab_rows(lab, listing.active_repos(), seam)
         table = Table(title=f"{title} in lab {escape(lab.name)}", box=box.ROUNDED)
-        for column in ("name", "kind", "repo", "hosts", "artifact", "stage dir"):
+        for column in (
+            "name",
+            "kind",
+            "variant",
+            "instrumented",
+            "repo",
+            "hosts",
+            "artifact",
+            "stage dir",
+        ):
             table.add_column(column)
         for row in result.rows:
             table.add_row(
                 escape(row.name),
                 escape(row.kind),
+                escape(row.variant),
+                escape(row.instrumented),
                 escape(row.repo),
                 escape(", ".join(row.hosts)),
                 escape(row.artifact),
@@ -75,12 +86,14 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
     fail_loud_on_bootstrap_errors(ctx)
     repos = listing.active_repos()
     table = Table(title=title, box=box.ROUNDED)
-    for column in ("name", "kind", "repo", "match", "artifact"):
+    for column in ("name", "kind", "variant", "instrumented", "repo", "match", "artifact"):
         table.add_column(column)
     for declared in listing.declared_rows(repos, seam):
         table.add_row(
             escape(declared.name),
             escape(declared.kind),
+            escape(declared.variant),
+            escape(declared.instrumented),
             escape(declared.repo),
             escape(declared.match),
             escape(declared.artifact),

@@ -230,7 +230,9 @@ from pathlib import Path
 from otto.declared import DeclaredEntry, KindRegistry
 
 
-def _entry(name, kind="toy", seam="products", owner="acme", match=None, **params):
+def _entry(
+    name, kind="toy", seam="products", owner="acme", match=None, cls=None, variant=None, **params
+):
     return DeclaredEntry(
         name=name,
         kind=kind,
@@ -239,11 +241,21 @@ def _entry(name, kind="toy", seam="products", owner="acme", match=None, **params
         base_dir=Path("/repo"),
         match=match or {},
         params=params,
+        cls=cls,
+        variant=variant,
     )
 
 
 def _toy_factory(entry, host):
     return SimpleNamespace(name=entry.name, owner=None, built_for=host.id, **entry.params)
+
+
+def _toy_resolver(entry):
+    return object
+
+
+def _boom_resolver(entry):
+    raise ValueError("boom")
 
 
 @pytest.fixture
@@ -295,6 +307,155 @@ def test_build_runs_the_matcher_per_host(kinds):
     entries = [_entry("fw", match={"id": "bb.*"})]
     assert [b.name for b in kinds.build(entries, _host(id="bb1"))] == ["fw"]
     assert kinds.build(entries, _host(id="server1")) == []
+
+
+def _variant_entry(name, variant, **params):
+    return _entry(name, variant=variant, **params)
+
+
+def test_an_entry_without_a_variant_matches_any_run(kinds, monkeypatch):
+    from otto import context
+
+    entries = [_entry("fw", artifact="any.bin")]
+    for run in ("debug", "field"):
+        monkeypatch.setattr(context, "variant", lambda run=run: run)
+        assert [b.artifact for b in kinds.build(entries, _host())] == ["any.bin"]
+
+
+def test_a_variant_entry_is_used_only_on_its_run(kinds, monkeypatch):
+    from otto import context
+
+    entries = [_variant_entry("fw", "field", artifact="field.bin")]
+    monkeypatch.setattr(context, "variant", lambda: "field")
+    assert [b.artifact for b in kinds.build(entries, _host())] == ["field.bin"]
+    monkeypatch.setattr(context, "variant", lambda: "debug")
+    assert kinds.build(entries, _host()) == []
+
+
+def test_variant_entry_order_is_the_authors(kinds, monkeypatch):
+    # Same-name entries resolve first-match-wins in declaration order; a
+    # variant entry is a more specific entry and goes FIRST, like a match.
+    from otto import context
+
+    monkeypatch.setattr(context, "variant", lambda: "field")
+    specific_first = [
+        _variant_entry("fw", "field", artifact="field.bin"),
+        _entry("fw", artifact="any.bin"),
+    ]
+    assert [b.artifact for b in kinds.build(specific_first, _host())] == ["field.bin"]
+    fallback_first = list(reversed(specific_first))
+    assert [b.artifact for b in kinds.build(fallback_first, _host())] == ["any.bin"]
+
+
+def test_a_variant_skipped_entry_does_not_take_the_name(kinds, monkeypatch):
+    from otto import context
+
+    monkeypatch.setattr(context, "variant", lambda: "debug")
+    entries = [
+        _variant_entry("fw", "field", artifact="field.bin"),
+        _entry("fw", artifact="debug.bin"),
+    ]
+    assert [b.artifact for b in kinds.build(entries, _host())] == ["debug.bin"]
+
+
+def test_a_variant_entry_with_an_unknown_kind_still_fails_every_ingest(kinds, monkeypatch):
+    from otto import context
+
+    monkeypatch.setattr(context, "variant", lambda: "debug")
+    entries = [_variant_entry("fw", "field", kind="fiel")]
+    with pytest.raises(ValueError, match=r"fiel"):
+        kinds.build(entries, _host())
+
+
+def test_the_registry_reads_the_real_variant_when_nothing_patches_it(kinds):
+    from otto import context
+
+    token = context.set_variant("field")
+    try:
+        entries = [_variant_entry("fw", "field", artifact="field.bin")]
+        assert [b.artifact for b in kinds.build(entries, _host())] == ["field.bin"]
+    finally:
+        context._variant.reset(token)
+
+
+def test_a_class_entry_is_built_by_the_registrys_class_factory():
+    from otto.registry import Ref
+
+    reg: KindRegistry = KindRegistry(
+        "toy kind",
+        register_hint="register_toy_kind()",
+        class_factory=Ref("tests.unit.test_declared:_toy_factory"),
+        class_resolver=Ref("tests.unit.test_declared:_toy_resolver"),
+    )
+    entry = _entry("fw", kind=None, cls="acme.products:Firmware", artifact="x.bin")
+    (built,) = reg.build([entry], _host(id="h1"))
+    assert (built.name, built.built_for, built.kind, built.origin) == (
+        "fw",
+        "h1",
+        "acme.products:Firmware",
+        "declared",
+    )
+
+
+@pytest.mark.parametrize("skipped_by", ["match", "variant", "taken"])
+def test_a_class_entry_is_resolved_before_match_variant_and_name_checks(skipped_by, monkeypatch):
+    from otto import context
+    from otto.registry import Ref
+
+    monkeypatch.setattr(context, "variant", lambda: "debug")
+    reg: KindRegistry = KindRegistry(
+        "toy kind",
+        register_hint="register_toy_kind()",
+        class_factory=Ref("tests.unit.test_declared:_toy_factory"),
+        class_resolver=Ref("tests.unit.test_declared:_boom_resolver"),
+    )
+    entry = _entry(
+        "fw",
+        kind=None,
+        cls="acme.products:Firmware",
+        match={"os_version": ">=99"} if skipped_by == "match" else {},
+        variant="field" if skipped_by == "variant" else None,
+    )
+    entries = [entry]
+    if skipped_by == "taken":
+        reg.register("toy", _toy_factory, origin="tests")
+        entries.insert(0, _entry("fw", artifact="first.bin"))
+    with pytest.raises(ValueError, match="boom"):
+        reg.build(entries, _host(os_version="1.0"))
+
+
+@pytest.mark.parametrize(
+    "hooks",
+    [{"class_factory": "_toy_factory"}, {"class_resolver": "_toy_resolver"}],
+)
+def test_a_registry_with_only_one_class_hook_is_refused(hooks):
+    from otto.registry import Ref
+
+    refs = {k: Ref(f"tests.unit.test_declared:{v}") for k, v in hooks.items()}
+    with pytest.raises(ValueError, match=r"`class_factory` and `class_resolver`"):
+        KindRegistry("toy kind", register_hint="register_toy_kind()", **refs)
+
+
+def test_a_class_entry_without_a_class_factory_fails_even_when_taken_and_variant_skipped(
+    kinds, monkeypatch
+):
+    from otto import context
+
+    monkeypatch.setattr(context, "variant", lambda: "debug")
+    entries = [
+        _entry("fw", artifact="first.bin"),
+        _entry("fw", kind=None, cls="acme.products:Firmware", variant="field"),
+    ]
+    with pytest.raises(ValueError, match=r"toy kind registry builds no `class =` entries"):
+        kinds.build(entries, _host())
+
+
+def test_a_registry_without_a_class_factory_refuses_a_class_entry(kinds):
+    entry = _entry("fw", kind=None, cls="acme.products:Firmware")
+    with pytest.raises(
+        ValueError, match=r"\[\[products\]\] 'fw': toy kind registry builds no `class =` entries"
+    ):
+        kinds.build([entry], _host())
 
 
 # ── declared_for_host: repo collection + the §5 targeting gate ───────────────

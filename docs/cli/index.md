@@ -26,7 +26,7 @@ These options are available on every `otto` command:
 | `--xdir, -x` | `OTTO_XDIR` | current dir | Output directory for logs and artifacts |
 | `--include-projects, -I` | | | Force these projects active for this invocation, overriding lab inference — see {doc}`projects` |
 | `--exclude-projects, -E` | | | Switch these projects off for this invocation, overriding lab inference — see {doc}`projects` |
-| `--field / --debug` | `OTTO_FIELD_PRODUCTS` | `--debug` | Use field or debug products |
+| `--field / --debug` | `OTTO_FIELD_PRODUCTS` | `--debug` | Install each product's field or debug variant — a `[[products]]` entry's `variant`; see {ref}`product-variants` |
 | `--log-days` | `OTTO_LOG_DAYS` | `30` | Number of days to retain logs |
 | `--log-level` | `OTTO_LOG_LEVEL` | `INFO` | Logging level |
 | `--rich-log-file / --no-rich-log-file` | `OTTO_LOG_RICH` | `--no-rich-log-file` | Rich formatting in log files |
@@ -118,24 +118,39 @@ otto --lab my_lab --list-products
 ```
 
 ```text
-                           products in lab my_lab
-╭───────┬─────────────────────┬───────┬──────────────┬────────────────────┬────────────╮
-│ name  │ kind                │ repo  │ hosts        │ artifact           │ stage dir  │
-├───────┼─────────────────────┼───────┼──────────────┼────────────────────┼────────────┤
-│ agent │ shell               │ repo1 │ test1, test2 │ build/agent.tar.gz │ /opt/stage │
-│ kcov  │ kmod                │ repo1 │ test1        │ build/kcov.ko      │ login home │
-│ probe │ code (ProbeProduct) │ repo2 │ test3        │                    │            │
-╰───────┴─────────────────────┴───────┴──────────────┴────────────────────┴────────────╯
+                                             products in lab my_lab
+╭───────┬─────────────────────┬─────────┬──────────────┬───────┬──────────────┬────────────────────┬────────────╮
+│ name  │ kind                │ variant │ instrumented │ repo  │ hosts        │ artifact           │ stage dir  │
+├───────┼─────────────────────┼─────────┼──────────────┼───────┼──────────────┼────────────────────┼────────────┤
+│ agent │ shell               │ any     │ unknown      │ repo1 │ test1, test2 │ build/agent.tar.gz │ /opt/stage │
+│ kcov  │ kmod                │ any     │ yes          │ repo1 │ test1        │ build/kcov.ko      │ login home │
+│ probe │ code (ProbeProduct) │ any     │ unknown      │ repo2 │ test3        │                    │            │
+╰───────┴─────────────────────┴─────────┴──────────────┴───────┴──────────────┴────────────────────┴────────────╯
 not used in this lab:
   fw (embedded, repo2): no host matches
 ```
 
-The three reasons an entry is not used are `no host matches`, `outside <repo>'s
+The reasons an entry is not used are `no host matches`, `outside <repo>'s
 [project] scope` (the repo's `[project]` table does not target any host of the
-lab; see {ref}`project-scope-required`), and `shadowed by an earlier entry
-named '<name>'` — the first entry with a name wins on a host. A provider
-product dropped because a declared entry already held its name reads `shadowed
-by the declared entry named '<name>'`.
+lab; see {ref}`project-scope-required`), `variant 'field' (run is debug)` (see
+below), and `shadowed by an earlier entry named '<name>'` — the first entry
+with a name wins on a host. A provider product whose name a declared entry
+holds is not listed at all: the lab refuses to load, naming both
+({ref}`one-definition`).
+
+Two more columns answer, from the otto machine alone, what a debug build is
+for: `variant` is the entry's `variant` (`any` when it has none, and for
+every provider product — a provider decides per run), and `instrumented` is
+whether the artifact on disk carries coverage instrumentation — `yes`, `no`,
+`unknown` (an archive the scan cannot see inside, or a code product that does
+not say) or `missing` (the artifact is not built). An entry passed over for
+its variant reads `variant 'field' (run is debug)` under *not used*.
+
+Both listings answer from local configuration and files present on this
+machine: the repos' settings, the lab's data, the artifacts' bytes. Neither
+opens a connection, runs a command, or needs the bed to be up. What is
+installed *right now* is `otto run status`'s question
+({doc}`run/defaults`), and the counters are `otto cov`'s.
 
 ## Environment variables
 

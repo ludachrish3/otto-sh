@@ -42,6 +42,7 @@ local and remote machines.
    interface
    interact
    product
+   declared_product
    dev_tool
    shell_kind
    embedded_kind

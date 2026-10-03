@@ -135,24 +135,22 @@ def test_preexisting_name_blocks_a_declared_entry(seam):
     assert pre.owner is None
 
 
-def test_declared_beats_a_same_name_provider_in_chokepoint_order(seam):
-    # The fallback contract: declared applies FIRST at the chokepoint, so the
-    # provider loop's own seen-dedup skips its same-name instance.
+def test_a_declared_name_also_returned_by_a_provider_is_refused_at_the_chokepoint(seam):
     from otto.registry import registering_repo
 
     seam.declared.append(_entry("fw", seam.seam))
     with registering_repo("coderepo"):
-        seam.register_provider(
-            lambda host: [
-                SimpleNamespace(name="fw", owner=None),
-                SimpleNamespace(name="extra", owner=None),
-            ]
-        )
+        seam.register_provider(lambda host: [SimpleNamespace(name="fw", owner=None)])
     host = _host()
     seam.apply_declared(host)
-    seam.apply_providers(host)
-    attached = getattr(host, seam.attr)
-    assert [(a.name, a.owner) for a in attached] == [("fw", "declrepo"), ("extra", "coderepo")]
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"\[\[{seam.seam}\]\] 'fw' \(repo declrepo\) is also defined by provider "
+            r".*\(repo coderepo\)"
+        ),
+    ):
+        seam.apply_providers(host)
 
 
 def test_two_declared_entries_same_name_first_in_order_wins(seam):
@@ -286,21 +284,9 @@ async def test_shell_kind_commands_run_on_the_host():
 # ── factory chokepoint ───────────────────────────────────────────────────────
 
 
-def test_factory_applies_declared_before_providers_after_the_lab_stamp(monkeypatch):
-    """End to end: a fake repo's [[products]]/[[dev_tools]] entries land on a
-    factory-built host, beat same-name providers on BOTH seams, and the gate
-    saw the stamped lab.
-
-    Kills: (a) omitting either apply_declared_* call; (b) placing either after
-    its provider apply (the provider would win the name); (c) placing them
-    above the source_lab stamp (the gate would judge "" and this scoped repo
-    would be skipped, attaching nothing). Symmetric over both seams — a fix
-    that pins only apply_declared_products would leave apply_declared_dev_tools
-    droppable/reorderable with the whole suite green.
-    """
+def _factory_world(monkeypatch):
+    """A scoped fake repo declaring one product and one dev tool for ``probe-box.*``."""
     import otto.config as config_mod
-    from otto.host.factory import create_host_from_dict
-    from otto.registry import registering_repo
 
     product_entry = DeclaredEntry(
         name="fw",
@@ -329,13 +315,12 @@ def test_factory_applies_declared_before_providers_after_the_lab_stamp(monkeypat
     monkeypatch.setattr(config_mod, "get_repos", lambda: [repo])
     monkeypatch.setattr(config_mod, "get_ordered_repos", lambda: [repo])
     monkeypatch.setattr(config_mod, "is_bootstrapped", lambda: True)
-    with registering_repo("coderepo"):
-        product_mod.register_product_provider(lambda host: [SimpleNamespace(name="fw", owner=None)])
-        dev_tool_mod.register_dev_tool_provider(
-            lambda host: [SimpleNamespace(name="probe", owner=None)]
-        )
 
-    host = create_host_from_dict(
+
+def _factory_host():
+    from otto.host.factory import create_host_from_dict
+
+    return create_host_from_dict(
         {
             "os_type": "unix",
             "ip": "10.0.0.9",
@@ -345,13 +330,68 @@ def test_factory_applies_declared_before_providers_after_the_lab_stamp(monkeypat
         element=Element("probe-box"),
     )
 
-    (fw,) = host.products
-    assert (fw.name, fw.owner) == ("fw", "declrepo"), "declared must win over the provider"
-    assert fw.artifact == Path("/repo/build/fw.bin")
 
-    (probe,) = host.dev_tools
-    assert (probe.name, probe.owner) == ("probe", "declrepo"), "declared must win over the provider"
+def test_factory_applies_declared_entries_alongside_providers_after_the_lab_stamp(monkeypatch):
+    """End to end: a fake repo's [[products]]/[[dev_tools]] entries land on a
+    factory-built host next to differently-named provider instances on BOTH
+    seams, and the gate saw the stamped lab.
+
+    Kills: (a) omitting either apply_declared_* call; (c) placing either above
+    the source_lab stamp (the gate would judge "" and this scoped repo would be
+    skipped, attaching nothing). Symmetric over both seams.
+    """
+    from otto.registry import registering_repo
+
+    _factory_world(monkeypatch)
+    with registering_repo("coderepo"):
+        product_mod.register_product_provider(
+            lambda host: [SimpleNamespace(name="extra", owner=None, cov_dir="/tmp/extra")]
+        )
+        dev_tool_mod.register_dev_tool_provider(
+            lambda host: [SimpleNamespace(name="extra-tool", owner=None)]
+        )
+
+    host = _factory_host()
+
+    fw, extra = host.products
+    assert [(fw.name, fw.owner), (extra.name, extra.owner)] == [
+        ("fw", "declrepo"),
+        ("extra", "coderepo"),
+    ]
+    assert fw.artifact == Path("/repo/build/fw.bin")
+    probe, extra_tool = host.dev_tools
+    assert [(probe.name, probe.owner), (extra_tool.name, extra_tool.owner)] == [
+        ("probe", "declrepo"),
+        ("extra-tool", "coderepo"),
+    ]
     assert probe.artifact == Path("/repo/tools/probe.sh")
+
+
+@pytest.mark.parametrize(("seam_name", "name"), [("products", "fw"), ("dev_tools", "probe")])
+def test_factory_refuses_a_provider_name_a_declared_entry_holds(monkeypatch, seam_name, name):
+    """The refusal needs the declared loop to run BEFORE the provider loop on each seam.
+
+    Kills (b): placing either apply_declared_* after its provider apply — the
+    provider would attach first, the declared instance would be skipped as a
+    duplicate, and nothing would raise.
+    """
+    from otto.registry import registering_repo
+
+    _factory_world(monkeypatch)
+    with registering_repo("coderepo"):
+        if seam_name == "products":
+            product_mod.register_product_provider(
+                lambda host: [SimpleNamespace(name=name, owner=None)]
+            )
+        else:
+            dev_tool_mod.register_dev_tool_provider(
+                lambda host: [SimpleNamespace(name=name, owner=None)]
+            )
+
+    with pytest.raises(
+        ValueError, match=rf"\[\[{seam_name}\]\] '{name}' \(repo declrepo\) is also"
+    ):
+        _factory_host()
 
 
 def _scope_for_factory(labs):

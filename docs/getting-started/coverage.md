@@ -61,10 +61,11 @@ rather than on anything being wrong.
 {doc}`../configuration/declared-products-tools` for the whole `shell`
 kind.
 
-A product written in Python says exactly the same thing. The previous page's
-`AgentBinary` ({doc}`defining-products-and-tools`) declares
-`cov_dir = "/var/cov/agent"` as a class attribute, and reads it back as
-`self.cov_dir` when it composes the command:
+The shell kind sets `GCOV_PREFIX` from data, as above. The previous page's
+`AgentBinary` ({doc}`defining-products-and-tools`) is a `class =` entry for a
+different reason — it passes each element's `role` from lab metadata, a
+per-host value a command string cannot carry — and its overridden `install`
+sets the same variable, from `self.cov_dir`, when it composes the command:
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/products.py
 :language: python
@@ -72,18 +73,11 @@ A product written in Python says exactly the same thing. The previous page's
 :dedent: 4
 ```
 
-One thing does change, and it is the one a code-defined product has to do for
-itself: say whether its build is instrumented. A TOML `[[products]]` entry
-names an `artifact`, so otto scans that file and answers on its own; a Python
-`Product` is asked by calling `instrumented()`, and the base implementation
-answers "cannot tell" — which is the `unknown` verdict below, and counts as
-not instrumented. Override it with the same scan:
-
-```{literalinclude} ../examples/getting-started/libs/gs_example/products.py
-:language: python
-:pyobject: AgentBinary.instrumented
-:dedent: 4
-```
+Whether the build is instrumented needs no code either: the entry names an
+`artifact`, so otto scans that file and answers on its own. A product defined
+purely in Python, with no `artifact` for otto to scan, is asked by calling
+`instrumented()`, and the base implementation answers "cannot tell" — the
+`unknown` verdict below, which counts as not instrumented.
 
 `cov_dir` is optional. Left out, it defaults to `/tmp/<name>`, and either way
 `self.cov_dir` is concrete by the time the product is attached to a host, so
