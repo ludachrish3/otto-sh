@@ -146,6 +146,7 @@ def test_run_instruction_on_container(teardown_after, docker_host, tmp_path):
         _REPO1_USE_CASE,
         "--on",
         docker_host,
+        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )

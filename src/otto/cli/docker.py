@@ -8,7 +8,8 @@ Subcommands::
                                  [--pull] [--build-arg K=V] [--target STAGE]
     otto docker compose build   [USE_CASE [IMAGE...]] [--on H] [--provide CAP=REPO]
                                  [--no-cache] [--pull] [--build-arg K=V]
-    otto docker compose up      [USE_CASE [SERVICE...]] [--on H] [--no-build]
+    otto docker compose up      [USE_CASE [SERVICE...]] [--on H] [--build]
+                                 [--force-recreate] [--pull POLICY]
                                  [--provide CAP=REPO] [--env K=V] [--env-file FILE]
     otto docker compose down    [USE_CASE [SERVICE...]] [--on H] [--provide CAP=REPO]
     otto docker ps              [--on H]
@@ -483,9 +484,26 @@ async def _compose_up(
             autocompletion=_docker_host_completer,
         ),
     ] = None,
-    no_build: Annotated[
-        bool, typer.Option("--no-build", help="Skip the implicit build step before compose up.")
+    build: Annotated[
+        bool,
+        typer.Option(
+            "--build",
+            help=(
+                "Build the participating repos' declared `\\[\\[docker.images]]` first "
+                "(otto's build; docker's own `--build` is not passed)."
+            ),
+        ),
     ] = False,
+    force_recreate: Annotated[
+        bool,
+        typer.Option(
+            "--force-recreate", help="Recreate containers even if their configuration is unchanged."
+        ),
+    ] = False,
+    pull: Annotated[
+        str | None,
+        typer.Option("--pull", help="docker's `--pull` policy, passed through unchanged."),
+    ] = None,
     provide: Annotated[
         list[str] | None,
         typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
@@ -508,9 +526,10 @@ async def _compose_up(
 
     The fragments that take part are chosen by the provider competition, placed
     by --on, a committed pin, or their role, and handed the assembled env
-    mapping. Each participating repo's declared images are built first unless
-    --no-build says otherwise. With no USE_CASE, the only declared one is
-    deployed; naming SERVICEs narrows the deployment to them.
+    mapping. Each participating repo's declared images are built first only
+    with --build; without it, `up` is docker's own, so a service whose image
+    is missing fails with docker's error. With no USE_CASE, the only declared
+    one is deployed; naming SERVICEs narrows the deployment to them.
     """
     # --on is deliberately NOT canonicalized here. `deploy` resolves it
     # itself (it shares one pure prefix with `teardown`, so the two verbs
@@ -530,7 +549,9 @@ async def _compose_up(
             provide=provide_map,
             env=env_map,
             env_files=env_file or None,
-            build=not no_build,
+            build=build,
+            force_recreate=force_recreate,
+            pull=pull,
         )
     )
     if not isinstance(stack, _Declined):

@@ -162,7 +162,7 @@ async def test_compose_build_and_deploy_place_identically(layout, tmp_path):
         _install(lab, repos),
         patch.object(deploy_mod, "build_images", AsyncMock(side_effect=_deploy_spy)),
     ):
-        await deploy("integration", **kw)
+        await deploy("integration", build=True, **kw)
     assert built, layout
     assert set(built) == deployed_on, (
         f"{layout}: compose_build {sorted(built)} vs deploy {sorted(deployed_on)}"

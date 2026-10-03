@@ -21,7 +21,7 @@ fragments to; `compose build`, `compose up` and `compose down` all speak it.
 | `otto docker ps [--on HOST]` | `docker ps` | containers per host | optional |
 | `otto docker use-cases [USE_CASE]` | none | declared inventory, config only | none |
 | `otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]... [--no-cache] [--pull] [--build-arg K=V]...` | `docker compose build` | the images `up` would deploy, placed by the engine | optional collapse |
-| `otto docker compose up [USE_CASE [SERVICE]...] [--on HOST] [--no-build] [--provide]... [--env]... [--env-file]...` | `docker compose up` | deploy a use-case | optional collapse |
+| `otto docker compose up [USE_CASE [SERVICE]...] [--on HOST] [--build] [--force-recreate] [--pull POLICY] [--provide]... [--env]... [--env-file]...` | `docker compose up` | deploy a use-case | optional collapse |
 | `otto docker compose down [USE_CASE [SERVICE]...] [--on HOST] [--provide]...` | `docker compose down` | tear a use-case down | optional collapse |
 
 `build` builds images and nothing else: it needs a host (`--on`), not a
@@ -39,8 +39,9 @@ otto docker ps        [--on HOST]
 otto docker use-cases [USE_CASE]
 otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]...
                           [--no-cache] [--pull] [--build-arg K=V]...
-otto docker compose up    [USE_CASE [SERVICE]...] [--on HOST] [--no-build]
-                          [--provide CAP=REPO]... [--env K=V]... [--env-file PATH]...
+otto docker compose up    [USE_CASE [SERVICE]...] [--on HOST] [--build] [--force-recreate]
+                          [--pull POLICY] [--provide CAP=REPO]... [--env K=V]...
+                          [--env-file PATH]...
 otto docker compose down  [USE_CASE [SERVICE]...] [--on HOST] [--provide CAP=REPO]...
 ```
 
@@ -63,7 +64,7 @@ Container ids are also synthesized at lab-load time **before** any
 declared-but-stopped container auto-starts its compose stack on demand
 (`build=False`, so access never triggers an image build). If the stack
 can't be started — for example its image hasn't been built — the command
-fails fast with a clear "run `otto docker compose up` first" error.
+fails fast with a clear "run `otto docker compose up --build <project>` first" error.
 
 See {doc}`../../architecture/subsystems/docker-hosts` for why a container
 delegates to its parent host instead of being a parallel transport stack.

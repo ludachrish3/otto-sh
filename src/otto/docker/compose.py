@@ -268,7 +268,7 @@ async def compose_up(
     *,
     on: str | None = None,
     project_name: str | None = None,
-    build: bool = True,
+    build: bool = False,
 ) -> dict[str, DockerContainerHost]:
     """Bring up *repo*'s compose stack on a parent host.
 
@@ -284,13 +284,10 @@ async def compose_up(
     ``otto host <id>`` see them.
 
     Args:
-        build: When True (the default) and the repo declares
-            ``[[docker.images]]``, run :func:`~otto.docker.build.build_images` first so locally-
-            built images exist on the parent before compose tries to pull
-            them. Every build runs ``docker build``; docker's layer cache
-            makes it cheap when nothing changed. Pass ``build=False`` if the
-            compose file references only published images (or if you
-            already built explicitly).
+        build: When True and the repo declares ``[[docker.images]]``, run
+            :func:`~otto.docker.build.build_images` first. The default is
+            docker's own: ``up`` builds nothing, and a service whose image is
+            missing gets docker's error.
 
     Raises:
         ~otto.result.CommandNotRunError: this is a dry run. Bringing a stack
@@ -812,7 +809,7 @@ async def composed(
     on: str | None = None,
     project_name: str | None = None,
     own: bool = False,
-    build: bool = True,
+    build: bool = False,
 ) -> AsyncIterator[dict[str, DockerContainerHost]]:
     """Context manager wrapping ``compose_up`` / ``compose_down``.
 

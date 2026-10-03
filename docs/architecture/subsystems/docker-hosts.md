@@ -152,7 +152,7 @@ lab. This walks each repo's `[docker]` settings and registers
    ids nothing registers; both take the same branch, and the divergence is
    pinned by `tests/unit/config/test_completion_container_ids.py`.
 2. Operations against a not-yet-up container produce a clear "run
-   `otto docker compose up` first" error rather than a confusing "no such
+   `otto docker compose up --build <project>` first" error rather than a confusing "no such
    host."
 
 When `compose_up()` runs (from CLI or directly from an instruction),

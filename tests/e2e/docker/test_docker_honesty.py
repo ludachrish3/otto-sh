@@ -15,8 +15,15 @@ import pytest
 from tests._fixtures.paths import PROJECT_ROOT
 from tests._fixtures.sutrepo import make_sut_repo
 
-from ._cli import _WIDE, _run_otto
-from ._honesty import DAEMON_LIST_COMMAND, parse_built_line, parse_daemon_rows
+from ._cli import _REPO1_USE_CASE, _WIDE, _run_otto
+from ._honesty import (
+    DAEMON_LIST_COMMAND,
+    names_a_missing_image,
+    parse_built_line,
+    parse_daemon_rows,
+    parse_project_image_ids,
+    project_image_ids_command,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("docker_e2e")]
 
@@ -42,13 +49,34 @@ def _rmi(host: str, xdir, *refs: str) -> None:
     _run_otto("host", host, "exec", f"docker rmi {' '.join(refs)}", xdir=xdir)
 
 
+def _clear_image(host: str, xdir, reference: str) -> None:
+    """Take *reference* off the daemon on *host*, containers first, best effort.
+
+    `docker rmi -f <tag>` untags the image even under a running container, so the
+    `rm -f` of the containers made from it is belt and braces: it also leaves no
+    container behind pointing at the dangling image. Both steps ignore their exit
+    codes (nothing to remove is not a failure), so the caller asserts the outcome
+    by listing the daemon.
+    """
+    _run_otto(
+        "host",
+        host,
+        "exec",
+        f"docker ps -aq --filter ancestor={reference} | xargs -r docker rm -f",
+        xdir=xdir,
+    )
+    _rmi(host, xdir, "-f", reference)
+
+
 def _references_of(daemon: "dict[str, str]", image_id: str) -> "set[str]":
     return {reference for reference, listed in daemon.items() if listed == image_id}
 
 
-def _build(host: str, xdir, *flags: str):
+def _build(host: str, xdir, *flags: str, check: bool = True):
+    """Build ``repo1-api`` on *host*; *check* False leaves the exit code to the caller."""
     built = _run_otto("docker", "build", "repo1-api", "--on", host, *flags, xdir=xdir, env=_WIDE)
-    assert built.returncode == 0, built.stdout + built.stderr
+    if check:
+        assert built.returncode == 0, built.stdout + built.stderr
     return built
 
 
@@ -202,3 +230,90 @@ def test_a_wrong_dockerfile_path_inside_the_archive_is_dockers_error(docker_host
         or "no such file" in low
     ), output
     assert not _archive_left_on_host(docker_host, tmp_path)
+
+
+def test_compose_up_without_build_on_a_missing_image_is_dockers_error_and_no_build_ran(
+    teardown_after, docker_host, tmp_path
+):
+    """`compose up` builds nothing on its own: the missing image is docker's error.
+
+    The image is cleared first, containers included, so this does not depend on
+    an earlier test's teardown having stopped the stack that used it. It is
+    rebuilt on the way out so a daemon is never left without the image a crashed
+    sibling expected to find. The rebuild asserts only when the body passed: after
+    a failure it is best effort, so it cannot replace the body's failure in the
+    one-line summary.
+    """
+    suffix = teardown_after
+    ok = False
+    try:
+        _clear_image(docker_host, tmp_path, _LATEST)
+        before = _daemon_images(docker_host, tmp_path, allow_empty=True)
+        assert _LATEST not in before, f"could not clear {_LATEST} off {docker_host}:\n{before}"
+
+        up = _run_otto(
+            "docker",
+            "compose",
+            "up",
+            _REPO1_USE_CASE,
+            "--on",
+            docker_host,
+            xdir=tmp_path,
+            compose_suffix=suffix,
+            env=_WIDE,
+        )
+        text = up.stdout + up.stderr
+        assert up.returncode != 0, text
+        # docker's own wording for an image it cannot find, relayed rather than replaced
+        assert names_a_missing_image(text), text
+        # no build ran: none was announced, and the daemon never got one
+        assert "docker build" not in text, text
+        after = _daemon_images(docker_host, tmp_path, allow_empty=True)
+        assert _LATEST not in after, after
+        ok = True
+    finally:
+        _build(docker_host, tmp_path, check=ok)
+
+
+def test_compose_up_with_build_builds_then_deploys_the_id_the_daemon_lists(
+    teardown_after, docker_host, tmp_path
+):
+    """`compose up --build` builds the image and the stack runs the id the daemon lists.
+
+    `up` prints no build report (only `otto docker build` does), so the build is
+    witnessed by the daemon: the image is absent before (cleared first, as in the
+    test above) and listed after, and every container of this stack runs it.
+    """
+    suffix = teardown_after
+    _clear_image(docker_host, tmp_path, _LATEST)
+    before = _daemon_images(docker_host, tmp_path, allow_empty=True)
+    assert _LATEST not in before, f"could not clear {_LATEST} off {docker_host}:\n{before}"
+
+    up = _run_otto(
+        "docker",
+        "compose",
+        "up",
+        _REPO1_USE_CASE,
+        "--on",
+        docker_host,
+        "--build",
+        xdir=tmp_path,
+        compose_suffix=suffix,
+        env=_WIDE,
+    )
+    assert up.returncode == 0, up.stdout + up.stderr
+
+    listed = _daemon_images(docker_host, tmp_path).get(_LATEST)
+    assert listed, f"`--build` left no {_LATEST} on the daemon"
+    inspected = _run_otto(
+        "host",
+        docker_host,
+        "exec",
+        project_image_ids_command(f"unix-{_REPO1_USE_CASE}-{suffix}"),
+        xdir=tmp_path,
+        env=_WIDE,
+    )
+    running = parse_project_image_ids(inspected.stdout + inspected.stderr)
+    assert running, f"the stack has no container on {docker_host}:\n{inspected.stdout}"
+    # `docker images` shows 12 hex digits of the id `docker inspect` shows whole.
+    assert all(image_id.startswith(listed) for image_id in running), (listed, running)

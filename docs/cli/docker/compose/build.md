@@ -21,7 +21,7 @@ compose file refers to, as `docker compose build` has no `--tag` either.
 This runs the **same** provider competition and placement {doc}`up` runs and
 builds only the winners' images, each on the host `up` would deploy it to. A
 displaced mock's image is not built, and an `IMAGE` only a displaced repo
-declares is refused. `compose build` followed by `compose up --no-build`
+declares is refused. `compose build` followed by `compose up`
 deploys exactly what was just built. Library:
 {func}`~otto.docker.compose_build`; a test pins its placement against
 `deploy`'s.

@@ -30,9 +30,10 @@ composes = ["core"]                   # handles from above
 role = "edge"                         # which lab host it wants (below)
 ```
 
-`otto docker compose up integration` now deploys it, and the container comes back as
-the lab host `<parent>.integration.api` — see
-[Container hosts](index.md#container-hosts).
+`otto docker compose up --build integration` builds the declared image and deploys
+it (without `--build`, `up` builds nothing, so an image that is not already on the
+host is docker's pull error), and the container comes back as the lab host
+`<parent>.integration.api` — see [Container hosts](index.md#container-hosts).
 
 Only `name` and `composes` are required; `role` is shown because you need it
 as soon as the repo's scope holds more than one docker-capable host, which is
@@ -423,8 +424,8 @@ See {mod}`otto.docker.adapter` for the API.
 ## Deploying, narrowing, and tearing down
 
 ```console
-$ otto docker compose up integration                 # every service, every resolved host
-$ otto docker compose up integration api db          # just these services
+$ otto docker compose up --build integration        # build the declared images, then every service, every resolved host
+$ otto docker compose up integration api db          # just these services (images already built)
 $ otto docker compose down integration api           # stop and remove just api
 $ otto docker compose down integration               # the whole deployment
 ```

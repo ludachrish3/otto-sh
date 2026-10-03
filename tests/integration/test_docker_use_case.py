@@ -209,7 +209,7 @@ async def test_merged_stack_displaces_mock(parent, project):
     running container.
     """
     try:
-        stack = await deploy(USE_CASE, on=parent.id)
+        stack = await deploy(USE_CASE, on=parent.id, build=True)
 
         assert sorted(stack.hosts) == ["api", "edge", "worker"], (
             f"the merged stack must carry each service exactly once: {sorted(stack.hosts)}"
@@ -270,7 +270,7 @@ async def test_additive_up_converges_and_removes_orphans(parent, project):
        ``--remove-orphans`` reaps them inside this project.
     """
     try:
-        narrowed = await deploy(USE_CASE, on=parent.id, services=["api"])
+        narrowed = await deploy(USE_CASE, on=parent.id, services=["api"], build=True)
         assert sorted(narrowed.hosts) == ["api"], sorted(narrowed.hosts)
         api_first = await _container_of(parent, project, "api")
         assert api_first, f"no running `api` container in {project}"
@@ -279,7 +279,7 @@ async def test_additive_up_converges_and_removes_orphans(parent, project):
                 f"`services=['api']` started {absent!r} as well"
             )
 
-        full = await deploy(USE_CASE, on=parent.id)
+        full = await deploy(USE_CASE, on=parent.id, build=True)
         assert sorted(full.hosts) == ["api", "edge", "worker"], sorted(full.hosts)
         assert await _container_of(parent, project, "api") == api_first, (
             "the convergent second deploy RECREATED the already-running api container"
@@ -315,7 +315,7 @@ async def test_additive_up_converges_and_removes_orphans(parent, project):
 async def test_teardown_removes_stack_and_hosts(parent, lab, project):
     """``teardown`` stops the containers AND unregisters the lab ids."""
     try:
-        stack = await deploy(USE_CASE, on=parent.id)
+        stack = await deploy(USE_CASE, on=parent.id, build=True)
         registered = sorted(host.id for host in stack.hosts.values())
         assert registered == [f"{parent.id}.{USE_CASE}.{s}" for s in ("api", "edge", "worker")], (
             f"container ids are `<parent>.<usecase>.<service>` (spec §9): {registered}"

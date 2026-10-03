@@ -467,6 +467,8 @@ def _up_command(
     services: "Sequence[str]",
     *,
     narrowed: bool,
+    force_recreate: bool = False,
+    pull: "str | None" = None,
 ) -> str:
     """Build the one merged ``up`` command (spec §8 step 4).
 
@@ -474,6 +476,10 @@ def _up_command(
     the YAML with) and an ``env K=V`` prefix (what the compose PROCESS sees,
     which is what a ``${VAR}`` in a shell-ish field resolves against). One
     mapping, two sinks — never two mappings that could disagree.
+
+    *force_recreate* and *pull* are docker's own flags, rendered verbatim: a
+    ``--pull`` policy is docker's to judge, so it is quoted for the shell and
+    never validated here.
     """
     parts: "list[str]" = []
     if env:
@@ -483,6 +489,10 @@ def _up_command(
     for path in compose_paths:
         parts += ["-f", shlex.quote(str(path))]
     parts += ["--env-file", shlex.quote(str(env_file)), "up", "-d", "--remove-orphans"]
+    if force_recreate:
+        parts.append("--force-recreate")
+    if pull is not None:
+        parts += ["--pull", shlex.quote(pull)]
     if narrowed:
         parts += [shlex.quote(s) for s in services]
     return " ".join(parts)
@@ -614,7 +624,9 @@ async def deploy(
     env_files: "Sequence[Path] | None" = None,
     on: "str | None" = None,
     provide: "Mapping[str, str] | None" = None,
-    build: bool = True,
+    build: bool = False,
+    force_recreate: bool = False,
+    pull: "str | None" = None,
     project_name: "str | None" = None,
 ) -> UseCaseStack:
     """Deploy *use_case*: one merged compose stack per resolved host (spec §8).
@@ -629,7 +641,10 @@ async def deploy(
             host's id.
         provide: ``capability -> repo`` overrides for the provider
             competition (§4).
-        build: Build each participating repo's declared images first.
+        build: Build each participating repo's declared images first (the
+            default is docker's: build nothing).
+        force_recreate: Pass ``--force-recreate`` to ``docker compose up``.
+        pull: ``docker compose up``'s ``--pull`` policy, passed through verbatim.
         project_name: Use this compose project on every host instead of
             deriving ``<lab>-<usecase>-<suffix>`` per host.
 
@@ -704,6 +719,8 @@ async def deploy(
                             plan.env,
                             wanted,
                             narrowed=services_filter is not None,
+                            force_recreate=force_recreate,
+                            pull=pull,
                         ),
                     )
                 )
@@ -735,6 +752,8 @@ async def deploy(
                     plan.env,
                     wanted,
                     narrowed=services_filter is not None,
+                    force_recreate=force_recreate,
+                    pull=pull,
                 ),
                 # Unbounded on purpose: this can pull images. See _compose_cmd.
                 timeout=float("inf"),
@@ -969,8 +988,8 @@ async def deployed(
     "which containers did I add", and diffing before/after would fake one.
 
     ``**kw`` is forwarded to both verbs; keys only one of them takes
-    (``env``, ``env_files``, ``build`` / ``stop_timeout``) are routed to the
-    verb that takes them.
+    (``env``, ``env_files``, ``build``, ``force_recreate``, ``pull`` /
+    ``stop_timeout``) are routed to the verb that takes them.
 
     Raises:
         ~otto.host.errors.HostCommandError: the already-up probe could not

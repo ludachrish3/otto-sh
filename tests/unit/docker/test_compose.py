@@ -601,8 +601,34 @@ async def test_compose_up_registers_containers_with_their_declared_users(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_compose_up_builds_images_first_by_default(tmp_path):
-    """compose_up's default is build=True so locally-built images exist before compose runs."""
+async def test_compose_up_builds_images_first_when_asked(tmp_path):
+    """build=True builds locally-declared images before compose runs; the default builds nothing."""
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    call_log: list[str] = []
+
+    async def exec_side_effect(cmd, *_, **__):
+        call_log.append(cmd)
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")
+        if "compose" in cmd and " up -d" in cmd:
+            return _ok()
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\n")
+        if "label=com.docker.compose.project=" in cmd and "service=" in cmd:
+            return _ok("abc123\n")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    await compose_up(repo, lab, build=True)
+    # The build path must have run: `docker build` itself.
+    assert any(c.startswith("docker build ") for c in call_log), call_log
+
+
+@pytest.mark.asyncio
+async def test_compose_up_builds_nothing_by_default(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
@@ -623,34 +649,8 @@ async def test_compose_up_builds_images_first_by_default(tmp_path):
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     await compose_up(repo, lab)
-    # The build path must have run: `docker build` itself.
-    assert any(c.startswith("docker build ") for c in call_log), call_log
-
-
-@pytest.mark.asyncio
-async def test_compose_up_skips_build_when_build_false(tmp_path):
-    repo = _make_repo(tmp_path)
-    lab = _make_lab()
-    parent = lab.hosts["test3"]
-    call_log: list[str] = []
-
-    async def exec_side_effect(cmd, *_, **__):
-        call_log.append(cmd)
-        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
-            return _ok("")
-        if "compose" in cmd and " up -d" in cmd:
-            return _ok()
-        if "config" in cmd and "--services" in cmd:
-            return _ok("api\n")
-        if "label=com.docker.compose.project=" in cmd and "service=" in cmd:
-            return _ok("abc123\n")
-        return _ok()
-
-    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
-
-    await compose_up(repo, lab, build=False)
     assert not any(c.startswith("docker build ") for c in call_log), (
-        "build=False must skip the build path entirely"
+        "the default is docker's own: up builds nothing"
     )
 
 
@@ -960,6 +960,33 @@ async def test_composed_does_not_teardown_when_already_running(tmp_path):
     assert not any(("compose" in c and " down" in c) for c in cmds), (
         "composed(own=False) must skip teardown when stack was already running"
     )
+
+
+@pytest.mark.asyncio
+async def test_composed_builds_nothing_by_default(tmp_path):
+    """composed() shares compose_up's meaning of the default: up builds nothing."""
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    call_log: list[str] = []
+
+    async def exec_side_effect(cmd, *_, **__):
+        call_log.append(cmd)
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\n")
+        if "label=com.docker.compose.project=" in cmd and "service=" in cmd:
+            return _ok("abc123\n")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    async with composed(repo, lab, own=True):
+        pass
+
+    assert any(" up -d" in c for c in call_log), "the stack must have come up"
+    assert not any(c.startswith("docker build ") for c in call_log), call_log
 
 
 @pytest.mark.asyncio

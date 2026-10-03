@@ -69,3 +69,69 @@ def parse_daemon_rows(text: str) -> "dict[str, str]":
         if len(fields) >= 2 and _SHORT_ID.fullmatch(fields[1]):
             rows[fields[0]] = fields[1]
     return rows
+
+
+def project_image_ids_command(compose_project: str) -> str:
+    """The daemon query for the image id every container of *compose_project* runs.
+
+    Asked through ``otto host <id> exec`` like :data:`DAEMON_LIST_COMMAND`, and
+    marked the same way. Stopped containers count (``-a``): a stack that came up
+    and died is still the stack that was deployed.
+    """
+    return (
+        f"docker inspect -f '{MARK} {{{{.Image}}}}' "
+        f"$(docker ps -aq --filter label=com.docker.compose.project={compose_project})"
+    )
+
+
+_IMAGE_ID = re.compile(r"sha256:(?P<id>[0-9a-f]{64})")
+
+
+def parse_project_image_ids(text: str) -> "list[str]":
+    """Return the full image ids the rows :func:`project_image_ids_command` printed in *text*.
+
+    The daemon prints ``sha256:<64 hex>``; the daemon's own ``docker images``
+    listing shows only the first 12 hex digits, so a caller compares by prefix.
+    The echo of the command carries the mark too, followed by the unexpanded
+    ``{{.Image}}`` template, which has no id shape and is skipped.
+    """
+    ids: list[str] = []
+    for line in text.splitlines():
+        _, sep, rest = line.partition(f"{MARK} ")
+        if not sep:
+            continue
+        found = _IMAGE_ID.fullmatch(rest.strip())
+        if found:
+            ids.append(found["id"])
+    return ids
+
+
+_MISSING_IMAGE = re.compile(
+    r"pull access denied"
+    r"|failed to resolve reference"
+    r"|repository does not exist"
+    r"|manifest unknown"
+    r"|manifest for \S+ not found"
+    r"|[\w./-]+:[\w.-]+: not found"
+    r"|no such image"
+    # The registry cannot be reached at all (classic image store: `Get
+    # "https://registry-1.docker.io/v2/": dial tcp ...: i/o timeout`, or `...:
+    # lookup registry-1.docker.io ...`). Docker's own error for the image it
+    # could not pull, so it is the same answer: nothing built it. The
+    # containerd store wraps this in "failed to resolve reference", above.
+    r"|dial tcp"
+    r"|lookup registry"
+)
+
+
+def names_a_missing_image(text: str) -> bool:
+    """Whether *text* carries docker's own words for an image it cannot find.
+
+    ``compose up`` of an image that is not on the daemon tries to pull it, and
+    docker says so in one of a few forms depending on the registry's answer and
+    the compose version. Wrapping is collapsed first, so a phrase Rich broke
+    across two console lines still reads as one. A ``not found`` counts only when
+    it follows an image reference (``<name>:<tag>: not found``), never bare: a
+    missing *command* (``sh: 1: docker: not found``) says it too.
+    """
+    return _MISSING_IMAGE.search(" ".join(text.lower().split())) is not None

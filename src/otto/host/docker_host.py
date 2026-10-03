@@ -385,7 +385,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             except Exception as e:
                 raise RuntimeError(
                     f"Container {self.id!r} is declared but not running, and "
-                    f"auto-start failed: {e}. Run `otto docker compose up {self.project}` "
+                    f"auto-start failed: {e}. Run `otto docker compose up --build {self.project}` "
                     f"first."
                 ) from e
 
@@ -405,7 +405,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     f"Container {self.id!r} is declared but not running. "
                     f"Auto-start of use-case {self.project!r} did not produce "
                     f"a container for service {self.service!r} on {self.parent.id}. "
-                    f"Run `otto docker compose up {self.project}` first."
+                    f"Run `otto docker compose up --build {self.project}` first."
                 )
             return cid
 
@@ -422,7 +422,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running, and no "
                 f"repo named {self.project!r} is configured to auto-start it. "
-                f"Run `otto docker compose up` for project {self.project!r} first."
+                f"Build its image first (`otto docker build --on {self.parent.id}`) and retry."
             )
 
         try:
@@ -461,8 +461,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         except Exception as e:
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running, and "
-                f"auto-start failed: {e}. Run `otto docker compose up` for project "
-                f"{self.project!r} first."
+                f"auto-start failed: {e}. Build its image first "
+                f"(`otto docker build --on {self.parent.id}`) and retry."
             ) from e
 
         host = hosts.get(self.service)
@@ -470,8 +470,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running. "
                 f"Auto-start of stack {self.compose_project!r} did not produce "
-                f"a container for service {self.service!r}. Run `otto docker compose up` "
-                f"for project {self.project!r} first."
+                f"a container for service {self.service!r}. Build its image first "
+                f"(`otto docker build --on {self.parent.id}`) and retry."
             )
         return host.container_id
 

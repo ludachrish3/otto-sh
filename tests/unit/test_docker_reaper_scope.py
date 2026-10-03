@@ -49,7 +49,7 @@ _GROUP = "docker_e2e"
 # The modules that mint a disposable compose-project suffix, and the shape
 # they mint it with: `return "<literal>" + uuid.uuid4().hex[:8]`.
 _E2E_SUFFIX_SOURCES = (
-    TESTS_ROOT / "e2e" / "docker" / "test_docker_e2e_cli.py",
+    TESTS_ROOT / "e2e" / "docker" / "conftest.py",
     TESTS_ROOT / "e2e" / "run" / "test_run_exec_e2e.py",
 )
 _FRESH_SUFFIX = re.compile(r"""return\s+["']([^"']+)["']\s*\+\s*uuid\.uuid4\(\)""")

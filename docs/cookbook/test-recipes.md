@@ -152,10 +152,13 @@ from otto.docker import deployed
 
 @instruction()
 async def smoke():
-    async with deployed("integration", own=True) as stack:
+    async with deployed("integration", own=True, build=True) as stack:
         api = stack.hosts["api"]
         await api.run(["./run-tests"])
 ```
+
+`build=True` is there because, like `otto docker compose up`, `deployed` builds
+nothing by default; leave it out when the images are already on the host.
 
 {func}`~otto.docker.deployment.deployed` is the recommended scope. It deploys
 a **use-case** — the same named, cross-repo deployment `otto docker compose up` brings

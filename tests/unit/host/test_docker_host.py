@@ -1060,8 +1060,13 @@ async def test_use_case_auto_up_wraps_a_real_deploy_failure(monkeypatch):
     monkeypatch.setattr("otto.config.get_repos", _uc_repos)
     monkeypatch.setattr("otto.config.get_lab", MagicMock())
 
-    with pytest.raises(RuntimeError, match="not running, and auto-start failed"):
+    with pytest.raises(RuntimeError, match="not running, and auto-start failed") as exc:
         await h._auto_up()
+
+    assert "`otto docker compose up --build integration`" in str(exc.value), (
+        "the remedy must name the command that builds the image the failure is "
+        f"most often about: {exc.value}"
+    )
 
 
 @pytest.mark.asyncio
@@ -1084,8 +1089,59 @@ async def test_use_case_auto_up_no_container_for_service_is_refused(monkeypatch)
 
     with pytest.raises(
         RuntimeError, match="did not produce a container for service 'api' on test3"
-    ):
+    ) as exc:
         await h._auto_up()
+
+    assert "`otto docker compose up --build integration`" in str(exc.value)
+
+
+_LEGACY_REMEDY = "Build its image first (`otto docker build --on test3`) and retry."
+
+
+@pytest.mark.asyncio
+async def test_legacy_auto_up_with_no_repo_names_the_building_remedy(monkeypatch):
+    """No repo named ``repo1`` is configured: the remedy builds, because an
+    unbuilt image is the usual reason a bring-up is needed at all."""
+    h = _make_container(container_id="")
+    monkeypatch.setattr("otto.config.get_repos", lambda: _mock_repos(None))
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
+
+    with pytest.raises(RuntimeError, match="no repo named 'repo1'") as exc:
+        await h._auto_up()
+
+    assert _LEGACY_REMEDY in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_legacy_auto_up_wide_arm_names_the_building_remedy(monkeypatch):
+    """A real ``compose_up`` failure is wrapped with the building remedy."""
+    h = _make_container(container_id="")
+
+    async def failing_compose_up(*_a, **_kw):
+        raise HostCommandError("docker compose up failed: no such image")
+
+    monkeypatch.setattr("otto.docker.compose.compose_up", failing_compose_up)
+    monkeypatch.setattr("otto.config.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
+
+    with pytest.raises(RuntimeError, match="auto-start failed") as exc:
+        await h._auto_up()
+
+    assert _LEGACY_REMEDY in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_legacy_auto_up_with_no_service_container_names_the_building_remedy(monkeypatch):
+    """``compose_up`` succeeds but never produced this service's container."""
+    h = _make_container(container_id="")
+    monkeypatch.setattr("otto.docker.compose.compose_up", AsyncMock(return_value={}))
+    monkeypatch.setattr("otto.config.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
+
+    with pytest.raises(RuntimeError, match="did not produce a container") as exc:
+        await h._auto_up()
+
+    assert _LEGACY_REMEDY in str(exc.value)
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,7 @@ Most tests lease one docker-capable host from {test1, test3} via the same
 fd-flock mechanism as the transfer-host pool, so they distribute across two
 daemons and never race on the same one. The ones that address a container id
 from a second otto process lease test3 specifically — see
-``_ROLE_DOCKER_HOST`` below for why that is a placement fact, not a
+``_ROLE_DOCKER_HOST`` in ``_cli`` for why that is a placement fact, not a
 preference.
 """
 
@@ -26,38 +26,17 @@ import uuid
 
 import pytest
 
-from tests._fixtures._host_pool import lease_unix_host
-from tests.e2e._otto_subprocess import (
-    PROJECT_ROOT,
-    REPO1,
-    assert_no_output_dir,
-    assert_output_dir,
+from tests.e2e._otto_subprocess import REPO1, assert_no_output_dir, assert_output_dir
+
+from ._cli import (
+    _MERGED_USE_CASE,
+    _REPO1_USE_CASE,
+    _ROLE_DOCKER_HOST,
+    _WIDE,
+    REPO2,
+    _flat,
+    _run_otto,
 )
-
-from ._cli import _WIDE, _flat, _run_otto
-
-# The one host repo1's fragments RESOLVE to without `--on`. Every
-# ``[[docker.use_cases]]`` fragment of the sample repos declares
-# ``role = "docker"``, and test3 is the only element in the `unix` fixture lab
-# tagged ``"roles": ["docker"]`` (spec §5 knob 3). Placeholder registration
-# therefore only ever mints ``test3.<usecase>.<service>`` ids, so any test that
-# addresses a container id in a SEPARATE otto process — `otto host <id> ...`,
-# `otto run --on <id>` — must run against this host and no other: `--on test1`
-# registers `test1.repo1.api` inside the invocation that deployed it, and the
-# next process knows nothing about it. Tests that only drive `docker up/down/
-# build/ps --on <host>` keep the two-daemon pool above.
-_ROLE_DOCKER_HOST = "test3"
-
-# The use-cases the sample repos declare (spec §14's "name the fragment after
-# the repo and container ids stay literally unchanged"): repo1 declares `repo1`
-# and `integration`, repo2 declares `repo2` and `integration`. Two or more
-# declared use-cases make a bare `otto docker compose up` ambiguous — it refuses,
-# naming them — so every invocation below names the one it means.
-_REPO1_USE_CASE = "repo1"
-_MERGED_USE_CASE = "integration"
-
-
-REPO2 = PROJECT_ROOT / "tests" / "repo2"
 
 # Each test leases one docker-capable host from UNIX_POOL via the
 # ``docker_host`` fixture (tests/e2e/docker/conftest.py), and runs ``otto`` as subprocesses under
@@ -73,97 +52,18 @@ pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("docker_e2e")]
 
 
 # ---------------------------------------------------------------------------
-# Subprocess helper
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def role_docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
-    """Lease :data:`_ROLE_DOCKER_HOST` — the host repo1's fragments place onto.
-
-    Same fd-flock as ``docker_host``, narrowed to one element. Used by the
-    tests that address a container id from a second otto process, where the
-    id must be one PLACEMENT produced rather than one ``--on`` invented.
-    """
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, [_ROLE_DOCKER_HOST]) as element:
-        yield element
-
-
-@pytest.fixture
-def fresh_suffix() -> str:
-    """A short unique compose-project suffix so each test has its own stack.
-
-    The ``e2e-`` prefix is load-bearing beyond uniqueness: it is what puts a
-    reapable ``-e2e-`` infix into the resulting ``<lab>-<usecase>-<suffix>``
-    compose project, which is how ``tests/integration/conftest.py``'s orphan
-    reaper finds stacks a crashed run left behind.
-    ``tests/unit/test_docker_reaper_scope.py`` pins that agreement.
-    """
-    return "e2e-" + uuid.uuid4().hex[:8]
-
-
-@pytest.fixture
-def teardown_after(fresh_suffix, docker_host, tmp_path):
-    """Yield the suffix; on test exit, ensure the stack is torn down even if
-    the test failed mid-flight. Idempotent — `down` is harmless when the
-    stack isn't up.
-
-    Tears down BOTH declared use-cases (``repo1`` and the merged
-    ``integration``), because a use-case is now the unit of deployment and
-    each one gets its own compose project: a test that brought up
-    ``integration`` leaves a stack ``down repo1`` would never touch. A
-    half-torn-down stack leaks a docker network on each run; enough leaks
-    (~30) and the docker daemon runs out of subnet pools and subsequent
-    ``compose up``s fail with ``all predefined address pools have been fully
-    subnetted``.
-    """
-    yield fresh_suffix
-    # Both repos in SUT_DIRS so the merged use-case resolves the same set of
-    # fragments the test deployed. --on <docker_host> targets the daemon the
-    # test used. `provide` is deliberately NOT passed: the compose project is
-    # derived from (lab, use-case, suffix) alone, so one `down` reaps the
-    # stack whichever provider won.
-    for use_case in (_REPO1_USE_CASE, _MERGED_USE_CASE):
-        _run_otto(
-            "docker",
-            "compose",
-            "down",
-            use_case,
-            "--on",
-            docker_host,
-            sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
-            xdir=tmp_path,
-            compose_suffix=fresh_suffix,
-        )
-
-
-@pytest.fixture
-def teardown_role_host_after(fresh_suffix, role_docker_host, tmp_path):
-    """``teardown_after``, for the tests that lease :data:`_ROLE_DOCKER_HOST`."""
-    yield fresh_suffix
-    for use_case in (_REPO1_USE_CASE, _MERGED_USE_CASE):
-        _run_otto(
-            "docker",
-            "compose",
-            "down",
-            use_case,
-            "--on",
-            role_docker_host,
-            sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
-            xdir=tmp_path,
-            compose_suffix=fresh_suffix,
-        )
-
-
-# ---------------------------------------------------------------------------
 # Happy path: build → up → host run/put/get → down
 # ---------------------------------------------------------------------------
 
 
 def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
-    """The bug that started this whole thread: `otto docker compose up` must build
-    images first when the compose file references locally-built ones."""
+    """`otto docker compose up` builds nothing on its own: it builds first only with
+    `--build`, and this is the test that proves the flag does it.
+
+    The compose file references a locally built image, so a pull error here would
+    mean `--build` did not build it. That `up` WITHOUT the flag builds nothing is
+    pinned in ``test_docker_honesty.py``.
+    """
     suffix = teardown_after
     up = _run_otto(
         "docker",
@@ -172,6 +72,7 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
         _REPO1_USE_CASE,
         "--on",
         docker_host,
+        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -181,7 +82,7 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
     assert "container(s) registered" in up.stdout
     assert f"{docker_host}.repo1.api" in up.stdout
     assert "pull access denied" not in (up.stdout + up.stderr), (
-        "we must build before composing — pull errors mean we didn't"
+        "`--build` must build before composing — a pull error means it did not"
     )
 
     down = _run_otto(
@@ -217,6 +118,7 @@ def test_e2e_host_run_against_running_container(
         _REPO1_USE_CASE,
         "--on",
         docker_host,
+        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -254,6 +156,7 @@ def test_e2e_host_put_get_roundtrip(teardown_role_host_after, role_docker_host, 
         _REPO1_USE_CASE,
         "--on",
         docker_host,
+        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -314,7 +217,11 @@ def test_e2e_host_put_get_roundtrip(teardown_role_host_after, role_docker_host, 
 
 def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
     """A second `otto docker compose up` against a running stack must not fail or
-    re-create containers."""
+    re-create containers.
+
+    Only the first `up` says `--build`: the second needs no build, because the
+    image the first one built is already on the daemon.
+    """
     suffix = teardown_after
     first = _run_otto(
         "docker",
@@ -323,6 +230,7 @@ def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
         _REPO1_USE_CASE,
         "--on",
         docker_host,
+        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -390,6 +298,7 @@ def test_e2e_multi_repo_up_composes_only_the_named_use_case(teardown_after, dock
         _REPO1_USE_CASE,
         "--on",
         docker_host,
+        "--build",
         sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
         compose_suffix=suffix,
@@ -477,11 +386,15 @@ def test_e2e_run_against_unstarted_container_auto_starts(
     The command then succeeds against the freshly-started container — no
     ``otto docker compose up`` step required of the caller.
     ``teardown_role_host_after`` reaps the auto-started stack so it can't
-    leak. The id is a PLACEHOLDER's, so this must run on the host placement
-    minted it for (:data:`_ROLE_DOCKER_HOST`).
+    leak. The image is built first, explicitly: starting a stack never builds.
+    The id is a PLACEHOLDER's, so this must run on the host placement minted it
+    for (:data:`_ROLE_DOCKER_HOST`).
     """
     suffix = teardown_role_host_after
     docker_host = role_docker_host
+    # Auto-start builds nothing, so the image it composes must already be there.
+    built = _run_otto("docker", "build", "repo1-api", "--on", docker_host, xdir=tmp_path, env=_WIDE)
+    assert built.returncode == 0, built.stdout + built.stderr
     result = _run_otto(
         "host",
         f"{docker_host}.repo1.api",
@@ -547,6 +460,7 @@ def test_e2e_ps_lists_running_containers(teardown_after, docker_host, tmp_path):
         _REPO1_USE_CASE,
         "--on",
         docker_host,
+        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -619,6 +533,7 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
         _MERGED_USE_CASE,
         "--on",
         docker_host,
+        "--build",
         sut_dirs=_BOTH_REPOS,
         xdir=tmp_path,
         compose_suffix=suffix,
@@ -626,7 +541,7 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
     out = up.stdout + up.stderr
     assert up.returncode == 0, out
     assert "pull access denied" not in out, (
-        "both repos' images must be built before composing — a pull error means one wasn't"
+        "`--build` must build both repos' images before composing — a pull error means one wasn't"
     )
     # One project, one report line, three services from two repos.
     assert f"{_MERGED_USE_CASE} on {docker_host} (unix-{_MERGED_USE_CASE}-{suffix})" in up.stdout, (
@@ -679,6 +594,7 @@ def test_e2e_provide_flips_the_winner(teardown_after, docker_host, tmp_path):
         "edge=repo2",
         "--on",
         docker_host,
+        "--build",
         sut_dirs=_BOTH_REPOS,
         xdir=tmp_path,
         compose_suffix=suffix,

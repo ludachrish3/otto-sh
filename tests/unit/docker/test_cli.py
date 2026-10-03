@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -637,7 +638,7 @@ async def test_up_forwards_provide_env_and_env_files(tmp_path):
             use_case="integration",
             service=None,
             on="test3",
-            no_build=True,
+            build=True,
             provide=["edge=repo1"],
             env=["A=1", "B=2"],
             env_file=[env_file],
@@ -648,7 +649,87 @@ async def test_up_forwards_provide_env_and_env_files(tmp_path):
     assert kwargs["env"] == {"A": "1", "B": "2"}
     assert kwargs["env_files"] == [env_file]
     assert kwargs["on"] == "test3"
-    assert kwargs["build"] is False
+    assert kwargs["build"] is True
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    """CLI output as one line of words, whatever width or colour Rich chose.
+
+    CI forces a Rich terminal at a fixed 80 columns, so a help sentence wraps
+    across box-drawn lines; strip the escapes and the panel chrome and
+    collapse the whitespace so assertions read the words.
+    """
+    plain = _ANSI.sub("", output)
+    for chrome in "│╭╮╰╯─":
+        plain = plain.replace(chrome, " ")
+    return " ".join(plain.split())
+
+
+def _invoke_up(*argv: str):
+    from otto.cli.docker import docker_app
+    from tests._fixtures.dispatch import DispatchRunner
+
+    return DispatchRunner().invoke(
+        docker_app, ["compose", "up", "integration", "--on", "test3", *argv], spec_name="docker"
+    )
+
+
+def test_no_build_is_not_an_option():
+    result = _invoke_up("--no-build")
+
+    assert result.exit_code == 2
+    assert "No such option" in result.output
+    assert "--no-build" in result.output
+
+
+def test_up_defaults_to_no_build_and_build_flag_flips_it():
+    deploy = AsyncMock(return_value=_stub_stack())
+    with patch("otto.docker.deployment.deploy", deploy), patch.object(docker_cli, "rprint"):
+        plain = _invoke_up()
+        assert plain.exit_code == 0, plain.output
+        assert deploy.await_args.kwargs["build"] is False
+        built = _invoke_up("--build")
+        assert built.exit_code == 0, built.output
+        assert deploy.await_args.kwargs["build"] is True
+
+
+def test_force_recreate_and_pull_reach_deploy():
+    deploy = AsyncMock(return_value=_stub_stack())
+    with patch("otto.docker.deployment.deploy", deploy), patch.object(docker_cli, "rprint"):
+        result = _invoke_up("--force-recreate", "--pull", "always")
+
+    assert result.exit_code == 0, result.output
+    assert deploy.await_args.kwargs["force_recreate"] is True
+    assert deploy.await_args.kwargs["pull"] == "always"
+
+
+def test_pull_policy_is_relayed_verbatim():
+    deploy = AsyncMock(return_value=_stub_stack())
+    with patch("otto.docker.deployment.deploy", deploy), patch.object(docker_cli, "rprint"):
+        result = _invoke_up("--pull", "nonsense")
+
+    assert result.exit_code == 0, result.output  # otto does not judge the policy; docker will
+    assert deploy.await_args.kwargs["pull"] == "nonsense"
+
+
+def test_help_describes_the_three_flags_and_not_no_build():
+    from otto.cli.docker import docker_app
+    from tests._fixtures.dispatch import DispatchRunner
+
+    result = DispatchRunner().invoke(docker_app, ["compose", "up", "--help"], spec_name="docker")
+    text = _plain(result.output)
+
+    assert result.exit_code == 0, result.output
+    # The OPTIONS' help phrases, not the flag names: the leaf docstring says
+    # "with --build", so a bare name check could not fail.
+    assert "declared `[[docker.images]]` first" in text
+    assert "docker's own `--build` is not passed" in text
+    assert "Recreate containers even if their configuration is unchanged" in text
+    assert "docker's `--pull` policy, passed through unchanged" in text
+    assert "--no-build" not in text
 
 
 @pytest.mark.asyncio

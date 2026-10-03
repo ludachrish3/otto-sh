@@ -696,20 +696,104 @@ async def test_build_runs_once_per_repo_in_dependency_order(tmp_path):
         _install(lab, [b, a], ordered=[a, b]),
         patch.object(deploy_mod, "build_images", AsyncMock(side_effect=_build)),
     ):
-        await deploy("integration", on="test3")
+        await deploy("integration", on="test3", build=True)
 
     assert built == ["a", "b"]
 
 
 @pytest.mark.asyncio
-async def test_build_false_skips_the_build(single):
+async def test_up_without_build_runs_no_build_even_when_images_are_declared(tmp_path):
+    """Spec §5: `compose up` builds nothing on its own — the default is `build=False`.
+
+    The repo DECLARES an image: without one, nothing would build under either
+    default and the test could not fail.
+    """
+    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")], images=("img",))
+    host = _wire(_host("test3", "10.10.200.13"))
     with (
-        _install(single.lab, [single.repo]),
+        _install(_lab(host), [repo]),
         patch.object(deploy_mod, "build_images", AsyncMock(return_value={})) as builder,
     ):
-        await deploy("integration", on="test3", build=False)
+        await deploy("integration", on="test3")
 
     builder.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_build_true_builds_before_up(tmp_path):
+    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")], images=("img",))
+    host = _wire(_host("test3", "10.10.200.13"))
+    with (
+        _install(_lab(host), [repo]),
+        patch.object(deploy_mod, "build_images", AsyncMock(return_value={})) as builder,
+    ):
+        await deploy("integration", on="test3", build=True)
+
+    builder.assert_awaited_once()
+
+
+def test_up_command_renders_force_recreate_and_pull_after_remove_orphans():
+    cmd = deploy_mod._up_command(
+        "proj",
+        [Path("/s/a.yml")],
+        Path("/s/otto.env"),
+        {},
+        ["api"],
+        narrowed=True,
+        force_recreate=True,
+        pull="always",
+    )
+    assert cmd == (
+        "docker compose -p proj -f /s/a.yml --env-file /s/otto.env up -d --remove-orphans "
+        "--force-recreate --pull always api"
+    )
+
+
+def test_up_command_without_the_flags_is_unchanged():
+    cmd = deploy_mod._up_command(
+        "proj", [Path("/s/a.yml")], Path("/s/otto.env"), {}, [], narrowed=False
+    )
+    assert cmd == "docker compose -p proj -f /s/a.yml --env-file /s/otto.env up -d --remove-orphans"
+
+
+def test_up_command_quotes_a_pull_policy_it_does_not_validate():
+    cmd = deploy_mod._up_command(
+        "proj", [Path("/s/a.yml")], Path("/s/otto.env"), {}, [], narrowed=False, pull="a b"
+    )
+    assert cmd.endswith("--pull 'a b'")
+
+
+@pytest.mark.asyncio
+async def test_deploy_threads_the_flags_into_the_up_command(single):
+    with _install(single.lab, [single.repo]):
+        await deploy("integration", on="test3", force_recreate=True, pull="missing")
+
+    assert _up_command(single.host).endswith(
+        "up -d --remove-orphans --force-recreate --pull missing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_deployed_forwards_the_flags_to_deploy(single):
+    with _install(single.lab, [single.repo]):
+        async with deployed("integration", on="test3", force_recreate=True, pull="never", own=True):
+            pass
+
+    assert _up_command(single.host).endswith("--force-recreate --pull never")
+
+
+@pytest.mark.asyncio
+async def test_deployed_forwards_build_to_deploy(tmp_path):
+    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")], images=("img",))
+    host = _wire(_host("test3", "10.10.200.13"))
+    with (
+        _install(_lab(host), [repo]),
+        patch.object(deploy_mod, "build_images", AsyncMock(return_value={})) as builder,
+    ):
+        async with deployed("integration", on="test3", build=True, own=True):
+            pass
+
+    builder.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -733,7 +817,7 @@ async def test_a_failed_build_stops_before_up(tmp_path):
         ),
         pytest.raises(HostCommandError, match="no such base image"),
     ):
-        await deploy("integration", on="test3")
+        await deploy("integration", on="test3", build=True)
 
     assert not [c for c in host.commands if " up -d" in c]  # type: ignore[attr-defined]
 
@@ -1197,7 +1281,7 @@ async def test_a_successful_build_does_not_stop_the_deployment(tmp_path):
             ),
         ),
     ):
-        stack = await deploy("integration", on="test3")
+        stack = await deploy("integration", on="test3", build=True)
 
     assert list(stack.hosts) == ["api"]
     assert [c for c in host.commands if " up -d" in c]  # type: ignore[attr-defined]
@@ -1233,7 +1317,7 @@ async def test_builds_skip_a_repo_whose_services_were_all_narrowed_away(tmp_path
         _install(lab, [a, b]),
         patch.object(deploy_mod, "build_images", AsyncMock(side_effect=_build)),
     ):
-        await deploy("integration", on="test3", services=["api"])
+        await deploy("integration", on="test3", services=["api"], build=True)
 
     assert built == ["a"]
     # b's compose file still joins the -f merge; only its IMAGE is skipped.
@@ -1341,6 +1425,27 @@ async def test_dry_run_plan_shows_the_exact_compose_command(single, monkeypatch)
     assert "--env-file /tmp/otto-docker/unix-integration-u/compose/otto.env" in message
     assert message.rstrip().endswith("up -d --remove-orphans")
     assert "test3" in message
+
+
+@pytest.mark.asyncio
+async def test_dry_run_preview_carries_the_up_flags(single):
+    """The previewed `up` is the one a live run would send, flags included.
+
+    The preview and the live path each call `_up_command`; dropping the flags
+    from the preview call alone leaves every live-path test green, so pin it.
+    `build=True` is passed too: a dry run declines BEFORE the build, so no
+    `docker build` may appear in the plan.
+    """
+    with (
+        _install(single.lab, [single.repo]),
+        patch.object(deploy_mod, "is_dry_run", return_value=True),
+        pytest.raises(CommandNotRunError) as excinfo,
+    ):
+        await deploy("integration", on="test3", build=True, force_recreate=True, pull="always")
+
+    message = str(excinfo.value)
+    assert "up -d --remove-orphans --force-recreate --pull always" in message
+    assert "docker build" not in message
 
 
 @pytest.mark.asyncio
