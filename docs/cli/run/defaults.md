@@ -87,6 +87,32 @@ those last two do and do not touch. `--ensure` turns `install` into a converge �
 the lab's current state is read and only the missing work is done — which is
 what an `ensure` marker's steps do before a test.
 
+## What a run prints
+
+Each host says what became of every product as it goes: `staged`, then
+`installed`, or `skipped — <reason>`, or, at WARNING, the failed status and its
+message. A run over several hosts and products therefore shows which one passed
+and which one stopped it. `stage`, `uninstall`, the dev-tool install and the
+dev-tool uninstall report the same way.
+
+```text
+@router1   | app: staged
+@router1   | app: installed
+@router2   | app: staged
+@router2   | app: failed — service did not start
+```
+
+With `--ensure`, a lab that is already installed does no work and says so,
+rather than finishing silently:
+
+```text
+$ otto --lab my_lab run install --ensure
+skipped: already installed
+```
+
+A repo instruction that returns `ensure_uninstalled()` or `ensure_clean()`
+renders the same way (`skipped: already uninstalled`, `skipped: already clean`).
+
 ## Your repo's flags on a default
 
 A repo changes what one of the six does — and what it takes on the command

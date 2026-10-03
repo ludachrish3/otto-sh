@@ -2031,9 +2031,15 @@ def _render_ok_result(value: "Result", success: "str | None") -> None:
     from rich import print as rprint
 
     from ..result import CommandResult, Results
+    from ..utils import Status
 
     if isinstance(value, (CommandResult, Results)):
         return  # command output already streamed during execution
+    if value.status is Status.Skipped and value.msg:
+        # A skip is a pass that did nothing; the generic success line would
+        # read as though the work ran.
+        rprint(f"[yellow]skipped: {escape(str(value.msg))}[/yellow]")
+        return
     if success:
         rprint(f"[green]{success}[/green]")
         return

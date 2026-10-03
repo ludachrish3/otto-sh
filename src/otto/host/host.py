@@ -14,6 +14,8 @@ from dataclasses import (
     replace,
 )
 from logging import (
+    INFO,
+    WARNING,
     Filter,
     LogRecord,
     getLogger,
@@ -2165,6 +2167,7 @@ class BaseHost(ABC):
         """
         for product in self._owned_products(owner):
             result = await product.stage(cast("Host", self))
+            self._log_outcome(product.name, "staged", result)
             if not result.is_ok:
                 # Returned whole: a product's CommandResult carries the retcode
                 # and output that the CLI turns into an exit code.
@@ -2185,6 +2188,7 @@ class BaseHost(ABC):
             return stage_result
         for product in self._owned_products(owner):
             result = await product.install(cast("Host", self))
+            self._log_outcome(product.name, "installed", result)
             if not result.is_ok:
                 return result
         return Result(Status.Success)
@@ -2221,7 +2225,9 @@ class BaseHost(ABC):
         if get_product_logs:
             note(await self.get_product_logs(owner=owner))
         for product in self._owned_products(owner):
-            note(await product.uninstall(cast("Host", self)))
+            result = await product.uninstall(cast("Host", self))
+            self._log_outcome(product.name, "uninstalled", result)
+            note(result)
         if get_debug_logs:
             note(await self.get_debug_logs())
         return first_failure if first_failure is not None else Result(Status.Success)
@@ -2488,10 +2494,12 @@ class BaseHost(ABC):
         for tool in self._owned_dev_tools(owner):
             result = await tool.stage(cast("Host", self))
             if not result.is_ok:
+                self._log_outcome(tool.name, "staged", result)
                 # Returned whole: a tool's CommandResult carries the retcode
                 # and output that the CLI turns into an exit code.
                 return result
             result = await tool.install(cast("Host", self))
+            self._log_outcome(tool.name, "installed", result)
             if not result.is_ok:
                 return result
         return Result(Status.Success)
@@ -2522,6 +2530,7 @@ class BaseHost(ABC):
         first_failure: Result | None = None
         for tool in self._owned_dev_tools(owner):
             result = await tool.uninstall(cast("Host", self))
+            self._log_outcome(tool.name, "uninstalled", result)
             if not result.is_ok and first_failure is None:
                 first_failure = result
         return first_failure if first_failure is not None else Result(Status.Success)
@@ -2947,13 +2956,37 @@ class BaseHost(ABC):
         self,
         command: str,
         mode: LogMode = LogMode.NORMAL,
+        level: int = INFO,
     ) -> None:
         if mode is LogMode.NEVER:
             return
-        logger.info(
+        logger.log(
+            level,
             f"[bold]@{self.name}   | {command}",
             extra={"host": self, "log_mode": mode},
         )
+
+    def _log_outcome(self, name: str, done: str, result: Result) -> None:
+        """Say what became of one product or tool: *done* on success, else why not.
+
+        Skipped is a pass and names its reason at INFO; any other non-ok status
+        is a WARNING naming the status. A dry run's decline (``NotRun``) adds no
+        line: the preview owns that surface and says it in its own words.
+        """
+        if result.status is Status.NotRun:
+            return
+        from rich.markup import escape  # function-local: off the startup import graph
+
+        # Hook and library text is free-form and goes into a Rich-markup record:
+        # escape it, or a "[sudo]" prompt vanishes and a stray "[/x]" raises.
+        detail = f" — {escape(str(result.msg))}" if result.msg else ""
+        name = escape(name)
+        if result.status is Status.Success:
+            self._log_command(f"{name}: {done}")
+        elif result.status is Status.Skipped:
+            self._log_command(f"{name}: skipped{detail}")
+        else:
+            self._log_command(f"{name}: {result.status.name.lower()}{detail}", level=WARNING)
 
     def _log_output(
         self,
