@@ -45,11 +45,11 @@ With one seam character, two different hosts can produce one id: element `a-b` w
 - the lab merge raises `Duplicate host id … for different hosts` when the same id carries two different ips;
 - the composite source raises `host id 'X' in lab 'Y': element … collides with element …` across sources.
 
-What changes is the `add_host` message, which today names only the id. It names both declarations — each side's element name, board, slot and ip, and the source file when known — so the user sees which two to tell apart:
+What changes is the `add_host` message, which today names only the id. It names both declarations — each side's element name, board, slot and ip (no source file is stamped on a host; the loader's own prefix names the file of the entry being added) — so the user sees which two to tell apart:
 
 ```text
-LabRepositoryError: host id 'a-b' in lab 'bench': element 'a-b' (10.10.200.11, lab.json)
-collides with element 'a' board 'b' (10.10.200.12, lab.json). Give the elements
+LabRepositoryError: host id 'a-b' in lab 'bench': element 'a-b' (10.10.200.11)
+collides with element 'a' board 'b' (10.10.200.12). Give the elements
 distinct names, or set board/slot.
 ```
 
