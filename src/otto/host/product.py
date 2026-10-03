@@ -58,6 +58,106 @@ real home cannot be asked for. It stands in for the answer
 :func:`resolve_stage_dir` gets at run time."""
 
 
+LOGIN_HOME_PLACEHOLDER = "<login home>"
+"""How a plan names a staging directory that only a connected host can answer."""
+
+
+@dataclass
+class ProductPlan:
+    """What a product's hooks would do on one host, from configuration alone."""
+
+    stage: list[str] = field(default_factory=list)
+    """One line per transfer or command ``stage`` makes, in order."""
+
+    install: list[str] = field(default_factory=list)
+    """One line per transfer or command ``install`` makes, in order."""
+
+    uninstall: list[str] = field(default_factory=list)
+    """One line per transfer or command ``uninstall`` makes, in order."""
+
+    unchecked: list[str] = field(default_factory=list)
+    """One line per fact a real run reads off the host that this preview could
+    not; each says what the missing read decides."""
+
+
+@dataclass
+class StageDirPlan:
+    """A staging directory as a plan names it, with the gap when it is the login home."""
+
+    directory: str
+    """The staging directory as plan lines name it, a path or ``LOGIN_HOME_PLACEHOLDER``."""
+
+    unchecked: str | None = None
+    """The gap line when *directory* is the placeholder; ``None`` when the directory is known."""
+
+    refusal: str | None = None
+    """Why a real run refuses to stage here, or ``None`` when it does not.
+
+    Set when the host has no login home to fall back on. A plan whose staging
+    is refused has no transfer and no command to show: it returns this line
+    alone as its ``unchecked``, as the embedded kind does for a host without a
+    loader."""
+
+
+def put_line(local: Path, remote_dir: str) -> str:
+    """Return the plan's line for ``host.put(local, remote_dir)``."""
+    return f"PUT {local} -> {remote_dir}"
+
+
+def sudo_line(command: str) -> str:
+    """Return the plan's line for ``host.run(command, sudo=True)``."""
+    return f"sudo {command}"
+
+
+def planned_stage_dir(stage_dir: Path, host: "Host", who: str) -> StageDirPlan:
+    """Name the staging directory a plan can know, and the gap when it cannot.
+
+    The same precedence as :func:`resolve_stage_dir`, never contacting *host*:
+    a declared value, the host's ``default_dest_dir``, a login home the host
+    has already cached. An undiscovered login home becomes
+    :data:`LOGIN_HOME_PLACEHOLDER` plus one ``unchecked`` line; a host with no
+    login home at all (an embedded target) is the refusal
+    :func:`resolve_stage_dir` raises, so it comes back with a ``refusal``.
+    """
+    known = _declared_or_default(stage_dir, host, who)
+    if known is not None:
+        return StageDirPlan(str(known))
+    cached = getattr(host, "cached_login_home", None)
+    if cached is not None:
+        return StageDirPlan(str(cached))
+    host_id = getattr(host, "id", "?")
+    if getattr(host, "login_home", None) is None:
+        return StageDirPlan(
+            LOGIN_HOME_PLACEHOLDER,
+            refusal=(
+                f"{who} declares no stage_dir and {host_id} no default_dest_dir, and {host_id} "
+                "has no login home to fall back on: the install is refused"
+            ),
+        )
+    return StageDirPlan(
+        LOGIN_HOME_PLACEHOLDER,
+        f"the login home — {who} declares no stage_dir and {host_id} no default_dest_dir",
+    )
+
+
+def unplanned(obj: object) -> ProductPlan:
+    """Return the plan of a product or tool that does not describe itself.
+
+    Empty step lists and one ``unchecked`` line naming *obj*'s class: the
+    shared body of :meth:`Product.plan` and
+    :meth:`~otto.host.dev_tool.DevTool.plan`, so the two bases cannot drift.
+    """
+    cls = type(obj)
+    return ProductPlan(
+        unchecked=[
+            (
+                f"`{cls.__module__}.{cls.__qualname__}`: stage, install and uninstall are "
+                "Python code and are not previewed; implement plan() to describe them"
+            )
+        ]
+    )
+
+
 def _refuse_relative(stage_dir: Path, who: str) -> None:
     """Refuse a staging directory that is not absolute, naming *who* declared it."""
     raise ValueError(
@@ -249,6 +349,19 @@ class Product(ABC):
     def stage_key(self, host: "Host") -> str:
         """:attr:`stage_dir` as a comparable key at lab load (:func:`stage_dir_key`)."""
         return stage_dir_key(self.stage_dir, host, who=f"product {self.name!r}")
+
+    def plan(self, host: "Host") -> ProductPlan:
+        """Describe what ``stage``, ``install`` and ``uninstall`` would do on *host*.
+
+        Pure and synchronous: built from configuration and *host*'s declared
+        attributes, never from a command. The base does not guess: empty step
+        lists and one ``unchecked`` line naming this class, so a code-defined
+        product shows as an honest gap until its author describes it. The
+        built-in kinds override this, and a unit test runs their real hooks
+        against a recording host to keep the description equal to the deed.
+        """
+        del host  # the base describes the class, not the host
+        return unplanned(self)
 
     @abstractmethod
     async def stage(self, host: "Host") -> Result:

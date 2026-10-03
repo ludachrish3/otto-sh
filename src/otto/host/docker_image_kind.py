@@ -28,7 +28,7 @@ true`` on the entry when the build is known to carry coverage.
 
 import shlex
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from typing_extensions import override
@@ -36,7 +36,15 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import CommandResult, Result
 from ..utils import Status, anchor_path
-from .product import ShellProduct, cov_dir_of, cov_dir_of_name, sudo_gcda_delete
+from .product import (
+    ProductPlan,
+    ShellProduct,
+    cov_dir_of,
+    cov_dir_of_name,
+    planned_stage_dir,
+    put_line,
+    sudo_gcda_delete,
+)
 from .shell_kind import (
     bool_param,
     stage_dir_param,
@@ -126,6 +134,46 @@ class DockerImageProduct(ShellProduct):
         """Where the tarball is -- the one path ``stage``, ``docker load`` and the cleanup share."""
         return str(await self.resolved_stage_dir(host) / self.artifact.name)
 
+    # One source per docker command: ``install``/``uninstall`` run these and
+    # ``plan`` renders them, so the quoting cannot drift between the two.
+
+    def _load_command(self, staged: str) -> str:
+        """``docker load`` of the staged tarball at *staged* (quoted here)."""
+        return f"docker load -i {shlex.quote(staged)}"
+
+    def _cleanup_command(self, staged: str) -> str:
+        """Remove the staged tarball at *staged* (quoted here)."""
+        return f"rm -f {shlex.quote(staged)}"
+
+    def _pull_command(self) -> str:
+        """``docker pull`` of :attr:`image`."""
+        return f"docker pull {shlex.quote(self.image)}"
+
+    def _present_command(self) -> str:
+        """Ask the daemon whether :attr:`image` is already there."""
+        return f"docker image inspect {shlex.quote(self.image)} >/dev/null"
+
+    def _run_command(self, ref: str) -> str:
+        """``docker run -d`` of *ref*, which the caller has ALREADY shell-quoted.
+
+        Already quoted so a plan can pass a bare placeholder such as
+        ``<loaded image>`` where the hook passes the real, quoted reference.
+        """
+        cov_dir = cov_dir_of(self)
+        args = f" {self.run_args}" if self.run_args else ""
+        return (
+            f"docker run -d --name {shlex.quote(self.container_name)} "
+            f"-v {shlex.quote(cov_dir)}:{shlex.quote(cov_dir)}{args} {ref}"
+        )
+
+    def _rm_command(self) -> str:
+        """Force-remove the container."""
+        return f"docker rm -f {shlex.quote(self.container_name)}"
+
+    def _rmi_command(self, image: str) -> str:
+        """``docker rmi`` of *image*, ALREADY shell-quoted (see :meth:`_run_command`)."""
+        return f"docker rmi {image}"
+
     @override
     async def stage(self, host: "Host") -> Result:
         """Put the tarball under :attr:`stage_dir` for ``docker load``.
@@ -146,14 +194,14 @@ class DockerImageProduct(ShellProduct):
             return Result(Status.Error, msg=f"{self.name}: docker is not on {host.id}'s PATH")
         if self.is_tarball:
             staged = await self._staged_tarball(host)  # where stage() put it
-            loaded = await host.exec(f"docker load -i {shlex.quote(staged)}", timeout=_LOAD_TIMEOUT)
+            loaded = await host.exec(self._load_command(staged), timeout=_LOAD_TIMEOUT)
             if not loaded.status.is_ok:
                 return self._error_from(host, f"{self.name}: docker load", loaded)
             # The staged tarball is an intermediate `docker load` has already
             # consumed (unlike a `shell` product, whose artifact IS the
             # product) — best-effort cleanup, same as kmod's staged .ko;
             # its own failure must not fail an otherwise-successful install.
-            await host.exec(f"rm -f {shlex.quote(staged)}", timeout=30)
+            await host.exec(self._cleanup_command(staged), timeout=30)
             self.loaded_ref = _loaded_reference(loaded.value)
             if self.loaded_ref is None:
                 return Result(
@@ -163,16 +211,12 @@ class DockerImageProduct(ShellProduct):
                 )
             ref = self.loaded_ref
         elif self.pull:
-            pulled = await host.exec(
-                f"docker pull {shlex.quote(self.image)}", timeout=_PULL_TIMEOUT
-            )
+            pulled = await host.exec(self._pull_command(), timeout=_PULL_TIMEOUT)
             if not pulled.status.is_ok:
                 return self._error_from(host, f"{self.name}: docker pull {self.image}", pulled)
             ref = self.image
         else:
-            present = await host.exec(
-                f"docker image inspect {shlex.quote(self.image)} >/dev/null", timeout=60
-            )
+            present = await host.exec(self._present_command(), timeout=60)
             if present.status is Status.NotRun:
                 return Result(Status.NotRun)
             if not present.status.is_ok:
@@ -182,13 +226,7 @@ class DockerImageProduct(ShellProduct):
                     "there or set `pull = true` on the entry",
                 )
             ref = self.image
-        cov_dir = cov_dir_of(self)
-        args = f" {self.run_args}" if self.run_args else ""
-        run = await host.exec(
-            f"docker run -d --name {shlex.quote(self.container_name)} "
-            f"-v {shlex.quote(cov_dir)}:{shlex.quote(cov_dir)}{args} {shlex.quote(ref)}",
-            timeout=120,
-        )
+        run = await host.exec(self._run_command(shlex.quote(ref)), timeout=120)
         if not run.status.is_ok:
             return self._error_from(host, f"{self.name}: docker run", run)
         return Result(Status.Success)
@@ -215,7 +253,7 @@ class DockerImageProduct(ShellProduct):
                 resolved = str(inspected.value).strip()
                 if resolved:
                     image_to_remove = resolved
-        removed = await host.exec(f"docker rm -f {shlex.quote(self.container_name)}", timeout=120)
+        removed = await host.exec(self._rm_command(), timeout=120)
         if removed.status is Status.NotRun:
             return Result(Status.NotRun)
         # Idempotent: a container that was never installed (or already removed
@@ -227,11 +265,60 @@ class DockerImageProduct(ShellProduct):
             # Only an image otto loaded from a tarball is otto's to remove;
             # a pulled or pre-existing reference stays in the daemon's cache
             # (is_tarball guards this branch, never a reference's image).
-            gone = await host.exec(f"docker rmi {shlex.quote(image_to_remove)}", timeout=120)
+            gone = await host.exec(self._rmi_command(shlex.quote(image_to_remove)), timeout=120)
             if not gone.status.is_ok:
                 return self._error_from(host, f"{self.name}: docker rmi {image_to_remove}", gone)
             self.loaded_ref = None
         return Result(Status.Success)
+
+    @override
+    def plan(self, host: "Host") -> ProductPlan:
+        """Describe :meth:`stage`, :meth:`install` and :meth:`uninstall` as the plan contract asks.
+
+        The contract is the ``product-kind-plan`` section of
+        ``docs/cookbook/dry-run-contract.md``.
+
+        Every command is rendered by the same builder the hook runs, so the
+        quoting is one expression, not two copies; the two placeholders stand
+        for the two answers only the daemon can give.
+        """
+        host_id = getattr(host, "id", "?")
+        plan = ProductPlan(unchecked=[f"that docker is on {host_id}'s PATH (command -v docker)"])
+        if self.is_tarball:
+            where = planned_stage_dir(self.stage_dir, host, who=f"product {self.name!r}")
+            if where.refusal is not None:
+                return ProductPlan(unchecked=[where.refusal])
+            if where.unchecked is not None:
+                plan.unchecked.insert(0, where.unchecked)
+            staged = str(PurePosixPath(where.directory) / self.artifact.name)
+            plan.stage = [put_line(self.artifact, where.directory)]
+            plan.install = [
+                self._load_command(staged),
+                self._cleanup_command(staged),
+                self._run_command("<loaded image>"),
+            ]
+            plan.uninstall = [self._rm_command(), self._rmi_command("<image the container ran>")]
+            plan.unchecked += [
+                (
+                    "the reference `docker load` prints, which `docker run` then names "
+                    "(<loaded image>)"
+                ),
+                (
+                    "the image to remove, read from the container (docker container inspect "
+                    f"{self.container_name}); no running container means no `docker rmi`"
+                ),
+            ]
+            return plan
+        if self.pull:
+            plan.install = [self._pull_command()]
+        else:
+            plan.unchecked.append(
+                f"that {self.image} is present on {host_id} (docker image inspect); a missing "
+                "image fails the install unless the entry sets `pull = true`"
+            )
+        plan.install.append(self._run_command(shlex.quote(self.image)))
+        plan.uninstall = [self._rm_command()]
+        return plan
 
     @override
     async def is_installed(self, host: "Host") -> bool:

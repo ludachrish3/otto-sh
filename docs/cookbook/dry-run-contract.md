@@ -93,6 +93,50 @@ dry run: no command body was run and no device was contacted
 See {doc}`../cli/link/index` and {doc}`../cli/tunnel/index` for what each of those
 previews can and cannot tell you.
 
+(product-kind-plan)=
+
+## A product kind describes its plan
+
+`otto -n run install`, `uninstall` and `install-tools` print each product's
+and dev tool's steps ({ref}`dry-run-lab-verbs`). A kind supplies them by
+implementing `plan(host)` on its `Product` or `DevTool` subclass, which returns a
+{class}`~otto.host.product.ProductPlan`: the `stage`, `install` and `uninstall`
+lines its hooks would produce, plus `unchecked`, the facts a real run reads off
+the host that the plan could not.
+
+`plan()` is **pure**: it never contacts the host, never awaits, and reads only
+configuration and what the host object already holds. The lines speak a small
+vocabulary, and a new kind uses it rather than inventing one:
+
+- `PUT <file> -> <dir>` for a transfer
+- `LOAD <file> as <name>` for a load whose real command carries the whole file
+  (the embedded kind's `llext load_hex`)
+- a command verbatim, as `host.run(cmd)` or `host.exec(cmd)` receives it
+- `sudo <cmd>` for `host.run(cmd, sudo=True)`
+- the same command lines the host verbs run for composite steps, such as a
+  module load's `insmod` and the `rm -f` that follows it
+- `<login home>` (`LOGIN_HOME_PLACEHOLDER`) for a staging directory that only
+  a connected host can answer, with one `unchecked` line saying so
+
+The helpers {func}`~otto.host.product.planned_stage_dir`,
+{func}`~otto.host.product.put_line`, {func}`~otto.host.product.sudo_line` and
+{func}`~otto.host.product.unplanned` spell the staging directory, the `PUT` and
+`sudo` lines and the not-previewed answer, so a kind calls them instead of
+formatting those strings itself.
+
+A kind that does not describe itself inherits the base's honest answer: empty
+step lists and one `unchecked` line naming its class, so a code-defined product
+shows as "not previewed" rather than as a silent no-op.
+
+The contract is the **recorder differential** in `tests/unit/host/test_plan_*.py`.
+For every built-in kind it runs the real `stage`, `install` and `uninstall`
+against a recording host double and asserts the recorded lines equal the plan,
+line for line. A kind that changes a command without changing its plan goes
+red, which is what keeps the preview from becoming a second, wrong description
+of install. The recorder (`PlanRecorder` in `tests/unit/host/conftest.py`) is
+otto's own test double; a repo-registered kind's author runs the same idea with a
+host double of their own.
+
 ## The library contract, for test and script authors
 
 Everything above is about the CLI. If you write tests, instructions or

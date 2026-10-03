@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from rich.table import Table
 
     from ..params import OptionsSource
+    from .plan import RepoPlan
     from .state import CleanlinessReport, ProjectStatus, RepoScope
 
 STATE_ANSWERS: "dict[InstallState, Result]" = {
@@ -211,3 +212,60 @@ def _cleanliness_table(report: "CleanlinessReport") -> "Table":
         table.add_row("" if label == heading else label, item.name, cell)
         heading = label
     return table
+
+
+_PHASES: dict[str, list[str]] = {
+    "install": ["stage", "install"],
+    "uninstall": ["uninstall"],
+    "install-tools": ["stage", "install"],
+}
+"""The phases each previewed instruction prints, in the order its steps are listed."""
+
+
+def render_plan(name: str, plans: "list[RepoPlan]") -> str:
+    """Render :func:`~otto.project.plan.plan_instruction`'s answer as indented plain text.
+
+    A plan is a step list, not a table. ``install`` prints every product's
+    ``stage`` lines before any ``install`` line, the order
+    :meth:`~otto.host.host.BaseHost.install` really uses, while
+    ``install-tools`` keeps each tool's two phases together, as
+    :meth:`~otto.host.host.BaseHost.install_dev_tools` does. Gaps close each
+    repo under ``not checked:``, repo-level ones first. A gap that is true of
+    the whole lab arrives under every repo, so each fully rendered gap line
+    prints once, at its first occurrence, and a repo left with none prints no
+    block.
+    """
+    phases = _PHASES[name]
+    width = max(len(phase) for phase in phases)
+    seen: set[str] = set()
+    out: list[str] = []
+    for repo in plans:
+        out.append(repo.repo)
+        for host in repo.hosts:
+            out.append(f"  {host.host_id}")
+            names = max((len(entry.name) for entry in host.products), default=0)
+            steps = (
+                [(phase, entry) for entry in host.products for phase in phases]
+                if name == "install-tools"
+                else [(phase, entry) for phase in phases for entry in host.products]
+            )
+            for phase, entry in steps:
+                first = True
+                for line in getattr(entry.plan, phase):
+                    # A multi-line command keeps its extra lines in the step column.
+                    for physical in line.splitlines() or [""]:
+                        if first:
+                            label = f"{phase:<{width}}  {entry.name:<{names}}"
+                            first = False
+                        else:
+                            label = " " * (width + 2 + names)
+                        out.append(f"    {label}  {physical}")
+        gaps = list(repo.gaps) + [
+            f"{host.host_id}: {gap}" for host in repo.hosts for gap in host.gaps
+        ]
+        fresh = [gap for gap in dict.fromkeys(gaps) if gap not in seen]
+        seen.update(fresh)
+        if fresh:
+            out.append("  not checked:")
+            out.extend(f"    {gap}" for gap in fresh)
+    return "\n".join(out)

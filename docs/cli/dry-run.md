@@ -93,8 +93,10 @@ dry run: no command body was run and no device was contacted
   lab: my_lab (3 hosts)
 ```
 
-`install` here is the real project instruction — a repo overriding it with its
-own options class (inheriting `InstallOptions`, see
+`install` here is the real project instruction, and it also prints its plan
+above this block ({ref}`the lab-level verbs <dry-run-lab-verbs>` shows it; the
+plan is left out of this example to show the options). A repo overriding it
+with its own options class (inheriting `InstallOptions`, see
 {doc}`../getting-started/customizing-project-instructions`) shows the same
 way, its own fields included.
 
@@ -271,7 +273,47 @@ dry run core: no device was contacted — nothing was read and nothing was chang
   …
 ```
 
+(dry-run-lab-verbs)=
+
 ## The lab-level verbs answer the same way
+
+`otto -n run install`, `uninstall` and `install-tools` print the plan first:
+every step the real run would take, host by host, derived from configuration
+alone, and then the standard block. A real run is unchanged.
+
+```text
+[DRY RUN] Commands and file transfers will be skipped. No device will be contacted.
+repo1
+  test1
+    stage    agent  PUT /work/repo1/build/agent.tar.gz -> /opt/stage
+    install  agent  tar -xzf /opt/stage/agent.tar.gz -C /opt/agent && /opt/agent/install.sh
+    install  kcov   PUT /work/repo1/build/kcov.ko -> <login home>
+                    sudo insmod '<login home>/kcov.ko'
+                    rm -f '<login home>/kcov.ko'
+  not checked:
+    test1: kcov: the login home — product 'kcov' declares no stage_dir and test1 no default_dest_dir
+    test1: kcov: whether kcov is resident on test1 (cat /proc/modules): uninstall runs rmmod only then
+    test1: kcov: sudo is assumed because the login user is not root; a real run measures how test1 elevates
+dry run: no command body was run and no device was contacted
+  would run: otto run install
+  options:
+    InstallOptions: ensure=False, recover_partial=True
+  lab: bench (3 hosts)
+```
+
+`install` lists every product's `stage` lines before any product's `install`
+lines, the order a host really uses; `install-tools` keeps each tool's two
+phases together. A host with nothing to do prints only its own line (the
+example leaves out `bench`'s other two hosts), and a local path is anchored to
+the repo that declared it. The lines' vocabulary, `<login home>` included, is
+{ref}`the product-kind contract's <product-kind-plan>`. Everything under `not checked:` is a fact a real run reads off the host (or a
+decision it takes from a flag) that a dry run cannot: `--ensure`'s "is the lab
+already installed" check, a repo or host class that replaces the default verb,
+`--toolchain`, the log hauls, and each product's own unchecked reads, prefixed
+with its name. A kernel-module load shows `sudo` only for a host whose
+configured login user is not root, the same test the real `load` applies. A gap that holds for the whole lab prints
+once, under the first repo it applies to. `status`, the other first-party
+instructions and every user-defined instruction keep the seam default.
 
 `otto.project`'s verbs — what `otto run install` and the `ensure` marker's
 steps call — compose the host verbs above, and inherit their answers. Two of

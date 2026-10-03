@@ -100,6 +100,19 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
             verb_instances = [
                 ctx.options(origin.cls) for origin in verb_origins if origin.cls not in own_types
             ]
+            if project.spec.dry_run_preview:
+                from rich import get_console
+
+                from ..project.plan import plan_instruction
+                from ..project.render import render_plan
+
+                # Verbatim: a plan line is a host command, so a `[` must not be read
+                # as markup, a `:name:` as an emoji, or a long line hard-wrapped.
+                text = render_plan(name, plan_instruction(name, ctx, kw))
+                if text:  # no repo applies: print nothing, not a blank line
+                    get_console().print(
+                        text, markup=False, emoji=False, highlight=False, soft_wrap=True
+                    )
             preview = command_spec(click_ctx).dry_run_preview or _leaf_declares_preview(click_ctx)
             await finish_dry_run(click_ctx, own + verb_instances, preview=preview)
         return await orchestrator.run_project_instruction(name, kw)

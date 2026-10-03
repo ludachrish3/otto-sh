@@ -34,6 +34,8 @@ treatment, flag tables and all.
 
 .. automodule:: otto.project.commands
 
+.. automodule:: otto.project.plan
+
 .. automodule:: otto.project.render
 
 .. automodule:: otto.project.state

@@ -88,6 +88,14 @@ class TestFirstDeclaration:
         assert spec.combine_results is None
         assert spec.render is None
 
+    def test_dry_run_preview_defaults_off_and_is_a_shape_keyword(self) -> None:
+        register_project_instruction_body(Base, "deploy", _mark("deploy", None), repo="a")
+        assert PROJECT_INSTRUCTIONS.get("deploy").spec.dry_run_preview is False
+        register_project_instruction_body(
+            Base, "preview", _mark("preview", None, dry_run_preview=True), repo="a"
+        )
+        assert PROJECT_INSTRUCTIONS.get("preview").spec.dry_run_preview is True
+
     def test_body_for_resolves_through_the_mro(self) -> None:
         _first_party()
         entry = PROJECT_INSTRUCTIONS.get("provision")
@@ -178,3 +186,22 @@ def test_publish_registers_a_data_entry():
     assert entry.project is PROJECT_INSTRUCTIONS.get("provision")
     assert entry.handler is None
     assert entry.registered_by is None
+
+
+def test_the_shipped_install_verbs_opt_in_to_the_dry_run_preview():
+    from otto.project import actions as mod
+    from otto.project.actions import ProjectActions
+
+    mod.register_project_instruction_bodies(ProjectActions, None)
+    previewed = {
+        name: PROJECT_INSTRUCTIONS.get(name).spec.dry_run_preview
+        for name in ("install", "uninstall", "install-tools", "status", "cleanup", "get-logs")
+    }
+    assert previewed == {
+        "install": True,
+        "uninstall": True,
+        "install-tools": True,
+        "status": False,
+        "cleanup": False,
+        "get-logs": False,
+    }

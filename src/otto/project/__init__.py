@@ -43,6 +43,10 @@ if TYPE_CHECKING:
     from .orchestrator import is_uninstalled as is_uninstalled
     from .orchestrator import status as status
     from .orchestrator import uninstall as uninstall
+    from .plan import HostPlan as HostPlan
+    from .plan import ProductPlanEntry as ProductPlanEntry
+    from .plan import RepoPlan as RepoPlan
+    from .plan import plan_instruction as plan_instruction
     from .state import Cleanliness as Cleanliness
     from .state import CleanlinessItem as CleanlinessItem
     from .state import CleanlinessKind as CleanlinessKind
@@ -76,6 +80,10 @@ _LAZY_ATTRS: dict[str, str] = {
     "is_uninstalled": "otto.project.orchestrator",
     "status": "otto.project.orchestrator",
     "uninstall": "otto.project.orchestrator",
+    "HostPlan": "otto.project.plan",
+    "ProductPlanEntry": "otto.project.plan",
+    "RepoPlan": "otto.project.plan",
+    "plan_instruction": "otto.project.plan",
     "Cleanliness": "otto.project.state",
     "CleanlinessItem": "otto.project.state",
     "CleanlinessKind": "otto.project.state",
@@ -109,11 +117,14 @@ __all__ = [
     "CleanlinessReport",
     "CleanupOptions",
     "GetLogsOptions",
+    "HostPlan",
     "InstallOptions",
     "InstallState",
     "InstallToolsOptions",
+    "ProductPlanEntry",
     "ProjectActions",
     "ProjectStatus",
+    "RepoPlan",
     "RepoScope",
     "StatusOptions",
     "UninstallOptions",
@@ -129,6 +140,7 @@ __all__ = [
     "install_tools",
     "is_clean",
     "is_uninstalled",
+    "plan_instruction",
     "register_project_actions",
     "status",
     "uninstall",

@@ -31,7 +31,14 @@ from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
 from .dev_tool import DevTool
-from .product import ShellProduct, cov_dir_of_name, validate_stage_dir
+from .product import (
+    ProductPlan,
+    ShellProduct,
+    cov_dir_of_name,
+    planned_stage_dir,
+    put_line,
+    validate_stage_dir,
+)
 
 if TYPE_CHECKING:
     from .host import Host
@@ -67,6 +74,22 @@ class DeclaredShell(ShellProduct, DevTool):
         if self.check_cmd is None:
             return False
         return (await host.run(self.check_cmd)).status is Status.Success
+
+    @override
+    def plan(self, host: "Host") -> ProductPlan:
+        # The seam the entry was declared in, as the registry stamped it; an
+        # object built by hand carries no entry and reads as a product.
+        seam = self.source_entry.seam if self.source_entry is not None else "products"
+        noun = "dev tool" if seam == "dev_tools" else "product"
+        where = planned_stage_dir(self.stage_dir, host, who=f"{noun} {self.name!r}")
+        if where.refusal is not None:
+            return ProductPlan(unchecked=[where.refusal])
+        return ProductPlan(
+            stage=[put_line(self.artifact, where.directory)],
+            install=[] if self.install_cmd is None else [self.install_cmd],
+            uninstall=[] if self.uninstall_cmd is None else [self.uninstall_cmd],
+            unchecked=[] if where.unchecked is None else [where.unchecked],
+        )
 
 
 def str_param(

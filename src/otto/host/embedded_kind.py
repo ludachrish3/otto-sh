@@ -25,7 +25,7 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
-from .product import ShellProduct
+from .product import ProductPlan, ShellProduct
 from .shell_kind import bool_param, reject_retired_params, str_list_param, str_param
 
 if TYPE_CHECKING:
@@ -84,12 +84,21 @@ class EmbeddedProduct(ShellProduct):
     (``void cov_reset(void) { __gcov_clear(); }``)."""
 
     @staticmethod
-    def _loader(host: Any) -> "BinaryLoader":
+    def _host_label(host: Any) -> str:
+        """Name *host* for an error or a plan line: its id, else its type."""
+        return getattr(host, "id", None) or type(host).__name__
+
+    @staticmethod
+    def _loader_or_none(host: Any) -> "BinaryLoader | None":
+        """Return *host*'s binary loader, or ``None`` when it has none."""
+        return getattr(host, "loader", None)
+
+    @classmethod
+    def _loader(cls, host: Any) -> "BinaryLoader":
         """Return *host*'s binary loader, or fail loud naming the host."""
-        loader = getattr(host, "loader", None)
+        loader = cls._loader_or_none(host)
         if loader is None:
-            who = getattr(host, "id", None) or type(host).__name__
-            raise ValueError(f"{who} has no binary loader")
+            raise ValueError(f"{cls._host_label(host)} has no binary loader")
         return loader
 
     @property
@@ -133,6 +142,38 @@ class EmbeddedProduct(ShellProduct):
     async def uninstall(self, host: "Host") -> Result:
         """Unload the extension, returning ``host.unload``'s result unchanged."""
         return await host.unload(self.name)  # ty: ignore[unresolved-attribute]
+
+    @override
+    def plan(self, host: "Host") -> ProductPlan:
+        """Plan the load, the ``call_after_load`` calls and the unload, spelt by the loader itself.
+
+        The call and unload lines are the host loader's own
+        ``call_command``/``unload_command`` — the strings the hooks and
+        ``EmbeddedHost.unload`` send — so
+        the two cannot drift. The load is shown as ``LOAD <local> as <name>``
+        because its real command carries the whole object hex-encoded.
+        """
+        loader = self._loader_or_none(host)
+        if loader is None:
+            return ProductPlan(
+                unchecked=[
+                    (
+                        f"{self._host_label(host)} has no binary loader: "
+                        "the install and the uninstall are refused before the device is touched"
+                    )
+                ]
+            )
+        return ProductPlan(
+            install=[f"LOAD {self.artifact} as {self.name}"]
+            + [loader.call_command(self.name, fn) for fn in self.call_after_load],
+            uninstall=[loader.unload_command(self.name)],
+            unchecked=[
+                (
+                    "the device's answer to the load and to each unload round "
+                    f"(at most {loader.max_unload_rounds} rounds)"
+                )
+            ],
+        )
 
     @override
     async def is_installed(self, host: "Host") -> bool:

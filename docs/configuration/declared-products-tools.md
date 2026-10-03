@@ -11,6 +11,11 @@ name a declared entry already claimed stands down.
 To see which hosts a product lands on, run `otto --lab X --list-products`
 (`--list-tools` for dev tools); see {ref}`list-products-flag`.
 
+To see what an install would do on those hosts before touching one, run
+`otto -n run install`: for every kind below it prints each transfer and command
+the product would make, and `otto -n run install-tools` does the same for dev
+tools ({ref}`dry-run-lab-verbs`).
+
 A repo that declares a non-empty `[[products]]` or `[[dev_tools]]` array must
 also declare its fleet in a `[project]` table; otherwise otto exits 1 at
 startup with an error naming the repo. See {ref}`project-scope-required` for

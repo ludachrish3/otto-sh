@@ -92,6 +92,17 @@ MARK_ATTR = "__otto_project_instruction__"
 """Attribute ``@instruction`` sets on a ``ProjectActions`` method it decorated."""
 
 
+PREVIEWABLE_INSTRUCTIONS: list[str] = ["install", "uninstall", "install-tools"]
+"""The project instructions ``dry_run_preview=True`` is honoured for.
+
+These are the names :func:`otto.project.plan.plan_instruction` can plan; it
+raises for any other, and ``instruction()`` refuses the keyword on any other at
+declaration. Declared here, not in ``otto.project.plan``, because the
+first-party declarations in ``otto.project.actions`` run at import and
+``plan`` imports that module.
+"""
+
+
 class ProjectInstructionError(OttoError):
     """A project instruction was declared in a way the table refuses."""
 
@@ -122,6 +133,7 @@ class ProjectInstructionSpec:
     walk: str = "forward"
     continue_on_failure: bool = False
     require_dependencies: bool = True
+    dry_run_preview: bool = False
     combine_results: "Callable[[dict[str, Any]], Any] | None" = None
     render: "Callable[[Any, Any], Any] | None" = None
 
@@ -289,6 +301,7 @@ def instruction(
     walk: str | None = None,
     continue_on_failure: bool | None = None,
     require_dependencies: bool | None = None,
+    dry_run_preview: bool | None = None,
     combine_results: "Callable[[dict[str, Any]], Any] | None" = None,
     render: "Callable[[Any, Any], Any] | None" = None,
     name: str | None = None,
@@ -368,10 +381,12 @@ def instruction(
     on the function and hands it back. ``register_project_actions`` reads the
     marks when the class is attributed to its repo, and
     ``otto.project.commands`` publishes one merged command per name once every
-    repo has spoken. The five walk-shape keywords (``walk``,
-    ``continue_on_failure``, ``require_dependencies``, ``combine_results``,
-    ``render``) are legal only there; only the ones passed explicitly are
-    recorded, so a later declaration inherits the first one's values.
+    repo has spoken. The six walk-shape keywords (``walk``,
+    ``continue_on_failure``, ``require_dependencies``, ``dry_run_preview``,
+    ``combine_results``, ``render``) are legal only there, and
+    ``dry_run_preview=True`` only on :data:`PREVIEWABLE_INSTRUCTIONS`; only the
+    ones passed explicitly are recorded, so a later declaration inherits the first one's
+    values.
     """
     if len(args) > 1:
         raise TypeError("instruction() takes at most one positional argument, the name")
@@ -411,6 +426,7 @@ def instruction(
                 ("walk", walk),
                 ("continue_on_failure", continue_on_failure),
                 ("require_dependencies", require_dependencies),
+                ("dry_run_preview", dry_run_preview),
                 ("combine_results", combine_results),
                 ("render", render),
             ]
@@ -421,6 +437,12 @@ def instruction(
         cmd_name = explicit_name or command_name(func_name)
         if _declares_self(func):
             options_parameter(func, options)  # for its refusal; the name is not needed here
+            if dry_run_preview and cmd_name not in PREVIEWABLE_INSTRUCTIONS:
+                raise ValueError(
+                    f"instruction {func_name!r}: dry_run_preview=True is honoured only for "
+                    f"{', '.join(PREVIEWABLE_INSTRUCTIONS)}, the verbs a plan can be "
+                    f"built for; {cmd_name!r} cannot be previewed"
+                )
             # An explicit help= wins over the docstring, and the six use it:
             # a project instruction's METHOD docstring describes what ONE
             # repo's body does, while the published command walks every repo,

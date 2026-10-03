@@ -50,12 +50,16 @@ from typing import TYPE_CHECKING
 import pytest
 import pytest_asyncio
 
+from otto.host.binary_loader import LlextHexLoader
+from otto.host.element import Element
 from otto.host.file_ops import PosixFileOps
 from otto.host.host import BaseHost, Expect, is_dry_run, refuse_declined_elevation
 from otto.host.lab_info import LabInfo
+from otto.host.login_proxy import Cred
 from otto.host.toolchain import Toolchain
+from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
-from otto.result import CommandResult, Result
+from otto.result import CommandResult, Result, Results
 from otto.utils import Status
 
 if TYPE_CHECKING:
@@ -280,6 +284,170 @@ def recording_host() -> PosixRecordingHost:
 def embedded_recording_host() -> RecordingHost:
     """A fresh glob-less double, for the verbs that must name that gap."""
     return RecordingHost()
+
+
+class PlanRecorder(UnixHost):
+    """A ``UnixHost`` whose transfers and commands are RECORDED in the plan's own vocabulary.
+
+    The install-preview differential (spec §3) runs a kind's real ``stage`` /
+    ``install`` / ``uninstall`` against this host and compares what they asked
+    for with what ``plan()`` said. It is a real ``UnixHost`` so that
+    ``load``/``unload``/``lsmod``/``rm`` run their production code and are
+    recorded as the ``put``/``run``/``exec`` calls they really make.
+
+    ``lines`` holds every action in order: ``PUT <src> -> <dest dir>``,
+    ``sudo <cmd>`` for an elevated ``run``, and the command string for a plain
+    ``run`` or ``exec``. ``take()`` hands the lines over and clears them.
+    ``script(cmd, output)`` scripts the output of ONE future exec of *cmd*;
+    unscripted commands answer success with empty output. ``home_reads``
+    counts calls of ``login_home`` — a plan must never cause one. Like
+    production, ``login_home`` answers from ``cached_login_home`` without
+    counting a read.
+
+    The plan vocabulary is ``put``, ``run`` (a string, a ``ShellCommand`` or a
+    list of either, one line each) and ``run(sudo=True)``; ``exec(sudo=True)``
+    is refused, because production routes it through elevation probes that
+    have no plan line. ``put`` ignores ``user``/``recursive``/``concurrent``.
+    """
+
+    def __init__(self, login: str = "admin") -> None:
+        super().__init__(
+            ip="10.0.0.1",
+            element=Element("h1"),
+            creds=[Cred(login=login, password="x")],
+            log=LogMode.QUIET,
+            term="ssh",
+        )
+        self.id = "h1"
+        self._login = login
+        self.lines: list[str] = []
+        self.home_reads = 0
+        self._scripts: dict[str, list[str]] = {}
+
+    @property
+    def current_user(self) -> str:  # ty: ignore[invalid-method-override] — the recorder stands in for the session
+        return self._login  # the configured login, as a fresh session is seeded with it
+
+    def script(self, cmd: str, output: str) -> None:
+        self._scripts.setdefault(cmd, []).append(output)
+
+    def take(self) -> list[str]:
+        lines, self.lines = self.lines, []
+        return lines
+
+    async def login_home(self) -> Path:
+        if self.cached_login_home is not None:
+            return self.cached_login_home
+        self.home_reads += 1
+        return Path("/home/admin")
+
+    async def put(
+        self,
+        src_files,
+        dest_dir,
+        mode=None,
+        show_progress=False,
+        *,
+        user=None,
+        recursive=False,
+        concurrent=False,
+    ) -> Result:
+        del mode, show_progress, user, recursive, concurrent
+        files = src_files if isinstance(src_files, list) else [src_files]
+        self.lines.extend(f"PUT {src} -> {dest_dir}" for src in files)
+        return Result(Status.Success, value={})
+
+    async def run(
+        self, cmds, expects=None, timeout=None, log=LogMode.NORMAL, *, sudo=False, user=None
+    ):
+        del expects, timeout, log, user
+        items = [cmds] if isinstance(cmds, str) or hasattr(cmds, "cmd") else list(cmds)
+        results = []
+        for item in items:
+            cmd = item if isinstance(item, str) else item.cmd
+            self.lines.append(f"sudo {cmd}" if sudo else cmd)
+            results.append(CommandResult(Status.Success, value="", command=cmd, retcode=0))
+        return Results.collect(results)
+
+    def _refuse_exec_sudo(self) -> None:
+        raise TypeError("the plan vocabulary has no exec(sudo=True); use run(sudo=True)")
+
+    async def _exec_one(
+        self, cmd, timeout, log=LogMode.NORMAL, user=None, *, expects=None, needs_shell=False
+    ):
+        del timeout, log, user, expects, needs_shell
+        self.lines.append(cmd)
+        queued = self._scripts.get(cmd)
+        output = queued.pop(0) if queued else ""
+        return CommandResult(Status.Success, value=output, command=cmd, retcode=0)
+
+
+@pytest.fixture
+def plan_recorder() -> PlanRecorder:
+    """A fresh :class:`PlanRecorder` per test, logged in as ``admin`` (not root)."""
+    return PlanRecorder()
+
+
+@pytest.fixture
+def root_plan_recorder() -> PlanRecorder:
+    """A fresh :class:`PlanRecorder` logged in as ``root``: ``load``/``unload`` do not elevate."""
+    return PlanRecorder(login="root")
+
+
+class EmbeddedPlanRecorder(RecordingHost):
+    """:class:`RecordingHost` with an LLEXT loader, recording in the plan's vocabulary.
+
+    It records ``load``, ``unload`` and ``exec``.
+
+    ``EmbeddedHost.load`` sends the loader's command over the device console
+    with the whole payload hex-encoded, so the plan's vocabulary for it is
+    ``LOAD <local> as <name>``; ``unload`` sends ``loader.unload_command(name)``
+    once per round until the device reports it gone, and the plan shows that
+    command once. ``call_after_load`` functions go through ``exec`` and are
+    recorded verbatim.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.loader = LlextHexLoader()
+        self.lines: list[str] = []
+
+    def take(self) -> list[str]:
+        lines, self.lines = self.lines, []
+        return lines
+
+    async def load(
+        self, file: Path, name: str, show_progress: bool = False, timeout: float = 120.0
+    ) -> Result:
+        del show_progress, timeout
+        self.lines.append(f"LOAD {file} as {name}")
+        return Result(Status.Success)
+
+    async def unload(self, name: str, timeout: float = 20.0) -> Result:
+        del timeout
+        self.lines.append(self.loader.unload_command(name))
+        return Result(Status.Success)
+
+    async def _exec_one(
+        self,
+        cmd: str,
+        timeout: float,
+        log: LogMode = LogMode.NORMAL,
+        user: str | None = None,
+        *,
+        expects: "list[Expect] | None" = None,
+        needs_shell: bool = False,
+    ) -> CommandResult:
+        self.lines.append(cmd)
+        return await super()._exec_one(
+            cmd, timeout, log, user, expects=expects, needs_shell=needs_shell
+        )
+
+
+@pytest.fixture
+def embedded_plan_recorder() -> EmbeddedPlanRecorder:
+    """A fresh :class:`EmbeddedPlanRecorder` per test."""
+    return EmbeddedPlanRecorder()
 
 
 @pytest_asyncio.fixture

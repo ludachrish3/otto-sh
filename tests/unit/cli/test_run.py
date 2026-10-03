@@ -849,6 +849,45 @@ class TestInstructionOnAMethod:
                 async def install(self, other: int = 0):
                     pass
 
+    def test_dry_run_preview_is_refused_on_a_name_with_no_plan(self) -> None:
+        from typing import Annotated
+
+        import typer
+
+        from otto import options
+        from otto.cli.run import instruction
+
+        @options
+        class Opts:
+            flag: Annotated[bool, typer.Option(help="f")] = False
+
+        with pytest.raises(ValueError, match="install, uninstall, install-tools") as refused:
+
+            class Actions:
+                @instruction("deploy", options=Opts, dry_run_preview=True)
+                async def deploy(self, opts: Opts): ...
+
+        assert "'deploy'" in str(refused.value)
+
+    def test_dry_run_preview_is_accepted_on_a_previewable_name(self) -> None:
+        from typing import Annotated
+
+        import typer
+
+        from otto import options
+        from otto.cli.run import instruction
+        from otto.instructions import MARK_ATTR
+
+        @options
+        class Opts:
+            flag: Annotated[bool, typer.Option(help="f")] = False
+
+        class Actions:
+            @instruction("uninstall", options=Opts, dry_run_preview=True)
+            async def teardown(self, opts: Opts): ...
+
+        assert getattr(Actions.teardown, MARK_ATTR).shape == {"dry_run_preview": True}
+
     def test_shape_keywords_on_a_free_function_are_refused(self) -> None:
         from otto.cli.run import instruction
 

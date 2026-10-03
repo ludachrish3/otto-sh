@@ -39,8 +39,15 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
-from .kmod_tool_kind import kmodcov_tool_for
-from .product import ShellProduct, cov_dir_of, cov_dir_of_name, sudo_gcda_delete
+from .kmod_tool_kind import SUDO_ASSUMED, elevates, kmodcov_tool_for, load_lines, unload_line
+from .product import (
+    ProductPlan,
+    ShellProduct,
+    cov_dir_of,
+    cov_dir_of_name,
+    planned_stage_dir,
+    sudo_gcda_delete,
+)
 from .shell_kind import (
     bool_param,
     stage_dir_param,
@@ -199,6 +206,47 @@ class KmodProduct(ShellProduct):
         """Resident when ``lsmod`` SUCCEEDS and lists the name; a failed read is not-installed."""
         listing = await host.lsmod()  # ty: ignore[unresolved-attribute]
         return listing.is_ok and self.module_name in listing.value
+
+    @override
+    def plan(self, host: "Host") -> ProductPlan:
+        """Plan the load and the unload; ``coverage = "module"`` puts the library's load first.
+
+        A host with no kmodcov tool refuses the install, so that plan has no load lines. The
+        library is embedded with its install only: cleanup, not this product, unloads it.
+        """
+        host_id = getattr(host, "id", "?")
+        elevated = elevates(host)
+        params = self.params
+        where = planned_stage_dir(self.stage_dir, host, who=f"product {self.name!r}")
+        if where.refusal is not None:
+            return ProductPlan(unchecked=[where.refusal])
+        plan = ProductPlan()
+        if self.coverage == "module":
+            tool = kmodcov_tool_for(host)
+            if tool is None:
+                plan.unchecked.append(
+                    f'coverage = "module" needs otto_kmodcov on host {host_id}, and no '
+                    "[[dev_tools]] entry of kind 'kmodcov' matches that host: "
+                    "the install is refused"
+                )
+                return plan
+            library = tool.plan(host, as_library=True)
+            plan.install += library.install
+            plan.unchecked += library.unchecked
+            # The same one-argument quoting install() applies.
+            params = f"{params} {shlex.quote(f'cov_dir={cov_dir_of(self)}')}".strip()
+        plan.install += load_lines(self.artifact, where.directory, params, elevated=elevated)
+        plan.uninstall = [unload_line(self.module_name, elevated=elevated)]
+        plan.unchecked += [
+            (
+                f"whether {self.module_name} is resident on {host_id} (cat /proc/modules): "
+                "uninstall runs rmmod only then"
+            ),
+            *([SUDO_ASSUMED.format(host=host_id)] if elevated else []),
+        ]
+        if where.unchecked is not None:
+            plan.unchecked.insert(0, where.unchecked)
+        return plan
 
     # ── hooks ────────────────────────────────────────────────────────────────
     # Their failure messages never name the product: the fetcher's warning and

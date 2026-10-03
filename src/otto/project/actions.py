@@ -78,7 +78,8 @@ def _owned(items: "list[_OwnedT]", owner: str) -> "list[_OwnedT]":
     way inside the host verbs. This copy exists because the QUESTIONS below
     (:attr:`ProjectActions.owns_products`, :meth:`~ProjectActions.status`,
     :meth:`~ProjectActions.is_clean`) count attachments rather than driving a
-    verb; every ACTION passes ``owner=`` down and lets the host filter.
+    verb; every ACTION passes ``owner=`` down and lets the host filter. The
+    install preview (:mod:`otto.project.plan`) reads attachments through it too.
 
     Nothing here filters on ``None``: an unowned attachment belongs to no
     repo's actions, so no repo's default touches it.
@@ -348,6 +349,7 @@ class ProjectActions:
         walk="forward",
         continue_on_failure=False,
         require_dependencies=True,
+        dry_run_preview=True,
     )
     async def install(self, opts: InstallOptions) -> Result:  # noqa: ARG002 — the base body needs no flag; the parameter is the override's, and super() passes it through
         """Install this repo's products on every fleet host.
@@ -365,6 +367,7 @@ class ProjectActions:
         walk="reverse",
         continue_on_failure=True,
         require_dependencies=False,
+        dry_run_preview=True,
     )
     async def uninstall(self, opts: UninstallOptions) -> Result:
         """Uninstall this repo's products on every fleet host.
@@ -493,6 +496,7 @@ class ProjectActions:
         walk="forward",
         continue_on_failure=False,
         require_dependencies=True,
+        dry_run_preview=True,
     )
     async def install_tools(self, opts: InstallToolsOptions) -> Result:
         """Install this repo's dev tools on every fleet host.

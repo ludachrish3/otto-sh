@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 from ..declared import KindRegistry, declared_for_host
 from ..registry import Ref, caller_module, get_registering_repo, refuse_during_test_load
 from ..result import Result
+from .product import ProductPlan, unplanned
 
 if TYPE_CHECKING:
     from ..declared import DeclaredEntry
@@ -117,6 +118,19 @@ class DevTool(ABC):
     async def is_installed(self, host: "Host") -> bool:
         """Return True when this tool is currently installed on *host*."""
         ...
+
+    def plan(self, host: "Host") -> ProductPlan:
+        """Describe what ``stage``, ``install`` and ``uninstall`` would do on *host*.
+
+        Pure and synchronous: built from configuration and *host*'s declared
+        attributes, never from a command. The base does not guess: empty step
+        lists and one ``unchecked`` line naming this class, so a code-defined
+        tool shows as an honest gap until its author describes it. The
+        built-in kinds override this, and a unit test runs their real hooks
+        against a recording host to keep the description equal to the deed.
+        """
+        del host  # the base describes the class, not the host
+        return unplanned(self)
 
 
 DevToolProvider = Callable[["Host"], Iterable[DevTool] | None]

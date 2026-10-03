@@ -25,8 +25,9 @@ library, and how it is loaded on demand, is the product kind's side
 (:mod:`otto.host.kmod_kind`).
 """
 
+import shlex
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from typing_extensions import override
@@ -35,7 +36,14 @@ from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
 from .dev_tool import DevTool
-from .product import resolve_stage_dir, stage_dir_key
+from .product import (
+    ProductPlan,
+    planned_stage_dir,
+    put_line,
+    resolve_stage_dir,
+    stage_dir_key,
+    sudo_line,
+)
 from .shell_kind import stage_dir_param, str_param
 
 if TYPE_CHECKING:
@@ -47,6 +55,49 @@ KMODCOV_MODULE_NAME = "otto_kmodcov"
 _VALID = "artifact, stage_dir, module_name, params"
 _VALID_KMODCOV = "artifact, stage_dir, params, source"
 _MODULE_VERBS = ("load", "unload", "lsmod")
+
+SUDO_ASSUMED = (
+    "sudo is assumed because the login user is not root; a real run measures how {host} elevates"
+)
+"""The plan's gap line for the elevation a real ``insmod``/``rmmod`` measures."""
+
+
+def elevates(host: Any) -> bool:
+    """Whether :meth:`~otto.host.unix_host.UnixHost.load`/``unload`` will elevate on *host*.
+
+    They run ``insmod``/``rmmod`` under ``sudo`` unless the session user is
+    root, and a session starts as the login the lab data configures — which
+    is all a plan may read (:meth:`~otto.host.host.BaseHost.configured_login_user`,
+    no host contact). A host that names no login is treated as not root.
+    """
+    configured = getattr(host, "configured_login_user", None)
+    return (configured() if callable(configured) else "") != "root"
+
+
+def _elevate(command: str, elevated: bool) -> str:
+    return sudo_line(command) if elevated else command
+
+
+def load_lines(artifact: Path, where: str, params: str, *, elevated: bool) -> list[str]:
+    """Return the three lines :meth:`~otto.host.unix_host.UnixHost.load` makes, in its quoting.
+
+    *elevated* is whether the ``insmod`` runs under ``sudo`` (:func:`elevates`).
+    """
+    staged = shlex.quote(str(PurePosixPath(where) / artifact.name))
+    extra = f" {params.strip()}" if params.strip() else ""
+    return [
+        put_line(artifact, where),
+        _elevate(f"insmod {staged}{extra}", elevated),
+        f"rm -f {staged}",
+    ]
+
+
+def unload_line(module_name: str, *, elevated: bool) -> str:
+    """Return the line :meth:`~otto.host.unix_host.UnixHost.unload` makes for a resident module.
+
+    ``unload`` normalises ``-`` to ``_`` before it quotes the name, and so does this.
+    """
+    return _elevate(f"rmmod {shlex.quote(module_name.replace('-', '_'))}", elevated)
 
 
 @dataclass
@@ -135,6 +186,38 @@ class KmodTool(DevTool):
         listing = await host.lsmod()  # ty: ignore[unresolved-attribute]
         return listing.is_ok and self.module_name in listing.value
 
+    @override
+    def plan(self, host: "Host", *, as_library: bool = False) -> ProductPlan:
+        """Plan the load and the unload; *as_library* is how a product's plan embeds this tool.
+
+        As a library the tool is loaded only when it is not already resident
+        and is never unloaded by the product, so the residency gap says that,
+        and the sudo gap is left to the product's own line.
+        """
+        host_id = getattr(host, "id", "?")
+        elevated = elevates(host)
+        where = planned_stage_dir(self.stage_dir, host, who=f"dev tool {self.name!r}")
+        if where.refusal is not None:
+            return ProductPlan(unchecked=[where.refusal])
+        resident = (
+            f"whether {self.module_name} is already resident on {host_id} (cat /proc/modules): "
+        )
+        plan = ProductPlan(
+            install=load_lines(self.artifact, where.directory, self.params, elevated=elevated),
+            uninstall=[unload_line(self.module_name, elevated=elevated)],
+            unchecked=(
+                [resident + "the library is loaded only when it is not"]
+                if as_library
+                else [
+                    resident + "install skips a resident module, uninstall runs rmmod only for one",
+                    *([SUDO_ASSUMED.format(host=host_id)] if elevated else []),
+                ]
+            ),
+        )
+        if where.unchecked is not None:
+            plan.unchecked.insert(0, where.unchecked)
+        return plan
+
 
 def _require_module_verbs(entry: DeclaredEntry, host: Any) -> None:
     missing = [v for v in _MODULE_VERBS if not callable(getattr(host, v, None))]
@@ -210,6 +293,16 @@ class KmodcovTool(KmodTool):
         if problem is not None:
             return Result(Status.Error, msg=problem)
         return await super().install(host)
+
+    @override
+    def plan(self, host: "Host", *, as_library: bool = False) -> ProductPlan:
+        """Plan as a :class:`KmodTool`, plus the interface check ``install`` runs first."""
+        plan = super().plan(host, as_library=as_library)
+        plan.unchecked.append(
+            f"the interface check of {self.artifact} (modinfo MODULE_VERSION): a .ko this otto "
+            "cannot drive is refused before anything is sent"
+        )
+        return plan
 
 
 def interface_problem(tool: KmodcovTool) -> str | None:

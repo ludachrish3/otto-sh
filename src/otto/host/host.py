@@ -1369,6 +1369,20 @@ class BaseHost(ABC):
         self._log_command(banner)
         return Result(Status.NotRun, msg=banner)
 
+    def configured_login_user(self) -> str:
+        """Return the login user the lab data configures, without contacting the host.
+
+        The very value ``SessionManager._seed_user`` stamps a live session's
+        ``current_user`` with, so it is what a real run's first ``sudo``
+        decision sees. It is CONFIGURATION, not a measurement: nothing is
+        connected and nothing is claimed about the loop. ``""`` when the host
+        has no session manager yet (``_session_mgr`` is ``init=False`` with no
+        default, filled by a family's ``__post_init__``, so a base-typed double
+        may lack it) or no login at all.
+        """
+        mgr = getattr(self, "_session_mgr", None)
+        return mgr._login_user() if mgr is not None else ""  # noqa: SLF001 — intra-package read of the manager's configured login user
+
     def _dry_run_session(self, name: str) -> "HostSession":
         """Announce the session a dry run declines to open, and return the decline.
 
@@ -1402,13 +1416,8 @@ class BaseHost(ABC):
 
         self._log_command(f"[DRY RUN] open_session({name!r}) — no session opened")
         # The login user is CONFIGURATION, not a measurement, so the declined
-        # handle reports it exactly as a real one would — read from the same
-        # `_login_user()` that `SessionManager._seed_user` stamps a live named
-        # session with. `getattr` because `_session_mgr` is `init=False` with
-        # no default: it is `BaseHost`'s field, but only a family's
-        # `__post_init__` fills it, so a base-typed double may have none.
-        mgr = getattr(self, "_session_mgr", None)
-        login_user = mgr._login_user() if mgr is not None else ""  # noqa: SLF001 — intra-package read of the manager's configured login user
+        # handle reports it exactly as a real one would.
+        login_user = self.configured_login_user()
         # `self.name`, not `self.id`, and deliberately: this identifier is
         # read by humans in a `[DRY RUN]` banner or a CommandNotRunError
         # message, and every other dry-run decline on this class names the
