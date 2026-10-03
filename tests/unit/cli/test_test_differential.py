@@ -28,7 +28,7 @@ from otto.cli.test import RUN_FLAGS, _run_params
 from otto.coverage.config import DestinationError
 from otto.params import OptionsValidationError
 from otto.suite.run import RunOptions, prepare_run
-from tests.unit.cli.conftest import _flat, _repo_with_tickets_configured
+from tests.unit.cli.conftest import _flat, _repo_with_tickets_configured, _squashed
 
 _SKIP = {"list_markers", "list_tests"}  # not RunOptions fields
 
@@ -85,7 +85,7 @@ def test_each_flag_reaches_run_tests_as_the_class_constructs_it(
         exit_code, handed, output = capture_cov(argv)
         assert exit_code == 2
         assert handed == {}
-        assert _flat(spell_flags(contradiction_message, RUN_FLAGS)) in _flat(output)
+        assert _squashed(spell_flags(contradiction_message, RUN_FLAGS)) in _squashed(output)
         return
     exit_code, handed, output = capture_cov(argv)
     assert exit_code == 0, output
@@ -98,6 +98,7 @@ CONTRADICTIONS = [
     ({"cov": False, "cov_dir": "{tmp}"}, "cov=False cannot be combined with"),
     ({"cov": False, "cov_report": True}, "cov=False cannot be combined with"),
     ({"seed": 7, "random_order": False}, "seed cannot be combined with random_order=False"),
+    ({"cov_dir": "{tmp}", "cov_report_dir": "{tmp}"}, "cov_report_dir cannot be or contain"),
 ]
 
 
@@ -130,7 +131,7 @@ def test_each_single_field_refusal_is_the_librarys_message_in_flag_spelling(
     exit_code, handed, output = capture_cov(_argv(fields, tmp_path))
     assert exit_code == 2
     assert handed == {}
-    assert _flat(spell_flags(str(excinfo.value), RUN_FLAGS)) in _flat(output)
+    assert _squashed(spell_flags(str(excinfo.value), RUN_FLAGS)) in _squashed(output)
 
 
 def _resolve(value: object, tmp_path: Path) -> object:
@@ -157,10 +158,23 @@ def test_each_contradiction_is_the_librarys_message_in_flag_spelling(
     exit_code, handed, output = capture_cov(_argv(fields, tmp_path))
     assert exit_code == 2
     assert handed == {}
-    # `_flat` collapses rich's wrapped panel borders and whitespace on both
-    # sides: click can wrap a long spelled message across lines, so a plain
-    # substring check can false-negative on where it wraps.
-    assert _flat(spell_flags(str(excinfo.value), RUN_FLAGS)) in _flat(output)
+    # `_squashed` drops rich's panel borders and all whitespace on both sides:
+    # click wraps a long spelled message across lines and hard-breaks a path
+    # longer than the panel, so a plain substring check can false-negative on
+    # where it wraps.
+    assert _squashed(spell_flags(str(excinfo.value), RUN_FLAGS)) in _squashed(output)
+
+
+def test_a_path_segment_named_like_a_field_is_never_spelled_as_a_flag(capture_cov, tmp_path):
+    """The flag spelling rewrites field names word by word, so a message that
+    quoted the user's ``<tmp>/cov`` would print ``<tmp>/--cov``. The refusal
+    names the fields only; proven red by putting the paths back in it."""
+    same = tmp_path / "cov"
+    exit_code, handed, output = capture_cov(["--cov-dir", str(same), "--cov-report-dir", str(same)])
+    assert exit_code == 2
+    assert handed == {}
+    assert "--cov-report-dir cannot be or contain --cov-dir" in _flat(output)
+    assert "/--cov" not in _squashed(output)
 
 
 def test_a_bad_destination_is_the_librarys_message_in_flag_spelling(capture_cov, tmp_path):
@@ -170,4 +184,4 @@ def test_a_bad_destination_is_the_librarys_message_in_flag_spelling(capture_cov,
     exit_code, handed, output = capture_cov(["--cov-report-dir", str(tmp_path)])
     assert exit_code == 2
     assert handed == {}
-    assert _flat(spell_flags(str(excinfo.value), RUN_FLAGS)) in _flat(output)
+    assert _squashed(spell_flags(str(excinfo.value), RUN_FLAGS)) in _squashed(output)

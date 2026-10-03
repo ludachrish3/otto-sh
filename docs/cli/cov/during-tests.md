@@ -55,6 +55,9 @@ case.
 `--cov-dir`, `--cov-report`, `--cov-report-dir` and `--cov-tickets-json` all
 imply coverage ({class}`~otto.suite.run.RunOptions` applies the same rule to
 a Python caller), so pairing any of them with `--no-cov` is a usage error.
+So is a `--cov-report-dir` that is, or contains, the `--cov-dir`: clearing
+the report would clear the coverage data it reports on. A report inside
+the `--cov-dir` is fine.
 
 (coverage-awareness)=
 ## Coverage awareness: `ctx.cov`

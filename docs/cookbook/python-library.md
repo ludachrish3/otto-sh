@@ -257,7 +257,8 @@ exceptions below stay one level down, at
 the `otto test` options class itself: what a field implies on the command
 line (`cov_report_dir` implies `cov_report` implies `cov`) it implies for a
 Python caller, and a contradiction (`cov=False` with a destination, a
-`seed` with `random_order=False`) is refused at construction.
+`cov_report_dir` that is or contains `cov_dir`, a `seed` with
+`random_order=False`) is refused at construction.
 
 ```python
 import otto

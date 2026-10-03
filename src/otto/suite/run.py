@@ -60,6 +60,13 @@ class NoTestsMatchedError(OttoError, ValueError):
     """
 
 
+def _lexical_path(path: Path) -> Path:
+    """*path* made absolute and normalised without touching the filesystem."""
+    # absolute(), not resolve(): resolve() reads symlinks; normpath folds ".."
+    # without them.
+    return Path(os.path.normpath(Path(path).expanduser().absolute()))
+
+
 @dataclasses.dataclass(frozen=True)
 class RunOptions:
     """Shared test-run options: markers/iterations/stability/coverage/monitor.
@@ -99,7 +106,8 @@ class RunOptions:
     cov_report: bool = False
     """Implies ``cov``."""
     cov_report_dir: Path | None = None
-    """Implies ``cov_report``."""
+    """Implies ``cov_report``. Must not be or contain ``cov_dir``: clearing
+    the report directory would clear the coverage data it reports on."""
     overwrite_cov_report_dir: bool = False
     project_name: str = "Coverage Report"
     cov_tickets_json: Path | None = None
@@ -122,7 +130,8 @@ class RunOptions:
 
         Raises:
             otto.params.OptionsValidationError: ``cov=False`` with a
-                coverage destination, a ``seed`` with ``random_order=False``,
+                coverage destination, a ``cov_report_dir`` that is or
+                contains ``cov_dir``, a ``seed`` with ``random_order=False``,
                 a ``monitor_interval`` below the monitor's floor, or a
                 ``monitor_hosts`` that is not a valid regex. The error class
                 is imported inline on each raise branch, so the happy path
@@ -140,6 +149,28 @@ class RunOptions:
                     "or cov_tickets_json, which all imply coverage"
                 )
             object.__setattr__(self, "cov", True)
+        if self.cov_dir is not None and self.cov_report_dir is not None:
+            # Lexical, not Path.resolve(): construction reads no filesystem
+            # content, so a symlink alias goes unnoticed (the CLI resolves its
+            # paths first), but every spelling of one path (x/../x, ~/x, an
+            # absolute x) is caught. A path that cannot be made absolute (an
+            # unknown ~user, a deleted cwd) skips the rule: prepare_run's
+            # destination checks report it.
+            try:
+                cov_dir = _lexical_path(self.cov_dir)
+                report = _lexical_path(self.cov_report_dir)
+            except (RuntimeError, OSError):
+                cov_dir = report = None
+            if cov_dir is not None and report is not None and cov_dir.is_relative_to(report):
+                from ..params import OptionsValidationError
+
+                # No paths in the message: the CLI spells field names as flags
+                # word by word, so a path segment named like a field would be
+                # rewritten, and the user has just typed both paths.
+                raise OptionsValidationError(
+                    "cov_report_dir cannot be or contain cov_dir: clearing the report "
+                    "would clear the coverage data it reports on"
+                )
         if self.monitor_output is not None or self.monitor_hosts is not None:
             object.__setattr__(self, "monitor", True)
         from ..utils import validate_interval

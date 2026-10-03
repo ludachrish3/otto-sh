@@ -373,6 +373,17 @@ def _flat(output: str) -> str:
     return " ".join(output.replace("│", " ").split())
 
 
+def _squashed(output: str) -> str:
+    """*output* with panel borders and every whitespace character removed.
+
+    For checks that quote a path: a token longer than the panel's width
+    (a long ``tmp_path``) is hard-broken mid-token, and :func:`_flat` turns
+    that break into a space the message never had. Compare both sides
+    squashed when the expected text can carry such a token.
+    """
+    return "".join(output.replace("│", "").split())
+
+
 def _lib_ok_result():
     """A zero-exit ``SuiteRunResult`` for a faked ``otto.suite.run.run_tests``."""
     from otto.suite.run import SuiteRunResult

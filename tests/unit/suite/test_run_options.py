@@ -29,6 +29,16 @@ CONTRADICTIONS = [
     ({"cov": False, "cov_report_dir": P}, "cov=False cannot be combined with"),
     ({"cov": False, "cov_tickets_json": P}, "cov=False cannot be combined with"),
     ({"seed": 7, "random_order": False}, "seed cannot be combined with random_order=False"),
+    ({"cov_dir": P, "cov_report_dir": P}, "^cov_report_dir cannot be or contain cov_dir"),
+    ({"cov_dir": P / "cov", "cov_report_dir": P}, "^cov_report_dir cannot be or contain cov_dir"),
+]
+
+# The same directory, spelled so that only a lexical normalisation equates
+# them (pathlib alone already folds "./cov" and a trailing slash).
+SAME_DIRECTORY_SPELLINGS = [
+    (Path("cov"), Path("cov/../cov")),
+    (Path("cov"), Path.cwd() / "cov"),
+    (Path("~/cov"), Path.home() / "cov"),
 ]
 
 
@@ -49,6 +59,36 @@ def test_construction_applies_the_implications(given, expected):
 def test_construction_refuses_the_contradictions(given, message):
     with pytest.raises(OptionsValidationError, match=message):
         RunOptions(**given)
+
+
+@pytest.mark.parametrize(("cov_dir", "cov_report_dir"), SAME_DIRECTORY_SPELLINGS)
+def test_a_report_dir_spelled_differently_is_still_the_cov_dir(cov_dir, cov_report_dir):
+    """Under ``overwrite_cov_report_dir`` the report's clear would empty the
+    coverage data it is about to read, however the two paths are spelled."""
+    with pytest.raises(OptionsValidationError, match="cannot be or contain cov_dir"):
+        RunOptions(cov_dir=cov_dir, cov_report_dir=cov_report_dir)
+
+
+@pytest.mark.parametrize(
+    ("cov_dir", "cov_report_dir"),
+    [(P, P / "report"), (P / "cov", P / "report"), (P / "cov-data", P / "cov")],
+    ids=["report-inside-cov", "siblings", "shared-name-prefix"],
+)
+def test_a_report_dir_that_cannot_clear_the_cov_dir_is_allowed(cov_dir, cov_report_dir):
+    """A report inside the coverage tree, or beside it, destroys no data.
+
+    The shared-name-prefix row is what a string-prefix comparison would get
+    wrong: ``cov-data`` starts with ``cov`` but is not inside it.
+    """
+    opts = RunOptions(cov_dir=cov_dir, cov_report_dir=cov_report_dir)
+    assert (opts.cov_dir, opts.cov_report_dir) == (cov_dir, cov_report_dir)
+
+
+def test_a_path_that_cannot_be_made_absolute_skips_the_rule_instead_of_crashing():
+    """An unknown ``~user`` makes ``expanduser`` raise; construction must not
+    leak that ``RuntimeError`` (``prepare_run``'s destination checks own it)."""
+    odd = Path("~nosuchuser_otto_xyz/cov")
+    assert RunOptions(cov_dir=odd, cov_report_dir=odd).cov_report_dir == odd
 
 
 def test_no_cov_without_a_destination_is_allowed():
