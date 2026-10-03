@@ -261,10 +261,28 @@ def test_list_hosts_still_needs_a_lab_while_list_products_does_not(listing_world
     assert _invoke("--list-products").exit_code == 0
 
 
-def test_help_describes_both_flags_in_plain_language():
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _rendered_help() -> str:
+    """``otto --help`` as one line of words, whatever width or colour Rich chose.
+
+    Under ``GITHUB_ACTIONS`` Typer forces a Rich terminal, and with CI's
+    ``TERM=dumb`` Rich then renders 80 columns wide and ignores ``COLUMNS``
+    (``Console.size``'s dumb-terminal arm), so a sentence in the options
+    panel wraps across box-drawn lines. Strip the escapes and the panel
+    chrome and collapse the whitespace, so the assertions read the words.
+    """
     result = _invoke("--help")
     assert result.exit_code == 0
-    text = " ".join(result.output.split())
+    plain = _ANSI.sub("", result.output)
+    for chrome in "│╭╮╰╯─":
+        plain = plain.replace(chrome, " ")
+    return " ".join(plain.split())
+
+
+def test_help_describes_both_flags_in_plain_language():
+    text = _rendered_help()
     assert "--list-products" in text
     assert "--list-tools" in text
     assert "List the products the repos declare" in text
