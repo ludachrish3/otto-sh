@@ -58,7 +58,7 @@ MIN_ANSWERED_PER_CHUNK = 3000
 """A floor under the cases that actually COMPARE, per slice.
 
 The whole generated corpus answered 29 920 of 37 628 cases when measured
-(2026-09-11; the hand-written lines below are counted separately: 284 cases, 236
+(2026-09-11; the hand-written lines below are counted separately: 308 cases, 260
 answered, 20 of the hand-overs the unknown-name ones). Interleaving spreads that
 evenly — 3 724 to 3 752 per slice, ~10.5 s each uncontended, ~21 s under coverage
 and xdist. 3 000 is loose enough that adding a command or an option cannot fail
@@ -321,6 +321,12 @@ def _reason_class(reason: str) -> str:
 
 
 HAND_WRITTEN = [
+    ("otto --log-level ", 2),
+    ("otto --log-level deb", 2),
+    ("otto --log-level DEB", 2),
+    ("otto --log-level w", 2),
+    ("otto --log-level Wa", 2),
+    ("otto --log-level=cr", 1),
     ('otto run "bl', 2),
     ("otto run blink-all --lev", 3),
     ("otto --lab=east host ", 3),

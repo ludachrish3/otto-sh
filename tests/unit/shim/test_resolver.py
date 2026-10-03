@@ -102,6 +102,15 @@ def _tree():
                                     "case_sensitive": True,
                                 },
                             ),
+                            _param(
+                                ["--level"],
+                                "level",
+                                source={
+                                    "kind": "static",
+                                    "values": ["DEBUG", "INFO", "WARNING", "WARN"],
+                                    "match_case": True,
+                                },
+                            ),
                         ],
                     )
                 },
@@ -193,6 +202,13 @@ def _answer(words: str, cword: int, env: dict | None = None, tests: "sc.TestName
     tree = _tree()
     res = sc.resolve(tree, args, NAMES["host_classes_by_id"])
     return sc.complete(tree, res, frag, env or {}, sc.Payloads(NAMES, tests))
+
+
+def test_static_match_case_answers_in_the_fragments_case():
+    assert _answer("otto run deploy --level w", 4) == ["warning", "warn"]
+    assert _answer("otto run deploy --level W", 4) == ["WARNING", "WARN"]
+    assert _answer("otto run deploy --level ", 4) == ["DEBUG", "INFO", "WARNING", "WARN"]
+    assert _answer("otto run deploy --level Wa", 4) == []
 
 
 def test_click_split_keeps_a_partial_quoted_token():

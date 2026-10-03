@@ -40,7 +40,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # is a lazy PEP 562 export) and it is what keeps the accepted level names below
 # from drifting out of the module that registers them.
 from ..declared import DeclaredEntry, MatchLeaf, validate_match_table
-from ..logger.levels import LEVEL_ALIASES
+from ..logger.levels import LEVEL_NAMES
 from ..utils import anchor_path, parse_cache_ttl
 from .base import OttoModel
 from .color import validate_color
@@ -427,7 +427,7 @@ class CredsConfigSpec(OttoModel):
 #: second edit, and a removed one stops validating instead of being accepted and
 #: then crashing ``setLevel`` downstream. ``NOTSET`` is excluded: "inherit root"
 #: is what an ABSENT entry already means.
-_LOG_LEVEL_NAMES = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"} | set(LEVEL_ALIASES))
+_LOG_LEVEL_NAMES = frozenset(LEVEL_NAMES)
 
 
 class LoggingConfigSpec(OttoModel):

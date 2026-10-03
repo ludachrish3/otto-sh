@@ -21,7 +21,9 @@ from typer.testing import CliRunner
 from otto.cli.invoke import LoggingLevelsConflictError, merge_logging_levels
 from otto.cli.main import app
 from otto.cli.registry import register_cli_command
+from otto.config.env import LOG_LVL_ENV_VAR
 from otto.logger import management
+from otto.logger.levels import LEVEL_NAMES
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.bootstrapstub import bootstrap_stub
@@ -392,6 +394,33 @@ class TestLoggerArguments:
     def test_log_level_custom_lower_case(self, real_main_mocks):
         _invoke(["--log-level", "debug"])
         assert logging.getLogger().level == logging.DEBUG
+
+    def test_bogus_log_level_is_refused_naming_it_and_the_levels(self, real_main_mocks):
+        result = _invoke(["--log-level", "bogus"])
+        assert result.exit_code == 2
+        assert "bogus" in result.output
+        for name in LEVEL_NAMES:
+            assert name in result.output
+
+    @pytest.mark.parametrize(("typed", "stored"), [("debug", "DEBUG"), ("Warn", "WARN")])
+    def test_log_level_is_stored_upper_case(self, real_main_mocks, typed, stored):
+        from otto.cli import main
+
+        assert _invoke(["--log-level", typed]).exit_code == 0
+        assert main._root_log_level == stored
+
+    def test_bogus_log_level_from_the_environment_is_refused(self, real_main_mocks):
+        with patch.dict(os.environ, {LOG_LVL_ENV_VAR: "bogus"}):
+            result = _invoke([])
+        assert result.exit_code == 2
+        assert "bogus" in result.output
+
+    def test_lower_case_log_level_from_the_environment_is_upper_cased(self, real_main_mocks):
+        from otto.cli import main
+
+        with patch.dict(os.environ, {LOG_LVL_ENV_VAR: "debug"}):
+            assert _invoke([]).exit_code == 0
+        assert main._root_log_level == "DEBUG"
 
     def test_log_days_default(self, real_main_mocks):
         _invoke([])

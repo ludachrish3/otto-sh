@@ -150,3 +150,22 @@ def test_formatting_leaves_the_record_as_it_found_it():
     formatter.format(record)
 
     assert record.msg == original
+
+
+def test_level_names_are_the_stdlib_names_and_the_aliases_by_severity():
+    from otto.logger.levels import LEVEL_NAMES
+
+    assert LEVEL_NAMES == ["DEBUG", "INFO", "WARNING", "WARN", "ERROR", "CRITICAL", "CRIT"]
+
+
+def test_every_alias_is_a_level_name():
+    from otto.logger.levels import LEVEL_ALIASES, LEVEL_NAMES
+
+    assert set(LEVEL_ALIASES) <= set(LEVEL_NAMES)
+
+
+def test_settings_accept_exactly_the_level_names():
+    from otto.logger.levels import LEVEL_NAMES
+    from otto.models import settings
+
+    assert frozenset(LEVEL_NAMES) == settings._LOG_LEVEL_NAMES

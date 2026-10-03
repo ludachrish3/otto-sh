@@ -516,6 +516,14 @@ def _source_values(
     if kind == "echo":
         return [frag]
     if kind == "static":
+        if source.get("match_case"):
+            # Answer in the fragment's case (lower-case fragment -> lower-case
+            # names), then Typer's own prefix filter, which drops a mixed-case
+            # fragment's upper-case answer: the completer's exact contract.
+            low = frag.lower()
+            hits = [v for v in source["values"] if v.lower().startswith(low)]
+            answered = [v.lower() for v in hits] if frag.islower() else hits
+            return [v for v in answered if v.startswith(frag)]
         if source.get("case_sensitive", True):
             return [v for v in source["values"] if v.startswith(frag)]
         low = frag.lower()

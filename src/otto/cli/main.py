@@ -30,6 +30,7 @@ from ..config.env import (
     SUT_DIRS_ENV_VAR,
     XDIR_ENV_VAR,
 )
+from ..logger.levels import LEVEL_NAMES
 from ..version import get_version
 from .completers import completion_source
 
@@ -115,8 +116,28 @@ def list_labs_callback(value: bool) -> None:
 
 
 def log_level_callback(value: str) -> str:
-    """Normalise the ``--log-level`` value to upper-case before Typer stores it."""
-    return value.upper()
+    """Upper-case the ``--log-level`` value, refusing a name otto does not know."""
+    level = value.upper()
+    if level not in LEVEL_NAMES:
+        choices = ", ".join(LEVEL_NAMES)
+        raise typer.BadParameter(f"{value!r} is not a log level; choose from {choices}")
+    return level
+
+
+@completion_source(kind="static", values=LEVEL_NAMES, match_case=True)
+def _log_level_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
+    """Completion source for ``--log-level``: the level names, in the fragment's case.
+
+    People type levels in lower case, so a lower-case fragment completes to
+    lower-case names (``deb`` -> ``debug``); anything else gets the canonical
+    upper-case names. The callback upper-cases whatever is given. The shim's
+    ``match_case`` static source reproduces exactly this, including Typer's
+    own prefix filter, which drops a mixed-case fragment's upper-case answer
+    (applied here too, so a direct call answers what the shell is shown).
+    """
+    hits = [name for name in LEVEL_NAMES if name.lower().startswith(incomplete.lower())]
+    answered = [name.lower() for name in hits] if incomplete.islower() else hits
+    return [name for name in answered if name.startswith(incomplete)]
 
 
 @completion_source(kind="payload", key="usernames", sort=True)
@@ -554,7 +575,8 @@ def main(  # noqa: PLR0913 — CLI command params
             envvar=LOG_LVL_ENV_VAR,
             metavar="LOG LEVEL",
             callback=log_level_callback,
-            help="Level at which to log.",
+            autocompletion=_log_level_completer,
+            help=f"Level at which to log: {', '.join(LEVEL_NAMES)} (any case).",
         ),
     ] = "INFO",
     rich_log_file: Annotated[
