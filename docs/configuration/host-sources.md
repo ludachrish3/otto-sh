@@ -527,10 +527,16 @@ registry machinery behind this and every other seam otto can be extended at.
   the same element: drop it from one of them, or reorder the entries so the one
   you want wins last.
 
+(host-id-collision)=
+
 `LabRepositoryError: host id 'X' in lab 'Y': element ... collides with element ...`
 : Two *different* elements — surviving the merge, so not an override — produce
-  the same host id. The message names both elements and the source each came
-  from; give the elements distinct names, or set `board`/`slot`.
+  the same host id. The message names both elements — the composite adds the
+  source each came from, the loader adds each side's board, slot and ip; give the elements distinct names, or set `board`/`slot`. The composite
+  source and `Lab.add_host` raise the same message shape, and the inventory
+  summary (completion, `--list-hosts`) records a drop when two elements at
+  different ips compose one id, folding them when the ip is the same (one
+  machine). The rule itself: {ref}`host-identity`.
 
 `LabNotFoundError: Lab '...' is not declared by any configured source (...)`
 : No source's `labs` table (or backend `list_labs`) declares that name. A lab

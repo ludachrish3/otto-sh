@@ -80,4 +80,4 @@ class TestLinkDefaults:
 
     def test_impair_defaults_none_and_is_carried(self):
         assert Link(a=_ep("a"), b=_ep("b")).impair is None
-        assert Link(a=_ep("a"), b=_ep("b"), impair="wanem_seed").impair == "wanem_seed"
+        assert Link(a=_ep("a"), b=_ep("b"), impair="wanem-seed").impair == "wanem-seed"

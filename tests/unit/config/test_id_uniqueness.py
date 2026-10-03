@@ -5,6 +5,7 @@ import pytest
 from otto.config.lab import Lab
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
+from otto.labs.errors import LabRepositoryError
 
 
 def _mk(element, ip="10.0.0.1", element_id=None):
@@ -14,7 +15,11 @@ def _mk(element, ip="10.0.0.1", element_id=None):
 def test_add_host_rejects_duplicate():
     lab = Lab(name="t")
     lab.add_host(_mk("server"))
-    with pytest.raises((KeyError, ValueError), match="server"):
+    with pytest.raises(
+        LabRepositoryError,
+        match=r"host id 'server' in lab 't': element 'server' \(10\.0\.0\.1\) "
+        r"collides with element 'server' \(10\.0\.0\.2\)",
+    ):
         lab.add_host(_mk("server", ip="10.0.0.2"))
 
 
@@ -56,7 +61,11 @@ def test_distinct_slug_collision_detected():
     # Two different raw elements that slug to the same id collide.
     a = Lab(name="a")
     a.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("Lab X Server")))
-    with pytest.raises((KeyError, ValueError), match="lab-x-server"):
+    with pytest.raises(
+        LabRepositoryError,
+        match=r"host id 'lab-x-server' in lab 'a': element 'Lab X Server' \(10\.0\.0\.1\) "
+        r"collides with element 'lab-x-server' \(10\.0\.0\.2\)",
+    ):
         a.add_host(UnixHost(ip="10.0.0.2", creds=[], element=Element("lab-x-server")))
 
 

@@ -77,7 +77,7 @@ describe("Overview page", () => {
     await importKitchen();
     expect(screen.getByTestId("element-section-chassis-a")).toBeTruthy();
     expect(screen.getByTestId("element-section-spare-chassis")).toBeTruthy();
-    expect(screen.getByTestId("subject-link-chassis-a_lc1")).toBeTruthy();
+    expect(screen.getByTestId("subject-link-chassis-a-lc1-1")).toBeTruthy();
   });
 });
 
@@ -85,10 +85,10 @@ describe("Subject page", () => {
   it("navigates by hash and shows range-scoped series counts", async () => {
     render(<App />);
     await importKitchen();
-    fireEvent.click(screen.getByTestId("subject-link-workers_w2"));
+    fireEvent.click(screen.getByTestId("subject-link-workers-w2"));
     await waitFor(() => expect(screen.getByTestId("subject-page")).toBeTruthy());
-    expect(window.location.hash).toBe("#/host/workers_w2");
-    expect(screen.getByTestId("subject-title").textContent).toContain("workers_w2");
+    expect(window.location.hash).toBe("#/host/workers-w2");
+    expect(screen.getByTestId("subject-title").textContent).toContain("workers-w2");
     const fullText = screen.getByTestId("series-summary").textContent ?? "";
 
     const session = useReviewStore.getState().sessions[0];

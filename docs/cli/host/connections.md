@@ -11,7 +11,7 @@ To change the final hop before a target host, use `--hop` to choose an
 intermediate SSH jump host:
 
 ```bash
-otto --lab my_lab host --hop jumpbox target_seed exec "uname -a"
+otto --lab my_lab host --hop jumpbox target-seed exec "uname -a"
 ```
 
 The hop host must support SSH. The target host can use SSH or telnet --
@@ -28,8 +28,8 @@ detected and rejected at connection time.
 The `--hop` option works with all subcommands:
 
 ```bash
-otto --lab my_lab host --hop jumpbox target_seed put firmware.bin /tmp/
-otto --lab my_lab host --hop jumpbox target_seed get /var/log/syslog ./logs/
+otto --lab my_lab host --hop jumpbox target-seed put firmware.bin /tmp/
+otto --lab my_lab host --hop jumpbox target-seed get /var/log/syslog ./logs/
 ```
 
 For persistent hop configuration, set the `hop` field on the host entry in
@@ -39,7 +39,7 @@ For persistent hop configuration, set the `hop` field on the host entry in
 {
     "ip": "10.10.200.12",
     "board": "seed",
-    "hop": "jumpbox_seed",
+    "hop": "jumpbox-seed",
     "creds": [{ "login": "admin", "password": "secret" }]
 }
 ```

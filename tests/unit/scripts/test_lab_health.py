@@ -32,11 +32,30 @@ from scripts.lab_health import (
     _CONSOLE_STATE_PROBE,
     DEFAULT_HOSTS,
     _hop_index,
+    _host_id,
     _load_hosts,
     _print_report,
 )
 
 pytestmark = pytest.mark.interpreter_agnostic
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        ({"element": "test1"}, "test1"),
+        ({"element": "bb", "board": "Qemu", "slot": 0}, "bb-qemu-0"),
+        ({"element": "Edge Node", "board": "line", "slot": 3}, "edge-node-line-3"),
+        # the element's ``id`` is data and never part of the host id
+        ({"element": "bb", "element_id": 7, "board": "q", "slot": 1}, "bb-q-1"),
+    ],
+)
+def test_host_id_is_make_host_id(entry, expected):
+    """The hop index keys hosts by the id otto composes — one format, one source."""
+    from otto.host.remote_host import make_host_id
+
+    assert _host_id(entry) == expected
+    assert _host_id(entry) == make_host_id(entry["element"], entry.get("board"), entry.get("slot"))
 
 
 def _route_probes(monkeypatch):

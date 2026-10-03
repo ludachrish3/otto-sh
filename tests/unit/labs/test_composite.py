@@ -373,8 +373,8 @@ def test_element_replaced_wholesale_and_warns(caplog) -> None:
         lab = comp.load_lab("site")
     # The global element's mgmt board is gone with its element. The element's
     # ``id`` (3) is data and reaches neither the ids nor the merge key.
-    assert set(lab.hosts) == {"dut_cpu"}
-    assert lab.hosts["dut_cpu"].ip == "10.9.9.9"
+    assert set(lab.hosts) == {"dut-cpu"}
+    assert lab.hosts["dut-cpu"].ip == "10.9.9.9"
     msgs = [r.getMessage() for r in caplog.records]
     assert any("'dut'" in m and "r/local" in m and "r/global" in m for m in msgs)
 
@@ -475,12 +475,9 @@ def test_declared_but_memberless_errors_naming_the_source() -> None:
 def test_host_id_clash_across_distinct_elements_after_merge_errors() -> None:
     """Two elements landing on one host id is an error, not a silent drop.
 
-    No pair of FACTORY-built elements can reach this any more: an id is
-    ``slug(element)`` plus, when a board is set, ``_`` + ``slug(board)`` +
-    slot, and neither slug can contain ``_``, so an id names exactly one
-    element (spec 2026-09-05 §2.2). What still can is a host with NO element —
-    a backend's own ``local`` keys under ``""`` — meeting an element the
-    author actually named ``local``.
+    A host with NO element — a backend's own ``local`` keys under ``""`` —
+    meeting an element the author actually named ``local`` is one way in; the
+    kebab pair in the next test is the other.
     """
 
     class LocalOnly:
@@ -503,6 +500,41 @@ def test_host_id_clash_across_distinct_elements_after_merge_errors() -> None:
     )
     with pytest.raises(
         LabRepositoryError, match=r"host id 'local'.*element '' from a.*element 'local' from b"
+    ):
+        comp.load_lab("site")
+
+
+def test_kebab_pair_from_two_sources_collides_naming_both_elements() -> None:
+    """Element ``a-b`` in one source and element ``a`` + board ``b`` in another compose ``a-b``.
+
+    Every portion of an id joins with ``-``, so the two different declarations
+    meet on one key when the sources merge; the composite refuses, naming both
+    elements and the source each came from.
+    """
+    comp = CompositeLabRepository(
+        [
+            LabSource(
+                label="src1",
+                repository=ExampleLabRepository(labs={"site": [_element("a-b", "10.0.0.1")]}),
+            ),
+            LabSource(
+                label="src2",
+                repository=ExampleLabRepository(
+                    labs={
+                        "site": [
+                            {
+                                "name": "a",
+                                "hosts": [{"ip": "10.0.0.2", "board": "b", "creds": _CREDS}],
+                            }
+                        ]
+                    }
+                ),
+            ),
+        ]
+    )
+    with pytest.raises(
+        LabRepositoryError,
+        match=r"host id 'a-b' in lab 'site'.*'a-b' from src1 collides with element 'a' from src2",
     ):
         comp.load_lab("site")
 

@@ -127,7 +127,7 @@ def test_an_id_no_lab_produces_is_still_a_violation() -> None:
     """The original rule, kept: offering an id that cannot dispatch is worse
     than offering none."""
     summaries = _summaries_of()
-    summaries.append(HostSummary(id="ghost_seed", labs=["unix"], ip="1.1.1.1"))
+    summaries.append(HostSummary(id="ghost-seed", labs=["unix"], ip="1.1.1.1"))
     with pytest.raises(AssertionError, match="cannot dispatch"):
         assert_lab_repository_conforms(_Backend(summaries), expected_labs=["unix", "unix_alt"])
 

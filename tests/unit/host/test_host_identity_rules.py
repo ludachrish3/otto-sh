@@ -15,10 +15,10 @@ from otto.labs.json_repository import parse_elements
     [
         ("server", None, None, "server"),
         ("Lab X Server", None, None, "lab-x-server"),
-        ("chassis", "cpu", 1, "chassis_cpu1"),
-        ("chassis", "io", 7, "chassis_io7"),
-        ("Edge Router", "LineCard", 3, "edge-router_linecard3"),
-        ("server", "cpu", None, "server_cpu"),
+        ("chassis", "cpu", 1, "chassis-cpu-1"),
+        ("chassis", "io", 7, "chassis-io-7"),
+        ("Edge Router", "LineCard", 3, "edge-router-linecard-3"),
+        ("server", "cpu", None, "server-cpu"),
     ],
 )
 def test_make_host_id_table(element, board, slot, expected):

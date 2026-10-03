@@ -102,7 +102,7 @@ two hosts that share a single physical lock — the required set is a set, so
 that costs nothing.
 
 (`board` and `slot` are what give the two chassis hosts distinct ids,
-`chassis_slot1` and `chassis_slot2` — the element's `id` (`1`) is data and
+`chassis-slot-1` and `chassis-slot-2` — the element's `id` (`1`) is data and
 never enters either; see {ref}`host-identity`.  A resource identifier is
 unrelated to a host id — otto never derives one from the other.)
 

@@ -175,7 +175,7 @@ def test_the_parity_backend_map_names_exactly_the_bed_roster():
 
 
 def test_the_declared_tap_link_names_both_ends_the_builder_provisions():
-    """The declared ``test1:bbeth-1350 <-> bb1350_qemu:eth0`` link is
+    """The declared ``test1:bbeth-1350 <-> bb1350-qemu:eth0`` link is
     pinned to ``GUEST_TABLE``, the same way the guest entries above are.
 
     A link declaration is a fourth hand-written copy of the identity table --
@@ -207,7 +207,7 @@ def test_the_declared_tap_link_names_both_ends_the_builder_provisions():
         link
         for link in data["links"]
         if {(e["host"], e.get("interface")) for e in link["endpoints"]}
-        == {("test1", guest.tap), (f"{guest.element}_qemu", "eth0")}
+        == {("test1", guest.tap), (f"{guest.element}-qemu", "eth0")}
     ]
     assert len(declared) == 1, (
         f"expected exactly one declared {guest.tap} <-> {guest.element}:eth0 link, "

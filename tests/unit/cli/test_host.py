@@ -915,7 +915,7 @@ class TestHostIdCompleter:
         )
         with patch("otto.config.get_repos", return_value=[_fake_repo(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == ["beet_seed", "local", "test1"]  # + built-in local
+        assert result == ["beet-seed", "local", "test1"]  # + built-in local
 
     def test_deduplicates_ids(self, tmp_path):
         """Same host id present in two lab.json files must collapse to one."""
@@ -1123,8 +1123,8 @@ class TestHostIdCompleterLabFilter:
 
     def test_prefix_filter_still_applies_within_lab(self, tmp_path):
         fake_cache = {
-            "hosts": ["test1", "cabbage_seed", "alt2"],
-            "hosts_by_lab": {"unix": ["test1", "cabbage_seed"]},
+            "hosts": ["test1", "cabbage-seed", "alt2"],
+            "hosts_by_lab": {"unix": ["test1", "cabbage-seed"]},
         }
         with patch("otto.config.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="test")

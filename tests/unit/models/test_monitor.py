@@ -146,7 +146,7 @@ class TestMetricRecordSource:
         rec = MetricRecord.model_validate(
             {
                 "timestamp": "2026-07-01T08:00:00+00:00",
-                "host": "chassis-a_lc1",
+                "host": "chassis-a-lc1-1",
                 "label": "PSU Temp °C",
                 "value": 41.5,
                 "source": "mgmt-01",
@@ -216,9 +216,9 @@ class TestExportDocument:
                         "elements": [{"id": "spare-chassis", "type": "physical"}],
                         "hosts": [
                             {
-                                "id": "chassis-a_lc1",
+                                "id": "chassis-a-lc1-1",
                                 "element": "chassis-a",
-                                "name": "chassis-a lc1",
+                                "name": "chassis-a lc1 1",
                                 "board": "lc1",
                                 "slot": 1,
                                 "hop": "edge-gw",
@@ -232,10 +232,10 @@ class TestExportDocument:
                         ],
                         "links": [
                             {
-                                "id": "chassis-a_lc1--edge-gw",
+                                "id": "chassis-a-lc1-1--edge-gw",
                                 "endpoints": [
                                     {"host": "edge-gw", "ip": "10.20.1.1"},
-                                    {"host": "chassis-a_lc1", "interface": "eth0"},
+                                    {"host": "chassis-a-lc1-1", "interface": "eth0"},
                                 ],
                                 "protocol": "tcp",
                                 "provenance": "implicit",
@@ -259,7 +259,7 @@ class TestExportDocument:
                     "metrics": [
                         {
                             "timestamp": "2026-07-01T08:00:00+00:00",
-                            "host": "chassis-a_lc1",
+                            "host": "chassis-a-lc1-1",
                             "label": "CPU %",
                             "value": 33.3,
                         }
@@ -295,7 +295,7 @@ class TestExportDocument:
         raw = self._doc()
         raw["sessions"][0]["lab"]["hosts"][0]["future_field"] = "x"
         doc = MonitorExport.model_validate(raw)
-        assert doc.sessions[0].lab.hosts[0].id == "chassis-a_lc1"
+        assert doc.sessions[0].lab.hosts[0].id == "chassis-a-lc1-1"
 
     def test_link_provenance_validated(self):
         raw = self._doc()

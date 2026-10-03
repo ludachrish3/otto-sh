@@ -10,7 +10,7 @@ afterEach(cleanup);
 const link: LinkSnapshot = {
   id: "lnk-1",
   endpoints: [
-    { host: "workers_w3", interface: "eth0", ip: "10.20.2.23" },
+    { host: "workers-w3", interface: "eth0", ip: "10.20.2.23" },
     { host: "db-01", interface: "eth0", ip: "10.20.3.31" },
   ],
   protocol: "udp",
@@ -65,7 +65,7 @@ describe("LinkInspector", () => {
     expect(panel.textContent).toContain("metrics-udp");
     expect(screen.getByTestId("inspector-protocol").textContent).toContain("udp");
     expect(screen.getByTestId("inspector-provenance").textContent).toContain("implicit");
-    expect(screen.getByTestId("inspector-endpoints").textContent).toContain("workers_w3");
+    expect(screen.getByTestId("inspector-endpoints").textContent).toContain("workers-w3");
     expect(screen.getByTestId("inspector-endpoints").textContent).toContain("10.20.3.31");
     expect(screen.getByTestId("inspector-impair").textContent).toContain("edge-gw");
     expect(screen.getByTestId("inspector-netem").textContent).toContain("Configure — coming soon");

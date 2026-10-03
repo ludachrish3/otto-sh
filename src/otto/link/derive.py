@@ -14,6 +14,7 @@ from typing import Any
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.element import Element
 from ..host.factory import host_identity
+from ..host.remote_host import slug
 from ..models.link import LinkSpec
 from .model import Link, LinkEndpoint, Provenance
 
@@ -71,7 +72,14 @@ def _resolve_endpoint(
         # name whose slug the author spelled as they typed it), and "no such
         # host" for a host that is plainly in the file is a dead end without
         # this.
-        close = get_close_matches(host_id, sorted(hosts), n=3)
+        # The commonest slip is the ELEMENT name typed where the composed id
+        # belongs; ids are ``<element>-<board>[-<slot>]``, so a prefix match
+        # finds it however short the element name is (a plain similarity
+        # ratio drops under its cutoff once the id grows a board and slot).
+        stem = slug(host_id)
+        close = [h for h in sorted(hosts) if h == stem or h.startswith(f"{stem}-")][:3]
+        if not close:
+            close = get_close_matches(host_id, sorted(hosts), n=3)
         hint = f" — did you mean {', '.join(repr(c) for c in close)}?" if close else ""
         raise ValueError(f"unknown host {host_id!r} (no such host in any lab file){hint}")
     if interface is not None:

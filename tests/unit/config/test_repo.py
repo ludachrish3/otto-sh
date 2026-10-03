@@ -86,19 +86,20 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
     assert pylib not in sys.path
 
     def _park(registry) -> dict:
-        # Raw entries, so parking never resolves a lazy ``Ref``.
+        # Raw entries, so parking never resolves a lazy ``Ref``. Park by
+        # ORIGIN and by NAME: an earlier test in this worker may have left one
+        # of repo1's option names registered under another origin, and an
+        # entry that is already present makes the delta below come out empty.
         parked = {}
         for name, entry, origin in registry._raw_items():
-            if origin.startswith("repo1_instructions"):
+            if origin.startswith("repo1_instructions") or name in repo1_options:
                 parked[name] = (entry, origin)
                 registry.unregister(name)
         return parked
 
     registries = [INSTRUCTIONS, OPTIONS]
     parked = {registry: _park(registry) for registry in registries}
-    evicted = {
-        m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("repo1_instructions")
-    }
+    evicted = {m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("repo1_")}
     before = {registry: set(registry.names()) for registry in registries}
 
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo1))
@@ -122,7 +123,7 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
                 registry.unregister(name)
             for name, (entry, origin) in parked[registry].items():
                 registry._restore_raw(name, entry, origin)
-        for mod in [m for m in sys.modules if m.startswith("repo1_instructions")]:
+        for mod in [m for m in sys.modules if m.startswith("repo1_")]:
             sys.modules.pop(mod, None)
         sys.modules.update(evicted)
 

@@ -40,7 +40,7 @@ GUEST_ADDR = "2: eth0    inet 198.51.100.17/30 brd 198.51.100.19 scope global et
 
 GUEST_LINK = Link(
     a=LinkEndpoint(host="test1", interface="bbeth-1350", ip="198.51.100.18"),
-    b=LinkEndpoint(host="bb1350_qemu", interface="eth0", ip="198.51.100.17"),
+    b=LinkEndpoint(host="bb1350-qemu", interface="eth0", ip="198.51.100.17"),
     name="bb1350-wire",
 )
 
@@ -57,7 +57,7 @@ def _bed(*, see_the_guest: bool, link: Link = GUEST_LINK):
     rather than to anything about the link.
     """
     test1 = FakeHost(id="test1", ip="10.10.200.11", addr_text=TEST1_WITH_TAP)
-    guest = FakeHost(id="bb1350_qemu", ip="198.51.100.17", addr_text=GUEST_ADDR)
+    guest = FakeHost(id="bb1350-qemu", ip="198.51.100.17", addr_text=GUEST_ADDR)
     # The hop is what makes test1's TAP a transit netdev; without it
     # `_hop_dependents` finds nothing and the guard under test never arms.
     guest.hop = "test1"
@@ -87,7 +87,7 @@ class TestImpairRefusesAnIncompleteView:
                 lab, "bb1350-wire", ImpairmentParams(delay_ms=50.0), from_host="test1"
             )
 
-        assert "bb1350_qemu" in str(excinfo.value), "the refusal must name the host it cannot see"
+        assert "bb1350-qemu" in str(excinfo.value), "the refusal must name the host it cannot see"
         # And it refused before touching anything: a refusal that lands after
         # the qdisc does is not a refusal.
         assert not any("tc qdisc" in c for c in test1.commands), test1.commands
@@ -188,7 +188,7 @@ class TestRepairIsNotGatedByTheLockoutRefusals:
         """
         mgmt_wire = Link(
             a=LinkEndpoint(host="test1", interface="eth1", ip="10.10.200.11"),
-            b=LinkEndpoint(host="bb1350_qemu", interface="eth0", ip="198.51.100.17"),
+            b=LinkEndpoint(host="bb1350-qemu", interface="eth0", ip="198.51.100.17"),
             name="mgmt-wire",
         )
         lab, test1, guest = _bed(see_the_guest=True, link=mgmt_wire)
@@ -238,7 +238,7 @@ class TestRepairReachesWhatItCan:
         assert [p.netdev for p in report.cleared] == ["bbeth-1350"]
         assert "tc qdisc del dev bbeth-1350 root" in test1.sudo_commands
         assert len(report.unreachable) == 1
-        assert "bb1350_qemu/eth0" in report.unreachable[0]
+        assert "bb1350-qemu/eth0" in report.unreachable[0]
         assert "not in the loaded lab" in report.unreachable[0]
 
     @pytest.mark.asyncio
@@ -267,7 +267,7 @@ class TestRepairReachesWhatItCan:
         """
         half_named = Link(
             a=LinkEndpoint(host="test1", interface="bbeth-1350", ip="198.51.100.18"),
-            b=LinkEndpoint(host="bb1350_qemu"),
+            b=LinkEndpoint(host="bb1350-qemu"),
             name="half-named",
         )
         lab, test1, _ = _bed(see_the_guest=True, link=half_named)
@@ -285,7 +285,7 @@ class TestRepairReachesWhatItCan:
         """The preserved half. Nothing could be impaired anywhere on such a
         link, so there is no repair to attempt and `repair --all` still declines
         it BY NAME rather than reporting a vacuous success."""
-        bare = Link(a=LinkEndpoint(host="test1"), b=LinkEndpoint(host="bb1350_qemu"), name="bare")
+        bare = Link(a=LinkEndpoint(host="test1"), b=LinkEndpoint(host="bb1350-qemu"), name="bare")
         lab, test1, _ = _bed(see_the_guest=True, link=bare)
 
         sweep = await repair_all(lab)

@@ -9,7 +9,7 @@ assertion failure.
 THE BUSYBOX GUEST ARM BELOW DOES NOT INJECT A DROP -- it pins otto's refusal
 to inject one. The 2026-08-22 TAP move removed the old blocker exactly as
 that day's open item predicted: a guest's ``eth0`` now has a far end that
-lives on a lab host, ``test1:bbeth-1350 <-> bb1350_qemu:eth0`` IS
+lives on a lab host, ``test1:bbeth-1350 <-> bb1350-qemu:eth0`` IS
 declared in ``tech1/lab.json``, and there is finally something for ``otto
 link impair`` (whose only argument is a DECLARED LINK id -- there is no
 host-and-netdev verb, by design) to name. Measurement then found the next
@@ -22,7 +22,7 @@ MEASURED ON THE LIVE BED, 2026-08-22, in this order:
    302.5ms. A port-scoped ``--port 23 --proto tcp --loss 100`` built the
    full prio/netem/u32 tree on the TAP, left ICMP at 0.96ms (so the wire and
    the guest were both fine, and only telnet was blackholed), and made
-   ``otto host bb1350_qemu run`` fail with rc 1 after 134s -- stalled in
+   ``otto host bb1350-qemu run`` fail with rc 1 after 134s -- stalled in
    ``Performing telnet login``, with the impairment verified still in place
    at the moment of failure. The ``--expire`` backstop then cleared the whole
    tree on schedule and the guest answered again immediately, no restart.
@@ -408,7 +408,7 @@ def test_otto_refuses_to_blackhole_the_busybox_guests_only_wire(busybox_chaos_be
       the guest's management transit -- and with that guard neutered this
       attempt really does blackhole the guest, which is what makes the
       assertion falsifiable rather than decorative;
-    * ``--from bb1350_qemu`` lands on the guest's ``eth0``, which IS its
+    * ``--from bb1350-qemu`` lands on the guest's ``eth0``, which IS its
       management interface, so ``ensure_not_mgmt`` refuses. Getting that
       answer at all means otto reached the guest over telnet-through-the-hop
       and parsed BusyBox ``ip -o addr show`` with

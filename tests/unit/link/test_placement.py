@@ -55,7 +55,7 @@ class TestEndpointPlacements:
         assert p == Placement("test2", "eth1.200", FlowDirection.B_TO_A)
 
     def test_unnamed_interface_not_impairable(self) -> None:
-        bare = Link(a=LinkEndpoint(host="a_seed"), b=LINK.b)
+        bare = Link(a=LinkEndpoint(host="a-seed"), b=LINK.b)
         with pytest.raises(ValueError, match="no named interface"):
             endpoint_placements(bare, BOTH)
 
@@ -70,13 +70,13 @@ class TestInpathPlacements:
 
     def test_not_in_path_fails_loud(self) -> None:
         off_path = Link(
-            a=LinkEndpoint(host="x_seed", interface="eth9", ip="192.168.99.1"), b=LINK.b
+            a=LinkEndpoint(host="x-seed", interface="eth9", ip="192.168.99.1"), b=LINK.b
         )
-        with pytest.raises(ValueError, match=r"no interface on 'x_seed'.*192.168.99.1"):
+        with pytest.raises(ValueError, match=r"no interface on 'x-seed'.*192.168.99.1"):
             inpath_placements(off_path, "test3", TEST3_ADDRS, BOTH)
 
     def test_unresolved_endpoint_ip_rejected(self) -> None:
-        no_ip = Link(a=LinkEndpoint(host="a_seed", interface="eth1"), b=LINK.b)
+        no_ip = Link(a=LinkEndpoint(host="a-seed", interface="eth1"), b=LINK.b)
         with pytest.raises(ValueError, match="unresolved ip"):
             inpath_placements(no_ip, "test3", TEST3_ADDRS, BOTH)
 

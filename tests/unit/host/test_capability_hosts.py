@@ -80,7 +80,7 @@ def test_host_id_and_name_leave_the_element_id_out():
     )
     # The element's ``id`` is data: it reaches neither the id nor the name
     # (spec 2026-09-05 §2.1). The id is slugged, the name is as written.
-    assert h.id == "test_boardx2"
+    assert h.id == "test-boardx-2"
     assert h.element.id == 5
     # name is the element name plus board/slot, exactly as written, no number
     # (spec 2026-09-05 §2.4); board/slot are space-separated, original case.
@@ -95,7 +95,7 @@ def test_make_host_id_matches_built_host_id():
     from otto.host.remote_host import make_host_id
     from otto.host.unix_host import UnixHost
 
-    assert make_host_id("Test", "BoardX", 2) == "test_boardx2"
+    assert make_host_id("Test", "BoardX", 2) == "test-boardx-2"
     assert make_host_id("solo", None, None) == "solo"
 
     h = UnixHost(

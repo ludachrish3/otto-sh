@@ -133,7 +133,7 @@ class TestIdAndNameGeneration:
         host = ZephyrHost(
             ip="192.0.2.1", element=Element("Zephyr37_Fat"), board="Mote", log=LogMode.QUIET
         )
-        assert host.id == "zephyr37-fat_mote"
+        assert host.id == "zephyr37-fat-mote"
         assert host.name == "Zephyr37_Fat Mote"
 
     def test_custom_name_preserved(self):

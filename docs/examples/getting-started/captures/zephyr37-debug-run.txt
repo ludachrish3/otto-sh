@@ -37,7 +37,7 @@ DEBUG    Skipping unrelated-lab link at index 0 in lab.json: {'endpoints': [{'ho
 DEBUG    Skipping unrelated-lab link at index 1 in lab.json: {'_comment': "The bb1350  derive.py:157
          guest's /30 to its TAP on test1 -- the ONLY wire the guest has.",                          
          'endpoints': [{'host': 'test1', 'interface': 'bbeth-1350'}, {'host':                       
-         'bb1350_qemu', 'interface': 'eth0'}], 'protocol': 'tcp'}                                   
+         'bb1350-qemu', 'interface': 'eth0'}], 'protocol': 'tcp'}                                   
 DEBUG    Loaded lab 'embedded' with 8 hosts                                   json_repository.py:461
 DEBUG    LocalSession@<session>: handshake start cmd='stty -echo 2>/dev/null;      session.py:528
          echo; echo __OTTO_<session>_READY__\n'                                                  

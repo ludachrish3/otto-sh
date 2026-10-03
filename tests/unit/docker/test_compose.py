@@ -52,6 +52,7 @@ from otto.host.login_proxy import Cred
 from otto.host.mount import Mount
 from otto.host.product import ShellProduct
 from otto.host.unix_host import UnixHost
+from otto.labs.errors import LabRepositoryError
 from otto.registry import registering_repo
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
@@ -1263,7 +1264,7 @@ def test_placeholder_id_collision_with_different_host_is_rejected(tmp_path):
     existing.id = placeholder.id
     lab.hosts[placeholder.id] = existing
 
-    with pytest.raises(KeyError, match=re.escape(placeholder.id)):
+    with pytest.raises(LabRepositoryError, match=re.escape(placeholder.id)):
         lab.add_host(placeholder)
 
     # The unrelated host must survive untouched — no silent overwrite.

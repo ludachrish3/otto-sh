@@ -289,7 +289,7 @@ class TestJsonFileLabRepository:
         repo = JsonFileLabRepository([tmp_path])
         lab = repo.load_lab("idlab")
 
-        assert "alt1_qemu0" in lab.hosts
+        assert "alt1-qemu-0" in lab.hosts
 
     def test_list_labs(self, tmp_path):
         _hosts_file(
@@ -455,7 +455,7 @@ class TestDeclaredLinks:
             hosts=[host_a, host_other],
             links=[
                 {
-                    "endpoints": [{"host": "test1"}, {"host": "kiwi_seed"}],
+                    "endpoints": [{"host": "test1"}, {"host": "kiwi-seed"}],
                     "protocol": "tcp",
                 }
             ],
@@ -463,10 +463,10 @@ class TestDeclaredLinks:
         repo = JsonFileLabRepository([tmp_path])
         lab = repo.load_lab("unix")
 
-        assert "kiwi_seed" not in lab.hosts  # dangling: not part of this lab's hosts
+        assert "kiwi-seed" not in lab.hosts  # dangling: not part of this lab's hosts
         assert len(lab.links) == 1
         (link,) = lab.links
-        assert {link.a.host, link.b.host} == {"test1", "kiwi_seed"}
+        assert {link.a.host, link.b.host} == {"test1", "kiwi-seed"}
         assert {link.a.ip, link.b.ip} == {"192.0.2.1", "192.0.2.9"}
 
     def test_link_fully_outside_lab_is_excluded(self, tmp_path):
@@ -490,7 +490,7 @@ class TestDeclaredLinks:
             hosts=[host_a, host_x, host_y],
             links=[
                 {
-                    "endpoints": [{"host": "kiwi_seed"}, {"host": "mango_seed"}],
+                    "endpoints": [{"host": "kiwi-seed"}, {"host": "mango-seed"}],
                     "protocol": "tcp",
                 }
             ],
@@ -531,11 +531,11 @@ class TestDeclaredLinks:
                 # (1) unrelated lab: references an unknown host — must be SKIPPED,
                 # not raise (pre-fix this failed every lab's load).
                 {
-                    "endpoints": [{"host": "ghost_seed"}, {"host": "phantom_seed"}],
+                    "endpoints": [{"host": "ghost-seed"}, {"host": "phantom-seed"}],
                     "protocol": "udp",
                 },
                 # (2) unrelated lab: structurally malformed (1 endpoint) — must be SKIPPED.
-                {"endpoints": [{"host": "kiwi_seed"}]},
+                {"endpoints": [{"host": "kiwi-seed"}]},
             ],
         )
         repo = JsonFileLabRepository([tmp_path])
@@ -631,7 +631,7 @@ class TestDeclaredLinks:
             hosts=[test1],
             links=[
                 {
-                    "endpoints": [{"host": "test1"}, {"host": "dup_seed"}],
+                    "endpoints": [{"host": "test1"}, {"host": "dup-seed"}],
                     "protocol": "tcp",
                 }
             ],
@@ -646,7 +646,7 @@ class TestDeclaredLinks:
         assert any("Duplicate host id" in r.message for r in caplog.records)
         assert "test1" in lab.hosts
         (link,) = lab.links
-        dup_ip = link.a.ip if link.a.host == "dup_seed" else link.b.ip
+        dup_ip = link.a.ip if link.a.host == "dup-seed" else link.b.ip
         assert dup_ip == "192.0.2.50"  # first record's addressing kept
 
 
@@ -762,7 +762,7 @@ def test_hosts_of_one_element_share_the_one_frozen_element(tmp_path: Path) -> No
         ),
     )
     lab = JsonFileLabRepository([tmp_path]).load_lab("l")
-    a, b = lab.hosts["dut_a"], lab.hosts["dut_b"]
+    a, b = lab.hosts["dut-a"], lab.hosts["dut-b"]
     assert a.element is b.element
     assert a.element.metadata == {"rack": "B4"}
     with pytest.raises(FrozenInstanceError):

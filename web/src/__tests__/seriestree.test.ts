@@ -13,7 +13,7 @@ const kitchen = parseExportDocument(
 ).sessions[0];
 
 describe("buildSeriesTree — host subject", () => {
-  const tree = buildSeriesTree(kitchen, "chassis-a_lc1");
+  const tree = buildSeriesTree(kitchen, "chassis-a-lc1-1");
 
   it("groups by chart with spec metadata", () => {
     const cpu = tree.find((c) => c.chartKey === "cpu");
@@ -53,16 +53,16 @@ describe("buildSeriesTree — element subject", () => {
   it("includes member-host series named by host", () => {
     const cpu = tree.find((c) => c.chartKey === "cpu");
     expect(cpu?.series.map((s) => s.host)).toEqual([
-      "chassis-a_lc1",
-      "chassis-a_lc2",
-      "chassis-a_sup",
+      "chassis-a-lc1-1",
+      "chassis-a-lc2-2",
+      "chassis-a-sup-5",
     ]);
-    expect(cpu?.series[0].key).toBe("chassis-a_lc1/CPU %");
+    expect(cpu?.series[0].key).toBe("chassis-a-lc1-1/CPU %");
   });
 });
 
 describe("filterTree + sourcesIn", () => {
-  const tree = buildSeriesTree(kitchen, "chassis-a_lc1");
+  const tree = buildSeriesTree(kitchen, "chassis-a-lc1-1");
 
   it("search prunes by series and chart label, case-insensitive", () => {
     const hit = filterTree(tree, { search: "psu", chips: null, source: null });
@@ -85,11 +85,11 @@ describe("filterTree + sourcesIn", () => {
     // A filter that repaints slots from 0 would still pass a single-series
     // comparison (0 === 0, the old psu-temp form) — proving no-repaint needs
     // a surviving series whose original slot is NONZERO. In the element
-    // tree's 3-series cpu chart, "sup" keeps only chassis-a_sup, slot 2.
+    // tree's 3-series cpu chart, "sup" keeps only chassis-a-sup-5, slot 2.
     const elementTree = buildSeriesTree(kitchen, "chassis-a");
     const hit = filterTree(elementTree, { search: "sup", chips: null, source: null });
     const cpu = hit.find((c) => c.chartKey === "cpu");
-    expect(cpu?.series.map((s) => [s.host, s.slot])).toEqual([["chassis-a_sup", 2]]);
+    expect(cpu?.series.map((s) => [s.host, s.slot])).toEqual([["chassis-a-sup-5", 2]]);
   });
 
   it("sourcesIn lists distinct external sources", () => {
@@ -99,7 +99,7 @@ describe("filterTree + sourcesIn", () => {
 
 describe("collectSeriesPoints", () => {
   it("returns in-range [ms, value] pairs for checked keys only", () => {
-    const tree = buildSeriesTree(kitchen, "chassis-a_lc1");
+    const tree = buildSeriesTree(kitchen, "chassis-a-lc1-1");
     const range = { from: kitchen.startMs, to: kitchen.startMs + 10 * 60_000 };
     const points = collectSeriesPoints(kitchen, tree, new Set(["CPU %"]), range);
     expect([...points.keys()]).toEqual(["CPU %"]);

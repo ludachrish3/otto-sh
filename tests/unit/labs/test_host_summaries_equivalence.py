@@ -7,7 +7,7 @@ the user a completion that cannot dispatch, which is worse than offering none.
 
 These cases are not hypothetical: deriving ids by formatting the raw JSON
 (the obvious cheap implementation) diverges on any ``os_profile`` that
-defaults an identity field (``r`` vs ``r_cpu0``) and on any element or board
+defaults an identity field (``r`` vs ``r-cpu-0``) and on any element or board
 the author spelled with case or punctuation (``Line Card`` vs ``line-card``),
 because the raw dict cannot see the profile merge or the slug rule.
 """
@@ -109,7 +109,7 @@ def test_profile_defaulted_identity_fields_reach_the_summary(tmp_path, profile_d
 
     (summary,) = repo.list_host_summaries()
     # Raw derivation would say "r" — the profile's board/slot are invisible there.
-    assert summary.id == "r_cpu0"
+    assert summary.id == "r-cpu-0"
     assert summary.id in repo.load_lab("e").hosts
     # docker_capable likewise comes from the merged spec, not the raw dict.
     assert summary.docker_capable is True
@@ -128,18 +128,15 @@ def test_two_records_deriving_one_id_keep_the_first_with_its_whole_membership(tm
 
     Degenerate config (``load_lab`` refuses it as a host-id collision), but
     pinned: enumeration must keep the first record and its whole membership
-    rather than silently prefer the later one. This is the only
-    route left to the keep-first branch — an id's prefix IS its element's slug
-    (spec 2026-09-05 §2.2), so two DIFFERENT elements can no longer land on one
-    id, and the same element in two files of one source is refused before
-    enumeration reaches the ids (see the test below).
+    rather than silently prefer the later one. (Two DIFFERENT elements can
+    also compose one id since every seam is ``-``; see
+    ``test_two_elements_composing_one_id_record_a_drop_naming_both`` and
+    ``test_two_elements_at_one_address_are_one_machine_in_both_labs``.)
 
     The ``ip`` is the half that discriminates keep-first from keep-last. The
     membership assertions pin that keeping the first record keeps the WHOLE
-    membership: both records are the one element's, so the kept summary already
-    carries every lab either of them could contribute — there is nothing left
-    to fold in, and no reachable configuration puts two memberships under one
-    id.
+    membership: both records are the one element's, so the kept summary
+    already carries every lab either of them could contribute.
     """
     repo = _write_lab(
         tmp_path,
@@ -162,41 +159,155 @@ def test_two_records_deriving_one_id_keep_the_first_with_its_whole_membership(tm
     )
 
     (summary,) = repo.list_host_summaries()
-    assert summary.id == "dup_seed", "both boards slug to 'seed'"
+    assert summary.id == "dup-seed", "both boards slug to 'seed'"
     assert summary.ip == "10.0.0.1", "first record wins"
     assert sorted(summary.labs) == ["e", "w"], "keeping the first keeps the whole membership"
     assert sorted(summary.lab_patterns) == ["e", "w"]
 
 
-def test_two_files_of_one_source_cannot_derive_the_same_id(tmp_path):
-    """Distinct elements can no longer collide on one host id (spec 2026-09-05 §2.2).
-
-    The old degenerate route was the element id: ``('dup', 1)`` with board
-    ``seed`` and ``dup1`` with board ``seed`` both produced ``dup1_seed``, and
-    enumeration had to keep the first record. Now an id is
-    ``slug(element)[_slug(board)slot]`` and neither slug can contain ``_``, so
-    an id's prefix IS its element's slug — distinct elements produce distinct
-    ids, and the only way two files could restate one id is by carrying the
-    same element, which is a duplicate-element error (spec §2.4).
-    """
+def _two_file_repo(tmp_path, first: dict, second: dict) -> JsonFileLabRepository:
+    """One source holding two lab files: *first* in ``a/``, *second* in ``b/``."""
     a, b = tmp_path / "a", tmp_path / "b"
     for d in (a, b):
         d.mkdir()
-    write_lab_json(
-        a / "lab.json",
-        [{"ip": "10.0.0.1", "element": "dup", "board": "seed", "labs": ["e"], "creds": _CREDS}],
-    )
-    write_lab_json(
-        b / "lab.json",
-        [{"ip": "10.0.0.2", "element": "dup1", "board": "seed", "labs": ["w"], "creds": _CREDS}],
-    )
-    repo = JsonFileLabRepository(search_paths=[a, b])
+    write_lab_json(a / "lab.json", [first])
+    write_lab_json(b / "lab.json", [second])
+    return JsonFileLabRepository(search_paths=[a, b])
 
-    summaries = repo.list_host_summaries()
-    assert sorted(s.id for s in summaries) == ["dup1_seed", "dup_seed"]
-    assert {s.id: s.ip for s in summaries} == {"dup_seed": "10.0.0.1", "dup1_seed": "10.0.0.2"}
-    assert "dup_seed" in repo.load_lab("e").hosts
-    assert "dup1_seed" in repo.load_lab("w").hosts
+
+_BARE_X_CPU_1 = {"ip": "10.0.0.1", "element": "x-cpu-1", "creds": _CREDS}
+_X_CPU_SLOT_1 = {
+    "ip": "10.0.0.2",
+    "element": "x",
+    "board": "cpu",
+    "slot": 1,
+    "creds": _CREDS,
+}
+_BARE_DESCRIBED = "element 'x-cpu-1' (10.0.0.1)"
+_BOARDED_DESCRIBED = "element 'x' board 'cpu' slot 1 (10.0.0.2)"
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "kept_described", "dropped_described"),
+    [
+        pytest.param(
+            _BARE_X_CPU_1, _X_CPU_SLOT_1, _BARE_DESCRIBED, _BOARDED_DESCRIBED, id="bare-kept"
+        ),
+        pytest.param(
+            _X_CPU_SLOT_1, _BARE_X_CPU_1, _BOARDED_DESCRIBED, _BARE_DESCRIBED, id="boarded-kept"
+        ),
+    ],
+)
+def test_two_elements_composing_one_id_record_a_drop_naming_both(
+    tmp_path, first, second, kept_described, dropped_described
+):
+    """Elements ``x-cpu-1`` and ``x`` + board ``cpu`` slot 1 compose ONE id; the loser is SAID.
+
+    Every portion of an id joins with ``-`` (spec 2026-10-03 §3), so two
+    different elements can land on one id. Across LABS that is not a refusal
+    (``load_lab`` of each lab succeeds), but the summary list carries one
+    record per id: the first wins, and the other host — a different address —
+    must not vanish silently (see otto.labs.drops). The drop names BOTH
+    declarations by the fields that tell them apart (element, board, slot,
+    ip), as ``Lab.add_host``'s refusal does. Run in both file orders so the
+    KEPT side's board and slot are asserted too, not only the dropped side's.
+    """
+    from otto.labs.drops import collecting_drops
+
+    repo = _two_file_repo(tmp_path, {**first, "labs": ["e"]}, {**second, "labs": ["w"]})
+    assert "x-cpu-1" in repo.load_lab("e").hosts
+    assert "x-cpu-1" in repo.load_lab("w").hosts
+
+    with collecting_drops() as drops:
+        (summary,) = repo.list_host_summaries()
+
+    assert (summary.id, summary.ip, summary.labs) == ("x-cpu-1", first["ip"], ["e"])
+    (drop,) = drops
+    assert drop.where == f"{tmp_path / 'b' / 'lab.json'}: element {second['element']!r} hosts[0]"
+    assert "host id 'x-cpu-1'" in drop.reason, "names the id"
+    assert f"{kept_described} collides with {dropped_described}" in drop.reason, (
+        "names the kept declaration, then the dropped one, each with its board, slot and address"
+    )
+
+
+def test_two_elements_at_one_address_are_one_machine_in_both_labs(tmp_path):
+    """``a-b`` and ``a`` + board ``b`` at ONE address are the same machine.
+
+    Same id + same ip is the rule ``Lab.__add__`` dedups on: one host. The
+    second record's lab membership folds into the kept summary (order
+    preserved) and nothing is dropped — lab ``w``'s membership must not vanish.
+    """
+    from otto.labs.drops import collecting_drops
+
+    repo = _two_file_repo(
+        tmp_path,
+        {"ip": "10.0.0.1", "element": "a-b", "labs": ["e"], "creds": _CREDS},
+        {"ip": "10.0.0.1", "element": "a", "board": "b", "labs": ["w"], "creds": _CREDS},
+    )
+
+    with collecting_drops() as drops:
+        (summary,) = repo.list_host_summaries()
+
+    assert (summary.id, summary.ip, summary.labs) == ("a-b", "10.0.0.1", ["e", "w"])
+    assert summary.lab_patterns == ["e", "w"]
+    assert drops == []
+
+
+def test_a_same_lab_kebab_pair_at_one_address_folds_in_completion_but_is_refused_at_load(
+    tmp_path,
+):
+    """The one shape where completion offers an id the lab will not load.
+
+    ``a-b`` and ``a`` + board ``b`` at ONE address in ONE lab: the summary
+    folds them (same id, same machine) while ``load_lab`` refuses the lab,
+    naming both declarations. The refusal says ``in lab`` once — the loader's
+    file/element/index prefix does not repeat what the refusal already says.
+    """
+    from otto.labs.errors import LabRepositoryError
+
+    repo = _write_lab(
+        tmp_path,
+        [
+            {"ip": "10.0.0.1", "element": "a-b", "labs": ["e"], "creds": _CREDS},
+            {"ip": "10.0.0.1", "element": "a", "board": "b", "labs": ["e"], "creds": _CREDS},
+        ],
+    )
+
+    assert [s.id for s in repo.list_host_summaries()] == ["a-b"]
+
+    with pytest.raises(LabRepositoryError) as excinfo:
+        repo.load_lab("e")
+    message = str(excinfo.value)
+    assert "element 'a' hosts[0]: host id 'a-b' in lab 'e':" in message
+    assert message.count("in lab 'e'") == 1
+    assert "element 'a-b' (10.0.0.1) collides with element 'a' board 'b' (10.0.0.1)" in message
+
+
+def test_a_restated_host_with_the_same_address_folds_without_a_drop(tmp_path):
+    """The same host written twice (same id, same address) is one host, not a collision.
+
+    A second file restating an element is a duplicate-element error, so one
+    element listing the host twice is the same-element route to an id met twice
+    at one address (two ELEMENTS at one address: see
+    ``test_two_elements_at_one_address_are_one_machine_in_both_labs``); the
+    kept record carries the element's whole membership.
+    """
+    from otto.labs.drops import collecting_drops
+
+    host = {
+        "ip": "10.0.0.1",
+        "element": "dup",
+        "board": "seed",
+        "labs": ["e", "w"],
+        "creds": _CREDS,
+    }
+    repo = _write_lab(tmp_path, [host, dict(host)])
+
+    with collecting_drops() as drops:
+        (summary,) = repo.list_host_summaries()
+
+    assert (summary.id, summary.ip, sorted(summary.labs)) == ("dup-seed", "10.0.0.1", ["e", "w"])
+    assert drops == []
 
 
 def test_ip_comes_from_the_validated_spec_not_the_raw_dict(tmp_path, profile_defaulting_ip):

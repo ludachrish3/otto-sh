@@ -35,7 +35,7 @@ aborting:
 
 ```text
 partially repaired bb1350-wire: cleared test1/bbeth-1350, timers cancelled 0
-  could not reach bb1350_qemu/eth0: link references host 'bb1350_qemu' not in the loaded lab
+  could not reach bb1350-qemu/eth0: link references host 'bb1350-qemu' not in the loaded lab
 ```
 
 The headline reads `partially repaired`, not a green `repaired`, and the

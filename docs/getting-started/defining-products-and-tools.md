@@ -44,7 +44,7 @@ Registering a provider makes the `[project]` table in `.otto/settings.toml`
 required — the repo has to say which labs and hosts it is speaking for, and
 otto will not call the provider for a host outside that declaration. The
 worked example declares it as `lab_patterns = ["busybox"]` and
-`host_patterns = ["bb.*_qemu"]` — both fullmatched regexes, defined in
+`host_patterns = ["bb.*-qemu"]` — both fullmatched regexes, defined in
 {ref}`project-scope` in {doc}`../configuration/lab-config`.
 
 ## A dev tool

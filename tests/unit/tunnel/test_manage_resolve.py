@@ -201,7 +201,7 @@ class TestContainerRules:
     def _setup(self):
         parent = FakeUnix("test1", ip="10.10.200.11")
         ctr = _container("test1.repo2.oldos", parent)
-        other = FakeUnix("test2_soil", ip="10.10.200.12")
+        other = FakeUnix("test2-soil", ip="10.10.200.12")
         return _lab(**{parent.id: parent, ctr.id: ctr, other.id: other}), parent, ctr, other
 
     def test_container_endpoint_with_parent_neighbor_ok(self) -> None:
@@ -234,7 +234,7 @@ class TestContainerRules:
         ``asyncio.TimeoutError`` (the host call no longer raises one)."""
         parent = FakeUnix("test1", ip="10.10.200.11")
         ctr = _container("test1.repo2.oldos", parent, inspect_timeout=True)
-        other = FakeUnix("test2_soil", ip="10.10.200.12")
+        other = FakeUnix("test2-soil", ip="10.10.200.12")
         lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
 
         with pytest.raises(RuntimeError, match="timed out inspecting container"):
@@ -281,7 +281,7 @@ class TestContainerLiveness:
 
     def _lab_with(self, ctr):
         parent = FakeUnix("test1", ip="10.10.200.11")
-        other = FakeUnix("test2_soil", ip="10.10.200.12")
+        other = FakeUnix("test2-soil", ip="10.10.200.12")
         return _lab(**{parent.id: parent, ctr.id: ctr, other.id: other}), parent, other
 
     def test_down_container_endpoint_fails_loud_without_compose(self, monkeypatch) -> None:
@@ -477,7 +477,7 @@ class TestPlannedChainRefusesFromLabDataAlone:
     def test_a_container_hop_is_named_but_its_address_is_left_unread(self) -> None:
         parent = FakeUnix("test1", ip="10.10.200.11")
         ctr = _container("test1.repo2.oldos", parent)
-        other = FakeUnix("test2_soil", ip="10.10.200.12")
+        other = FakeUnix("test2-soil", ip="10.10.200.12")
         lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
 
         # POSITIVE CONTROL: a real run DOES resolve it, off the device, to the
@@ -499,7 +499,7 @@ class TestPlannedChainRefusesFromLabDataAlone:
     def test_the_container_interface_refusal_still_fires(self) -> None:
         parent = FakeUnix("test1", ip="10.10.200.11")
         ctr = _container("test1.repo2.oldos", parent)
-        other = FakeUnix("test2_soil", ip="10.10.200.12")
+        other = FakeUnix("test2-soil", ip="10.10.200.12")
         lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
         with active_context(dry_run=True), pytest.raises(ValueError, match="no @interface"):
             planned_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, "eth0")])
@@ -519,7 +519,7 @@ class TestTheBackstopGuardsResolutionToo:
     def test_a_container_hop_raises_instead_of_answering(self) -> None:
         parent = FakeUnix("test1", ip="10.10.200.11")
         ctr = _real_placeholder(running_cid="abc123")
-        other = FakeUnix("test2_soil", ip="10.10.200.12")
+        other = FakeUnix("test2-soil", ip="10.10.200.12")
         lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
 
         with (

@@ -89,16 +89,52 @@ def slug(value: str) -> str:
 def make_host_id(element: str, board: str | None, slot: int | None) -> str:
     """Compose a host's ``id`` from its identity fields — the single source of the id format.
 
-    ``slug(element)``, then — only when a board is set — ``_`` + ``slug(board)``
-    + ``slot``. The element's ``id`` is data and never appears (spec
-    2026-09-05 §2.2). Called by ``RemoteHost._generate_id`` and by
-    host_preferences selector matching, so a selector regex matches the same
-    string a built host reports.
+    Every portion is slugged and the portions are joined by ``-``:
+    ``slug(element)``, then — only when a board is set — ``slug(board)``, then
+    — only with a board — the slot. ``test1``, ``test1-bb``, ``test1-bb-0``.
+    A slot of ``0`` is a slot. The element's ``id`` is data and never appears.
+    Called by ``RemoteHost._generate_id`` and the factory; host_preferences
+    selectors fullmatch the id it produces. Two different declarations CAN compose one id (element
+    ``a-b`` and element ``a`` + board ``b``); ``Lab.add_host`` refuses that,
+    naming both.
     """
-    if board is None:
-        return slug(element)
-    slot_str = "" if slot is None else f"{slot}"
-    return f"{slug(element)}_{slug(board)}{slot_str}"
+    portions = [slug(element)]
+    if board is not None:
+        portions.append(slug(board))
+        if slot is not None:
+            portions.append(str(slot))
+    return "-".join(portions)
+
+
+def make_host_name(element: str, board: str | None, slot: int | None) -> str:
+    """Compose a host's display ``name`` from its identity fields: ``element [board] [slot]``.
+
+    Space-joined, exactly as written — no case change and no slug — because a
+    name is a label, not an id. The board appears only when it is set and
+    non-empty, and the slot only WITH a board (a slot alone is ignored, as in
+    :func:`make_host_id`). A slot of ``0`` is a slot.
+    """
+    parts = [element]
+    if board:
+        parts.append(board)
+        if slot is not None:
+            parts.append(str(slot))
+    return " ".join(parts)
+
+
+def describe_identity(element: str, board: str | None, slot: int | None, ip: str | None) -> str:
+    """Name a host by its declaration, for a collision message: what the user wrote, not the id.
+
+    ``element 'x' board 'cpu' slot 1 (10.0.0.2)`` — board, slot and address
+    each appear only when set. Two declarations that compose one id (see
+    :func:`make_host_id`) are told apart by exactly these fields.
+    """
+    parts = [f"element {element!r}"]
+    if board is not None:
+        parts.append(f"board {board!r}")
+    if slot is not None:
+        parts.append(f"slot {slot}")
+    return " ".join(parts) + (f" ({ip})" if ip else "")
 
 
 OsType = str
@@ -577,12 +613,7 @@ class RemoteHost(BaseHost):
         No case change in either direction and no number (spec 2026-09-05
         §2.4) — a label, not an id.
         """
-        parts: list[str] = [self.element.name]
-        if self.board:
-            parts.append(self.board)
-            if self.slot is not None:
-                parts.append(str(self.slot))
-        return " ".join(parts)
+        return make_host_name(self.element.name, self.board, self.slot)
 
     def _generate_id(self) -> str:
         return make_host_id(self.element.name, self.board, self.slot)

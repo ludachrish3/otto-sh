@@ -64,7 +64,7 @@ interface DataPlaneBackbone {
  * sibling `acc-*`) are a real tier, not a decoration; peeling them collapses
  * that tier into the hub's column and regresses toward the pre-redesign
  * hairball (measured, see the design doc). Only true degree-1 pendants (a
- * service hanging off ONE attachment, e.g. isp-core's `hss-01`) get folded
+ * service hanging off ONE attachment, e.g. isp-core's `mme-01` element) get folded
  * away. */
 function peelDataPlaneBackbone(
   nodes: TopoNode[],
@@ -549,11 +549,12 @@ function barycentricRowSort(byColumn: Map<number, TopoNode[]>, edges: TopoEdge[]
  *
  * A node with no data-plane neighbour in the ADJACENT column falls back to the
  * median y of its SAME-COLUMN data-plane neighbours. Without that fallback a
- * DOCKED LEAF is stranded: `hss-01`'s only declared link is to `core-02`, which
- * the peel/dock step places in `hss-01`'s own column, so it has no cross-column
- * neighbour at all, gets no target, and sits at its stale grid y while every
- * node around it is pulled toward its own neighbours -- measured, that left
- * `hss-01` at y=0 with `core-02` at y=1320, 12 rows from the node it hangs off,
+ * DOCKED LEAF is stranded: the `mme-01` element's only declared link is to
+ * `core-01`, and the peel/dock step places it in core-01's own column, so it
+ * has no cross-column neighbour at all, gets no target, and sits at its stale
+ * grid y while every node around it is pulled toward its own neighbours --
+ * measured (on the then-pendant `hss-01`, docked to `core-02`), that left it
+ * at y=0 with `core-02` at y=1320, 12 rows from the node it hangs off,
  * its link bowing the entire height of the column. That is precisely the
  * "linked peers sit far apart and their links bow" failure this redesign
  * exists to remove, so a leaf with no cross-column opinion follows the node it
@@ -581,7 +582,7 @@ function coordinateAssignment(
   const neighborsAcross = adjacentColumnNeighbors(edges, columnOfId);
 
   // Same-column data-plane neighbours -- the dock relationship a leaf like
-  // `hss-01` has with `core-02`. Only consulted when a node has no
+  // `pgw-01-lc2-2` has with `core-02`. Only consulted when a node has no
   // cross-column neighbour to take a target from.
   const sameColumnNeighbors = new Map<string, string[]>();
   for (const e of edges) {
@@ -612,7 +613,7 @@ function coordinateAssignment(
         crossTarget.set(n.id, median(neigh.map((id) => y.get(id) ?? 0)));
       }
     }
-    // Stage 2: an undecided node (a docked leaf, e.g. `hss-01`) follows the
+    // Stage 2: an undecided node (a docked leaf, e.g. `pgw-01-lc2-2`) follows the
     // median of its same-column data-plane neighbours' STAGE-1 TARGETS, not
     // their current y -- chasing the anchor's stale position just re-opens the
     // gap every sweep, since the anchor moves to its own target in the very

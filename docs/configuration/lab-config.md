@@ -264,11 +264,33 @@ table, the backends, and what happens at load.
 ### Host identity & naming
 
 There is no `id` field on a host entry.  The **element's `name`** is the id
-source: it is **slugged** — lower-cased, with every run of characters
-outside `[a-z0-9]` (spaces, punctuation, `_`) collapsed to a single `-`,
-leading/trailing `-` stripped — and then, only when the host sets a
-`board`, `_` + `slug(board)` and the `slot` are appended.  `slot` never
-appears without a board.  The element's `id` is **data** — it is carried as
+source.  Every portion is **slugged** — lower-cased, every run of characters
+outside `[a-z0-9]` (spaces, punctuation, `_`) collapsed to one `-`, ends
+trimmed — and the portions are joined by `-`: the element, then the board
+when set, then the slot when set.  `slot` never appears without a board, and
+a slot of `0` is a slot.
+
+| Host | Identity fields | Id |
+| --- | --- | --- |
+| element only | `name="test1"` | `test1` |
+| element + board | `name="test1"`, `board="bb"` | `test1-bb` |
+| element + board + slot | `name="test1"`, `board="bb"`, `slot=0` | `test1-bb-0` |
+| spaced or punctuated names | `name="Edge Router"`, `board="line.card"`, `slot=3` | `edge-router-line-card-3` |
+
+Two different declarations can compose one id — element `a-b` (no board), or
+element `a` with board `b`: both compose `a-b`.  otto refuses that at load and
+names both, with their ip:
+
+```text
+host id 'a-b' in lab 'bench': element 'a-b' (10.0.0.1) collides with element 'a' board 'b' (10.0.0.2). Give the elements distinct names, or set board/slot.
+```
+
+Rename one; nothing is renamed for you.  The same refusal across lab sources
+is in {ref}`the host-sources troubleshooting entry <host-id-collision>`.  A container host's id is
+`<host>.<project>.<service>`, docker's own names — see
+{doc}`../cli/docker/index`.
+
+The element's `id` is **data** — it is carried as
 `host.element.id` and never enters a host id, a display name, or an ordering.
 **Renaming an element changes its hosts' ids** — and, transitively, the id of
 any declared {ref}`link <lab-links>` whose `endpoints[].host` names one.
@@ -319,10 +341,10 @@ On the CLI, wherever a *host* is named — the `otto host <id>` positional,
 | --- | --- | --- | --- |
 | `"Lab X Server"` | `lab-x-server` | `Lab X Server` | `None` |
 | `"server1"` / `47` | `server1` | `server1` | `47` |
-| `"Edge Router"`, board `LineCard`, slot `3` | `edge-router_linecard3` | `Edge Router LineCard 3` | `None` |
-| `"chassis"`, board `cpu`, slot `1` | `chassis_cpu1` | `chassis cpu 1` | `None` |
-| `"chassis"`, board `cpu`, slot `2` | `chassis_cpu2` | `chassis cpu 2` | `None` |
-| `"chassis"`, board `io`, slot `7` | `chassis_io7` | `chassis io 7` | `None` |
+| `"Edge Router"`, board `LineCard`, slot `3` | `edge-router-linecard-3` | `Edge Router LineCard 3` | `None` |
+| `"chassis"`, board `cpu`, slot `1` | `chassis-cpu-1` | `chassis cpu 1` | `None` |
+| `"chassis"`, board `cpu`, slot `2` | `chassis-cpu-2` | `chassis cpu 2` | `None` |
+| `"chassis"`, board `io`, slot `7` | `chassis-io-7` | `chassis io 7` | `None` |
 
 A single element with several hosts — a chassis's boards — is the common
 case a repeated *name* is not: one element, several host entries, one id and
@@ -733,7 +755,7 @@ Three steps, in order:
 Every operational host field stays exactly where it was.  Host ids do
 change, though, wherever the v1 id embedded an `element_id`: it drops out of
 the composition entirely (see {ref}`host-identity` above), so `dut3_cpu`
-becomes `dut_cpu` once `element_id: 3` moves to the element's `id`.  Update
+becomes `dut-cpu` once `element_id: 3` moves to the element's `id`.  Update
 every place that named the old id: declared-link endpoints, `[project]
 host_patterns`, `[host_preferences]` selectors (which match by host id),
 reservation identifiers that embed a host id, live tunnel markers, and any
@@ -763,7 +785,10 @@ repetitive and error-prone.  Move the shared values into
 
 The `[host_preferences]` block is a map whose keys are **Python regexes**
 matched (`re.fullmatch`) against each host's **id** (e.g. `test1`,
-`router_seed2`).  Under each selector, two kinds of values are allowed:
+`router-seed-2`).  Every seam of an id is `-`, so a prefix selector such as
+`test1-.*` matches the hosts of `test1` **and** of any element whose name
+begins `test1-`; anchor on the board (`test1-bb-.*`) or spell the full id when
+that matters.  Under each selector, two kinds of values are allowed:
 
 - **Selection lists** (`term`, `transfer`, `impairer`) — an ordered list of
   preferred backends.  Otto picks the first entry that is in the host's

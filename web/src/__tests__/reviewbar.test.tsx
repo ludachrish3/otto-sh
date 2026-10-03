@@ -118,19 +118,19 @@ describe("ReviewBar", () => {
     render(<App />);
     await importText(DRIFT, "drift.json");
     expect(screen.getByTestId("session-picker")).toBeTruthy();
-    // baseline lab: no workers_w1
-    expect(screen.queryByTestId("subject-link-workers_w1")).toBeNull();
+    // baseline lab: no workers-w1
+    expect(screen.queryByTestId("subject-link-workers-w1")).toBeNull();
     await openSessionPicker(user);
     // react-aria-components' Select also mirrors its options into a
     // visually-hidden native <select> (for autofill/native-form support),
     // so an unscoped role query would match both that <option> and the
     // visible popover item — scope to the listbox the popover renders.
     await user.click(within(screen.getByRole("listbox")).getByRole("option", { name: "expanded" }));
-    await waitFor(() => expect(screen.getByTestId("subject-link-workers_w1")).toBeTruthy());
-    expect(screen.getByTestId("subject-link-workers_w2")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("subject-link-workers-w1")).toBeTruthy());
+    expect(screen.getByTestId("subject-link-workers-w2")).toBeTruthy();
     await openSessionPicker(user);
     await user.click(within(screen.getByRole("listbox")).getByRole("option", { name: "rewired" }));
-    await waitFor(() => expect(screen.queryByTestId("subject-link-workers_w2")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("subject-link-workers-w2")).toBeNull());
     expect(screen.getByTestId("subject-link-edge-gw")).toBeTruthy();
   });
 

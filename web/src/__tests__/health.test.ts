@@ -82,10 +82,10 @@ describe("healthForHosts against kitchen-sink", () => {
     }
   });
 
-  it("workers_w2 is down when the range ends inside its outage window", () => {
+  it("workers-w2 is down when the range ends inside its outage window", () => {
     // Outage: 60m→80m from session start. End the range at +70m.
     const range = { from: kitchen.startMs, to: kitchen.startMs + 70 * MIN };
-    const h = healthForHosts(kitchen, range).get("workers_w2");
+    const h = healthForHosts(kitchen, range).get("workers-w2");
     expect(h?.status).toBe("down");
     // Last sample just before 60m; outage ≈ 10m (one cadence tick of slack).
     expect(h?.outageMs).toBeGreaterThanOrEqual(9 * MIN);
@@ -94,7 +94,7 @@ describe("healthForHosts against kitchen-sink", () => {
 
   it("other workers stay ok in that same window", () => {
     const range = { from: kitchen.startMs, to: kitchen.startMs + 70 * MIN };
-    expect(healthForHosts(kitchen, range).get("workers_w1")?.status).toBe("ok");
+    expect(healthForHosts(kitchen, range).get("workers-w1")?.status).toBe("ok");
   });
 
   it("a range before a host's data yields no-data", () => {
@@ -347,9 +347,9 @@ describe("healthForHost agrees with healthForHosts (the rule must not fork)", ()
       range: null,
     },
     {
-      // workers_w2's outage window (60m-80m) still covers this range's end:
-      // "down" for workers_w2, "ok" for its siblings.
-      label: "kitchen-sink, range ending inside workers_w2's outage (down + ok)",
+      // workers-w2's outage window (60m-80m) still covers this range's end:
+      // "down" for workers-w2, "ok" for its siblings.
+      label: "kitchen-sink, range ending inside workers-w2's outage (down + ok)",
       session: kitchen,
       range: { from: kitchen.startMs, to: kitchen.startMs + 70 * MIN },
     },
@@ -404,7 +404,7 @@ describe("healthForHost agrees with healthForHosts (the rule must not fork)", ()
 
 describe("headlineFor", () => {
   it("prefers CPU and formats percent unspaced", () => {
-    const head = headlineFor(kitchen, "chassis-a_lc1", null);
+    const head = headlineFor(kitchen, "chassis-a-lc1-1", null);
     expect(head?.chartKey).toBe("cpu");
     expect(head?.text).toMatch(/^\d+% cpu$/);
   });

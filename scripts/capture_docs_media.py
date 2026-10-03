@@ -510,7 +510,7 @@ def _capture_dashboard(browser, harness) -> None:  # noqa: ANN001 — deferred i
     _tid(page, "import-input").set_input_files(fixture)
     _tid(page, "review-bar").wait_for()
     page.goto(f"{harness.url}#/hosts")
-    _tid(page, "host-tile-chassis-a_lc1").wait_for()
+    _tid(page, "host-tile-chassis-a-lc1-1").wait_for()
     # The first three element groups — a three-host chassis and two
     # single-host elements — cut at the tiles' right edge (each group's
     # health-rollup bar and header run the full page width).
@@ -523,7 +523,7 @@ def _capture_dashboard(browser, harness) -> None:  # noqa: ANN001 — deferred i
         right=_page_right(tiles.last),
     )
 
-    page.goto(f"{harness.url}#/host/chassis-a_lc1")
+    page.goto(f"{harness.url}#/host/chassis-a-lc1-1")
     _tid(page, "chart-panel-cpu").locator("canvas").wait_for()
     _tid(page, "chart-panel-net").locator("canvas").wait_for()
     page.wait_for_timeout(400)  # let ECharts finish its initial render pass

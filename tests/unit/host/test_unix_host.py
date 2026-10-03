@@ -143,7 +143,7 @@ class TestIdAndNameGeneration:
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
-        assert h.id == "alt1_qemu"
+        assert h.id == "alt1-qemu"
         await h.close()
 
     @pytest.mark.asyncio
@@ -156,7 +156,7 @@ class TestIdAndNameGeneration:
             creds=[Cred(login="u", password="p")],
             log=LogMode.QUIET,
         )
-        assert h.id == "alt1_qemu0"
+        assert h.id == "alt1-qemu-0"
         await h.close()
 
     @pytest.mark.asyncio

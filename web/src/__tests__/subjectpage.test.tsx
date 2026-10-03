@@ -46,7 +46,7 @@ vi.mock("wouter", async (importOriginal) => {
   const mod = await importOriginal<typeof import("wouter")>();
   return { ...mod, useParams: () => ({ id: mockSubject }) };
 });
-let mockSubject = "chassis-a_lc1";
+let mockSubject = "chassis-a-lc1-1";
 
 function load(subject: string) {
   mockSubject = subject;
@@ -70,21 +70,21 @@ afterEach(() => {
 
 describe("SubjectPage chart stack", () => {
   it("renders one chart panel per chart group with data", () => {
-    load("chassis-a_lc1");
+    load("chassis-a-lc1-1");
     expect(screen.getByTestId("chart-stack")).toBeTruthy();
     expect(screen.getByTestId("chart-panel-cpu")).toBeTruthy();
     expect(screen.getByTestId("chart-panel-psu-temp")).toBeTruthy();
   });
 
   it("keeps the pinned series-summary format", () => {
-    load("chassis-a_lc1");
+    load("chassis-a-lc1-1");
     expect(screen.getByTestId("series-summary").textContent).toMatch(
       /^\d+ series · \d+ samples in range$/,
     );
   });
 
   it("unchecking a series removes it from the chart options", async () => {
-    load("chassis-a_lc1");
+    load("chassis-a-lc1-1");
     const before = setOptions.length;
     // Untitled UI's Checkbox puts data-testid on the <label>, not the
     // visually-hidden <input> — react-aria's Checkbox needs the real
@@ -110,7 +110,7 @@ describe("SubjectPage chart stack", () => {
     // longer add a second chart to compare — the exact TODO item 3 bug. The
     // SeriesPanel unit test passes with either prop order; only rendering the
     // real SubjectPage exercises the wiring.
-    load("chassis-a_lc1");
+    load("chassis-a-lc1-1");
     const user = userEvent.setup();
     // Chips are addressed by react-aria's `data-key` (from Tag's `id`), not a
     // testid the vendored Tag cannot forward — see SeriesPanel.tsx's header.
@@ -153,17 +153,17 @@ describe("SubjectPage live window control", () => {
   });
 
   it("renders only in live mode", () => {
-    load("chassis-a_lc1");
+    load("chassis-a-lc1-1");
     expect(screen.queryByTestId("live-window")).toBeNull();
     cleanup();
     useReviewStore.setState({ mode: "live" });
-    load("chassis-a_lc1");
+    load("chassis-a-lc1-1");
     expect(screen.getByTestId("live-window")).toBeTruthy();
   });
 
   it("the selected item reflects windowMs, not a separately stored choice", () => {
     useReviewStore.setState({ mode: "live" });
-    load("chassis-a_lc1");
+    load("chassis-a-lc1-1");
     // Default windowMs (900_000, the store's own default) -> "15m" selected.
     expect(screen.getByTestId("live-window-15m").getAttribute("data-selected")).not.toBeNull();
     expect(screen.getByTestId("live-window-5m").getAttribute("data-selected")).toBeNull();
@@ -171,7 +171,7 @@ describe("SubjectPage live window control", () => {
 
     cleanup();
     useReviewStore.setState({ windowMs: 3_600_000 });
-    load("chassis-a_lc1");
+    load("chassis-a-lc1-1");
     expect(screen.getByTestId("live-window-1h").getAttribute("data-selected")).not.toBeNull();
     expect(screen.getByTestId("live-window-15m").getAttribute("data-selected")).toBeNull();
   });
@@ -183,7 +183,7 @@ describe("SubjectPage live window control", () => {
     // overview.test.tsx's session-picker helper).
     const user = userEvent.setup();
     useReviewStore.setState({ mode: "live" });
-    load("chassis-a_lc1");
+    load("chassis-a-lc1-1");
     await user.click(screen.getByTestId("live-window-5m"));
     expect(useReviewStore.getState().windowMs).toBe(300_000);
   });
@@ -203,7 +203,7 @@ describe("SubjectPage log tables", () => {
   });
 
   it("renders no table for a host without rows", () => {
-    load("workers_w1");
+    load("workers-w1");
     expect(screen.queryByTestId("log-table-kernel")).toBeNull();
   });
 });

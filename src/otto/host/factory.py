@@ -98,6 +98,12 @@ class HostIdentity:
     docker_capable: bool
     """Whether the host declares (or its profile defaults) docker capability."""
 
+    board: str | None
+    """Validated board (a profile may default it) — an id portion, kept to name the host."""
+
+    slot: int | None
+    """Validated slot (a profile may default it) — an id portion, kept to name the host."""
+
 
 def reject_unresolved_reference(host_data: dict[str, Any]) -> None:
     """Refuse a host dict that still carries a non-null ``inventory`` key.
@@ -149,6 +155,8 @@ def host_identity(host_data: dict[str, Any], element: Element) -> HostIdentity:
         id=make_host_id(element.name, spec.board, spec.slot),
         ip=spec.ip,
         docker_capable=bool(getattr(spec, "docker_capable", False)),
+        board=spec.board,
+        slot=spec.slot,
     )
 
 

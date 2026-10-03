@@ -53,6 +53,35 @@ class TestResolveDeclaredLinks:
         with pytest.raises(ValueError, match="unknown host 'nope'"):
             resolve_declared_links([entry], HOSTS, source="lab.json", loaded_ids=set(HOSTS))
 
+    def test_an_element_name_typed_for_a_composed_id_names_the_id_however_short(self):
+        # ``a`` against ``a-qemu-3`` scores far below difflib's cutoff, so this
+        # is the prefix path; ``ab`` is a sibling element and must not be offered.
+        hosts = {"a-qemu-3": BARE, "ab": TEST1, "test4": BARE}
+        entry = _entry(endpoints=[{"host": "a"}, {"host": "test4"}])
+        with pytest.raises(ValueError, match=r"unknown host 'a'.*did you mean 'a-qemu-3'\?$"):
+            resolve_declared_links([entry], hosts, source="lab.json", loaded_ids=set(hosts))
+
+    def test_an_old_shape_spelling_of_an_id_names_the_slugged_id(self):
+        # ``BB1350_QEMU`` slugs to exactly the id ``bb1350-qemu`` (the equality
+        # arm, not the ``<stem>-`` prefix), and its case plus the ``_`` score
+        # under difflib's cutoff against it, so only that arm can find it.
+        hosts = {"bb1350-qemu": BARE, "test4": BARE}
+        entry = _entry(endpoints=[{"host": "BB1350_QEMU"}, {"host": "test4"}])
+        with pytest.raises(ValueError, match=r"did you mean 'bb1350-qemu'\?$"):
+            resolve_declared_links([entry], hosts, source="lab.json", loaded_ids=set(hosts))
+
+    def test_a_near_typo_with_no_prefix_match_still_gets_the_similarity_hint(self):
+        entry = _entry(endpoints=[{"host": "tset1"}, {"host": "test4"}])
+        with pytest.raises(ValueError, match=r"unknown host 'tset1'.*did you mean 'test1'"):
+            resolve_declared_links([entry], HOSTS, source="lab.json", loaded_ids=set(HOSTS))
+
+    def test_a_name_nothing_resembles_gets_no_hint(self):
+        entry = _entry(endpoints=[{"host": "zzzz"}, {"host": "test4"}])
+        with pytest.raises(
+            ValueError, match=r"unknown host 'zzzz' \(no such host in any lab file\)$"
+        ):
+            resolve_declared_links([entry], HOSTS, source="lab.json", loaded_ids=set(HOSTS))
+
     def test_unknown_interface_errors(self):
         entry = _entry(endpoints=[{"host": "test1", "interface": "eth9"}, {"host": "test4"}])
         with pytest.raises(ValueError, match="no interface 'eth9'"):
@@ -87,14 +116,14 @@ class TestResolveDeclaredLinks:
 
 class TestImpairField:
     def test_impair_carried_onto_link(self):
-        hosts = {**HOSTS, "wanem_seed": HostAddressing(ip="10.10.200.14", interfaces={})}
-        entry = _entry(impair="wanem_seed")
+        hosts = {**HOSTS, "wanem-seed": HostAddressing(ip="10.10.200.14", interfaces={})}
+        entry = _entry(impair="wanem-seed")
         (link,) = resolve_declared_links([entry], hosts, source="lab.json", loaded_ids=set(hosts))
-        assert link.impair == "wanem_seed"
+        assert link.impair == "wanem-seed"
 
     def test_unknown_impair_host_rejected(self):
-        entry = _entry(impair="wanem_seed")
-        with pytest.raises(ValueError, match="impair host 'wanem_seed' is not a known host"):
+        entry = _entry(impair="wanem-seed")
+        with pytest.raises(ValueError, match="impair host 'wanem-seed' is not a known host"):
             resolve_declared_links([entry], HOSTS, source="lab.json", loaded_ids=set(HOSTS))
 
     def test_impair_host_must_not_be_an_endpoint(self):

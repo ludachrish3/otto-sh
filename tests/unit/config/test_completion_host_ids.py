@@ -130,8 +130,8 @@ def test_collect_host_ids_by_lab_host_in_two_labs(tmp_path: Path) -> None:
     by_lab = collect_host_ids_by_lab([repo])
 
     assert by_lab == {
-        "unix": ["shared_seed"],
-        "unix_alt": ["shared_seed"],
+        "unix": ["shared-seed"],
+        "unix_alt": ["shared-seed"],
     }
 
 

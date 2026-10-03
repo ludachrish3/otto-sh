@@ -45,16 +45,16 @@ holds everything but the second slot:
 ```text
 reservations required by lab rig for chris (3 host(s)
                        in play)
-╭──────────────────┬─────────┬───────────────┬──────╮
-│ resource         │ level   │ owner         │ held │
-├──────────────────┼─────────┼───────────────┼──────┤
-│ chassis-1        │ element │ chassis       │ yes  │
-│ chassis-1-slot-1 │ host    │ chassis_slot1 │ yes  │
-│ chassis-1-slot-2 │ host    │ chassis_slot2 │ no   │
-│ rig-pdu          │ lab     │ rig           │ yes  │
-╰──────────────────┴─────────┴───────────────┴──────╯
+╭──────────────────┬─────────┬────────────────┬──────╮
+│ resource         │ level   │ owner          │ held │
+├──────────────────┼─────────┼────────────────┼──────┤
+│ chassis-1        │ element │ chassis        │ yes  │
+│ chassis-1-slot-1 │ host    │ chassis-slot-1 │ yes  │
+│ chassis-1-slot-2 │ host    │ chassis-slot-2 │ no   │
+│ rig-pdu          │ lab     │ rig            │ yes  │
+╰──────────────────┴─────────┴────────────────┴──────╯
 User 'chris' does not hold all resources required by lab 'rig'. Missing:
-  chassis-1-slot-2  host chassis_slot2  (held by: dana until 16:00)
+  chassis-1-slot-2  host chassis-slot-2  (held by: dana until 16:00)
 ```
 
 Each `held by:` clause names the current holders and, for any booking that has

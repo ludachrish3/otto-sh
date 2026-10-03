@@ -42,17 +42,16 @@ Exit status is non-zero if any host is unreachable/unresponsive.
 
 Usage::
 
-    scripts/lab_health.py
-    scripts/lab_health.py --hosts tests/_fixtures/lab_data/tech1/lab.json
-    scripts/lab_health.py --restart-qemu
-    scripts/lab_health.py --logout-consoles
+    uv run python scripts/lab_health.py
+    uv run python scripts/lab_health.py --hosts tests/_fixtures/lab_data/tech1/lab.json
+    uv run python scripts/lab_health.py --restart-qemu
+    uv run python scripts/lab_health.py --logout-consoles
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import shlex
 import shutil
 import subprocess
@@ -60,6 +59,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+from otto.host.remote_host import make_host_id
 
 DEFAULT_HOSTS = Path("tests/_fixtures/lab_data/tech1/lab.json")
 
@@ -426,8 +427,7 @@ def _load_hosts(path: Path) -> list[dict]:
     Since lab.json v2 a host entry lives under its element and no longer
     carries ``element``/``element_id`` itself — they are stamped back on here,
     which is exactly what otto's own loader does before host validation.
-    Restated rather than imported, like :func:`_host_id`: this script
-    deliberately runs with no otto on the path.
+    Restated rather than imported: the lab file's shape is read directly here.
     """
     doc = json.loads(path.read_text())
     hosts: list[dict] = []
@@ -461,30 +461,16 @@ def _run_ssh(
         return 124, "", f"ssh timed out after {timeout:.0f}s"
 
 
-def _slug(value: str) -> str:
-    """Lower-case, non-alphanumeric runs to ``-`` — otto's ``slug()``, restated."""
-    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-
-
 def _host_id(host: dict) -> str:
-    """Compose otto's host id from *host*'s element/element_id/board/slot fields.
+    """Compose otto's host id from *host*'s element/board/slot fields.
 
-    Mirrors :func:`otto.host.remote_host.make_host_id`; restated rather than
-    imported because this script deliberately runs with no otto on the path.
-    A host with no ``board`` — every Unix VM and every Zephyr guest since the
-    board was dropped from the lab data — has the bare element (plus any
-    ``element_id``) as its id, so defaulting the board to anything at all
-    invents an id no host answers to.
+    Delegates to :func:`otto.host.remote_host.make_host_id`, the single source
+    of the id format (the Makefile runs this script under ``uv run``, so otto
+    is importable). A host with no ``board`` — every Unix VM and every Zephyr
+    guest since the board was dropped from the lab data — has the bare element
+    as its id; the element's ``id`` is data and never part of it.
     """
-    element_id = host.get("element_id")
-    element_id_str = "" if element_id is None else f"{element_id}"
-    ne = f"{_slug(host['element'])}{element_id_str}"
-    board = host.get("board")
-    if board is None:
-        return ne
-    slot = host.get("slot")
-    slot_str = "" if slot is None else f"{slot}"
-    return f"{ne}_{_slug(board)}{slot_str}"
+    return make_host_id(host["element"], host.get("board"), host.get("slot"))
 
 
 def _hop_index(hosts: list[dict]) -> dict[str, dict]:

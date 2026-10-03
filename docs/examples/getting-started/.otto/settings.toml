@@ -26,5 +26,5 @@ paths = ["lab_data"]
 # doc: begin project
 [project]
 lab_patterns = ["busybox"]
-host_patterns = ["bb.*_qemu"]
+host_patterns = ["bb.*-qemu"]
 # doc: end project

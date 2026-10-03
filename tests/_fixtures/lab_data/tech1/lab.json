@@ -476,7 +476,7 @@
             "_comment": "The bb1350 guest's /30 to its TAP on test1 -- the ONLY wire the guest has.",
             "endpoints": [
                 {"host": "test1", "interface": "bbeth-1350"},
-                {"host": "bb1350_qemu", "interface": "eth0"}
+                {"host": "bb1350-qemu", "interface": "eth0"}
             ],
             "protocol": "tcp"
         }

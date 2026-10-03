@@ -30,15 +30,15 @@ describe("deriveReachability", () => {
     const { effective, warnings } = effectiveOf(cascade);
     expect(warnings).toEqual([]);
     expect(effective.get("gw-a")).toBe("down");
-    expect(effective.get("rack-a_n1")).toBe("unreachable");
-    expect(effective.get("rack-a_n2")).toBe("unreachable");
+    expect(effective.get("rack-a-n1-1")).toBe("unreachable");
+    expect(effective.get("rack-a-n2-2")).toBe("unreachable");
     expect(effective.get("solo-ok")).toBe("ok");
   });
 
   it("does not cascade inside a healthy window", () => {
     const range = { from: cascade.startMs, to: cascade.startMs + 50 * 60_000 };
     const { effective } = deriveReachability(cascade, healthForHosts(cascade, range));
-    for (const id of ["gw-a", "rack-a_n1", "rack-a_n2", "solo-ok"]) {
+    for (const id of ["gw-a", "rack-a-n1-1", "rack-a-n2-2", "solo-ok"]) {
       expect(effective.get(id), id).toBe("ok");
     }
   });
@@ -174,7 +174,7 @@ describe("buildTopoGraph — intra-element", () => {
   it("renders members, the hop path to local, and per-link implicit edges", () => {
     expect(ids).toContain("local");
     expect(ids).toContain("edge-gw");
-    expect(ids).toContain("chassis-a_lc1");
+    expect(ids).toContain("chassis-a-lc1-1");
     const implicit = graph.edges.filter((e) => e.provenance === "implicit");
     expect(implicit).toHaveLength(3); // individual at this level
   });
@@ -208,7 +208,7 @@ describe("management partition", () => {
     const g = buildTopoGraph(ispCore, effective, { sources: true });
     // mme-01 has real declared links (mme01-core01, plus sgw01-core01 since
     // the topology-default-view spec's fixture touch-up fused sgw-01 into
-    // this chassis element). Some is not zero.
+    // this chassis element, as the host mme-01-lc2-2). Some is not zero.
     //
     // PIN ADJUSTED: originally checked hss-01, which the same touch-up fused
     // into the "pgw-01" chassis element -- hss-01 no longer exists as its

@@ -46,16 +46,16 @@ describe("ElementNode", () => {
 describe("HostNode", () => {
   it("shows slot badge and dimmed unreachable treatment", () => {
     const host: TopoNode = {
-      id: "rack-a_n1",
+      id: "rack-a-n1-1",
       kind: "host",
       depth: 2,
-      label: "rack-a_n1",
-      host: { id: "rack-a_n1", element: "rack-a", slot: 1 } as NonNullable<TopoNode["host"]>,
+      label: "rack-a-n1-1",
+      host: { id: "rack-a-n1-1", element: "rack-a", slot: 1 } as NonNullable<TopoNode["host"]>,
       effective: "unreachable",
-      enterTarget: "/host/rack-a_n1",
+      enterTarget: "/host/rack-a-n1-1",
     };
     render(<HostNode data={{ ...host, slotBadge: true }} />);
-    const root = screen.getByTestId("topo-node-rack-a_n1");
+    const root = screen.getByTestId("topo-node-rack-a-n1-1");
     expect(root.getAttribute("data-status")).toBe("unreachable");
     expect(root.textContent).toContain("slot 1");
     expect(root.className).toContain("opacity-60");
@@ -93,15 +93,17 @@ describe("HostNode", () => {
 
   it("separates two present parts with a single ·", () => {
     const host: TopoNode = {
-      id: "rack-a_n1",
+      id: "rack-a-n1-1",
       kind: "host",
       depth: 2,
-      label: "rack-a_n1",
-      host: { id: "rack-a_n1", element: "rack-a", slot: 1 } as NonNullable<TopoNode["host"]>,
+      label: "rack-a-n1-1",
+      host: { id: "rack-a-n1-1", element: "rack-a", slot: 1 } as NonNullable<TopoNode["host"]>,
       effective: "unreachable",
     };
     render(<HostNode data={{ ...host, slotBadge: true }} />);
-    expect(screen.getByTestId("topo-node-rack-a_n1").textContent).toContain("unreachable · slot 1");
+    expect(screen.getByTestId("topo-node-rack-a-n1-1").textContent).toContain(
+      "unreachable · slot 1",
+    );
   });
 });
 

@@ -147,7 +147,7 @@ def test_location_fields_default_none_and_stay_out_of_the_id():
     )
     host = spec.to_host(element=Element("lab"))
     assert (host.site, host.rack, host.shelf) == (None, None, None)
-    assert host.id == "lab_cx1"
+    assert host.id == "lab-cx-1"
 
 
 def test_hostspec_shelf_rejects_negative():

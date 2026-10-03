@@ -122,7 +122,7 @@ describe("reviewStore", () => {
       format: 1,
       session: "no-such-session",
       metrics: [
-        { host: "chassis-a_lc1", label: "CPU %", timestamp: "2026-03-01T08:20:30Z", value: 1 },
+        { host: "chassis-a-lc1-1", label: "CPU %", timestamp: "2026-03-01T08:20:30Z", value: 1 },
       ],
       events: [],
       log_events: [],
@@ -169,7 +169,7 @@ describe("reviewStore", () => {
       format: 1,
       session: active,
       metrics: [
-        { host: "chassis-a_lc1", label: "CPU %", timestamp: "2026-03-01T08:20:30Z", value: 1 },
+        { host: "chassis-a-lc1-1", label: "CPU %", timestamp: "2026-03-01T08:20:30Z", value: 1 },
       ],
       events: [],
       log_events: [],
@@ -203,8 +203,8 @@ describe("reviewStore", () => {
       format: 1,
       session: active,
       metrics: [
-        { host: "chassis-a_lc1", label: "CPU %", timestamp: "2026-03-01T08:20:30Z", value: 1 },
-        { host: "chassis-a_lc1", label: "CPU %", timestamp: "not-a-timestamp", value: 2 },
+        { host: "chassis-a-lc1-1", label: "CPU %", timestamp: "2026-03-01T08:20:30Z", value: 1 },
+        { host: "chassis-a-lc1-1", label: "CPU %", timestamp: "not-a-timestamp", value: 2 },
       ],
       events: [],
       log_events: [],
@@ -232,7 +232,7 @@ describe("reviewStore", () => {
       ({
         format: 1,
         session: active,
-        metrics: [{ host: "chassis-a_lc1", label: "CPU %", timestamp: ts, value: 1 }],
+        metrics: [{ host: "chassis-a-lc1-1", label: "CPU %", timestamp: ts, value: 1 }],
         events: [],
         log_events: [],
         deleted_event_ids: [],

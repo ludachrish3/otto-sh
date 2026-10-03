@@ -43,7 +43,7 @@ function renderPanel(overrides: Partial<Parameters<typeof SeriesPanel>[0]> = {})
   // Resolve `tree` from the overrides first so the derived defaults (allCharts,
   // checked) follow the caller's tree — tests that pass a different subject's
   // tree (e.g. a source-less host) must not inherit the default host's sources.
-  const tree = overrides.tree ?? buildSeriesTree(kitchen, "chassis-a_lc1");
+  const tree = overrides.tree ?? buildSeriesTree(kitchen, "chassis-a-lc1-1");
   const props = {
     tree,
     allCharts: tree,
@@ -89,7 +89,7 @@ describe("SeriesPanel", () => {
     // The chips render off the full chart list (allCharts), while the
     // checkbox list below them uses the narrowed `tree`. So filtering to one
     // chart keeps every chip present but shows only that chart's series.
-    const all = buildSeriesTree(kitchen, "chassis-a_lc1");
+    const all = buildSeriesTree(kitchen, "chassis-a-lc1-1");
     const onlyCpu = all.filter((c) => c.chartKey === "cpu");
     const other = all.find((c) => c.chartKey !== "cpu");
     expect(all.length).toBeGreaterThan(1);
@@ -109,7 +109,7 @@ describe("SeriesPanel", () => {
     renderPanel();
     const cpuRow = screen.getByTestId("series-node-CPU %").closest("li");
     expect(cpuRow?.textContent).toContain("CPU %");
-    expect(cpuRow?.textContent).not.toContain("chassis-a_lc1");
+    expect(cpuRow?.textContent).not.toContain("chassis-a-lc1-1");
   });
 
   it("checkbox toggle reports the series key", async () => {

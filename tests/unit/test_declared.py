@@ -41,7 +41,7 @@ def _host(**attrs):
     ("match", "attrs", "expected"),
     [
         # plain string = regex FULLmatch (a substring hit must not admit)
-        ({"id": "bb.*_qemu"}, {"id": "bb7_qemu"}, True),
+        ({"id": "bb.*-qemu"}, {"id": "bb7-qemu"}, True),
         ({"id": "bb"}, {"id": "bb-extra"}, False),
         # specifier-prefixed string = version comparison
         ({"os_version": ">=3.7"}, {"os_version": "3.7"}, True),
@@ -160,7 +160,7 @@ def _element_host(**overrides):
     Distinct from this module's existing ``_host`` helper, which stays as is.
     """
     attrs: dict = {
-        "id": "dut_cpu1",
+        "id": "dut-cpu-1",
         "element": Element("dut", id=7, metadata={"rev": "B", "site": {"row": 3}}),
         "metadata": {"tag": "x"},
         "os_type": "unix",

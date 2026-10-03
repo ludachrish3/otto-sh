@@ -95,7 +95,7 @@ describe("element derivation (kitchen-sink)", () => {
   });
 
   it("resolves subject kinds host-first", () => {
-    expect(subjectKind(session, "chassis-a_lc1")).toBe("host");
+    expect(subjectKind(session, "chassis-a-lc1-1")).toBe("host");
     expect(subjectKind(session, "chassis-a")).toBe("element");
     expect(subjectKind(session, "nope")).toBeNull();
   });
@@ -118,8 +118,8 @@ describe("ranges", () => {
   });
 
   it("metricsForSubject filters by subject and range", () => {
-    const all = metricsForSubject(session, "workers_w2", null);
-    const last15 = metricsForSubject(session, "workers_w2", presetRange(bounds, 15));
+    const all = metricsForSubject(session, "workers-w2", null);
+    const last15 = metricsForSubject(session, "workers-w2", presetRange(bounds, 15));
     expect(all.length).toBeGreaterThan(last15.length);
     expect(last15.length).toBeGreaterThan(0);
     // element-targeted series resolve through the element id

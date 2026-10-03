@@ -72,7 +72,7 @@ key that replaced it. Values are typed:
 
 | Value | Meaning |
 |---|---|
-| `"bb.*_qemu"` | regex, full match |
+| `"bb.*-qemu"` | regex, full match |
 | `">=3.7"` (any `>= <= == ~= != > <` prefix) | version comparison |
 | `true`, `3` | equality |
 | `["rev2", "rev3"]` | any-of |

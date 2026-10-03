@@ -306,7 +306,7 @@ def test_renders_fully_offline(page, shell_dash):
     # "/" is the topology landing now (route swap); the grid lives at
     # #/hosts -- a same-document hash hop, so this stays a zero-network proof.
     page.goto(f"{shell_dash.url}#/hosts")
-    page.locator('[data-testid="subject-link-chassis-a_lc1"]').wait_for()
+    page.locator('[data-testid="subject-link-chassis-a-lc1-1"]').wait_for()
     assert blocked == []
 
 
@@ -321,7 +321,7 @@ def test_drift_session_picker_rerenders_lab(page, shell_dash):
     page.goto(f"{shell_dash.url}#/hosts")
     picker = page.locator('[data-testid="session-picker"]')
     picker.wait_for()
-    assert page.locator('[data-testid="subject-link-workers_w2"]').count() == 0
+    assert page.locator('[data-testid="subject-link-workers-w2"]').count() == 0
 
     picker.click()
     # react-aria's Select keeps a visually-hidden native <select> (its
@@ -329,12 +329,12 @@ def test_drift_session_picker_rerenders_lab(page, shell_dash):
     # — get_by_text sees both; role="option" only resolves the one popover
     # item that's actually in the accessibility tree.
     page.get_by_role("option", name="expanded", exact=True).click()
-    page.locator('[data-testid="subject-link-workers_w2"]').wait_for()
+    page.locator('[data-testid="subject-link-workers-w2"]').wait_for()
 
     picker.click()
     page.get_by_role("option", name="rewired", exact=True).click()
     page.locator('[data-testid="subject-link-edge-gw"]').wait_for()
-    assert page.locator('[data-testid="subject-link-workers_w2"]').count() == 0
+    assert page.locator('[data-testid="subject-link-workers-w2"]').count() == 0
 
 
 def test_single_session_hides_picker(page, shell_dash):
@@ -347,7 +347,7 @@ def test_range_presets_change_subject_summary(page, shell_dash):
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
     page.goto(f"{shell_dash.url}#/hosts")  # subject-link-* is grid-only, not the topology landing
-    page.locator('[data-testid="subject-link-workers_w1"]').click()
+    page.locator('[data-testid="subject-link-workers-w1"]').click()
     page.locator('[data-testid="subject-page"]').wait_for()
     full = page.locator('[data-testid="series-summary"]').inner_text()
 
@@ -377,7 +377,7 @@ def test_custom_range_apply_and_reset(page, shell_dash):
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
     page.goto(f"{shell_dash.url}#/hosts")  # subject-link-* is grid-only, not the topology landing
-    page.locator('[data-testid="subject-link-workers_w1"]').click()
+    page.locator('[data-testid="subject-link-workers-w1"]').click()
     page.locator('[data-testid="subject-page"]').wait_for()
     full = page.locator('[data-testid="series-summary"]').inner_text()
 
@@ -613,15 +613,17 @@ def test_grid_health_tiles_and_headline(shell_dash, page):
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
     page.goto(f"{shell_dash.url}#/hosts")  # host-tile-* is grid-only, not the topology landing
-    tile = page.locator('[data-testid="host-tile-chassis-a_lc1"]')
+    tile = page.locator('[data-testid="host-tile-chassis-a-lc1-1"]')
     tile.wait_for()
-    assert re.search(r"% cpu", page.locator('[data-testid="headline-chassis-a_lc1"]').inner_text())
-    w2 = page.locator('[data-testid="host-tile-workers_w2"]')
+    assert re.search(
+        r"% cpu", page.locator('[data-testid="headline-chassis-a-lc1-1"]').inner_text()
+    )
+    w2 = page.locator('[data-testid="host-tile-workers-w2"]')
     assert "down ·" not in w2.inner_text()
     # Rollup bar: one segment per chassis member.
     assert page.locator('[data-testid="health-rollup-chassis-a"] > *').count() == 3
 
-    # End the range inside workers_w2's 60-80min outage: derive +70min from
+    # End the range inside workers-w2's 60-80min outage: derive +70min from
     # the popover's pre-seeded "from" field (same derivation the custom-range
     # spec uses).
     _open_range_picker(page)
@@ -629,7 +631,7 @@ def test_grid_health_tiles_and_headline(shell_dash, page):
     _set_range_field(page, 1, start + timedelta(minutes=70))
     _apply_range_picker(page)
     page.wait_for_function(
-        "() => document.querySelector('[data-testid=\"host-tile-workers_w2\"]')"
+        "() => document.querySelector('[data-testid=\"host-tile-workers-w2\"]')"
         ".innerText.includes('down ·')"
     )
     assert "down · 10m" in w2.inner_text()
@@ -641,7 +643,7 @@ def test_subject_charts_render_and_filter(shell_dash, page):
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
     page.goto(f"{shell_dash.url}#/hosts")  # subject-link-* is grid-only, not the topology landing
-    page.locator('[data-testid="subject-link-chassis-a_lc1"]').click()
+    page.locator('[data-testid="subject-link-chassis-a-lc1-1"]').click()
     page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
     assert page.locator('[data-testid="chart-stack"] canvas').count() >= 4
     # Uncheck the CPU series -> its (single-series) panel unmounts.
@@ -659,7 +661,7 @@ def test_source_badges_and_source_filter(shell_dash, page):
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
     page.goto(f"{shell_dash.url}#/hosts")  # subject-link-* is grid-only, not the topology landing
-    page.locator('[data-testid="subject-link-chassis-a_lc1"]').click()
+    page.locator('[data-testid="subject-link-chassis-a-lc1-1"]').click()
     panel = page.locator('[data-testid="series-panel"]')
     panel.wait_for()
     assert "mgmt-01" in panel.inner_text()
@@ -812,7 +814,7 @@ def test_topology_drill_in_and_singleton(shell_dash, page):
     page.goto(f"{shell_dash.url}#/topology")
     page.locator('[data-testid="topo-node-chassis-a"]').click()
     page.locator('[data-testid="topo-breadcrumb"]').wait_for()
-    lc1 = page.locator('[data-testid="topo-node-chassis-a_lc1"]')
+    lc1 = page.locator('[data-testid="topo-node-chassis-a-lc1-1"]')
     lc1.wait_for()
     assert "slot 1" in lc1.inner_text()
     lc1.click()
@@ -1013,11 +1015,11 @@ def test_cascade_unreachable_vs_down(shell_dash, page):
     assert rack.locator('[data-status-segment="unreachable"]').count() == 2
     # Intra view: the member nodes carry unreachable themselves.
     rack.click()
-    n1 = page.locator('[data-testid="topo-node-rack-a_n1"]')
+    n1 = page.locator('[data-testid="topo-node-rack-a-n1-1"]')
     n1.wait_for()
     assert n1.get_attribute("data-status") == "unreachable"
     # Parallel rack pair (cascade.json's "pair-a"/"pair-b" declared links
-    # between rack-a_n1 and rack-a_n2) fans out as two distinct declared
+    # between rack-a-n1-1 and rack-a-n2-2) fans out as two distinct declared
     # edges — link ids pass through as edge ids verbatim (data/topology.ts).
     # The intra view mounts a fresh canvas, so its edges lag its nodes too.
     _wait_for_links(page, 2)

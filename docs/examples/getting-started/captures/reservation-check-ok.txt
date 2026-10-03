@@ -8,6 +8,6 @@ reservations required by lab busybox for chris (5
 ├────────────────┼─────────┼─────────────┼──────┤
 │ bb-bench       │ lab     │ busybox     │ yes  │
 │ bb1350-chassis │ element │ bb1350      │ yes  │
-│ bb1350-slot    │ host    │ bb1350_qemu │ yes  │
+│ bb1350-slot    │ host    │ bb1350-qemu │ yes  │
 ╰────────────────┴─────────┴─────────────┴──────╯
 OK — all required resources are reserved.

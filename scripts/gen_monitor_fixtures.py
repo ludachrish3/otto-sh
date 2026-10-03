@@ -7,9 +7,11 @@ models — conformance-checked by construction — and writes them minified to
 ``tests/unit/scripts/test_monitor_fixture_files.py``). Regenerate via
 ``make monitor-fixtures`` whenever the schema or the scenarios change.
 
-Import discipline (spec §5): only :mod:`otto.models` and the leaf
-:mod:`otto.link.model` — deliberately nothing from ``otto.configmodule``,
-which the library-extraction branch renames.
+Import discipline (spec §5): :mod:`otto.models`, the leaf
+:mod:`otto.link.model`, and :func:`otto.host.remote_host.make_host_id` /
+``make_host_name`` — so fixture ids and names are composed from each host's own
+fields, never spelled by hand (pinned by
+``test_every_fixture_host_id_is_what_make_host_id_composes_from_its_fields``).
 
 Series shapes are realistic on purpose (diurnal CPU, sawtooth memory leak,
 a spike under an event span): chart UX cannot be judged against noise.
@@ -24,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
+from otto.host.remote_host import make_host_id, make_host_name
 from otto.link.model import LinkEndpoint, make_static_link_id
 from otto.models import (
     ChartSpecRecord,
@@ -46,7 +49,7 @@ BASE = datetime(2026, 7, 1, 8, 0, 0, tzinfo=timezone.utc)
 """Fixed session-start epoch — never wall clock (determinism)."""
 
 OUTAGE_S = (3600.0, 4800.0)
-"""workers_w2 goes silent in this window (seconds from session start)."""
+"""workers-w2 goes silent in this window (seconds from session start)."""
 
 _DURATION_S = 7200.0  # kitchen-sink session length: 2 h
 _CADENCE_S = 15.0  # base cadence; spec §12 allows trimming from the 5 s sketch
@@ -59,7 +62,6 @@ _SPARSE_CADENCE_S = 300.0  # sprawl/isp-core cadence: lab-rich, metrics-sparse f
 
 
 def _host(
-    host_id: str,
     element: str,
     ip: str,
     *,
@@ -69,11 +71,15 @@ def _host(
     os_version: str | None = "24.04",
     interfaces: dict[str, str] | None = None,
 ) -> HostSnapshot:
-    """One fixture host with the common defaults filled in."""
+    """One fixture host with the common defaults filled in.
+
+    The id is what otto composes from the host's own fields, never a spelling
+    of the author's, so a fixture shows the ids a real lab would.
+    """
     return HostSnapshot(
-        id=host_id,
+        id=make_host_id(element, board, slot),
         element=element,
-        name=host_id.replace("_", " "),
+        name=make_host_name(element, board, slot),
         board=board,
         slot=slot,
         hop=hop,
@@ -84,6 +90,17 @@ def _host(
         interfaces=interfaces or {"eth0": ip},
         labs=["fixture"],
         is_virtual=True,
+    )
+
+
+def _moved(host: HostSnapshot, *, slot: int | None) -> HostSnapshot:
+    """*host* in another slot; its id follows, because the slot is part of it."""
+    return host.model_copy(
+        update={
+            "slot": slot,
+            "id": make_host_id(host.element, host.board, slot),
+            "name": make_host_name(host.element, host.board, slot),
+        }
     )
 
 
@@ -282,12 +299,9 @@ def kitchen_sink() -> MonitorExport:
     """Every UI feature in one lab (spec §5 table)."""
     rng = random.Random(20260710)  # noqa: S311 — deterministic dummy data, not cryptography
     hosts = [
+        _host("edge-gw", "10.20.0.1", interfaces={"eth0": "10.20.0.1", "eth1": "10.20.1.1"}),
+        _host("chassis-a", "10.20.1.11", board="lc1", slot=1, hop="edge-gw"),
         _host(
-            "edge-gw", "edge-gw", "10.20.0.1", interfaces={"eth0": "10.20.0.1", "eth1": "10.20.1.1"}
-        ),
-        _host("chassis-a_lc1", "chassis-a", "10.20.1.11", board="lc1", slot=1, hop="edge-gw"),
-        _host(
-            "chassis-a_lc2",
             "chassis-a",
             "10.20.1.12",
             board="lc2",
@@ -295,12 +309,12 @@ def kitchen_sink() -> MonitorExport:
             hop="edge-gw",
             os_version=None,
         ),  # metadata hole: no os_version
-        _host("chassis-a_sup", "chassis-a", "10.20.1.15", board="sup", slot=5, hop="edge-gw"),
-        _host("workers_w1", "workers", "10.20.2.21", board="w1"),  # board, no slot
-        _host("workers_w2", "workers", "10.20.2.22", board="w2"),
-        _host("workers_w3", "workers", "10.20.2.23", board="w3"),
-        _host("db-01", "db-01", "10.20.3.31"),  # singleton, no hop
-        _host("mgmt-01", "mgmt-01", "10.20.4.41"),  # the external source
+        _host("chassis-a", "10.20.1.15", board="sup", slot=5, hop="edge-gw"),
+        _host("workers", "10.20.2.21", board="w1"),  # board, no slot
+        _host("workers", "10.20.2.22", board="w2"),
+        _host("workers", "10.20.2.23", board="w3"),
+        _host("db-01", "10.20.3.31"),  # singleton, no hop
+        _host("mgmt-01", "10.20.4.41"),  # the external source
     ]
     elements = [
         ElementRecord(
@@ -310,9 +324,9 @@ def kitchen_sink() -> MonitorExport:
     ]
     links = [
         *_implicit_links(hosts),
-        _link(("workers_w1", "eth0", "10.20.2.21"), ("db-01", "eth0", "10.20.3.31"), name="app-db"),
+        _link(("workers-w1", "eth0", "10.20.2.21"), ("db-01", "eth0", "10.20.3.31"), name="app-db"),
         _link(
-            ("workers_w3", "eth0", "10.20.2.23"),
+            ("workers-w3", "eth0", "10.20.2.23"),
             ("db-01", "eth0", "10.20.3.31"),
             protocol="udp",
             name="metrics-udp",
@@ -320,17 +334,17 @@ def kitchen_sink() -> MonitorExport:
         ),
     ]
     spike = {
-        "chassis-a_lc1": lambda cpu: _with_spike(cpu, center_s=5400.0, width_s=180.0, height=45.0)
+        "chassis-a-lc1-1": lambda cpu: _with_spike(cpu, center_s=5400.0, width_s=180.0, height=45.0)
     }
     metrics = _host_metrics(
         rng,
         [h.id for h in hosts],
         start=BASE,
         duration_s=_DURATION_S,
-        gaps_for={"workers_w2": (OUTAGE_S,)},
+        gaps_for={"workers-w2": (OUTAGE_S,)},
         cpu_extra=spike,
     )
-    for board in ("chassis-a_lc1", "chassis-a_lc2", "chassis-a_sup"):
+    for board in ("chassis-a-lc1-1", "chassis-a-lc2-2", "chassis-a-sup-5"):
         metrics += _series(
             rng,
             board,
@@ -405,7 +419,7 @@ def kitchen_sink() -> MonitorExport:
                 "message": f"fixture kernel message {i} on {hid}",
             },
         )
-        for hid in ("chassis-a_lc1", "db-01")
+        for hid in ("chassis-a-lc1-1", "db-01")
         for i in range(40)
     ]
     meta = _meta(_HOST_CHARTS + _MGMT_CHARTS, tables=True)
@@ -442,7 +456,7 @@ def kitchen_sink() -> MonitorExport:
 def minimal() -> MonitorExport:
     """Cover the degenerate case: one singleton host, two series, nothing else."""
     rng = random.Random(11)  # noqa: S311 — deterministic dummy data, not cryptography
-    host = _host("solo", "solo", "10.30.0.5")
+    host = _host("solo", "10.30.0.5")
     meta = _meta(_HOST_CHARTS[:2], tables=False)
     start = BASE
     metrics = _series(
@@ -487,19 +501,21 @@ def cascade() -> MonitorExport:
     """
     rng = random.Random(20260711)  # noqa: S311 — deterministic dummy data, not cryptography
     hosts = [
-        _host("gw-a", "gw-a", "10.30.0.1", interfaces={"eth0": "10.30.0.1", "eth1": "10.30.1.1"}),
-        _host("rack-a_n1", "rack-a", "10.30.1.11", board="n1", slot=1, hop="gw-a"),
-        _host("rack-a_n2", "rack-a", "10.30.1.12", board="n2", slot=2, hop="gw-a"),
-        _host("solo-ok", "solo-ok", "10.30.2.21"),
+        _host("gw-a", "10.30.0.1", interfaces={"eth0": "10.30.0.1", "eth1": "10.30.1.1"}),
+        _host("rack-a", "10.30.1.11", board="n1", slot=1, hop="gw-a"),
+        _host("rack-a", "10.30.1.12", board="n2", slot=2, hop="gw-a"),
+        _host("solo-ok", "10.30.2.21"),
     ]
     links = [
         *_implicit_links(hosts),
         _link(
-            ("rack-a_n1", "eth0", "10.30.1.11"), ("rack-a_n2", "eth0", "10.30.1.12"), name="pair-a"
+            ("rack-a-n1-1", "eth0", "10.30.1.11"),
+            ("rack-a-n2-2", "eth0", "10.30.1.12"),
+            name="pair-a",
         ),
         _link(
-            ("rack-a_n1", "eth0", "10.30.1.11"),
-            ("rack-a_n2", "eth0", "10.30.1.12"),
+            ("rack-a-n1-1", "eth0", "10.30.1.11"),
+            ("rack-a-n2-2", "eth0", "10.30.1.12"),
             protocol="udp",
             name="pair-b",
         ),
@@ -511,7 +527,7 @@ def cascade() -> MonitorExport:
     # sample at session end and undoing "silent through session end". Push
     # hi one cadence past the end so the boundary tick is caught too.
     dead = (3600.0, _DURATION_S + cadence)
-    gaps_for = {"gw-a": (dead,), "rack-a_n1": (dead,), "rack-a_n2": (dead,)}
+    gaps_for = {"gw-a": (dead,), "rack-a-n1-1": (dead,), "rack-a-n2-2": (dead,)}
     metrics: list[MetricRecord] = []
     for h in hosts:
         metrics += _series(
@@ -545,45 +561,44 @@ def sprawl() -> MonitorExport:
     hosts under ``core-gw``; ``chassis-a`` + ``console-01`` under
     ``edge-gw``} -> ``zephyr-01``/``zephyr-02`` under ``console-01``: a
     3-hop chain kitchen-sink (management depth capped at 1) cannot produce.
-    The data plane skips columns (``chassis-a_lc1``/``app-01``/``zephyr-01``
+    The data plane skips columns (``chassis-a-lc1-1``/``app-01``/``zephyr-01``
     all reach back to the top-of-rack switches directly, bypassing their own
-    management chain) and fans out in parallel (``workers_w1``/``w3`` both
+    management chain) and fans out in parallel (``workers-w1``/``w3`` both
     to ``db-01``). ``core-gw`` and everything hopping through it go dark for
     the back half of the session — a wider cascade than the two-host one in
     :func:`cascade`.
     """
     rng = random.Random(20260712)  # noqa: S311 — deterministic dummy data, not cryptography
     hosts = [
-        _host("jump-01", "jump-01", "10.60.0.1"),
-        _host("mgmt-01", "mgmt-01", "10.60.0.2"),
-        _host("tor-sw-a", "tor-sw-a", "10.60.0.3"),
-        _host("tor-sw-b", "tor-sw-b", "10.60.0.4"),
+        _host("jump-01", "10.60.0.1"),
+        _host("mgmt-01", "10.60.0.2"),
+        _host("tor-sw-a", "10.60.0.3"),
+        _host("tor-sw-b", "10.60.0.4"),
         _host(
-            "edge-gw",
             "edge-gw",
             "10.60.1.1",
             hop="jump-01",
             interfaces={"eth0": "10.60.1.1", "eth1": "10.60.1.101"},
         ),
-        _host("core-gw", "core-gw", "10.60.1.2", hop="jump-01"),
-        _host("db-01", "db-01", "10.60.1.3", hop="jump-01"),
-        _host("db-02", "db-02", "10.60.1.4", hop="jump-01"),
-        _host("app-01", "app-01", "10.60.2.1", hop="core-gw"),
-        _host("app-02", "app-02", "10.60.2.2", hop="core-gw"),
-        _host("app-03", "app-03", "10.60.2.3", hop="core-gw"),
-        _host("app-04", "app-04", "10.60.2.4", hop="core-gw"),
-        _host("cache-01", "cache-01", "10.60.2.5", hop="core-gw"),
-        _host("queue-01", "queue-01", "10.60.2.6", hop="core-gw"),
-        _host("workers_w1", "workers", "10.60.2.11", board="w1", hop="core-gw"),
-        _host("workers_w2", "workers", "10.60.2.12", board="w2", hop="core-gw"),
-        _host("workers_w3", "workers", "10.60.2.13", board="w3", hop="core-gw"),
-        _host("workers_w4", "workers", "10.60.2.14", board="w4", hop="core-gw"),
-        _host("chassis-a_lc1", "chassis-a", "10.60.3.1", board="lc1", slot=1, hop="edge-gw"),
-        _host("chassis-a_lc2", "chassis-a", "10.60.3.2", board="lc2", slot=2, hop="edge-gw"),
-        _host("chassis-a_sup", "chassis-a", "10.60.3.3", board="sup", slot=3, hop="edge-gw"),
-        _host("console-01", "console-01", "10.60.3.10", hop="edge-gw"),
-        _host("zephyr-01", "zephyr-01", "10.60.4.1", hop="console-01"),
-        _host("zephyr-02", "zephyr-02", "10.60.4.2", hop="console-01"),
+        _host("core-gw", "10.60.1.2", hop="jump-01"),
+        _host("db-01", "10.60.1.3", hop="jump-01"),
+        _host("db-02", "10.60.1.4", hop="jump-01"),
+        _host("app-01", "10.60.2.1", hop="core-gw"),
+        _host("app-02", "10.60.2.2", hop="core-gw"),
+        _host("app-03", "10.60.2.3", hop="core-gw"),
+        _host("app-04", "10.60.2.4", hop="core-gw"),
+        _host("cache-01", "10.60.2.5", hop="core-gw"),
+        _host("queue-01", "10.60.2.6", hop="core-gw"),
+        _host("workers", "10.60.2.11", board="w1", hop="core-gw"),
+        _host("workers", "10.60.2.12", board="w2", hop="core-gw"),
+        _host("workers", "10.60.2.13", board="w3", hop="core-gw"),
+        _host("workers", "10.60.2.14", board="w4", hop="core-gw"),
+        _host("chassis-a", "10.60.3.1", board="lc1", slot=1, hop="edge-gw"),
+        _host("chassis-a", "10.60.3.2", board="lc2", slot=2, hop="edge-gw"),
+        _host("chassis-a", "10.60.3.3", board="sup", slot=3, hop="edge-gw"),
+        _host("console-01", "10.60.3.10", hop="edge-gw"),
+        _host("zephyr-01", "10.60.4.1", hop="console-01"),
+        _host("zephyr-02", "10.60.4.2", hop="console-01"),
     ]
     links = [
         *_implicit_links(hosts),
@@ -613,10 +628,10 @@ def sprawl() -> MonitorExport:
         _link(("app-02", "eth0", "10.60.2.2"), ("db-01", "eth0", "10.60.1.3"), name="app02-db"),
         _link(("app-03", "eth0", "10.60.2.3"), ("db-02", "eth0", "10.60.1.4"), name="app03-db"),
         _link(("app-04", "eth0", "10.60.2.4"), ("db-02", "eth0", "10.60.1.4"), name="app04-db"),
-        _link(("workers_w1", "eth0", "10.60.2.11"), ("db-01", "eth0", "10.60.1.3"), name="w1-db"),
-        _link(("workers_w3", "eth0", "10.60.2.13"), ("db-01", "eth0", "10.60.1.3"), name="w3-db"),
+        _link(("workers-w1", "eth0", "10.60.2.11"), ("db-01", "eth0", "10.60.1.3"), name="w1-db"),
+        _link(("workers-w3", "eth0", "10.60.2.13"), ("db-01", "eth0", "10.60.1.3"), name="w3-db"),
         _link(
-            ("chassis-a_lc1", "eth0", "10.60.3.1"),
+            ("chassis-a-lc1-1", "eth0", "10.60.3.1"),
             ("tor-sw-a", "eth0", "10.60.0.3"),
             name="chassis-mgmt",
         ),
@@ -635,10 +650,10 @@ def sprawl() -> MonitorExport:
         "app-04",
         "cache-01",
         "queue-01",
-        "workers_w1",
-        "workers_w2",
-        "workers_w3",
-        "workers_w4",
+        "workers-w1",
+        "workers-w2",
+        "workers-w3",
+        "workers-w4",
     )
     dead = (600.0, _SPARSE_DURATION_S + _SPARSE_CADENCE_S)  # see cascade()'s boundary-tick note
     metrics: list[MetricRecord] = []
@@ -737,8 +752,9 @@ def isp_core() -> MonitorExport:
     Docs-hero touch-up (topology-default-view spec, fixture section):
     ``mme-01``/``sgw-01`` and ``pgw-01``/``hss-01`` are each folded into one
     physical chassis (``mme-01``, ``pgw-01`` survive as the shared element
-    id; the fused host keeps its own id, ip, and links, only its `element`
-    changes) — the same "one physical box, several line cards" shape as
+    id; the fused host keeps its ip and links, but its id composes with the
+    chassis: ``mme-01-lc2-2``, ``pgw-01-lc2-2``) — the same "one physical box,
+    several line cards" shape as
     ``agg-01``'s three boards, giving the topology shot two more chassis
     without inventing new hosts. Both fused hosts were degree-1 pendants
     docking into the SAME neighbour they always did (``mme-01``/``sgw-01``
@@ -756,36 +772,38 @@ def isp_core() -> MonitorExport:
     """
     rng = random.Random(20260713)  # noqa: S311 — deterministic dummy data, not cryptography
     hosts = [
-        _host("jump-01", "jump-01", "10.70.0.1"),
-        _host("ems-01", "ems-01", "10.70.0.2"),
-        _host("ems-02", "ems-02", "10.70.0.3"),
-        _host("pe-01", "pe-01", "10.70.1.1"),
-        _host("pe-02", "pe-02", "10.70.1.2"),
-        _host("core-01", "core-01", "10.70.1.11"),
-        _host("core-02", "core-02", "10.70.1.12"),
+        _host("jump-01", "10.70.0.1"),
+        _host("ems-01", "10.70.0.2"),
+        _host("ems-02", "10.70.0.3"),
+        _host("pe-01", "10.70.1.1"),
+        _host("pe-02", "10.70.1.2"),
+        _host("core-01", "10.70.1.11"),
+        _host("core-02", "10.70.1.12"),
         # mme-01/sgw-01 share the "mme-01" chassis element (fixture touch-up,
         # topology-default-view spec): board+slot make the grouping physical
         # without needing an explicit ElementRecord, matching agg-01's
-        # existing lc1/lc2/lc3 pattern. host id/ip/links unchanged.
-        _host("mme-01", "mme-01", "10.70.1.21", board="lc1", slot=1),
-        _host("sgw-01", "mme-01", "10.70.1.22", board="lc2", slot=2),
-        # pgw-01/hss-01 share the "pgw-01" chassis element, same pattern.
-        _host("pgw-01", "pgw-01", "10.70.1.23", board="lc1", slot=1),
-        _host("hss-01", "pgw-01", "10.70.1.24", board="lc2", slot=2),
-        _host("agg-01_lc1", "agg-01", "10.70.2.11", board="lc1", slot=1, hop="jump-01"),
-        _host("agg-01_lc2", "agg-01", "10.70.2.12", board="lc2", slot=2, hop="jump-01"),
-        _host("agg-01_lc3", "agg-01", "10.70.2.13", board="lc3", slot=3, hop="jump-01"),
-        _host("agg-02", "agg-02", "10.70.2.21", hop="jump-01"),
-        _host("agg-03", "agg-03", "10.70.2.31", hop="jump-01"),
-        _host("agg-04", "agg-04", "10.70.2.41", hop="jump-01"),
-        _host("acc-01", "acc-01", "10.70.3.1", hop="jump-01"),
-        _host("acc-02", "acc-02", "10.70.3.2", hop="jump-01"),
-        _host("acc-03", "acc-03", "10.70.3.3", hop="jump-01"),
-        _host("acc-04", "acc-04", "10.70.3.4", hop="jump-01"),
-        _host("acc-05", "acc-05", "10.70.3.5", hop="jump-01"),
-        _host("acc-06", "acc-06", "10.70.3.6", hop="jump-01"),
-        _host("acc-07", "acc-07", "10.70.3.7", hop="jump-01"),
-        _host("acc-08", "acc-08", "10.70.3.8", hop="jump-01"),
+        # existing lc1/lc2/lc3 pattern. The fused host's id becomes
+        # mme-01-lc2-2; its ip and links are unchanged.
+        _host("mme-01", "10.70.1.21", board="lc1", slot=1),
+        _host("mme-01", "10.70.1.22", board="lc2", slot=2),
+        # pgw-01/hss-01 share the "pgw-01" chassis element, same pattern
+        # (hss-01 becomes pgw-01-lc2-2).
+        _host("pgw-01", "10.70.1.23", board="lc1", slot=1),
+        _host("pgw-01", "10.70.1.24", board="lc2", slot=2),
+        _host("agg-01", "10.70.2.11", board="lc1", slot=1, hop="jump-01"),
+        _host("agg-01", "10.70.2.12", board="lc2", slot=2, hop="jump-01"),
+        _host("agg-01", "10.70.2.13", board="lc3", slot=3, hop="jump-01"),
+        _host("agg-02", "10.70.2.21", hop="jump-01"),
+        _host("agg-03", "10.70.2.31", hop="jump-01"),
+        _host("agg-04", "10.70.2.41", hop="jump-01"),
+        _host("acc-01", "10.70.3.1", hop="jump-01"),
+        _host("acc-02", "10.70.3.2", hop="jump-01"),
+        _host("acc-03", "10.70.3.3", hop="jump-01"),
+        _host("acc-04", "10.70.3.4", hop="jump-01"),
+        _host("acc-05", "10.70.3.5", hop="jump-01"),
+        _host("acc-06", "10.70.3.6", hop="jump-01"),
+        _host("acc-07", "10.70.3.7", hop="jump-01"),
+        _host("acc-08", "10.70.3.8", hop="jump-01"),
     ]
     links = [
         *_implicit_links(hosts),
@@ -807,12 +825,12 @@ def isp_core() -> MonitorExport:
             name="core01-core02",
         ),
         _link(
-            ("agg-01_lc1", "eth0", "10.70.2.11"),
+            ("agg-01-lc1-1", "eth0", "10.70.2.11"),
             ("core-01", "eth0", "10.70.1.11"),
             name="agg01-core01",
         ),
         _link(
-            ("agg-01_lc2", "eth0", "10.70.2.12"),
+            ("agg-01-lc2-2", "eth0", "10.70.2.12"),
             ("core-02", "eth0", "10.70.1.12"),
             name="agg01-core02",
         ),
@@ -836,12 +854,12 @@ def isp_core() -> MonitorExport:
         ),
         _link(
             ("acc-01", "eth0", "10.70.3.1"),
-            ("agg-01_lc3", "eth0", "10.70.2.13"),
+            ("agg-01-lc3-3", "eth0", "10.70.2.13"),
             name="acc01-agg01",
         ),
         _link(
             ("acc-02", "eth0", "10.70.3.2"),
-            ("agg-01_lc3", "eth0", "10.70.2.13"),
+            ("agg-01-lc3-3", "eth0", "10.70.2.13"),
             name="acc02-agg01",
         ),
         _link(
@@ -867,30 +885,47 @@ def isp_core() -> MonitorExport:
         _link(("acc-05", "eth0", "10.70.3.5"), ("acc-06", "eth0", "10.70.3.6"), name="acc-ring-3"),
         _link(("acc-07", "eth0", "10.70.3.7"), ("acc-08", "eth0", "10.70.3.8"), name="acc-ring-4"),
         _link(
-            ("mme-01", "eth0", "10.70.1.21"), ("core-01", "eth0", "10.70.1.11"), name="mme01-core01"
+            ("mme-01-lc1-1", "eth0", "10.70.1.21"),
+            ("core-01", "eth0", "10.70.1.11"),
+            name="mme01-core01",
         ),
         _link(
-            ("sgw-01", "eth0", "10.70.1.22"), ("core-01", "eth0", "10.70.1.11"), name="sgw01-core01"
+            ("mme-01-lc2-2", "eth0", "10.70.1.22"),
+            ("core-01", "eth0", "10.70.1.11"),
+            name="sgw01-core01",
         ),
         _link(
-            ("pgw-01", "eth0", "10.70.1.23"), ("core-02", "eth0", "10.70.1.12"), name="pgw01-core02"
+            ("pgw-01-lc1-1", "eth0", "10.70.1.23"),
+            ("core-02", "eth0", "10.70.1.12"),
+            name="pgw01-core02",
         ),
         _link(
-            ("hss-01", "eth0", "10.70.1.24"), ("core-02", "eth0", "10.70.1.12"), name="hss01-core02"
+            ("pgw-01-lc2-2", "eth0", "10.70.1.24"),
+            ("core-02", "eth0", "10.70.1.12"),
+            name="hss01-core02",
         ),
         _link(
-            ("pgw-01", "eth0", "10.70.1.23"),
+            ("pgw-01-lc1-1", "eth0", "10.70.1.23"),
             ("pe-01", "eth0", "10.70.1.1"),
             name="pgw01-pe01",
             impair="core-02",
         ),
     ]
     dead = (600.0, _SPARSE_DURATION_S + _SPARSE_CADENCE_S)  # see cascade()'s boundary-tick note
-    ems01_hosts = ["pe-01", "pe-02", "core-01", "core-02", "mme-01", "sgw-01", "pgw-01", "hss-01"]
+    ems01_hosts = [
+        "pe-01",
+        "pe-02",
+        "core-01",
+        "core-02",
+        "mme-01-lc1-1",
+        "mme-01-lc2-2",
+        "pgw-01-lc1-1",
+        "pgw-01-lc2-2",
+    ]
     ems02_hosts = [
-        "agg-01_lc1",
-        "agg-01_lc2",
-        "agg-01_lc3",
+        "agg-01-lc1-1",
+        "agg-01-lc2-2",
+        "agg-01-lc3-3",
         "agg-02",
         "agg-03",
         "agg-04",
@@ -999,7 +1034,7 @@ def isp_core() -> MonitorExport:
                 id="tun-0000pe01agg1-15006",
                 protocol="udp",
                 service_port=15006,
-                hops=["pe-01", "core-01", "agg-01_lc1"],
+                hops=["pe-01", "core-01", "agg-01-lc1-1"],
                 status="ok",
                 carriers_present=6,
                 carriers_expected=6,
@@ -1016,9 +1051,9 @@ def drift() -> MonitorExport:
 
     def lab_v1() -> LabSnapshot:
         hosts = [
-            _host("chassis-a_lc1", "chassis-a", "10.20.1.11", board="lc1", slot=1),
-            _host("chassis-a_sup", "chassis-a", "10.20.1.15", board="sup", slot=5),
-            _host("db-01", "db-01", "10.20.3.31"),
+            _host("chassis-a", "10.20.1.11", board="lc1", slot=1),
+            _host("chassis-a", "10.20.1.15", board="sup", slot=5),
+            _host("db-01", "10.20.3.31"),
         ]
         return LabSnapshot(hosts=hosts)
 
@@ -1026,34 +1061,33 @@ def drift() -> MonitorExport:
         v1 = lab_v1()
         hosts = [
             *v1.hosts,
-            _host("chassis-a_lc2", "chassis-a", "10.20.1.12", board="lc2", slot=2),
-            _host("workers_w1", "workers", "10.20.2.21", board="w1"),
-            _host("workers_w2", "workers", "10.20.2.22", board="w2"),
+            _host("chassis-a", "10.20.1.12", board="lc2", slot=2),
+            _host("workers", "10.20.2.21", board="w1"),
+            _host("workers", "10.20.2.22", board="w2"),
         ]
         links = [
             _link(
-                ("workers_w1", "eth0", "10.20.2.21"), ("db-01", "eth0", "10.20.3.31"), name="app-db"
+                ("workers-w1", "eth0", "10.20.2.21"),
+                ("db-01", "eth0", "10.20.3.31"),
+                name="app-db",
             )
         ]
         return LabSnapshot(hosts=hosts, links=links)
 
     def lab_v3() -> LabSnapshot:
         v2 = lab_v2()
-        gw = _host("edge-gw", "edge-gw", "10.20.0.1")
+        gw = _host("edge-gw", "10.20.0.1")
         hosts = [gw] + [
-            h.model_copy(
-                update={
-                    "slot": 3 if h.board == "lc2" else h.slot,  # board slot moved
-                    "hop": "edge-gw" if h.element == "chassis-a" else h.hop,
-                }
+            _moved(h, slot=3 if h.board == "lc2" else h.slot).model_copy(
+                update={"hop": "edge-gw" if h.element == "chassis-a" else h.hop}
             )
             for h in v2.hosts
-            if h.id != "workers_w2"  # host removed
+            if h.id != "workers-w2"  # host removed
         ]
         links = [
             *_implicit_links(hosts),
             _link(
-                ("workers_w1", "eth0", "10.20.2.21"),
+                ("workers-w1", "eth0", "10.20.2.21"),
                 ("db-01", "eth0", "10.20.3.31"),
                 name="app-db",
                 impair="edge-gw",

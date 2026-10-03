@@ -40,7 +40,11 @@ from least to most specific:
 2. **Per-host `*_options`** in `lab.json` — the lab's own values for
    a single host.
 3. **Product `[host_preferences]`** in `.otto/settings.toml` — applied
-   to every host whose id matches the selector regex.  Product values
+   to every host whose id matches the selector regex (a full match over
+   the id, whose seams are `-` — `test1-.*` matches every host of
+   `test1` **and** of any element whose name begins `test1-`, so anchor on
+   the board, `test1-bb-.*`, or spell the full id when that matters).
+   Product values
    **win over** `lab.json`.  See {ref}`host-preferences`.
 4. **CLI `--term` / `--transfer`** — final word, applied at invocation
    time.

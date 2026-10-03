@@ -16,7 +16,7 @@ function freshKitchen() {
 
 describe("buildSeriesTree maxSeries", () => {
   it("defaults a spec with no max_series to the default cap", () => {
-    const tree = buildSeriesTree(freshKitchen(), "chassis-a_lc1");
+    const tree = buildSeriesTree(freshKitchen(), "chassis-a-lc1-1");
     expect(tree.length).toBeGreaterThan(0);
     for (const chart of tree) expect(chart.maxSeries).toBe(MAX_SERIES_PER_CHART);
   });
@@ -29,7 +29,7 @@ describe("buildSeriesTree maxSeries", () => {
     expect(psu).toBeDefined();
     if (cpu) cpu.max_series = null; // uncapped
     if (psu) psu.max_series = 3; // explicit cap
-    const tree = buildSeriesTree(session, "chassis-a_lc1");
+    const tree = buildSeriesTree(session, "chassis-a-lc1-1");
     const byKey = Object.fromEntries(tree.map((c) => [c.chartKey, c.maxSeries]));
     expect(byKey["cpu"]).toBeNull();
     expect(byKey["psu-temp"]).toBe(3);

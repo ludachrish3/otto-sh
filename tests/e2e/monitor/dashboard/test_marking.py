@@ -588,7 +588,7 @@ def test_zz_shot_span_labels_both_themes(page: Page, shell_dash, tmp_path) -> No
     page.goto(shell_dash.url)
     page.locator('[data-testid="import-input"]').set_input_files(_FIXTURES / "kitchen-sink.json")
     page.locator('[data-testid="review-bar"]').wait_for()
-    page.goto(f"{shell_dash.url}#/host/chassis-a_lc1")
+    page.goto(f"{shell_dash.url}#/host/chassis-a-lc1-1")
     page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
 
     out_dir = PROJECT_ROOT / "reports" / "monitor-e2e-shots"

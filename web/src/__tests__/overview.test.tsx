@@ -72,15 +72,15 @@ afterEach(() => {
 describe("fleet grid", () => {
   it("renders a tile per host with a labeled headline", () => {
     load();
-    const tile = screen.getByTestId("host-tile-chassis-a_lc1");
+    const tile = screen.getByTestId("host-tile-chassis-a-lc1-1");
     expect(tile).toBeTruthy();
-    expect(screen.getByTestId("headline-chassis-a_lc1").textContent).toMatch(/% cpu$/);
+    expect(screen.getByTestId("headline-chassis-a-lc1-1").textContent).toMatch(/% cpu$/);
   });
 
   it("shows down · duration when the range ends inside the outage", () => {
     const start = importAndGetStart();
     load({ from: start, to: start + 70 * MIN });
-    expect(screen.getByTestId("host-tile-workers_w2").textContent).toMatch(/down · 10m/);
+    expect(screen.getByTestId("host-tile-workers-w2").textContent).toMatch(/down · 10m/);
   });
 
   it("shows a sub-minute down duration as seconds, not '0m' (Minor 5, 5b follow-ups review)", () => {
@@ -92,7 +92,7 @@ describe("fleet grid", () => {
 
   it("healthy tiles show no down text at full range", () => {
     load();
-    expect(screen.getByTestId("host-tile-workers_w2").textContent).not.toMatch(/down ·/);
+    expect(screen.getByTestId("host-tile-workers-w2").textContent).not.toMatch(/down ·/);
   });
 
   it("renders the element rollup with one segment per member", () => {

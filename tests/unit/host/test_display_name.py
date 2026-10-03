@@ -20,7 +20,7 @@ def test_board_and_slot_space_separated_original_case():
 def test_mixed_case_board_is_kept_verbatim():
     host = _mk("Edge Router", board="LineCard", slot=3)
     assert host.name == "Edge Router LineCard 3"
-    assert host.id == "edge-router_linecard3"
+    assert host.id == "edge-router-linecard-3"
 
 
 def test_multi_host_element_gets_no_number_after_lab_assembly():

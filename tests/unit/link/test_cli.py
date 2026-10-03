@@ -125,7 +125,7 @@ class TestRepairCommand:
             link_id="lnk-abc",
             cleared=[Placement("test1", "bbeth-1350", FlowDirection.A_TO_B)],
             unreachable=[
-                "bb1350_qemu/eth0: link references host 'bb1350_qemu' not in the loaded lab"
+                "bb1350-qemu/eth0: link references host 'bb1350-qemu' not in the loaded lab"
             ],
         )
         with (
@@ -137,7 +137,7 @@ class TestRepairCommand:
         assert "partially repaired" in result.output
         assert "test1/bbeth-1350" in result.output
         assert "could not reach" in result.output
-        assert "bb1350_qemu/eth0" in result.output
+        assert "bb1350-qemu/eth0" in result.output
 
     def test_a_fully_reached_repair_still_says_repaired_and_exits_0(self) -> None:
         """The discriminator for the test above: the partial rendering must not

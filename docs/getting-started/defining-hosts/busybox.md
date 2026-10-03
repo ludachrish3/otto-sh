@@ -14,7 +14,7 @@ questions differently: `ash` instead of `bash`, `su` instead of `sudo`, a
 Two things to notice. `hop: "test1"` — otto reaches the guest through the
 VM that hosts it. And the `userland_options` block is a **pin** — every
 value declared, none left for the probe. That is what a probe on a pinned
-host reports — here the newest guest, `bb1350_qemu` (the element name plus
+host reports — here the newest guest, `bb1350-qemu` (the element name plus
 the board otto appends):
 
 ```{literalinclude} ../../examples/getting-started/captures/probe-bb1350.txt

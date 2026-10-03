@@ -11,9 +11,9 @@ bed has sixteen hosts; a BusyBox project wants five. `[project]` in
 ```
 
 Both are {ref}`fullmatched regexes <project-scope>` — `bb`
-would match nothing, `bb.*_qemu` matches the five guests and not `test1`,
+would match nothing, `bb.*-qemu` matches the five guests and not `test1`,
 which is also a member of the `busybox` lab. The host id is what is matched:
-`bb1350_qemu`, the element name plus the board slug otto appends.
+`bb1350-qemu`, the element name plus the board slug otto appends.
 
 What the declaration changes is the fleet every walk starts from.
 `all_hosts()` and {meth}`~otto.context.OttoContext.do_for_all_hosts` iterate
@@ -48,10 +48,10 @@ os.chdir(_old_cwd)
 >>> repo = Repo(sut_dir=Path.cwd())
 >>> lab = load_lab("busybox", search_paths=[Path("lab_data")])
 >>> sorted(lab.hosts)
-['bb1161_qemu', 'bb1211_qemu', 'bb1281_qemu', 'bb1310_qemu', 'bb1350_qemu', 'local', 'test1']
+['bb1161-qemu', 'bb1211-qemu', 'bb1281-qemu', 'bb1310-qemu', 'bb1350-qemu', 'local', 'test1']
 >>> scopes = resolve_scopes([repo], lab.component_names, lab.hosts, exclude_ids=frozenset({"local"}))
 >>> sorted(scoped_ids(lab.hosts, scopes, None))
-['bb1161_qemu', 'bb1211_qemu', 'bb1281_qemu', 'bb1310_qemu', 'bb1350_qemu']
+['bb1161-qemu', 'bb1211-qemu', 'bb1281-qemu', 'bb1310-qemu', 'bb1350-qemu']
 ```
 
 `test1` is in the lab and out of the fleet. Naming it explicitly —

@@ -131,9 +131,9 @@ describe("dataPlaneColumns — isp-core", () => {
     // edges came from.
     //
     // PIN ADJUSTED (topology-default-view spec, isp-core fixture touch-up):
-    // sgw-01 is now fused into the "mme-01" chassis element (same host id,
-    // ip, and single core-01 link -- only `element` changed) and hss-01 into
-    // "pgw-01", so neither exists as its own node any more. The merge is
+    // sgw-01 is now fused into the "mme-01" chassis element (its host id
+    // became mme-01-lc2-2, ip and single core-01 link unchanged) and hss-01
+    // into "pgw-01" (pgw-01-lc2-2), so neither exists as its own node. The merge is
     // degree-preserving (still ONE distinct neighbour each: mme-01->core-01,
     // pgw-01->{core-02,pe-01} exactly as pgw-01 alone had), so mme-01 is
     // still the true pendant this test is about; only the list shrinks.

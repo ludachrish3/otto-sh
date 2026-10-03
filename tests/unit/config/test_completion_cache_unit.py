@@ -916,7 +916,7 @@ def test_collect_returns_only_capable_sorted(tmp_path: Path) -> None:
     """Only docker_capable hosts are returned, sorted, and bad entries are skipped."""
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
-    # docker_capable host "b_seed", non-docker host "a_seed", and a docker_capable
+    # docker_capable host "b-seed", non-docker host "a-seed", and a docker_capable
     # entry whose identity cannot resolve. v2 keeps that skip per RECORD; a
     # malformed ELEMENT takes its whole file out of enumeration instead (see
     # tests/unit/labs/test_json_repository.py), which is why the junk entry
@@ -933,7 +933,7 @@ def test_collect_returns_only_capable_sorted(tmp_path: Path) -> None:
 
     result = cc.collect_docker_capable_host_ids([repo])
 
-    assert result == ["b_seed"]
+    assert result == ["b-seed"]
 
 
 def test_collect_skips_missing_file(tmp_path: Path) -> None:

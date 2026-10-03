@@ -65,7 +65,7 @@ def test_hosts_of_one_element_disagreeing_on_labs_is_loud() -> None:
     """v2 assigns membership per ELEMENT, so this fixture has no v2 spelling.
 
     Taking the first host's ``labs`` and dropping the rest would silently
-    delete ``dut_b`` from ``embedded`` — and every "host X is absent from lab
+    delete ``dut-b`` from ``embedded`` — and every "host X is absent from lab
     Y" assertion downstream would then pass for the wrong reason.
     """
     with pytest.raises(ValueError, match=r"'dut'.*\['unix'\].*\['embedded'\]"):

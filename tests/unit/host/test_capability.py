@@ -87,7 +87,7 @@ class TestSelectPreferences:
             "zephyr.*": {"transfer": ["console"]},
         }
         # zephyr host: term from the base, transfer overridden by the specific
-        assert select_preferences(table, "zephyr1_board") == {
+        assert select_preferences(table, "zephyr1-board") == {
             "term": ["ssh"],
             "transfer": ["console"],
         }

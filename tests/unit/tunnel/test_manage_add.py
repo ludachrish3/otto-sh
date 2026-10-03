@@ -1072,7 +1072,7 @@ class TestAddDryRunWithAContainerEndpoint:
 
         parent = FakeHost("test1", ip="10.10.200.11")
         ctr = _container("test1.repo2.oldos", parent)
-        other = FakeHost("test2_soil", ip="10.10.200.12")
+        other = FakeHost("test2-soil", ip="10.10.200.12")
         return _lab_from(parent, ctr, other), parent, ctr, other
 
     def test_the_chain_and_id_are_named_but_no_argv_is_shown(self) -> None:

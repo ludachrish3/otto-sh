@@ -152,7 +152,7 @@ def bed_lab(tech: str) -> Lab:
 
     The membership check is not decoration. ``Lab.add_host`` keys on
     ``host.id``, which ``make_host_id`` derives from the element AND its
-    board/slot -- measured, ``bb1161`` builds as ``bb1161_qemu`` -- while a
+    board/slot -- measured, ``bb1161`` builds as ``bb1161-qemu`` -- while a
     ``hop`` field names an ELEMENT. Today every hop target is boardless and
     the two coincide; a jump host that gained a board would make ``lab.hosts``
     miss the key otto looks up, and the failure would surface at open time as

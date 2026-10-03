@@ -70,7 +70,7 @@ _busybox[BusyBoxSocketsParser().command] = BusyBoxSocketsParser()
 # A per-host set replaces the defaults outright, so the project-wide entropy
 # parser goes back in.
 _busybox[EntropyParser().command] = EntropyParser()
-register_host_parsers(re.compile(r"bb.*_qemu"), _busybox)
+register_host_parsers(re.compile(r"bb.*-qemu"), _busybox)
 # doc: end register-parsers
 
 # doc: begin register-setup

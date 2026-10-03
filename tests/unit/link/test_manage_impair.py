@@ -254,9 +254,9 @@ class TestRefusalsAndSafety:
         # ip inside test3's eth1.200 subnet: impairing dataplane (in-path on
         # test3) would sever otto->beet. Refuse before any mutation.
         lab, _test1, _test2, test3 = _bed(link=INPATH)
-        beet = FakeHost(id="beet_seed", ip="10.10.202.77", addr_text="")
+        beet = FakeHost(id="beet-seed", ip="10.10.202.77", addr_text="")
         beet.hop = "test3"  # direct hop through the middlebox
-        lab.hosts["beet_seed"] = beet
+        lab.hosts["beet-seed"] = beet
         with pytest.raises(ValueError, match="hop transit"):
             await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=1.0))
         assert not test3.sudo_commands
@@ -265,13 +265,13 @@ class TestRefusalsAndSafety:
     async def test_hop_transit_transitive_chain_refused(self) -> None:
         # beet -> onion -> test3: beet still transits test3 (transitive walk).
         lab, _test1, _test2, test3 = _bed(link=INPATH)
-        onion = FakeHost(id="onion_seed", ip="10.10.99.1", addr_text="")
+        onion = FakeHost(id="onion-seed", ip="10.10.99.1", addr_text="")
         onion.hop = "test3"
-        beet = FakeHost(id="beet_seed", ip="10.10.202.77", addr_text="")
-        beet.hop = "onion_seed"
-        lab.hosts["onion_seed"] = onion
-        lab.hosts["beet_seed"] = beet
-        with pytest.raises(ValueError, match="beet_seed"):
+        beet = FakeHost(id="beet-seed", ip="10.10.202.77", addr_text="")
+        beet.hop = "onion-seed"
+        lab.hosts["onion-seed"] = onion
+        lab.hosts["beet-seed"] = beet
+        with pytest.raises(ValueError, match="beet-seed"):
             await impair_link(lab, "dataplane", ImpairmentParams(delay_ms=1.0))
         assert not test3.sudo_commands
 

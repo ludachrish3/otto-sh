@@ -20,7 +20,7 @@ def test_built_host_shares_the_passed_instance():
     element = Element("Chassis", id=9, metadata={"row": 3}, resources=frozenset({"chassis-9"}))
     host = create_host_from_dict(dict(ENTRY), element=element)
     assert host.element is element
-    assert host.id == "chassis_cpu2"
+    assert host.id == "chassis-cpu-2"
     assert host.name == "Chassis cpu 2"
 
 

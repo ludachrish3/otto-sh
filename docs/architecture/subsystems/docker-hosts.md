@@ -93,7 +93,7 @@ differences moot, which is the decoupling test again.
 Container host id = `<parent_id>.<usecase>.<service>`, lowercased.
 
 - **Parent id** is whatever `UnixHost._generateId()` produces (e.g.
-  `test3`, or `test3_rack1` if the lab encodes `board`/`slot`).
+  `test3`, or `test3-rack-1` if the lab encodes `board`/`slot`).
 - **Use-case** is the `[[docker.use_cases]]` `name` — the deployment, not
   the repo, because a use-case is cross-repo by construction. A repo whose
   fragment is named after the repo keeps its pre-use-case container ids

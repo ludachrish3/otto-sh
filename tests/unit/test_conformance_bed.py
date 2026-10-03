@@ -1054,8 +1054,8 @@ def test_a_hop_target_whose_host_id_is_not_its_element_is_refused(monkeypatch, t
     """``hop`` names an ELEMENT; a ``Lab`` is keyed by host ID, and they can differ.
 
     INJECTED with a jump host that declares a board, which is what makes
-    ``make_host_id`` produce ``relay_qemu`` for element ``relay`` -- the same
-    derivation that turns ``bb1161`` into ``bb1161_qemu``. Every hop target
+    ``make_host_id`` produce ``relay-qemu`` for element ``relay`` -- the same
+    derivation that turns ``bb1161`` into ``bb1161-qemu``. Every hop target
     in today's data is boardless, so real data cannot tell a lab that answers
     to the hop from one that does not.
     """

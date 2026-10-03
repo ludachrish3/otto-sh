@@ -76,12 +76,12 @@ def test_an_elements_own_data_reaches_every_host_it_groups():
         resources={},
     )
     lab = repo.load_lab("rig")
-    cpu, io = lab.hosts["chassis_cpu"], lab.hosts["chassis_io"]
+    cpu, io = lab.hosts["chassis-cpu"], lab.hosts["chassis-io"]
     assert cpu.element is io.element  # one Element per element dict, shared
     assert (cpu.element.name, cpu.element.id) == ("chassis", 7)
     assert cpu.element.metadata == {"rack": "B4"}
     assert cpu.element.resources == frozenset({"chassis-7"})
-    assert {s.id for s in repo.list_host_summaries()} == {"chassis_cpu", "chassis_io"}
+    assert {s.id for s in repo.list_host_summaries()} == {"chassis-cpu", "chassis-io"}
 
 
 def test_accepts_repo_dir_for_registry_compatibility(tmp_path):

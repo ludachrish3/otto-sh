@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+from otto.host.remote_host import make_host_id
 from otto.models import MonitorExport
 from scripts.gen_monitor_fixtures import OUTAGE_S, build_all, dumps
 
@@ -22,6 +23,18 @@ def _subjects(doc):
     elements = {e.id for s in doc.sessions for e in s.lab.elements}
     elements |= {h.element for s in doc.sessions for h in s.lab.hosts}
     return hosts, elements
+
+
+def test_every_fixture_host_id_is_what_make_host_id_composes_from_its_fields():
+    """A fixture shows the ids a real lab would: composed, never hand-spelled."""
+    docs = build_all()
+    seen = 0
+    for stem, doc in docs.items():
+        for session in doc.sessions:
+            for host in session.lab.hosts:
+                assert host.id == make_host_id(host.element, host.board, host.slot), (stem, host.id)
+                seen += 1
+    assert seen, "the fixtures carry no hosts, so this pinned nothing"
 
 
 def test_deterministic():
@@ -95,7 +108,7 @@ def test_kitchen_sink_outage_window():
     (s,) = doc.sessions
     lo = s.start.timestamp() + OUTAGE_S[0]
     hi = s.start.timestamp() + OUTAGE_S[1]
-    down = [m for m in s.metrics if m.host == "workers_w2"]
+    down = [m for m in s.metrics if m.host == "workers-w2"]
     assert down, "outage host must still have samples outside the gap"
     assert not [m for m in down if lo <= m.timestamp.timestamp() < hi]
 
@@ -109,8 +122,8 @@ def test_drift_sessions_evolve():
     assert len(s2.lab.hosts) > len(s1.lab.hosts)  # host added
     ids2 = {h.id for h in s2.lab.hosts}
     ids3 = {h.id for h in s3.lab.hosts}
-    assert "workers_w2" in ids2  # host removed
-    assert "workers_w2" not in ids3
+    assert "workers-w2" in ids2  # host removed
+    assert "workers-w2" not in ids3
     assert "edge-gw" not in ids2  # gateway added
     assert "edge-gw" in ids3
     slot = {
@@ -118,6 +131,10 @@ def test_drift_sessions_evolve():
         for s, sess in (("s2", s2), ("s3", s3))
     }
     assert slot["s2"] != slot["s3"]  # board slot moved
+    # A moved slot is a NEW id (the slot is a portion of it), so the dashboard
+    # sees the board arrive under its new id: the honest drift.
+    assert "chassis-a-lc2-2" in ids2
+    assert "chassis-a-lc2-3" in ids3
     assert any(ln.impair for ln in s3.lab.links)  # impairment added
     assert not any(ln.impair for ln in s2.lab.links)
 
@@ -209,7 +226,7 @@ def test_isp_core_tunnels_pinned():
     assert got == {
         "tun-0000jumpacc7-15003": ("uncertain", ["jump-01", "acc-07"]),
         "tun-0000pe02agg3-15005": ("degraded", ["pe-02", "core-02", "agg-03"]),
-        "tun-0000pe01agg1-15006": ("ok", ["pe-01", "core-01", "agg-01_lc1"]),
+        "tun-0000pe01agg1-15006": ("ok", ["pe-01", "core-01", "agg-01-lc1-1"]),
     }
 
 

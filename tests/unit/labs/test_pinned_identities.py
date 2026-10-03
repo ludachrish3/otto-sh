@@ -51,11 +51,11 @@ _PINNED: dict[tuple[str, str], list[tuple[str, str, int | None]]] = {
         ("test3", "test3", None),
     ],
     ("tech1", "busybox"): [
-        ("bb1161_qemu", "bb1161", None),
-        ("bb1211_qemu", "bb1211", None),
-        ("bb1281_qemu", "bb1281", None),
-        ("bb1310_qemu", "bb1310", None),
-        ("bb1350_qemu", "bb1350", None),
+        ("bb1161-qemu", "bb1161", None),
+        ("bb1211-qemu", "bb1211", None),
+        ("bb1281-qemu", "bb1281", None),
+        ("bb1310-qemu", "bb1310", None),
+        ("bb1350-qemu", "bb1350", None),
         ("test1", "test1", None),
     ],
     ("tech1", "embedded"): [
@@ -104,22 +104,22 @@ _PINNED_RESOURCES: dict[tuple[str, str], set[str]] = {
 _PINNED_ELEMENT_RESOURCES: dict[tuple[str, str], dict[str, set[str]]] = {
     ("tech1", "unix"): {"test1": {"test1-chassis"}, "test2": set(), "test3": set()},
     ("tech1", "busybox"): {
-        "bb1161_qemu": set(),
-        "bb1211_qemu": set(),
-        "bb1281_qemu": set(),
-        "bb1310_qemu": set(),
-        "bb1350_qemu": set(),
+        "bb1161-qemu": set(),
+        "bb1211-qemu": set(),
+        "bb1281-qemu": set(),
+        "bb1310-qemu": set(),
+        "bb1350-qemu": set(),
         "test1": {"test1-chassis"},
     },
 }
 _PINNED_HOST_RESOURCES: dict[tuple[str, str], dict[str, set[str]]] = {
     ("tech1", "unix"): {"test1": set(), "test2": {"test2-console"}, "test3": set()},
     ("tech1", "busybox"): {
-        "bb1161_qemu": set(),
-        "bb1211_qemu": set(),
-        "bb1281_qemu": set(),
-        "bb1310_qemu": set(),
-        "bb1350_qemu": set(),
+        "bb1161-qemu": set(),
+        "bb1211-qemu": set(),
+        "bb1281-qemu": set(),
+        "bb1310-qemu": set(),
+        "bb1350-qemu": set(),
         "test1": set(),
     },
 }

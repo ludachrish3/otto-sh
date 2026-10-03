@@ -75,11 +75,11 @@ def test_the_bed_is_all_there() -> None:
         "zephyr44-lfs",
         "zephyr37-llext",
         "zephyr44-llext",
-        "bb1161_qemu",
-        "bb1211_qemu",
-        "bb1281_qemu",
-        "bb1310_qemu",
-        "bb1350_qemu",
+        "bb1161-qemu",
+        "bb1211-qemu",
+        "bb1281-qemu",
+        "bb1310-qemu",
+        "bb1350-qemu",
     }
 
 
@@ -88,7 +88,7 @@ def test_the_example_console_hosts_mirror_the_bed() -> None:
     hosts = load_example_lab("unix+busybox+embedded").hosts
     for host_id, server, port in (
         ("test2", "test1", 4001),
-        ("bb1350_qemu", "test1", 2450),
+        ("bb1350-qemu", "test1", 2450),
         ("zephyr37-nofs", "test4", 2325),
         ("zephyr37-llext", "test4", 2323),
         ("zephyr44-llext", "test4", 2324),

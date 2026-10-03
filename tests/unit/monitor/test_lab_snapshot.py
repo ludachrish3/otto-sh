@@ -25,7 +25,7 @@ def test_snapshot_hosts_and_implicit_links():
 
     snap = snapshot_lab([gw, n1], declared=[])
 
-    assert {h.id for h in snap.hosts} == {"gw", "rack_n12"}
+    assert {h.id for h in snap.hosts} == {"gw", "rack-n1-2"}
     n1_snap = next(h for h in snap.hosts if h.hop == "gw")
     assert n1_snap.slot == 2
     assert n1_snap.board == "n1"
@@ -37,7 +37,7 @@ def test_snapshot_hosts_and_implicit_links():
     assert len(snap.links) == 1
     (link,) = snap.links
     assert link.provenance == "implicit"
-    assert {e.host for e in link.endpoints} == {"gw", "rack_n12"}
+    assert {e.host for e in link.endpoints} == {"gw", "rack-n1-2"}
 
 
 def test_snapshot_drops_links_with_unresolvable_endpoints():
@@ -77,7 +77,7 @@ def test_declared_link_impair_passthrough():
     n1 = _host(element="rack", board="n1", slot=2, hop="gw", ip="10.0.0.2")
     declared_link = Link(
         a=LinkEndpoint(host="gw", ip=gw.ip),
-        b=LinkEndpoint(host="rack_n12", ip=n1.ip),
+        b=LinkEndpoint(host="rack-n1-2", ip=n1.ip),
         protocol="udp",
         provenance=Provenance.DECLARED,
         impair="mb-1",

@@ -1,4 +1,4 @@
-$ otto --lab busybox host bb1350_qemu probe
+$ otto --lab busybox host bb1350-qemu probe
 INFO     fleet of interest: 5 of 7 lab hosts (1 repo(s), 0 excluded)                                
 INFO     @test1   | export APP_ENV=lab                                                              
 INFO     @test1   | export APP_ENV=lab                                                              

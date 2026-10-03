@@ -180,7 +180,7 @@ def test_loading_one_lab_also_loads_a_link_reaching_out_of_it():
     ``resolve_declared_links`` keeps any entry with at least ONE endpoint in
     the loaded lab, so a link is loaded by BOTH labs it straddles: test1
     belongs to ``unix`` and ``busybox``, so ``unix`` sees the
-    ``test1:bbeth-1350 <-> bb1350_qemu:eth0`` link and ``busybox``
+    ``test1:bbeth-1350 <-> bb1350-qemu:eth0`` link and ``busybox``
     already saw the ``test1:eth2 <-> test2:eth2`` one. Dropping
     half-outside links instead would silently hide every cross-lab route.
 
@@ -196,8 +196,8 @@ def test_loading_one_lab_also_loads_a_link_reaching_out_of_it():
     lab = load_lab("unix", search_paths=[lab_data_dir() / "tech1"])
 
     pairs = {frozenset({link.a.host, link.b.host}) for link in lab.links}
-    assert frozenset({"test1", "bb1350_qemu"}) in pairs, pairs
-    assert "bb1350_qemu" not in lab.hosts, "the guest is not a unix host, only its link is"
+    assert frozenset({"test1", "bb1350-qemu"}) in pairs, pairs
+    assert "bb1350-qemu" not in lab.hosts, "the guest is not a unix host, only its link is"
 
 
 def test_lab_info_stamped_per_component(tmp_path) -> None:

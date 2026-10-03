@@ -14,7 +14,7 @@ const appDbLink: LinkSnapshot = {
   protocol: "tcp",
   provenance: "declared",
   endpoints: [
-    { host: "workers_w1", interface: "eth0", ip: "10.20.2.21" },
+    { host: "workers-w1", interface: "eth0", ip: "10.20.2.21" },
     { host: "db-01", interface: "eth0", ip: "10.20.3.31" },
   ],
 };

@@ -28,6 +28,7 @@ from otto.config.lab import Lab
 from otto.context import OttoContext, _active, set_context
 from otto.host.factory import create_host_from_dict
 from otto.host.login_proxy import Cred
+from otto.host.remote_host import make_host_id
 from otto.host.unix_host import UnixHost
 from otto.link.derive import addressing_from_dict, resolve_declared_links
 from otto.logger.mode import LogMode
@@ -231,8 +232,8 @@ and from nowhere else, which is why nothing reaches it without
 ``hop: test1`` resolving first (see :func:`busybox_hop_context`).
 """
 
-BUSYBOX_CHAOS_HOST_ID = f"{BUSYBOX_CHAOS_ELEMENT}_qemu"
-"""The guest's HOST ID (``element_board``), which is what link endpoints,
+BUSYBOX_CHAOS_HOST_ID = make_host_id(BUSYBOX_CHAOS_ELEMENT, "qemu", None)
+"""The guest's HOST ID (``element-board``), which is what link endpoints,
 ``--from`` and ``otto host`` all name — as distinct from the element name the
 probe helpers above take."""
 
@@ -246,7 +247,7 @@ so the anchor and its TAP cannot drift apart."""
 
 
 def busybox_link_id() -> str:
-    """The declared ``test1:bbeth-1350 <-> bb1350_qemu:eth0`` link's id.
+    """The declared ``test1:bbeth-1350 <-> bb1350-qemu:eth0`` link's id.
 
     The guest's ONLY wire, declared in ``tech1/lab.json`` since the bed moved
     onto real TAPs. What otto will and will not do with it is measured in
@@ -292,7 +293,7 @@ def busybox_target() -> ChaosTarget:
     return ChaosTarget(
         sut_dir=REPO_E2E,
         lab="busybox",
-        host_id=f"{guest['element']}_{guest['board']}",
+        host_id=make_host_id(guest["element"], guest.get("board"), guest.get("slot")),
         ssh_host=hop["ip"],
         ssh_port=22,
         ssh_username=cred["login"],

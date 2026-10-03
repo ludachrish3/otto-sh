@@ -244,7 +244,7 @@ Facts worth knowing before you read a failure:
   would have exercised. Nothing is port-forwarded and no port range is pre-mapped, so
   the `nc` transfer picks its own ports the way it does on any other host.
 - **`bb1350`'s wire is a declared link, and otto will not impair it.** Because the far
-  end of that TAP is a real lab host, `test1:bbeth-1350 <-> bb1350_qemu:eth0` is
+  end of that TAP is a real lab host, `test1:bbeth-1350 <-> bb1350-qemu:eth0` is
   declared in `lab.json` and `otto link list` shows it. `otto link impair` refuses it
   from both ends, and both refusals are right: on test1 the TAP carries the guest's
   management transit, and on the guest `eth0` carries the guest's own management

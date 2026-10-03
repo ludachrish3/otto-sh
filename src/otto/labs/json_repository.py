@@ -13,6 +13,7 @@ from ..host.factory import (
     host_identity,
     validate_host_dict,
 )
+from ..host.remote_host import describe_identity
 from ..models.lab import ElementSpec, LabEntrySpec
 from .errors import (
     LabNotFoundError,
@@ -482,15 +483,24 @@ class JsonFileLabRepository:
 
         Best-effort, like :meth:`list_labs`: a malformed file or host entry
         is skipped rather than raised — these feed completion, which must
-        never crash the shell. Two records deriving one id keep the FIRST:
-        an id's prefix is its element's slug, so both records belong to one
-        element and carry one membership (:meth:`load_lab` refuses the same
-        pair as a host-id collision).
+        never crash the shell. Two records deriving one id resolve by
+        address, the rule ``Lab.__add__``
+        applies when labs merge: the same ip is the same machine, so the later
+        record's labs fold into the first summary; a different ip is a
+        different machine, so the later record is dropped (via
+        ``otto.labs.drops.record_drop``) naming both declarations.
+
+        One shape folds here yet is refused by :meth:`load_lab`: two records
+        that compose one id at the SAME ip and share a LAB name (element
+        ``a-b`` and element ``a`` + board ``b``). Completion may therefore offer
+        an id the lab refuses to load; the refusal, which names both
+        declarations, is the honest answer at load.
         """
         from ..inventory import InventoryError, resolve_host_entry  # lazy: see the note above
         from .drops import record_drop
 
         by_id: dict[str, HostSummary] = {}
+        kept_as: dict[str, str] = {}  # id -> the kept record's declaration, for a drop
 
         try:
             docs = self._load_documents(best_effort=True)
@@ -519,15 +529,32 @@ class JsonFileLabRepository:
                         # completion (see otto.labs.drops).
                         record_drop(f"{doc.path}: element {element.name!r} hosts[{index}]", str(e))
                         continue
-                    if identity.id in by_id:
-                        # Keep-first, with nothing to fold in: an id's prefix
-                        # IS its element's slug (spec 2026-09-05 §2.2, and
-                        # ``slug`` never emits ``_``), and one source carries
-                        # a slug once — a second file restating it is a
-                        # duplicate-element error, skipped above by
-                        # ``best_effort``. So both records come from the ONE
-                        # element, and share its membership exactly.
+                    first = by_id.get(identity.id)
+                    if first is not None:
+                        # Every portion of an id joins with ``-``, so two
+                        # records can compose one id (``a-b`` vs ``a`` + board
+                        # ``b``, or one element restated across labs). Same ip
+                        # = the same machine: its labs fold into the kept
+                        # summary. Different ip = a different machine that
+                        # would vanish from completion: dropped, naming both.
+                        if identity.ip == first.ip:
+                            first.labs.extend(n for n in labs if n not in first.labs)
+                            first.lab_patterns.extend(
+                                p for p in element.labs if p not in first.lab_patterns
+                            )
+                        else:
+                            loser = describe_identity(
+                                element.name, identity.board, identity.slot, identity.ip
+                            )
+                            record_drop(
+                                f"{doc.path}: element {element.name!r} hosts[{index}]",
+                                f"host id {identity.id!r}: {kept_as[identity.id]} collides "
+                                f"with {loser} — two declarations compose one id; rename one",
+                            )
                         continue
+                    kept_as[identity.id] = describe_identity(
+                        element.name, identity.board, identity.slot, identity.ip
+                    )
                     by_id[identity.id] = HostSummary(
                         id=identity.id,
                         labs=list(labs),
@@ -681,7 +708,6 @@ def _add_host(
             element=element,
             inventory_ref=entry.ref,
         )
-        lab.add_host(host)
     except ValidationError as e:
         # A resolved host dict can carry a referenced host's STORE creds
         # (spec 2026-09-06 creds-store §6.2), appended last when the entry
@@ -706,6 +732,16 @@ def _add_host(
         raise LabRepositoryError(
             f"Lab file '{path}': element {element.name!r} hosts[{idx}] in lab {lab.name!r}: {e}"
         ) from e
+    else:
+        # Its own step: a collision refusal already says ``in lab '<name>'`` and
+        # names both declarations, so it takes the file/element/index prefix
+        # without the lab framing the failures above carry.
+        try:
+            lab.add_host(host)
+        except LabRepositoryError as e:
+            raise LabRepositoryError(
+                f"Lab file '{path}': element {element.name!r} hosts[{idx}]: {e}"
+            ) from e
 
 
 def check_in_source_duplicates(

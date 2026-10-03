@@ -57,4 +57,4 @@ def test_containers_and_local_belong_to_no_element():
 def test_display_name_and_id_still_read_the_element_name():
     host = UnixHost(ip="10.0.0.1", creds=[], element=Element("Lab X Server"), board="Blade", slot=2)
     assert host.name == "Lab X Server Blade 2"
-    assert host.id == "lab-x-server_blade2"
+    assert host.id == "lab-x-server-blade-2"

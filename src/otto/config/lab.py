@@ -27,6 +27,19 @@ one character means "combined labs" at every layer.
 """
 
 
+def _describe(host: "Host") -> str:
+    """Name a host by its declaration, for a collision message: what the user wrote, not the id."""
+    from ..host.docker_host import DockerContainerHost  # lazy: module-load cycle
+    from ..host.remote_host import RemoteHost, describe_identity
+
+    if isinstance(host, DockerContainerHost):
+        parent = getattr(host.parent, "id", "?")
+        return f"container {host.project}/{host.service} on {parent}"
+    if isinstance(host, RemoteHost):
+        return describe_identity(host.element.name, host.board, host.slot, host.ip)
+    return f"host {host.id!r} ({type(host).__name__})"
+
+
 def split_lab_names(value: str) -> list[str]:
     """Split a ``+``-combined lab selection into individual lab names.
 
@@ -124,14 +137,27 @@ class Lab:
         Parameters
         ----------
         host : Host to add to the dictionary of hosts
-        """
-        if host.id in self.hosts:
-            raise KeyError(
-                f"Attempted to add a host with ID '{host.id}', "
-                f"but this key already exists in {self.name}'s known hosts."
-            ) from None
 
+        Raises
+        ------
+        LabRepositoryError
+            If another declaration already composed this host's id; the
+            message names both.
+        """
         from ..host.remote_host import RemoteHost  # lazy import avoids a module-load cycle
+
+        existing = self.hosts.get(host.id)
+        if existing is not None:
+            # lazy: collision path only; keeps otto.config.lab's import light
+            from ..labs.errors import LabRepositoryError
+
+            hint = ""
+            if isinstance(existing, RemoteHost) and isinstance(host, RemoteHost):
+                hint = " Give the elements distinct names, or set board/slot."
+            raise LabRepositoryError(
+                f"host id {host.id!r} in lab {self.name!r}: {_describe(existing)} "
+                f"collides with {_describe(host)}.{hint}"
+            )
 
         if isinstance(host, RemoteHost):
             host._lab = self  # noqa: SLF001 — intra-package back-link set by Lab at host registration

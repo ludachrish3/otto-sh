@@ -12,9 +12,9 @@ HERE = Path(__file__).resolve().parent
 
 
 async def main() -> None:
-    """Collect from bb1350_qemu with whatever parsers the registrations resolved for it."""
+    """Collect from bb1350-qemu with whatever parsers the registrations resolved for it."""
     async with otto.open_context(lab="busybox", search_paths=[HERE / "lab_data"]):
-        host = otto.get_host("bb1350_qemu")
+        host = otto.get_host("bb1350-qemu")
         collector = build_monitor_collector(hosts=[host])
         try:
             await collector.run(interval=timedelta(seconds=5), duration=timedelta(seconds=12))

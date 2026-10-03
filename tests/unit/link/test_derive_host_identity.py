@@ -7,7 +7,7 @@ agree for simple records, which is why this survived, and diverge exactly where
 host ids diverge:
 
 - an ``os_profile`` that defaults ``board``/``slot`` makes the real id
-  ``dut_lc2`` while the raw derivation says ``dut``. A link authored against
+  ``dut-lc-2`` while the raw derivation says ``dut``. A link authored against
   the id otto advertises then fails to resolve and **the whole lab fails to
   load**; authored the raw way, the link's endpoint names a host that is not
   in ``lab.hosts`` — a phantom edge — unless the load refuses it.
@@ -47,7 +47,7 @@ def test_addressing_id_matches_host_identity_under_a_profile(carded_profile):
     host_id, _addressing = addressing_from_dict(host, Element("dut"))
 
     assert host_id == host_identity(host, Element("dut")).id
-    assert host_id == "dut_lc2", "raw derivation would have said 'dut'"
+    assert host_id == "dut-lc-2", "raw derivation would have said 'dut'"
 
 
 def test_a_link_authored_against_the_raw_id_fails_loudly(tmp_path, carded_profile):
@@ -55,7 +55,7 @@ def test_a_link_authored_against_the_raw_id_fails_loudly(tmp_path, carded_profil
 
     A profile-defaulted board/slot is invisible in the raw record, so a link
     authored against ``dut`` resolved... to an endpoint naming a host absent
-    from lab.hosts (which is keyed ``dut_lc2``). Every consumer mapping
+    from lab.hosts (which is keyed ``dut-lc-2``). Every consumer mapping
     link.a.host to a host silently missed. It now fails the load instead,
     naming the near miss so the fix is obvious rather than archaeological.
     """
@@ -80,7 +80,7 @@ def test_a_link_authored_against_the_raw_id_fails_loudly(tmp_path, carded_profil
 
     message = str(excinfo.value)
     assert "unknown host 'dut'" in message
-    assert "did you mean 'dut_lc2'" in message, "the near-miss hint is the whole point"
+    assert "did you mean 'dut-lc-2'" in message, "the near-miss hint is the whole point"
 
 
 def test_a_record_naming_an_unregistered_profile_is_skipped_not_fatal(tmp_path):
@@ -114,7 +114,7 @@ def test_a_record_naming_an_unregistered_profile_is_skipped_not_fatal(tmp_path):
 def test_a_lab_declaring_a_link_by_the_advertised_id_loads(tmp_path, carded_profile):
     """The bug in one shot: this lab used to fail to load entirely.
 
-    The link names ``dut_lc2`` — the id ``otto host <TAB>`` offers and
+    The link names ``dut-lc-2`` — the id ``otto host <TAB>`` offers and
     ``lab.hosts`` is keyed by — but the endpoint map was keyed by the raw
     ``dut``, so resolution raised LabRepositoryError and the lab was
     unusable.
@@ -131,14 +131,14 @@ def test_a_lab_declaring_a_link_by_the_advertised_id_loads(tmp_path, carded_prof
             },
             {"ip": "10.0.0.2", "element": "srv", "labs": ["e"], "creds": _CREDS},
         ],
-        [{"endpoints": [{"host": "dut_lc2"}, {"host": "srv"}]}],
+        [{"endpoints": [{"host": "dut-lc-2"}, {"host": "srv"}]}],
     )
     repo = JsonFileLabRepository(search_paths=[tmp_path])
 
     lab = repo.load_lab("e")
 
-    assert "dut_lc2" in lab.hosts, "positive control: the profile shapes the host id"
-    (link,) = [x for x in lab.links if x.id == "dut_lc2--srv"]
+    assert "dut-lc-2" in lab.hosts, "positive control: the profile shapes the host id"
+    (link,) = [x for x in lab.links if x.id == "dut-lc-2--srv"]
     # Every endpoint must name a host that actually exists in the lab.
     assert link.a.host in lab.hosts
     assert link.b.host in lab.hosts
