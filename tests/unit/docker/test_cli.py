@@ -16,7 +16,7 @@ from otto.config.lab import Lab
 from otto.config.repo import DockerUseCase, Repo
 from otto.docker.build_verbs import DockerBuildError
 from otto.docker.deployment import UseCaseStack
-from otto.docker.reports import BuildReport, RepoBuild, TeardownReport
+from otto.docker.reports import BuildReport, ImageBuild, RepoBuild, TeardownReport
 from otto.docker.resolve import Displacement, Selection
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
@@ -113,21 +113,108 @@ async def test_build_hands_the_library_exactly_its_flags():
         patch("otto.docker.build_verbs.build_on", build_on),
         patch.object(docker_cli, "rprint", MagicMock()),
     ):
-        await docker_cli._build(on="test3", repo="r1", image=["api"], rebuild=True)
-    build_on.assert_awaited_once_with("test3", repo="r1", images=["api"], rebuild=True)
+        await docker_cli._build(
+            on="test3",
+            repo="r1",
+            image=["api"],
+            tag=["api:1"],
+            no_cache=True,
+            pull=True,
+            build_arg=["K=V", "U=a=b"],
+            target="prod",
+        )
+    build_on.assert_awaited_once_with(
+        "test3",
+        repo="r1",
+        images=["api"],
+        tags=["api:1"],
+        no_cache=True,
+        pull=True,
+        build_args={"K": "V", "U": "a=b"},
+        target="prod",
+    )
+
+
+def test_build_takes_dockers_flags_in_dockers_spelling_through_the_dispatch():
+    from otto.cli.docker import docker_app
+    from tests._fixtures.dispatch import DispatchRunner
+
+    build_on = AsyncMock(return_value=_report())
+    with patch("otto.docker.build_verbs.build_on", build_on):
+        result = DispatchRunner().invoke(
+            docker_app,
+            [
+                "build",
+                "--on",
+                "test3",
+                "-t",
+                "api:1",
+                "--no-cache",
+                "--pull",
+                "--build-arg",
+                "K=V",
+                "--build-arg",
+                "U=a=b",
+                "--target",
+                "prod",
+            ],
+            spec_name="docker",
+        )
+    assert result.exit_code == 0, result.output
+    build_on.assert_awaited_once_with(
+        "test3",
+        repo=None,
+        images=None,
+        tags=["api:1"],
+        no_cache=True,
+        pull=True,
+        build_args={"K": "V", "U": "a=b"},
+        target="prod",
+    )
+
+
+def test_a_malformed_build_arg_is_a_usage_error_naming_the_form():
+    from otto.cli.docker import docker_app
+    from tests._fixtures.dispatch import DispatchRunner
+
+    build_on = AsyncMock(return_value=_report())
+    with patch("otto.docker.build_verbs.build_on", build_on):
+        result = DispatchRunner().invoke(
+            docker_app, ["build", "--on", "test3", "--build-arg", "nope"], spec_name="docker"
+        )
+    build_on.assert_not_called()
+    assert result.exit_code == 2, result.output
+    # The usage box wraps its text at the terminal width and draws its own border.
+    flat = " ".join(result.output.replace("│", " ").split())
+    assert "--build-arg KEY=VALUE" in flat, result.output
+
+
+def test_a_tag_with_several_images_is_spelled_as_tag():
+    from otto.cli.docker import docker_app
+    from tests._fixtures.dispatch import DispatchRunner
+
+    err = DockerBuildError("tags name one image, and 2 are selected (api, db)", field="tag")
+    with patch("otto.docker.build_verbs.build_on", AsyncMock(side_effect=err)):
+        result = DispatchRunner().invoke(
+            docker_app, ["build", "--on", "test3", "-t", "x:1"], spec_name="docker"
+        )
+    assert result.exit_code == 2
+    assert "--tag" in result.output
 
 
 @pytest.mark.asyncio
-async def test_build_renders_cached_built_and_failed_and_exits_1_on_a_failure():
+async def test_build_renders_built_and_failed_and_exits_1_on_a_failure():
     report = _report(
         RepoBuild(
             "r1",
             "test3",
             "built",
             {
-                "api": CommandResult(Status.Skipped, value="r1-api:abc", command="", retcode=0),
-                "w": CommandResult(
-                    Status.Success, value="r1-w:abc", command="docker build", retcode=0
+                "api": ImageBuild(
+                    "api",
+                    ["api:latest"],
+                    "cbd8571d4b6e",
+                    CommandResult(Status.Success, value="Successfully built", retcode=0),
                 ),
             },
         ),
@@ -137,8 +224,13 @@ async def test_build_renders_cached_built_and_failed_and_exits_1_on_a_failure():
             "test3",
             "built",
             {
-                "db": CommandResult(
-                    Status.Failed, value="syntax error", command="docker build", retcode=1
+                "db": ImageBuild(
+                    "db",
+                    [],
+                    None,
+                    CommandResult(
+                        Status.Failed, value="syntax error", command="docker build", retcode=1
+                    ),
                 )
             },
         ),
@@ -150,20 +242,17 @@ async def test_build_renders_cached_built_and_failed_and_exits_1_on_a_failure():
         patch.object(docker_cli, "print_error", err),
         pytest.raises(typer.Exit) as e,
     ):
-        await docker_cli._build(on="test3", repo=None, image=None, rebuild=False)
+        await docker_cli._build(on="test3", repo=None, image=None)
     printed = " ".join(str(c) for c in out.call_args_list)
-    # Status.Skipped means a cache hit: pinned on the producer side by
-    # tests/unit/docker/test_build.py::test_build_one_skipped_when_image_exists.
-    assert "r1/api: cached → r1-api:abc" in printed
-    assert "r1/w: built → r1-w:abc" in printed
+    assert "r1/api: built api:latest  cbd8571d4b6e  (test3)" in printed
     # `str(call(...))` reprs the arg, doubling rich.markup.escape()'s own
     # backslash-escape of the second '['; match around the bracket run rather
     # than reconstruct that double-escaping here.
     assert "r2 declares no" in printed
     assert "docker.images" in printed
     assert "nothing to build on test3" in printed
-    assert "r3/db: FAILED" in str(err.call_args)
-    assert "syntax error" in str(err.call_args)
+    # The header, then the command that failed, then docker's own output.
+    assert err.call_args.args[0] == "r3/db: FAILED on test3\ndocker build\nsyntax error"
     assert e.value.exit_code == 1
 
 
@@ -181,13 +270,34 @@ def test_render_build_report_prints_literal_brackets_with_the_real_rprint(capsys
             "[bold]r",
             "test3",
             "built",
-            {"api": CommandResult(Status.Skipped, value="r-api:abc", command="", retcode=0)},
+            {
+                "api": ImageBuild(
+                    "api",
+                    ["api:latest"],
+                    "cbd8571d4b6e",
+                    CommandResult(Status.Success, value="Successfully built", retcode=0),
+                )
+            },
         ),
     )
     docker_cli._render_build_report(report)
     out = capsys.readouterr().out
     assert "[bold]r" in out, "rich ate the bracketed repo name"
     assert "[[docker.images]]" in out, "the docker.images key must reach the terminal literally"
+
+
+@pytest.mark.parametrize(
+    "argv", [["build", "--on", "test3", "--rebuild"], ["compose", "build", "--rebuild"]]
+)
+def test_rebuild_is_not_an_option(argv):
+    from otto.cli.docker import docker_app
+    from tests._fixtures.dispatch import DispatchRunner
+
+    result = DispatchRunner().invoke(docker_app, argv, spec_name="docker")
+
+    assert result.exit_code == 2
+    assert "No such option" in result.output
+    assert "--rebuild" in result.output
 
 
 def test_build_without_on_is_a_usage_error_spelled_as_the_flag():
@@ -243,10 +353,22 @@ async def test_compose_build_defaults_the_use_case_and_hands_the_flags():
         patch.object(docker_cli, "rprint", MagicMock()),
     ):
         await docker_cli._compose_build(
-            use_case=None, image=None, on="test3", provide=["db=r2"], rebuild=False
+            use_case=None,
+            image=None,
+            on="test3",
+            provide=["db=r2"],
+            no_cache=True,
+            pull=True,
+            build_arg=["K=V"],
         )
     compose_build.assert_awaited_once_with(
-        "integration", on="test3", provide={"db": "r2"}, images=None, rebuild=False
+        "integration",
+        on="test3",
+        provide={"db": "r2"},
+        images=None,
+        no_cache=True,
+        pull=True,
+        build_args={"K": "V"},
     )
 
 
@@ -258,8 +380,11 @@ async def test_compose_build_prints_displacements_then_images():
             "alt2",
             "built",
             {
-                "db": CommandResult(
-                    Status.Success, value="real-db:1", command="docker build", retcode=0
+                "db": ImageBuild(
+                    "db",
+                    ["real-db:1"],
+                    "cbd8571d4b6e",
+                    CommandResult(Status.Success, value="Successfully built", retcode=0),
                 )
             },
         ),
@@ -271,12 +396,10 @@ async def test_compose_build_prints_displacements_then_images():
         patch.object(docker_cli, "_default_use_case", return_value="integration"),
         patch.object(docker_cli, "rprint", out),
     ):
-        await docker_cli._compose_build(
-            use_case=None, image=None, on=None, provide=None, rebuild=False
-        )
+        await docker_cli._compose_build(use_case=None, image=None, on=None, provide=None)
     calls = [str(c) for c in out.call_args_list]
     assert any("mock" in c and "real" in c for c in calls[:1]), "displacement notice comes first"
-    assert any("real/db: built → real-db:1" in c for c in calls)
+    assert any("real/db: built real-db:1  cbd8571d4b6e" in c for c in calls)
 
 
 @pytest.mark.asyncio
@@ -286,9 +409,7 @@ async def test_compose_build_with_no_declared_use_case_is_the_existing_refusal()
         patch.object(docker_cli, "get_repos", return_value=[]),
         pytest.raises(typer.Exit) as e,
     ):
-        await docker_cli._compose_build(
-            use_case=None, image=None, on=None, provide=None, rebuild=False
-        )
+        await docker_cli._compose_build(use_case=None, image=None, on=None, provide=None)
     assert e.value.exit_code == 1
 
 

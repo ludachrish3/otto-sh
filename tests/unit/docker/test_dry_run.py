@@ -5,9 +5,8 @@ Spec: ``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md`` §4.
 ``otto/docker/`` was written with no dry-run awareness at all -- the package
 contained zero ``is_dry_run()`` calls -- so every one of its verbs met a dry
 run in one of two wrong ways. Either it read a decline as a device fact
-(``_image_exists`` answered "not present", which is the answer that
-COMMISSIONS A BUILD; ``_resolve_container_id`` answered ``""``, which reads as
-"not running"), or it interpolated ``result.value`` into a warning and got a
+(``_resolve_container_id`` answered ``""``, which reads as "not running"), or it
+interpolated ``result.value`` into a warning and got a
 ``CommandNotRunError`` thrown from a log line -- loud by accident, at a
 statement that made no mistake, naming an ``rm -rf`` when the caller had asked
 to bring a stack up.
@@ -19,7 +18,7 @@ Two mechanisms, one per shape, and the split is the point:
   above every device touch and above every local side effect. Only an early
   return protects the actions below it -- a hardened return value protects
   only the caller that branches on it.
-* the verbs that READ a device fact (``_image_exists``, ``_stack_already_up``,
+* the verbs that READ a device fact (``_stack_already_up``,
   both ``_resolve_container_id``s, ``compose_ps``) let the call reach the
   primitive -- keeping its ``[DRY RUN]`` announcement -- and refuse the
   ANSWER, via ``refuse_declined_fact``. Their return types (``bool``, ``str``,
@@ -51,7 +50,7 @@ import pytest
 
 from otto.config.lab import Lab
 from otto.config.repo import Repo
-from otto.docker.build import _build_one, _image_exists, build_images
+from otto.docker.build import build_images
 from otto.docker.compose import _resolve_container_id as _compose_resolve_container_id
 from otto.docker.compose import (
     _stack_already_up,
@@ -125,7 +124,9 @@ async def _router(cmd: str, *_args: Any, **_kwargs: Any) -> CommandResult:
     than "the seam was reached before it failed".
     """
     if cmd.startswith("docker image inspect"):
-        return _ok('[{"Id": "sha256:abc"}]')
+        return _ok("sha256:abc123abc123" + "0" * 52 + "\n")
+    if cmd.startswith("docker images"):
+        return _ok("api:latest abc123abc123\n")
     if "label=com.docker.compose.project=" in cmd and "service=" in cmd:
         return _ok("abc123def456\n")
     if "label=com.docker.compose.project=" in cmd:
@@ -303,67 +304,6 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
 
 
 # ---------------------------------------------------------------------------
-# THE HEADLINE: a fabricated "not present" commissioned a real build
-# ---------------------------------------------------------------------------
-
-
-class TestADeclinedInspectDoesNotCommissionABuild:
-    """`_image_exists` folded a decline to ``False`` and ``_build_one`` BUILT.
-
-    Driven at ``_build_one``, one level BELOW ``build_images``' arm, because
-    that is where the fabrication lived and because a test that only exercised
-    the arm would stay green if the fold came back. The two halves differ in
-    exactly one thing -- whether the ``docker image inspect`` was a decline or
-    a genuine miss -- and that is the whole claim: a MISS commissions a build,
-    a NON-MEASUREMENT must not.
-    """
-
-    @pytest.mark.asyncio
-    async def test_a_decline_and_a_genuine_miss_part_ways_at_the_build(self, tmp_path):
-        repo = _make_repo(tmp_path)
-        image = repo.docker_settings.images[0]
-        settings = repo.docker_settings
-
-        declined = await _real_decline("docker image inspect repo1-api:x")
-        parent = _bare_parent()
-        issued: list[str] = []
-
-        async def inspect_declines(cmd: str, *_a, **_kw) -> CommandResult:
-            issued.append(cmd)
-            return declined if cmd.startswith("docker image inspect") else _ok()
-
-        parent.exec = AsyncMock(side_effect=inspect_declines)  # type: ignore[method-assign]
-        parent.put = AsyncMock(return_value=Result(Status.Success, value={}))  # type: ignore[method-assign]
-
-        with pytest.raises(CommandNotRunError):
-            await _build_one(parent, "repo1", settings, image, rebuild=False)
-
-        assert [c for c in issued if c.startswith("docker build")] == [], (
-            f"a dry run's declined inspect was read as 'no such image' and "
-            f"commissioned a build: {issued}"
-        )
-        assert parent.put.await_count == 0, "a dry run staged a build context to the parent"
-
-        # POSITIVE CONTROL, same function and the same seam: a GENUINE miss
-        # (the daemon answered, and said no such image) still builds. Without
-        # it, "no build was issued" is satisfied by a `_build_one` that never
-        # builds anything.
-        issued.clear()
-
-        async def inspect_misses(cmd: str, *_a, **_kw) -> CommandResult:
-            issued.append(cmd)
-            return _fail("No such image") if "inspect" in cmd else _ok()
-
-        parent.exec = AsyncMock(side_effect=inspect_misses)  # type: ignore[method-assign]
-        result = await _build_one(parent, "repo1", settings, image, rebuild=False)
-
-        assert [c for c in issued if c.startswith("docker build")], (
-            f"a genuine 'no such image' stopped commissioning builds: {issued}"
-        )
-        assert result.status is Status.Success
-
-
-# ---------------------------------------------------------------------------
 # The verbs that READ a device fact: the decline is refused, not folded
 # ---------------------------------------------------------------------------
 
@@ -377,20 +317,6 @@ class TestTheReadProbesRefuseInsteadOfInventing:
     swallowed any of them. So every test asserts the decline raises AND that
     the ordinary answers still come back unchanged, through the same seam.
     """
-
-    @pytest.mark.asyncio
-    async def test_image_exists_refuses_a_decline_and_keeps_a_genuine_miss(self):
-        parent = _bare_parent()
-        parent.exec = AsyncMock(return_value=await _real_decline())  # type: ignore[method-assign]
-
-        with pytest.raises(CommandNotRunError, match="image_exists"):
-            await _image_exists(parent, "repo1-api:abc")
-
-        # POSITIVE CONTROLS, same seam: both real answers survive.
-        parent.exec = AsyncMock(return_value=_fail("No such image"))  # type: ignore[method-assign]
-        assert await _image_exists(parent, "repo1-api:abc") is False
-        parent.exec = AsyncMock(return_value=_ok('[{"Id":"sha"}]'))  # type: ignore[method-assign]
-        assert await _image_exists(parent, "repo1-api:abc") is True
 
     @pytest.mark.asyncio
     async def test_stack_already_up_refuses_a_decline_and_keeps_its_three_states(self):
@@ -530,22 +456,21 @@ class TestEveryPublicDockerExportIsAdjudicated:
     #: Reach the primitive, keep its announcement, refuse the ANSWER.
     REFUSING_PROBE = frozenset({"compose_ps"})
 
-    #: No device contact at all -- pure configuration, hashing, lab lookup, or a
+    #: No device contact at all -- pure configuration, lab lookup, or a
     #: data/exception type that never itself runs a command.
     PURE = frozenset(
         {
             "AdapterResult",
             "UseCaseStack",
-            "context_hash",
             "get_container_host",
             "get_user_compose_project",
-            "image_full_tag",
-            "image_latest_tag",
             "register_compose_adapter",
             "DockerBuildError",
+            "BuildOptions",
             "BuildReport",
             "FailedImage",
             "HostReport",
+            "ImageBuild",
             "RepoBuild",
             "TeardownReport",
         }
@@ -631,21 +556,16 @@ class TestEveryPublicDockerExportIsAdjudicated:
             # empty) lab, not repos -- a genuine, quiet "nothing to show".
             assert result.exit_code == 0, result.output
 
-    @pytest.mark.asyncio
-    async def test_the_pure_exports_stay_usable_under_a_dry_run(self, tmp_path):
+    def test_the_pure_exports_stay_usable_under_a_dry_run(self):
         """SUPPRESS THE PAYLOAD, NEVER THE ANNOUNCEMENT: a preview needs these.
 
-        Naming an image's tag or a compose project is how a caller says what
-        WOULD happen. If the sweep had refused these too, a dry run would have
-        nothing left to report -- and an empty dry run is a bug.
+        Naming a compose project is how a caller says what WOULD happen. If
+        the sweep had refused these too, a dry run would have nothing left to
+        report -- and an empty dry run is a bug.
         """
-        from otto.docker import context_hash, get_user_compose_project, image_full_tag
+        from otto.docker import get_user_compose_project
 
-        repo = _make_repo(tmp_path)
-        image = repo.docker_settings.images[0]
         with active_context(dry_run=True):
-            hash_hex = context_hash(image)
-            assert image_full_tag("", "repo1", image, hash_hex) == f"repo1-api:{hash_hex[:16]}"
             assert get_user_compose_project("repo1", "ci").startswith("otto-repo1-")
 
 

@@ -22,9 +22,7 @@ preference.
 from __future__ import annotations
 
 import os
-import subprocess
 import uuid
-from pathlib import Path
 
 import pytest
 
@@ -34,14 +32,9 @@ from tests.e2e._otto_subprocess import (
     REPO1,
     assert_no_output_dir,
     assert_output_dir,
-    run_otto,
 )
 
-# Docker container hosts require an SSH-based UnixHost parent (see
-# DockerContainerHost._make_session: term must be 'ssh').  test2 defaults
-# to telnet (it's first in its valid_terms list), so it cannot host containers.
-# Restrict the docker lease pool to the SSH-first unix peers only.
-_DOCKER_POOL = ("test1", "test3")
+from ._cli import _WIDE, _flat, _run_otto
 
 # The one host repo1's fragments RESOLVE to without `--on`. Every
 # ``[[docker.use_cases]]`` fragment of the sample repos declares
@@ -67,7 +60,7 @@ _MERGED_USE_CASE = "integration"
 REPO2 = PROJECT_ROOT / "tests" / "repo2"
 
 # Each test leases one docker-capable host from UNIX_POOL via the
-# ``docker_host`` fixture below, and runs ``otto`` as subprocesses under
+# ``docker_host`` fixture (tests/e2e/docker/conftest.py), and runs ``otto`` as subprocesses under
 # subprocess coverage (see tests/e2e/_otto_subprocess.py).  These tests are pinned to a
 # single xdist worker via ``xdist_group("docker_e2e")``: spreading
 # subprocess-coverage docker tests across workers makes several workers
@@ -82,63 +75,6 @@ pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("docker_e2e")]
 # ---------------------------------------------------------------------------
 # Subprocess helper
 # ---------------------------------------------------------------------------
-
-
-def _run_otto(
-    *args: str,
-    sut_dirs: str = str(REPO1),
-    lab: str = "unix",
-    xdir: Path | None = None,
-    compose_suffix: str | None = None,
-    env: dict[str, str] | None = None,
-    timeout: int = 180,
-) -> subprocess.CompletedProcess[str]:
-    """Run `otto -R --lab <lab> <args>` as a subprocess with a clean environment.
-
-    *compose_suffix* gets baked into ``OTTO_COMPOSE_SUFFIX`` so every test
-    can use a unique docker compose project name (e.g.
-    ``unix-repo1-<uuid>``) and never collide with concurrent runs on the
-    same docker host. *env* merges last, for the few tests that need to pin
-    something else about the child (``COLUMNS``, a ``pass_env`` value).
-
-    ``OTTO_SUT_DIRS`` goes through ``extra_env`` rather than the runner's
-    ``sut_dirs=``: the multi-repo tests pass an ``os.pathsep``-joined *string*
-    of two repo roots, which is not a single path.
-    """
-    extra_env: dict[str, str] = {"OTTO_SUT_DIRS": sut_dirs}
-    if compose_suffix is not None:
-        extra_env["OTTO_COMPOSE_SUFFIX"] = compose_suffix
-    if env is not None:
-        extra_env.update(env)
-
-    return run_otto(
-        list(args),
-        xdir=xdir,
-        sut_dirs=None,
-        lab=lab,
-        extra_argv_prefix=["-R"],
-        extra_env=extra_env,
-        timeout=timeout,
-    )
-
-
-@pytest.fixture
-def docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
-    """Lease one docker-capable, SSH-based host from the pool for this test's duration.
-
-    Yields the host's id, e.g. ``"test1"``.  The fd-flock on
-    the pool lock file (``unix_pool.<element>``) ensures at most one test
-    runs against each docker daemon at a time, while xdist can distribute
-    different tests to different workers/daemons concurrently.
-
-    The pool is restricted to ``_DOCKER_POOL`` (test1 + test3) because
-    ``DockerContainerHost`` requires its parent to have ``term='ssh'``.
-    test2 defaults to telnet (telnet is first in its valid_terms),
-    so it cannot serve as a docker container parent.
-    """
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, _DOCKER_POOL) as element:
-        yield element
 
 
 @pytest.fixture
@@ -372,7 +308,7 @@ def test_e2e_host_put_get_roundtrip(teardown_role_host_after, role_docker_host, 
 
 
 # ---------------------------------------------------------------------------
-# Idempotence and rebuild
+# Idempotence
 # ---------------------------------------------------------------------------
 
 
@@ -409,27 +345,6 @@ def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
     assert "container(s) registered" in second.stdout
 
 
-def test_e2e_build_then_build_again_is_skipped(docker_host, tmp_path):
-    """`otto docker build` followed by `otto docker build` must short-circuit
-    on `docker image inspect`."""
-    first = _run_otto("docker", "build", "--on", docker_host, xdir=tmp_path)
-    assert first.returncode == 0, first.stderr
-
-    second = _run_otto("docker", "build", "--on", docker_host, xdir=tmp_path)
-    assert second.returncode == 0, second.stderr
-    assert "cached" in second.stdout, f"second build should report cached, got:\n{second.stdout}"
-
-
-def test_e2e_build_rebuild_forces(docker_host, tmp_path):
-    """`--rebuild` must run the build even when the hash tag exists."""
-    _run_otto("docker", "build", "--on", docker_host, xdir=tmp_path)
-
-    forced = _run_otto("docker", "build", "--rebuild", "--on", docker_host, xdir=tmp_path)
-    assert forced.returncode == 0, forced.stderr
-    assert "built" in forced.stdout, forced.stdout
-    assert "cached" not in forced.stdout, "rebuild should NOT short-circuit"
-
-
 # ---------------------------------------------------------------------------
 # Multi-repo build (host-wide, ignores use-case pins)
 # ---------------------------------------------------------------------------
@@ -451,14 +366,10 @@ def test_e2e_multi_repo_build_builds_every_loaded_repo_on_the_host(docker_host, 
         f"multi-repo `build` should build every loaded repo\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    # `_render_build_report` prints "<repo>/<image>: built|cached → <tag>" for
-    # every image it actually builds.
-    assert "repo1/api: built → " in result.stdout or "repo1/api: cached → " in result.stdout, (
-        f"repo1/api must be built or cached:\n{result.stdout}"
-    )
-    assert (
-        "repo2/worker: built → " in result.stdout or "repo2/worker: cached → " in result.stdout
-    ), f"repo2/worker must be built or cached:\n{result.stdout}"
+    # `_render_build_report` prints "<repo>/<image>: built <refs>  <id>  (<host>)"
+    # for every image it builds.
+    assert "repo1/repo1-api: built " in result.stdout, result.stdout
+    assert "repo2/repo2-worker: built " in result.stdout, result.stdout
 
 
 def test_e2e_multi_repo_up_composes_only_the_named_use_case(teardown_after, docker_host, tmp_path):
@@ -656,16 +567,6 @@ def test_e2e_ps_lists_running_containers(teardown_after, docker_host, tmp_path):
 # ---------------------------------------------------------------------------
 
 _BOTH_REPOS = f"{REPO1}{os.pathsep}{REPO2}"
-
-# rich sizes its tables to the terminal; a subprocess has none, so it falls
-# back to 80 columns and truncates cells like `repo1[core,edge]` mid-word.
-# Pin a wide one so the assertions below read the values, not the ellipsis.
-_WIDE = {"COLUMNS": "200"}
-
-
-def _flat(text: str) -> str:
-    """Collapse rich's wrapping so a rendered line can be matched as one string."""
-    return " ".join(text.split())
 
 
 def test_e2e_use_cases_reports_the_displacement(tmp_path):

@@ -201,15 +201,19 @@ fire on every legitimate first run of a new stack.
 How to use the table is in {doc}`../../cli/docker/index`'s "Shared
 directories" section.
 
-## Build skipping
+## Builds
 
-Each image is tagged `<project>-<image>:<context_hash[:16]>`. The
-hash covers Dockerfile bytes, every context file (after
-`.dockerignore`), build args, and target stage. `docker image inspect`
-on the tag short-circuits; `--rebuild` forces. The hash is computed on
-the otto host and looked up on whichever parent will build, so caches
-are correct even when bringing the same image up on a different parent
-later.
+Every build runs `docker build` on the parent; otto keeps no record of
+earlier builds and skips nothing, so docker's layer cache is the only cache.
+The image is named exactly as declared (`<name>:latest`, or the tags typed
+with `--tag`), and the build is read back from the parent's daemon, never
+composed by otto: the references and id in the report are what
+`docker images` lists there. {doc}`../../cli/docker/build` is the user-facing
+home for the flags and the report.
+
+A directory context is staged on the parent before the build. An archive
+context is uploaded unchanged and given to `docker build` on stdin, so otto
+never opens it.
 
 ## Reservation tags
 
@@ -263,7 +267,7 @@ parent's SSH connection is still alive.
 
 - Local docker builds: builds always go to the parent.
 - Cross-host networking between containers on different parents.
-- Image push to a registry (only local tagging on the parent).
+- Image push to a registry (an image is only built and tagged on the parent).
 - Non-SSH parents for `run` / `open_session` / `send` / `expect` /
   `login` — rejected with a clear `NotImplementedError`. Local
   docker is expected to be managed via Kubernetes rather than as a

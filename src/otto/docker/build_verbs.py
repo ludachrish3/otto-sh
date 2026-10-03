@@ -19,8 +19,9 @@ from ..host.host import is_dry_run
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError
 from . import deployment
-from .build import build_images
+from .build import BuildOptions, build_command, build_images
 from .reports import BuildReport, RepoBuild
+from .staging import stage_key
 
 if TYPE_CHECKING:
     from ..config.lab import Lab
@@ -80,7 +81,14 @@ def _select_docker_repos(repo: "str | None") -> "list[Repo]":
 
 
 def _check_images(repos: "Sequence[Repo]", images: "Sequence[str] | None") -> None:
-    """Refuse an unknown image name, or a selection with nothing to build."""
+    """Refuse a selection that cannot be built as asked.
+
+    The refusals: an unknown image name; a selection with nothing to build; an
+    archive context that is not a file; one image name declared by more than
+    one selected repo (the name is the name docker sees); and two selected
+    images of one repo whose names flatten to one staging directory key
+    (staging is per repo, so only a repo's own images can share a directory).
+    """
     declared = {img.name for r in repos for img in r.docker_settings.images}
     if images is not None:
         unknown = sorted(set(images) - declared)
@@ -90,11 +98,50 @@ def _check_images(repos: "Sequence[Repo]", images: "Sequence[str] | None") -> No
                 f"declared: {sorted(declared)}",
                 field="images",
             )
+    for r in repos:
+        for img in r.docker_settings.images:
+            if images is not None and img.name not in images:
+                continue
+            if img.is_archive and not img.context.is_file():
+                raise DockerBuildError(
+                    f"image {img.name!r} of repo {r.name!r}: the context archive "
+                    f"{img.context} is not a file",
+                    field="images",
+                )
     if not declared:
         raise DockerBuildError(
             f"nothing to build: none of {sorted(r.name for r in repos)} declares [[docker.images]]",
             field=None,
         )
+    owners: "dict[str, list[str]]" = {}
+    for r in repos:
+        for img in r.docker_settings.images:
+            if images is None or img.name in images:
+                owners.setdefault(img.name, []).append(r.name)
+    clashes = {name: who for name, who in owners.items() if len(who) > 1}
+    if clashes:
+        described = "; ".join(
+            f"{name!r} by {', '.join(who)}" for name, who in sorted(clashes.items())
+        )
+        raise DockerBuildError(
+            f"one image name is declared by more than one selected repo ({described}); "
+            f"an image name is the name docker sees, so narrow the selection to one repo "
+            f"or rename one declaration",
+            field="images",
+        )
+    for r in repos:
+        by_key: "dict[str, str]" = {}
+        for img in r.docker_settings.images:
+            if images is not None and img.name not in images:
+                continue
+            key = stage_key(img.name)
+            other = by_key.setdefault(key, img.name)
+            if other != img.name:
+                raise DockerBuildError(
+                    f"images {other!r} and {img.name!r} of repo {r.name!r} would share "
+                    f"the staging directory key {key!r}; rename one declaration",
+                    field="images",
+                )
 
 
 def _dependency_order(repos: "Sequence[Repo]") -> "list[Repo]":
@@ -112,10 +159,30 @@ def _names_for(repo: "Repo", images: "Sequence[str] | None") -> "list[str] | Non
     return [n for n in declared if n in wanted]
 
 
+def _check_tags(
+    plan: "list[tuple[UnixHost, Repo, list[str] | None]]", tags: "Sequence[str] | None"
+) -> None:
+    """Refuse ``tags`` when the selection holds more than one image."""
+    if not tags:
+        return
+    selected: "list[str]" = []
+    for _parent, repo, names in plan:
+        declared = [img.name for img in repo.docker_settings.images]
+        selected.extend(declared if names is None else names)
+    if len(selected) > 1:
+        raise DockerBuildError(
+            f"tags name one image, and {len(selected)} are selected ({', '.join(selected)}); "
+            f"name the one image to tag",
+            field="tag",
+        )
+
+
 async def _build_plan(
-    plan: "list[tuple[UnixHost, Repo, list[str] | None]]", *, rebuild: bool
+    plan: "list[tuple[UnixHost, Repo, list[str] | None]]",
+    *,
+    options: BuildOptions,
 ) -> "list[RepoBuild]":
-    """Run *plan* in order: one ``build_images`` per (host, repo)."""
+    """Run *plan* in order: one ``build_images`` per (host, repo), each with *options*."""
     entries: "list[RepoBuild]" = []
     for parent, repo, names in plan:
         if not repo.docker_settings.images:
@@ -123,7 +190,7 @@ async def _build_plan(
             continue
         if names is not None and not names:
             continue  # declares images, but none of the requested ones
-        results = await build_images(repo, parent, image_names=names, rebuild=rebuild)
+        results = await build_images(repo, parent, image_names=names, options=options)
         entries.append(RepoBuild(repo.name, parent.id, "built", dict(results)))
     return entries
 
@@ -131,8 +198,14 @@ async def _build_plan(
 def _plan_text(
     plan: "list[tuple[UnixHost, Repo, list[str] | None]]",
     displaced: "Sequence[Displacement]" = (),
+    *,
+    options: BuildOptions,
 ) -> str:
     """Render a build plan the way ``deploy``'s dry run renders its own.
+
+    Each selected image also gets the exact ``docker build`` command
+    :func:`~otto.docker.build.build_command` renders for *options*, so the plan
+    names what a real run would execute.
 
     *displaced* is spec §6: ``compose_build`` places through the same
     provider competition ``deploy`` runs, so its dry run owes the same
@@ -150,7 +223,17 @@ def _plan_text(
     per_host = "; ".join(f"{host} <- {'; '.join(items)}" for host, items in by_host.items())
     displaced_text = ". ".join(d.describe() for d in displaced)
     displaced_note = f" Displaced: {displaced_text}." if displaced_text else ""
-    return f"Build plan: {per_host}.{displaced_note} No context was staged and no image was built."
+    commands = [
+        f"on {parent.id}: {build_command(repo.name, img, options)}"
+        for parent, repo, names in plan
+        for img in repo.docker_settings.images
+        if names is None or img.name in names
+    ]
+    command_note = f" Would run: {'; '.join(commands)}." if commands else ""
+    return (
+        f"Build plan: {per_host}.{displaced_note}{command_note} "
+        f"No context was staged and no image was built."
+    )
 
 
 async def build_on(
@@ -158,7 +241,11 @@ async def build_on(
     *,
     repo: "str | None" = None,
     images: "Sequence[str] | None" = None,
-    rebuild: bool = False,
+    tags: "Sequence[str] | None" = None,
+    no_cache: bool = False,
+    pull: bool = False,
+    build_args: "Mapping[str, str] | None" = None,
+    target: "str | None" = None,
 ) -> BuildReport:
     """Build the selected repos' declared images on *host* (``otto docker build``).
 
@@ -171,7 +258,14 @@ async def build_on(
         repo: Narrow the selection to this repo by name.
         images: Build only these declared ``[[docker.images]]`` names; each
             selected repo builds the subset it declares.
-        rebuild: Skip the context-hash cache and always ``docker build``.
+        tags: ``docker build -t``: the references to tag, as typed. They
+            replace the default ``<name>:latest`` and nothing is added to them.
+            A tag names one image, so more than one selected image refuses.
+        no_cache: ``docker build --no-cache``.
+        pull: ``docker build --pull``.
+        build_args: ``docker build --build-arg`` pairs, added to the declared
+            ones; a key given here wins over a declared one.
+        target: ``docker build --target``, replacing a declared target.
 
     Returns:
         A :class:`~otto.docker.reports.BuildReport`, one entry per selected repo
@@ -180,7 +274,10 @@ async def build_on(
     Raises:
         DockerBuildError: *host* is missing or not a docker-capable unix host in
             the active lab; *repo* names no docker repo; an *images* name no
-            selected repo declares; or no selected repo declares any image.
+            selected repo declares; no selected repo declares any image; two
+            selected repos declare one image name, or two selected images of
+            one repo share a staging directory key; or *tags* is given with more than
+            one image selected.
         ~otto.result.CommandNotRunError: this is a dry run; the message carries
             the whole plan.
     """
@@ -189,9 +286,19 @@ async def build_on(
     repos = _dependency_order(_select_docker_repos(repo))
     _check_images(repos, images)
     plan = [(parent, r, _names_for(r, images)) for r in repos]
+    _check_tags(plan, tags)
+    options = BuildOptions(
+        tags=list(tags or []),
+        no_cache=no_cache,
+        pull=pull,
+        build_args=dict(build_args or {}),
+        target=target,
+    )
     if is_dry_run():
-        raise CommandNotRunError(f"build_on({parent.id})", parent.id, _plan_text(plan))
-    return BuildReport(repos=await _build_plan(plan, rebuild=rebuild))
+        raise CommandNotRunError(
+            f"build_on({parent.id})", parent.id, _plan_text(plan, options=options)
+        )
+    return BuildReport(repos=await _build_plan(plan, options=options))
 
 
 async def compose_build(
@@ -200,7 +307,9 @@ async def compose_build(
     on: "str | None" = None,
     provide: "Mapping[str, str] | None" = None,
     images: "Sequence[str] | None" = None,
-    rebuild: bool = False,
+    no_cache: bool = False,
+    pull: bool = False,
+    build_args: "Mapping[str, str] | None" = None,
 ) -> BuildReport:
     """Build the images a deployment of *use_case* would use (``otto docker compose build``).
 
@@ -214,7 +323,10 @@ async def compose_build(
         on: Collapse every winner onto this lab host (spec §5 knob 1).
         provide: ``capability -> repo`` overrides for the competition (§4).
         images: Build only these declared image names, over the winners.
-        rebuild: Skip the context-hash cache and always ``docker build``.
+        no_cache: ``docker build --no-cache``, for every image.
+        pull: ``docker build --pull``, for every image.
+        build_args: ``docker build --build-arg`` pairs, added to the declared
+            ones of every image; a key given here wins over a declared one.
 
     Returns:
         A :class:`~otto.docker.reports.BuildReport`: hosts in sorted id order,
@@ -224,8 +336,9 @@ async def compose_build(
     Raises:
         ~otto.docker.resolve.UseCaseResolutionError: a placement refusal,
             identical to ``deploy``'s.
-        DockerBuildError: an *images* name no winner declares, or no winner
-            declares any image.
+        DockerBuildError: an *images* name no winner declares, no winner
+            declares any image, or two winners declare one image name (or two
+            images of one winner share a staging directory key).
         ~otto.result.CommandNotRunError: this is a dry run; the message carries
             the whole plan.
     """
@@ -249,12 +362,13 @@ async def compose_build(
                 seen.add(unit.repo.name)
                 winners.append(unit.repo)
     _check_images(winners, images)
+    options = BuildOptions(no_cache=no_cache, pull=pull, build_args=dict(build_args or {}))
     if is_dry_run():
         raise CommandNotRunError(
             f"compose_build({use_case})",
             ", ".join(sorted(placed)),
-            _plan_text(plan, selection.displaced),
+            _plan_text(plan, selection.displaced, options=options),
         )
     return BuildReport(
-        repos=await _build_plan(plan, rebuild=rebuild), displaced=list(selection.displaced)
+        repos=await _build_plan(plan, options=options), displaced=list(selection.displaced)
     )

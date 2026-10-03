@@ -10,6 +10,7 @@ Layout::
 
     /tmp/otto-docker/<project>/
         build/<image>/<context-as-tar>     # extracted build context
+        build/<image>.<archive>            # an archive context, uploaded unopened
         compose/<n>/<basename>.yml         # one numbered dir per compose file
         compose/<n>/<sidecar relative path> # env_file: sidecars, same numbering
         compose/otto.env                   # generated env file for the use case
@@ -21,6 +22,7 @@ stable across runs so nothing leaks into per-invocation subdirs.
 
 import logging
 import os
+import re
 import shlex
 import tarfile
 import tempfile
@@ -56,14 +58,52 @@ def project_root(project: str) -> Path:
     return PARENT_ROOT / project
 
 
+def stage_key(name: str) -> str:
+    """One path segment for an image *name*, which may carry a registry, port and path."""
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name)
+
+
 def image_build_dir(project: str, image_name: str) -> Path:
     """Where this image's context will live on the parent."""
-    return project_root(project) / "build" / image_name
+    return project_root(project) / "build" / stage_key(image_name)
 
 
 def compose_dir(project: str) -> Path:
     """Per-project compose staging directory on the parent host."""
     return project_root(project) / "compose"
+
+
+def image_archive_path(project: str, image: DockerImage) -> Path:
+    """Where an archive context is uploaded on the parent."""
+    return project_root(project) / "build" / f"{stage_key(image.name)}.{image.context.name}"
+
+
+async def stage_image_archive(parent: Host, project: str, image: DockerImage) -> Path:
+    """Copy an archive context to the parent unchanged; return its path there.
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run.
+    """
+    if is_dry_run():
+        raise CommandNotRunError(
+            f"stage_image_archive({project}/{image.name})",
+            getattr(parent, "id", ""),
+            "Nothing was copied to the parent.",
+        )
+    remote = image_archive_path(project, image)
+    prepared = await parent.exec(f"mkdir -p {shlex.quote(str(remote.parent))}")
+    if not prepared.status.is_ok:
+        raise _staging_failure(
+            prepared, f"failed to prepare {remote.parent} on the parent: {prepared.value}"
+        )
+    put_result = await parent.put([image.context], remote.parent)
+    if not put_result.is_ok:
+        raise HostCommandError(f"failed to copy the build archive to the parent: {put_result.msg}")
+    uploaded = remote.parent / image.context.name
+    moved = await parent.exec(f"mv -f {shlex.quote(str(uploaded))} {shlex.quote(str(remote))}")
+    if not moved.status.is_ok:
+        raise _staging_failure(moved, f"failed to place the build archive: {moved.value}")
+    return remote
 
 
 async def stage_image_context(
@@ -97,7 +137,7 @@ async def stage_image_context(
     # Checked, because `&&` makes a failed rm skip the mkdir silently and the
     # `tar -xf` below OVERLAYS rather than replaces: docker build would then
     # see a context still holding a file the user deleted locally, and produce
-    # a wrong image under a context hash that says it is right. Build staging
+    # an image that still holds the deleted file. Build staging
     # is keyed on the repo name (unlike compose staging, keyed on the
     # suffix-bearing project), so two users on one parent really do collide here.
     prepared = await parent.exec(

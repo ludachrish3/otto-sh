@@ -4,8 +4,10 @@ otto docker — build images and deploy use-case stacks on lab hosts.
 Subcommands::
 
     otto docker use-cases       [USE_CASE]
-    otto docker build           [IMAGE...] --on H [--repo NAME] [--rebuild]
-    otto docker compose build   [USE_CASE [IMAGE...]] [--on H] [--provide CAP=REPO] [--rebuild]
+    otto docker build           [IMAGE...] --on H [--repo NAME] [-t REF] [--no-cache]
+                                 [--pull] [--build-arg K=V] [--target STAGE]
+    otto docker compose build   [USE_CASE [IMAGE...]] [--on H] [--provide CAP=REPO]
+                                 [--no-cache] [--pull] [--build-arg K=V]
     otto docker compose up      [USE_CASE [SERVICE...]] [--on H] [--no-build]
                                  [--provide CAP=REPO] [--env K=V] [--env-file FILE]
     otto docker compose down    [USE_CASE [SERVICE...]] [--on H] [--provide CAP=REPO]
@@ -37,7 +39,6 @@ from rich import print as rprint
 from rich.markup import escape
 
 from ..config import get_repos
-from ..utils import Status
 from .completers import completion_source
 from .invoke import fail, print_error
 
@@ -244,7 +245,12 @@ _DECLINED = _Declined()
 """Sentinel distinguishing "a dry run declined" from a verb that returns None."""
 
 
-_BUILD_FLAGS: "dict[str, str]" = {"host": "--on", "repo": "--repo", "images": "IMAGE"}
+_BUILD_FLAGS: "dict[str, str]" = {
+    "host": "--on",
+    "repo": "--repo",
+    "images": "IMAGE",
+    "tag": "--tag",
+}
 
 
 async def _run_docker(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
@@ -307,18 +313,16 @@ def _render_build_report(report: "BuildReport") -> None:
             )
             rprint(f"[yellow]{escape(msg)}")
             continue
-        for name, res in entry.images.items():
-            # `value` on every branch: the tag on ok, the captured build output
-            # on failure. Never `msg` — an exec-produced CommandResult leaves it
-            # empty, so reading it here would print nothing at all.
-            if res.status is Status.Skipped:
-                line = escape(f"{entry.repo}/{name}: cached → {res.value}")
-                rprint(f"[dim]{line} ({entry.host})")
-            elif res.status is Status.Success:
-                line = escape(f"{entry.repo}/{name}: built → {res.value}")
-                rprint(f"[green]{line} ({entry.host})")
+        for name, built in entry.images.items():
+            if built.is_ok:
+                refs = ", ".join(built.references)
+                line = escape(f"{entry.repo}/{name}: built {refs}  {built.image_id}")
+                rprint(f"[green]{line}  ({entry.host})")
             else:
-                print_error(f"{entry.repo}/{name}: FAILED on {entry.host}\n{res.value}")
+                failed = f"{entry.repo}/{name}: FAILED on {entry.host}"
+                if built.result.command:
+                    failed += f"\n{built.result.command}"
+                print_error(f"{failed}\n{built.result.value}")
     if not report.ok:
         raise typer.Exit(1)
 
@@ -350,9 +354,25 @@ async def _build(
     repo: Annotated[
         str | None, typer.Option("--repo", help="Restrict to a single repo by name.")
     ] = None,
-    rebuild: Annotated[
-        bool, typer.Option("--rebuild", help="Force rebuild even if a context-hash tag exists.")
+    tag: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--tag", "-t", help="Image reference to tag, as `docker build -t`. Repeatable."
+        ),
+    ] = None,
+    no_cache: Annotated[
+        bool, typer.Option("--no-cache", help="Do not use docker's layer cache.")
     ] = False,
+    pull: Annotated[
+        bool, typer.Option("--pull", help="Always pull newer versions of the base images.")
+    ] = False,
+    build_arg: Annotated[
+        list[str] | None,
+        typer.Option("--build-arg", help="Build-time variable, KEY=VALUE. Repeatable."),
+    ] = None,
+    target: Annotated[
+        str | None, typer.Option("--target", help="The build stage to build.")
+    ] = None,
 ) -> None:
     """Build the selected repos' declared images on one lab host.
 
@@ -363,7 +383,19 @@ async def _build(
     """
     from ..docker.build_verbs import build_on
 
-    report = await _run_docker(build_on(on, repo=repo, images=image, rebuild=rebuild))
+    build_args = _parse_pairs(build_arg, form="KEY=VALUE", flag="--build-arg KEY=VALUE")
+    report = await _run_docker(
+        build_on(
+            on,
+            repo=repo,
+            images=image,
+            tags=tag,
+            no_cache=no_cache,
+            pull=pull,
+            build_args=build_args,
+            target=target,
+        )
+    )
     if not isinstance(report, _Declined):
         _render_build_report(report)
 
@@ -394,9 +426,16 @@ async def _compose_build(
         list[str] | None,
         typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
     ] = None,
-    rebuild: Annotated[
-        bool, typer.Option("--rebuild", help="Force rebuild even if a context-hash tag exists.")
+    no_cache: Annotated[
+        bool, typer.Option("--no-cache", help="Do not use docker's layer cache.")
     ] = False,
+    pull: Annotated[
+        bool, typer.Option("--pull", help="Always pull newer versions of the base images.")
+    ] = False,
+    build_arg: Annotated[
+        list[str] | None,
+        typer.Option("--build-arg", help="Build-time variable, KEY=VALUE. Repeatable."),
+    ] = None,
 ) -> None:
     """Build the images a deployment of a use-case would use, where it would use them.
 
@@ -407,9 +446,18 @@ async def _compose_build(
     from ..docker.build_verbs import compose_build
 
     provide_map = _parse_provide(provide)
+    build_args = _parse_pairs(build_arg, form="KEY=VALUE", flag="--build-arg KEY=VALUE")
     name = _default_use_case(use_case)
     report = await _run_docker(
-        compose_build(name, on=on, provide=provide_map, images=image, rebuild=rebuild)
+        compose_build(
+            name,
+            on=on,
+            provide=provide_map,
+            images=image,
+            no_cache=no_cache,
+            pull=pull,
+            build_args=build_args,
+        )
     )
     if not isinstance(report, _Declined):
         _render_build_report(report)

@@ -21,8 +21,8 @@ Every name is exported lazily (PEP 562), including ``AdapterResult`` /
 ``deploy`` / ``teardown`` / ``deployed`` / ``UseCaseStack`` (the use-case
 deploy pipeline, spec §8/§11), and ``build_on`` / ``compose_build`` /
 ``DockerBuildError`` with the report types they and ``teardown`` return
-(``BuildReport``, ``RepoBuild``, ``FailedImage``, ``HostReport``,
-``TeardownReport``): a caller pays for the one module that defines
+(``BuildReport``, ``RepoBuild``, ``ImageBuild``, ``FailedImage``,
+``HostReport``, ``TeardownReport``): a caller pays for the one module that defines
 the name it asks for. Every command that loads a lab imports ``.compose`` to
 place the declared container hosts, and must not pay for ``.build`` and its
 build-context staging with it.
@@ -40,12 +40,10 @@ no error to notice. Renaming the module is what makes the spec §11 API
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._context_hash import context_hash as context_hash
     from .adapter import AdapterResult as AdapterResult
     from .adapter import register_compose_adapter as register_compose_adapter
+    from .build import BuildOptions as BuildOptions
     from .build import build_images as build_images
-    from .build import image_full_tag as image_full_tag
-    from .build import image_latest_tag as image_latest_tag
     from .build_verbs import DockerBuildError as DockerBuildError
     from .build_verbs import build_on as build_on
     from .build_verbs import compose_build as compose_build
@@ -62,17 +60,16 @@ if TYPE_CHECKING:
     from .reports import BuildReport as BuildReport
     from .reports import FailedImage as FailedImage
     from .reports import HostReport as HostReport
+    from .reports import ImageBuild as ImageBuild
     from .reports import RepoBuild as RepoBuild
     from .reports import TeardownReport as TeardownReport
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
-    "context_hash": "otto.docker._context_hash",
     "AdapterResult": "otto.docker.adapter",
     "register_compose_adapter": "otto.docker.adapter",
+    "BuildOptions": "otto.docker.build",
     "build_images": "otto.docker.build",
-    "image_full_tag": "otto.docker.build",
-    "image_latest_tag": "otto.docker.build",
     "DockerBuildError": "otto.docker.build_verbs",
     "build_on": "otto.docker.build_verbs",
     "compose_build": "otto.docker.build_verbs",
@@ -89,6 +86,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "BuildReport": "otto.docker.reports",
     "FailedImage": "otto.docker.reports",
     "HostReport": "otto.docker.reports",
+    "ImageBuild": "otto.docker.reports",
     "RepoBuild": "otto.docker.reports",
     "TeardownReport": "otto.docker.reports",
 }
@@ -110,10 +108,12 @@ def __dir__() -> list[str]:
 
 __all__ = [
     "AdapterResult",
+    "BuildOptions",
     "BuildReport",
     "DockerBuildError",
     "FailedImage",
     "HostReport",
+    "ImageBuild",
     "RepoBuild",
     "TeardownReport",
     "UseCaseStack",
@@ -124,13 +124,10 @@ __all__ = [
     "compose_ps",
     "compose_up",
     "composed",
-    "context_hash",
     "deploy",
     "deployed",
     "get_container_host",
     "get_user_compose_project",
-    "image_full_tag",
-    "image_latest_tag",
     "register_compose_adapter",
     "teardown",
 ]

@@ -143,7 +143,7 @@ async def test_compose_build_and_deploy_place_identically(layout, tmp_path):
     lab = _lab(*hosts)
     built: list[tuple[str, str]] = []
 
-    async def _spy(repo, parent, *, image_names=None, rebuild=False):
+    async def _spy(repo, parent, *, image_names=None, options=None):
         built.append((repo.name, parent.id))
         return {}
 

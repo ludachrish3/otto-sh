@@ -43,6 +43,27 @@ class TeardownReport(HostReport):
 
 
 @dataclass(frozen=True)
+class ImageBuild:
+    """One image's build, with what the daemon lists for it afterwards."""
+
+    name: str
+    """The declared image name."""
+    references: "list[str]"
+    """The references the build was asked to tag, as the daemon lists them.
+
+    Another tag the daemon holds on the same image is not included. Empty on failure."""
+    image_id: "str | None"
+    """The image id as ``docker images`` prints it; ``None`` on failure."""
+    result: "CommandResult"
+    """The ``docker build``'s own result, or the read-back that failed."""
+
+    @property
+    def is_ok(self) -> bool:
+        """True when the build ran and the daemon lists the image."""
+        return self.result.is_ok
+
+
+@dataclass(frozen=True)
 class RepoBuild:
     """One repo's build on one host."""
 
@@ -52,8 +73,8 @@ class RepoBuild:
     """The lab id of the host it was built on."""
     kind: Literal["built", "no_images"]
     """``no_images``: the repo declares no ``[[docker.images]]``; nothing ran."""
-    images: "dict[str, CommandResult]" = field(default_factory=dict)
-    """Maps each image name to its result -- Skipped (cached), Success (built), else failed."""
+    images: "dict[str, ImageBuild]" = field(default_factory=dict)
+    """Maps each declared image name to its build."""
 
 
 @dataclass(frozen=True)
@@ -83,12 +104,12 @@ class BuildReport:
 
     @property
     def failed(self) -> "list[FailedImage]":
-        """Every image whose result is not ok, in build order."""
+        """Every image whose build is not ok, in build order."""
         return [
-            FailedImage(entry.repo, name, result)
+            FailedImage(entry.repo, name, built.result)
             for entry in self.repos
-            for name, result in entry.images.items()
-            if not result.is_ok
+            for name, built in entry.images.items()
+            if not built.is_ok
         ]
 
     @property

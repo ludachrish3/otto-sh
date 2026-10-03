@@ -287,8 +287,8 @@ async def compose_up(
         build: When True (the default) and the repo declares
             ``[[docker.images]]``, run :func:`~otto.docker.build.build_images` first so locally-
             built images exist on the parent before compose tries to pull
-            them. The build is idempotent via the context-hash skip, so this
-            is cheap when nothing changed. Pass ``build=False`` if the
+            them. Every build runs ``docker build``; docker's layer cache
+            makes it cheap when nothing changed. Pass ``build=False`` if the
             compose file references only published images (or if you
             already built explicitly).
 
@@ -323,12 +323,12 @@ async def compose_up(
         # Late import to avoid a circular `compose <-> build` import.
         from .build import build_images
 
-        results = await build_images(repo, parent, rebuild=False)
-        for name, res in results.items():
-            if not res.is_ok:
+        results = await build_images(repo, parent)
+        for name, built in results.items():
+            if not built.is_ok:
                 # value, not msg: the captured build output is the diagnosis.
                 raise HostCommandError(
-                    f"build for image {name!r} failed before compose up: {res.value}"
+                    f"build for image {name!r} failed before compose up: {built.result.value}"
                 )
 
     from .staging import stage_compose_files

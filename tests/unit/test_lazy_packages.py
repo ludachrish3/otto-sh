@@ -418,7 +418,7 @@ IMPORT_ORDERS = [
     "import otto.docker",
     "from otto.docker import compose_up",
     "import otto.docker.compose; from otto.docker import build_images",
-    "from otto.docker import deploy; from otto.docker import context_hash",
+    "from otto.docker import deploy; from otto.docker import build_images",
     "import otto.inventory",
     "from otto.inventory import build_inventory",
     "import otto.inventory.netbox; from otto.inventory import resolve_host_entry",

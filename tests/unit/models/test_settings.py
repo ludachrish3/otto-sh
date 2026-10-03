@@ -45,15 +45,21 @@ def clean_otto_env(monkeypatch):
 def test_docker_settings_spec_defaults_to_empty_runtime():
     rt = DockerSettingsSpec().to_runtime()
     assert isinstance(rt, DockerSettings)
-    assert rt.registry_url == "docker.io"
     assert rt.images == ()
     assert rt.composes == ()
+
+
+def test_registry_url_is_refused_by_name():
+    with pytest.raises(
+        ValidationError,
+        match=r"registry_url.*put the registry in the image `name` or pass `--tag`",
+    ):
+        DockerSettingsSpec.model_validate({"registry_url": "ghcr.io/me"})
 
 
 def test_docker_image_spec_builds_runtime_with_sorted_tupled_build_args():
     spec = DockerSettingsSpec.model_validate(
         {
-            "registry_url": "reg.example",
             "images": [
                 {
                     "name": "api",
@@ -447,12 +453,11 @@ def test_settings_builds_docker_and_os_profiles():
         {
             **_minimal(),
             "os_profiles": {"zephyr-3.7": {"base": "embedded", "os_version": "3.7"}},
-            "docker": {"registry_url": "reg.x"},
         }
     )
     assert m.os_profiles["zephyr-3.7"].base == "embedded"
     assert m.os_profiles["zephyr-3.7"].defaults == {"os_version": "3.7"}
-    assert m.docker.to_runtime().registry_url == "reg.x"
+    assert m.docker.to_runtime().images == ()
 
 
 def test_settings_validates_every_in_tree_fixture():
@@ -533,9 +538,12 @@ def test_docker_spec_fields_match_runtime_dataclass():
         (DockerComposeSpec, DockerCompose),
         (DockerSettingsSpec, DockerSettings),
     ]
+    # Runtime fields the spec fills from a private attribute, never a setting.
+    runtime_only = {DockerImage: {"dockerfile_in_archive"}}
     for spec_cls, rt_cls in pairs:
         spec_fields = set(spec_cls.model_fields)
         rt_fields = {f.name for f in dataclasses.fields(rt_cls) if f.init}
+        rt_fields -= runtime_only.get(rt_cls, set())
         assert spec_fields == rt_fields, (
             f"{spec_cls.__name__} <-> {rt_cls.__name__}: "
             f"spec-only={sorted(spec_fields - rt_fields)}, "
@@ -904,3 +912,70 @@ def test_settings_model_defaults_to_empty_declared_arrays():
     m = SettingsModel.model_validate(_minimal())
     assert m.products == []
     assert m.dev_tools == []
+
+
+def test_an_archive_context_keeps_the_dockerfile_as_a_path_inside_it(tmp_path):
+    # With a repo root in the validation context, `dockerfile` is anchored to
+    # the repo like any settings path; the path INSIDE the archive must still
+    # be the string the user wrote.
+    spec = DockerImageSpec.model_validate(
+        {"name": "api", "dockerfile": "docker/Dockerfile", "context": "build/ctx.tar.gz"},
+        context={"sut_dir": str(tmp_path)},
+    )
+    image = spec.to_runtime()
+    assert image.context == tmp_path / "build" / "ctx.tar.gz"
+    assert image.is_archive
+    assert image.dockerfile_in_archive == "docker/Dockerfile"
+
+
+def test_the_settings_schema_gains_no_field_for_it():
+    assert set(DockerImageSpec.model_json_schema()["properties"]) == {
+        "name",
+        "dockerfile",
+        "context",
+        "target",
+        "build_args",
+    }
+
+
+def test_a_directory_context_is_not_an_archive():
+    spec = DockerImageSpec.model_validate(
+        {"name": "api", "dockerfile": "docker/Dockerfile", "context": "docker"}
+    )
+    image = spec.to_runtime()
+    assert not image.is_archive
+    assert image.dockerfile_in_archive == ""
+
+
+def _image_entry(name: str) -> dict:
+    return {"name": name, "dockerfile": "/d/Dockerfile", "context": "/d"}
+
+
+def test_two_images_of_one_repo_may_not_share_a_name():
+    with pytest.raises(ValidationError, match=r"\[\[docker\.images\]\] names must be unique") as e:
+        DockerSettingsSpec.model_validate(
+            {"images": [_image_entry("api"), _image_entry("web"), _image_entry("api")]}
+        )
+    assert "['api']" in str(e.value)
+
+
+def test_distinct_image_names_are_accepted():
+    spec = DockerSettingsSpec.model_validate({"images": [_image_entry("api"), _image_entry("web")]})
+    assert [i.name for i in spec.images] == ["api", "web"]
+
+
+def test_an_image_name_that_carries_a_tag_is_refused():
+    with pytest.raises(
+        ValidationError, match=r"(?m)^name\n\s+Value error, .*put the tag in `--tag`"
+    ):
+        DockerImageSpec.model_validate(_image_entry("api:1.0"))
+
+
+def test_a_tag_after_a_registry_path_is_refused_too():
+    with pytest.raises(ValidationError, match="put the tag in `--tag`"):
+        DockerImageSpec.model_validate(_image_entry("registry.example:5000/team/api:1.0"))
+
+
+@pytest.mark.parametrize("name", ["registry.example:5000/team/api", "team/api", "api"])
+def test_an_image_name_without_a_tag_is_accepted(name):
+    assert DockerImageSpec.model_validate(_image_entry(name)).name == name

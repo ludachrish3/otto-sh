@@ -13,6 +13,7 @@ from ``config.repo`` are imported lazily inside ``to_runtime()`` and under
 
 import os
 import re
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
@@ -21,6 +22,8 @@ from pydantic import (
     AfterValidator,
     ConfigDict,
     Field,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -106,20 +109,49 @@ class DockerImageSpec(OttoModel):
     # is stringified below, rather than rejected at validation.
     build_args: dict[str, Any] = Field(default_factory=dict)
 
+    # The Dockerfile string as written, kept before ``RepoPath`` anchors it: for
+    # an archive context it is a path INSIDE the archive. A private attribute,
+    # not a field, so the exported settings schema does not change.
+    _dockerfile_as_written: str = PrivateAttr(default="")
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _keep_the_dockerfile_as_written(
+        cls, data: Any, handler: ModelWrapValidatorHandler["DockerImageSpec"]
+    ) -> "DockerImageSpec":
+        written = str(data.get("dockerfile", "")) if isinstance(data, dict) else ""
+        spec = handler(data)
+        spec._dockerfile_as_written = written  # noqa: SLF001 — the model's own private attribute
+        return spec
+
+    @field_validator("name")
+    @classmethod
+    def _name_carries_no_tag(cls, name: str) -> str:
+        # Docker's reference grammar puts a tag after the LAST "/", so a ":" there
+        # is a tag; one before it is a registry port and stays legal.
+        if ":" in name.rsplit("/", 1)[-1]:
+            raise ValueError(
+                f"[[docker.images]] name {name!r} carries a tag: put the tag in `--tag`"
+            )
+        return name
+
     def to_runtime(self) -> "DockerImage":
         """Build the ``DockerImage`` runtime dataclass from the validated spec fields."""
         from ..config.repo import DockerImage
 
-        return DockerImage(
+        image = DockerImage(
             name=self.name,
             dockerfile=self.dockerfile,
             context=self.context,
             target=self.target,
             # frozen, sorted, all-string tuple-of-tuples so the runtime object
-            # stays hashable and order-stable for the docker context hash;
-            # ``str(v)`` coerces TOML scalars (ints/bools) like the old parser.
+            # stays hashable and order-stable; ``str(v)`` coerces TOML
+            # scalars (ints/bools) like the old parser.
             build_args=tuple((k, str(v)) for k, v in sorted(self.build_args.items())),
         )
+        if image.is_archive:
+            return replace(image, dockerfile_in_archive=self._dockerfile_as_written)
+        return image
 
 
 class DockerComposeSpec(OttoModel):
@@ -217,15 +249,33 @@ class DockerUseCaseSpec(OttoModel):
 class DockerSettingsSpec(OttoModel):
     """Boundary spec for the ``[docker]`` section of ``settings.toml``.
 
-    Validates the Docker registry URL and the lists of image and Compose specs.
+    Validates the lists of image and Compose specs and refuses the removed
+    ``registry_url`` key by name.
     Builds a ``DockerSettings`` runtime dataclass (with images and composes as
     frozen tuples) via ``to_runtime()``.
     """
 
-    registry_url: str = "docker.io"
     images: list[DockerImageSpec] = Field(default_factory=list)
     composes: list[DockerComposeSpec] = Field(default_factory=list)
     use_cases: list[DockerUseCaseSpec] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _registry_url_is_gone(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "registry_url" in data:
+            raise ValueError(
+                "[docker] registry_url is no longer a setting: put the registry in the "
+                'image `name` or pass `--tag` (for example name = "ghcr.io/me/api").'
+            )
+        return data
+
+    @model_validator(mode="after")
+    def _image_names_are_unique(self) -> "DockerSettingsSpec":
+        names = [i.name for i in self.images]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            raise ValueError(f"[[docker.images]] names must be unique; duplicated: {dupes}")
+        return self
 
     @model_validator(mode="after")
     def _handles_resolve(self) -> "DockerSettingsSpec":
@@ -248,7 +298,6 @@ class DockerSettingsSpec(OttoModel):
         from ..config.repo import DockerSettings
 
         return DockerSettings(
-            registry_url=self.registry_url,
             images=tuple(i.to_runtime() for i in self.images),
             composes=tuple(c.to_runtime() for c in self.composes),
             use_cases=tuple(u.to_runtime() for u in self.use_cases),

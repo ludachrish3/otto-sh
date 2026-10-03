@@ -17,10 +17,9 @@ paths = [
 ]
 
 [docker]
-registry_url = "docker.io"
 
 [[docker.images]]
-name = "worker"
+name = "repo2-worker"
 dockerfile = "docker/Dockerfile"
 context = "docker"
 

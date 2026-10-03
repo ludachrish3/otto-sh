@@ -94,10 +94,9 @@ match = { id = "test[1-3]" }
 hosts = "[^.]+"
 
 [docker]
-registry_url = "docker.io"
 
 [[docker.images]]
-name = "api"
+name = "repo1-api"
 dockerfile = "docker/Dockerfile"
 context = "docker"
 

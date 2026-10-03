@@ -14,11 +14,9 @@ import pytest_asyncio
 
 from otto.config.repo import Repo
 from otto.docker import build_images
-from otto.docker.build import image_latest_tag
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
-from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.paths import TESTS_ROOT
 
@@ -71,28 +69,14 @@ def repo1():
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_build_succeeds(parent, repo1):
-    results = await build_images(repo1, parent, rebuild=True)
-    assert "api" in results
-    res = results["api"]
-    assert res.status is Status.Success, f"build failed: {res.value}"
-
-
-@pytest.mark.asyncio(loop_scope="module")
-async def test_build_skips_when_image_exists(parent, repo1):
-    # First build (force) → fresh build.
-    first = await build_images(repo1, parent, rebuild=True)
-    assert first["api"].status is Status.Success
-
-    # Second build without --rebuild → must short-circuit on `docker image inspect`.
-    second = await build_images(repo1, parent, rebuild=False)
-    assert second["api"].status is Status.Skipped
+    built = await build_images(repo1, parent)
+    assert built["repo1-api"].is_ok, f"build failed: {built['repo1-api'].result.value}"
+    assert built["repo1-api"].references == ["repo1-api:latest"]
 
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_build_tags_locally(parent, repo1):
-    await build_images(repo1, parent, rebuild=False)
-    # The :latest mirror should be pullable via `docker image inspect`.
-    image = repo1.docker_settings.images[0]
-    latest = image_latest_tag(repo1.docker_settings.registry_url, repo1.name, image)
-    result = await parent.exec(f"docker image inspect {latest}")
-    assert result.status.is_ok, f"latest tag missing: {result.value}"
+    await build_images(repo1, parent)
+    # The daemon holds the image under exactly the declared name.
+    result = await parent.exec("docker image inspect repo1-api:latest")
+    assert result.status.is_ok, f"image missing: {result.value}"

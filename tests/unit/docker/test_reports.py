@@ -4,7 +4,14 @@ import dataclasses
 
 import pytest
 
-from otto.docker.reports import BuildReport, FailedImage, HostReport, RepoBuild, TeardownReport
+from otto.docker.reports import (
+    BuildReport,
+    FailedImage,
+    HostReport,
+    ImageBuild,
+    RepoBuild,
+    TeardownReport,
+)
 from otto.result import CommandResult
 from otto.utils import Status
 
@@ -42,7 +49,10 @@ def test_teardown_report_carries_the_use_case_and_is_a_host_report():
 
 
 def test_build_report_ok_treats_skipped_as_ok():
-    images = {"api": _skipped("r1-api:abc"), "w": _ok("r1-w:abc")}
+    images = {
+        "api": ImageBuild("api", ["api:latest"], "cbd8571d4b6e", _skipped()),
+        "w": ImageBuild("w", ["w:latest"], "cbd8571d4b6e", _ok()),
+    }
     report = BuildReport(repos=[RepoBuild("r1", "test3", "built", images)])
     assert report.ok
     assert report.failed == []
@@ -52,8 +62,13 @@ def test_build_report_failed_lists_repo_image_and_result():
     bad = _fail("syntax error", command="docker build ...")
     report = BuildReport(
         repos=[
-            RepoBuild("r1", "test3", "built", {"api": _ok("t")}),
-            RepoBuild("r2", "test3", "built", {"db": bad}),
+            RepoBuild(
+                "r1",
+                "test3",
+                "built",
+                {"api": ImageBuild("api", ["api:latest"], "cbd8571d4b6e", _ok())},
+            ),
+            RepoBuild("r2", "test3", "built", {"db": ImageBuild("db", [], None, bad)}),
             RepoBuild("r3", "test3", "no_images"),
         ]
     )

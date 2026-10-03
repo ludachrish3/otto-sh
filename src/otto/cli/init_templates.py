@@ -176,7 +176,6 @@ path = "lab_data/creds.json"
 
 # --- [docker] — image builds + compose stacks --------------------------------
 #[docker]
-#registry_url = "docker.io"
 #[[docker.images]]
 #name = "{name}-test"
 #dockerfile = "docker/Dockerfile"

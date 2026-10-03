@@ -496,20 +496,19 @@ backend can be checked against otto's contract in your own test suite.
 ## Docker images and compose stacks
 
 ```toml
-[docker]
-registry_url = "docker.io"   # optional; default. Non-default registries
-                              # get prefixed onto image tags.
-
 [[docker.images]]
-name = "api"                              # short logical name
+name = "api"                              # the image name, verbatim: what
+                                          # `docker images` lists. It may carry
+                                          # a registry and path
+                                          # ("ghcr.io/me/api") and no tag
 dockerfile = "docker/api.Dockerfile"
-context = "docker"
+context = "docker"                        # a directory, or a tar archive
 
 [[docker.images]]
 name = "db"
 dockerfile = "docker/db.Dockerfile"
 context = "docker"
-build_args = { VERSION = "1.2.3" }       # optional; influences hash
+build_args = { VERSION = "1.2.3" }       # optional; `--build-arg` adds to it
 target = "prod"                          # optional multi-stage target
 
 [[docker.composes]]                      # a pure file inventory
@@ -534,6 +533,10 @@ priority = 10                            # capability, higher priority wins
 env = { LOG_LEVEL = "debug", EDGE_ADDR = "${otto:role.edge.addr}" }
 pass_env = ["EDGE_TAG"]                  # allowlist copied from your shell
 ```
+
+`name` is the image name, verbatim, and must not carry a tag. `context` is a
+directory or a tar archive. {doc}`../cli/docker/build` is the home for what a
+build does with them: the tag it applies and how an archive is used.
 
 `services` names the entries of *this* file's own `services:` block, and it is
 authoritative: it is the list otto registers container hosts from, not a hint.

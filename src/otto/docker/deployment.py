@@ -557,13 +557,13 @@ async def _build_for(units: "list[_RepoUnit]", parent: UnixHost) -> None:
     for unit in units:
         if not unit.repo.docker_settings.images:
             continue
-        results = await build_images(unit.repo, parent, rebuild=False)
-        for name, res in results.items():
-            if not res.is_ok:
+        results = await build_images(unit.repo, parent)
+        for name, built in results.items():
+            if not built.is_ok:
                 # value, not msg: the captured build output is the diagnosis.
                 raise HostCommandError(
                     f"build for image {name!r} of repo {unit.repo.name!r} failed "
-                    f"before the use-case stack came up: {res.value}"
+                    f"before the use-case stack came up: {built.result.value}"
                 )
 
 

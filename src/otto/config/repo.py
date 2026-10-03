@@ -37,12 +37,16 @@ SETTINGS_FILENAME = "settings.toml"
 TOML_SETTINGS_PATH = Path(".otto") / SETTINGS_FILENAME
 
 
+ARCHIVE_SUFFIXES = (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz")
+"""Context file names docker reads as a tar archive on ``docker build -``."""
+
+
 @dataclass(frozen=True)
 class DockerImage:
     """A Dockerfile-built image declared by a project."""
 
     name: str
-    """Short logical name used in tags and CLI selection."""
+    """The image repository name docker sees, verbatim; no tag."""
 
     dockerfile: Path
     """Absolute path to the Dockerfile."""
@@ -55,7 +59,15 @@ class DockerImage:
 
     build_args: tuple[tuple[str, str], ...] = ()
     """Frozen list of (name, value) build args. Tuples (not dicts) so the
-    container is hashable and order is preserved for context-hash inputs."""
+    container is hashable and order is preserved."""
+
+    dockerfile_in_archive: str = ""
+    """For an archive ``context``: the Dockerfile's path inside the archive, as written."""
+
+    @property
+    def is_archive(self) -> bool:
+        """True when ``context`` is a tar archive given to docker unopened."""
+        return self.context.name.endswith(ARCHIVE_SUFFIXES)
 
 
 @dataclass(frozen=True)
@@ -113,9 +125,6 @@ class DockerUseCase:
 @dataclass(frozen=True)
 class DockerSettings:
     """Per-repo docker configuration parsed from `[docker]` in `settings.toml`."""
-
-    registry_url: str = "docker.io"
-    """Default registry. Overridable per-image via the image's tag prefix."""
 
     images: tuple[DockerImage, ...] = ()
     """Images this project knows how to build."""

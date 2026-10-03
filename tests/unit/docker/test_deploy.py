@@ -22,7 +22,7 @@ from otto.docker import deployment as deploy_mod
 from otto.docker import resolve as resolve_mod
 from otto.docker.adapter import AdapterResult
 from otto.docker.deployment import UseCaseStack, deploy, deployed, teardown
-from otto.docker.reports import TeardownReport
+from otto.docker.reports import ImageBuild, TeardownReport
 from otto.docker.resolve import UseCaseResolutionError
 from otto.host.element import Element
 from otto.host.errors import HostCommandError
@@ -56,6 +56,18 @@ def _compose_file(
     return DockerCompose(path=path, name=handle, services=tuple(services), users=tuple(users))
 
 
+def _image(name):
+    return SimpleNamespace(
+        name=name,
+        dockerfile=Path("/ctx/Dockerfile"),
+        context=Path("/ctx"),
+        target=None,
+        build_args=(),
+        is_archive=False,
+        dockerfile_in_archive="",
+    )
+
+
 def _repo(name, *fragments, composes=(), images=()):
     """A repo table with docker settings, in the shape resolve/deploy read.
 
@@ -63,14 +75,16 @@ def _repo(name, *fragments, composes=(), images=()):
     strings): ``deploy`` only ever checks the tuple's truthiness, but
     ``compose_build``'s ``_names_for`` (the placement differential pins the
     two verbs against each other) reads ``.name`` off each declared image,
-    the same shape ``DockerImage`` carries.
+    the same shape ``DockerImage`` carries (``is_archive`` is what the
+    build verbs' pre-flight asks of each, and a build dry run renders each
+    one's ``docker build`` command from the rest).
     """
     return SimpleNamespace(
         name=name,
         docker_settings=SimpleNamespace(
             use_cases=tuple(fragments),
             composes=tuple(composes),
-            images=tuple(SimpleNamespace(name=n) for n in images),
+            images=tuple(_image(n) for n in images),
         ),
     )
 
@@ -713,7 +727,9 @@ async def test_a_failed_build_stops_before_up(tmp_path):
         patch.object(
             deploy_mod,
             "build_images",
-            AsyncMock(return_value={"img": _fail("no such base image")}),
+            AsyncMock(
+                return_value={"img": ImageBuild("img", [], None, _fail("no such base image"))}
+            ),
         ),
         pytest.raises(HostCommandError, match="no such base image"),
     ):
@@ -1174,7 +1190,11 @@ async def test_a_successful_build_does_not_stop_the_deployment(tmp_path):
     with (
         _install(lab, [repo]),
         patch.object(
-            deploy_mod, "build_images", AsyncMock(return_value={"img": _ok("repo/img:abc")})
+            deploy_mod,
+            "build_images",
+            AsyncMock(
+                return_value={"img": ImageBuild("img", ["img:latest"], "abc123abc123", _ok())}
+            ),
         ),
     ):
         stack = await deploy("integration", on="test3")

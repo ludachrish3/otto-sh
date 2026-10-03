@@ -181,8 +181,8 @@ def docker_lab(docker_parent) -> Lab:
 @pytest.fixture(scope="module")
 def built_image(docker_parent, docker_repo):
     """Ensure the repo1 ``api`` image is built once for this module."""
-    results = _run(build_images(docker_repo, docker_parent, rebuild=False))
-    assert results["api"].status in (Status.Success, Status.Skipped), results
+    results = _run(build_images(docker_repo, docker_parent))
+    assert results["repo1-api"].is_ok, results
     return results
 
 

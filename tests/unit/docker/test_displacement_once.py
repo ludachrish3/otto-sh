@@ -29,7 +29,7 @@ import pytest
 from otto.cli import docker as docker_cli
 from otto.config.lab import Lab
 from otto.docker import resolve as resolve_mod
-from otto.docker.reports import RepoBuild
+from otto.docker.reports import ImageBuild, RepoBuild
 from otto.docker.resolve import Displacement
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
@@ -124,7 +124,16 @@ def test_compose_build_shows_a_displacement_once(tmp_path, caplog):
     a, b, lab = _two_providers(tmp_path, images=("api",))
     built = AsyncMock(
         return_value=[
-            RepoBuild("b", "test3", "built", {"api": CommandResult(Status.Success, value="tag")})
+            RepoBuild(
+                "b",
+                "test3",
+                "built",
+                {
+                    "api": ImageBuild(
+                        "api", ["api:latest"], "abc123abc123", CommandResult(Status.Success)
+                    )
+                },
+            )
         ]
     )
     with (
@@ -207,7 +216,16 @@ def test_the_live_build_report_renders_through_describe(tmp_path, caplog, sentin
     a, b, lab = _two_providers(tmp_path, images=("api",))
     built = AsyncMock(
         return_value=[
-            RepoBuild("b", "test3", "built", {"api": CommandResult(Status.Success, value="tag")})
+            RepoBuild(
+                "b",
+                "test3",
+                "built",
+                {
+                    "api": ImageBuild(
+                        "api", ["api:latest"], "abc123abc123", CommandResult(Status.Success)
+                    )
+                },
+            )
         ]
     )
     with _install(lab, [a, b]), patch("otto.docker.build_verbs._build_plan", built):

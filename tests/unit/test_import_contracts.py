@@ -144,7 +144,6 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     ],
     # Every lab-loading command places the declared container hosts.
     "from otto.docker.compose import register_declared_container_hosts": [
-        "otto.docker._context_hash",
         "otto.docker.build",
         "otto.docker.staging",
     ],

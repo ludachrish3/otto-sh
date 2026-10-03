@@ -73,8 +73,8 @@ async def stack(test3_lease, sut_dirs_env_module):
     lab = Lab(name="docker_run_test")
     lab.hosts[parent.id] = parent
 
-    build_results = await build_images(repo, parent, rebuild=False)
-    assert build_results["api"].status in (Status.Success, Status.Skipped)
+    build_results = await build_images(repo, parent)
+    assert build_results["repo1-api"].is_ok, build_results
     hosts = await compose_up(repo, lab, on=parent.id)
     try:
         yield hosts["api"]

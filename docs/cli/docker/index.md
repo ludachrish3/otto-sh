@@ -17,10 +17,10 @@ fragments to; `compose build`, `compose up` and `compose down` all speak it.
 
 | otto | docker analogue | scope | `--on` |
 | --- | --- | --- | --- |
-| `otto docker build --on HOST [--repo NAME] [IMAGE...] [--rebuild]` | `docker build` | the selected repos' images, on one host | required |
+| `otto docker build --on HOST [--repo NAME] [IMAGE...] [-t REF]... [--no-cache] [--pull] [--build-arg K=V]... [--target STAGE]` | `docker build` | the selected repos' images, on one host | required |
 | `otto docker ps [--on HOST]` | `docker ps` | containers per host | optional |
 | `otto docker use-cases [USE_CASE]` | none | declared inventory, config only | none |
-| `otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]... [--rebuild]` | `docker compose build` | the images `up` would deploy, placed by the engine | optional collapse |
+| `otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]... [--no-cache] [--pull] [--build-arg K=V]...` | `docker compose build` | the images `up` would deploy, placed by the engine | optional collapse |
 | `otto docker compose up [USE_CASE [SERVICE]...] [--on HOST] [--no-build] [--provide]... [--env]... [--env-file]...` | `docker compose up` | deploy a use-case | optional collapse |
 | `otto docker compose down [USE_CASE [SERVICE]...] [--on HOST] [--provide]...` | `docker compose down` | tear a use-case down | optional collapse |
 
@@ -28,13 +28,17 @@ fragments to; `compose build`, `compose up` and `compose down` all speak it.
 use-case. Everything use-case-scoped is a `compose` verb, mirroring docker's
 own `docker build` / `docker compose` split.
 
+Both build verbs take `docker build`'s own flags; {doc}`build` is the one home for them.
+
 ## Synopsis
 
 ```text
-otto docker build     --on HOST [--repo NAME] [IMAGE...] [--rebuild]
+otto docker build     --on HOST [--repo NAME] [IMAGE...] [-t/--tag REF]... [--no-cache]
+                      [--pull] [--build-arg K=V]... [--target STAGE]
 otto docker ps        [--on HOST]
 otto docker use-cases [USE_CASE]
-otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]... [--rebuild]
+otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]...
+                          [--no-cache] [--pull] [--build-arg K=V]...
 otto docker compose up    [USE_CASE [SERVICE]...] [--on HOST] [--no-build]
                           [--provide CAP=REPO]... [--env K=V]... [--env-file PATH]...
 otto docker compose down  [USE_CASE [SERVICE]...] [--on HOST] [--provide CAP=REPO]...
@@ -57,7 +61,7 @@ otto host test3.integration.api get /etc/os-release ./
 Container ids are also synthesized at lab-load time **before** any
 `otto docker compose up`, so tab completion works immediately. Accessing a
 declared-but-stopped container auto-starts its compose stack on demand
-(`build=False`, so access never triggers an image rebuild). If the stack
+(`build=False`, so access never triggers an image build). If the stack
 can't be started — for example its image hasn't been built — the command
 fails fast with a clear "run `otto docker compose up` first" error.
 
@@ -67,6 +71,23 @@ delegates to its parent host instead of being a parallel transport stack.
 Configuration lives with the rest of the project's settings: the per-project
 `[docker]` block in {doc}`../../configuration/settings`, and the per-lab
 `docker_capable`/`roles` host fields in {doc}`../../configuration/lab-config`.
+
+(docker-persistent-shell-state)=
+## Persistent shell state
+
+`run()` preserves shell state (`cd`, environment variables, shell
+variables) across separate calls — same as `LocalHost` and `UnixHost`:
+
+```python
+await api.run(["cd /tmp", "pwd"])  # prints /tmp
+await api.run("export FOO=bar")
+await api.run("echo $FOO")  # prints bar
+```
+
+`exec()` is the stateless, concurrent-safe counterpart — each call
+spawns a fresh `docker exec` against the parent. Use `exec()` when
+you want to fan out independent commands; use `run()` when you need
+stateful or interactive flows.
 
 ## Shared directories
 
@@ -250,5 +271,4 @@ compose/down
 :hidden:
 
 use-cases
-rebuild-policy
 ```

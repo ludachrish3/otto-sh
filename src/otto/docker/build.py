@@ -1,5 +1,5 @@
 """
-Docker image building, with context-hash skipping.
+Docker image building.
 
 The public entry point is :func:`build_images`. It can be called from the
 CLI (``otto docker build``) and directly from instructions/suites; both
@@ -9,144 +9,171 @@ share the exact same code path so semantics never diverge.
 import logging
 import shlex
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 
-from ..config.repo import DockerImage, DockerSettings, Repo
-from ..host.host import Host, is_dry_run, refuse_declined_fact
+from ..config.repo import DockerImage, Repo
+from ..host.host import Host, is_dry_run
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
-from ._context_hash import context_hash
-from .staging import stage_image_context
+from .reports import ImageBuild
+from .staging import (
+    image_archive_path,
+    image_build_dir,
+    stage_image_archive,
+    stage_image_context,
+)
 
 logger = logging.getLogger(__name__)
 
 
-_IMPLICIT_REGISTRIES = {"", "docker.io"}
+@dataclass(frozen=True)
+class BuildOptions:
+    """The ``docker build`` flags a caller may add; each is docker's own."""
+
+    tags: list[str] = field(default_factory=list)
+    """``-t`` references, as typed. Empty: the image is tagged ``<name>:latest``."""
+    no_cache: bool = False
+    """``--no-cache``."""
+    pull: bool = False
+    """``--pull``."""
+    build_args: dict[str, str] = field(default_factory=dict)
+    """``--build-arg`` pairs, added to the declared ones; a repeated key wins."""
+    target: str | None = None
+    """``--target``, replacing the declared one."""
 
 
-def _tag_base(registry_url: str, project: str, image: DockerImage) -> str:
-    """Return ``<project>-<image>``, optionally prefixed with a non-default registry.
+def image_references(image: DockerImage, options: BuildOptions) -> list[str]:
+    """Return the references this build tags: the typed ones, or ``<name>:latest``."""
+    return list(options.tags) or [f"{image.name}:latest"]
 
-    Bare names (no ``<registry>/`` prefix) are kept for the default registry
-    so a user-authored ``compose.yml`` can reference the image as
-    ``repo1-api:latest`` and resolve to what otto built locally. A
-    non-default registry is included in the tag so push targets are explicit.
+
+def build_command(project: str, image: DockerImage, options: BuildOptions) -> str:
+    """Render the one ``docker build`` command for *image*; pure, so a dry run can show it.
+
+    A directory context is built from its staged copy. An archive context is
+    given to docker on stdin, unopened, and its Dockerfile is named by the
+    path it has inside the archive.
     """
-    base = f"{project}-{image.name}"
-    if registry_url and registry_url not in _IMPLICIT_REGISTRIES:
-        base = f"{registry_url}/{base}"
-    return base
+    if image.is_archive:
+        dockerfile_arg = image.dockerfile_in_archive
+        context_arg = f"- < {shlex.quote(str(image_archive_path(project, image)))}"
+    else:
+        remote_ctx = image_build_dir(project, image.name)
+        # Resolve the Dockerfile path relative to the staged context. If the
+        # user-declared Dockerfile lives outside the original context, the tar
+        # step put it at the root of remote_ctx under its basename.
+        try:
+            dockerfile_rel = image.dockerfile.relative_to(image.context).as_posix()
+        except ValueError:
+            dockerfile_rel = image.dockerfile.name
+        dockerfile_arg = str(remote_ctx / dockerfile_rel)
+        context_arg = shlex.quote(str(remote_ctx))
+
+    flags: list[str] = []
+    for reference in image_references(image, options):
+        flags.extend(["-t", shlex.quote(reference)])
+    flags.extend(["-f", shlex.quote(dockerfile_arg)])
+    target = options.target or image.target
+    if target:
+        flags.extend(["--target", shlex.quote(target)])
+    merged = {**dict(image.build_args), **options.build_args}
+    for arg_name, arg_value in merged.items():
+        flags.extend(["--build-arg", shlex.quote(f"{arg_name}={arg_value}")])
+    if options.no_cache:
+        flags.append("--no-cache")
+    if options.pull:
+        flags.append("--pull")
+    return f"docker build {' '.join(flags)} {context_arg}"
 
 
-def image_full_tag(registry_url: str, project: str, image: DockerImage, hash_hex: str) -> str:
-    """Construct the ``<project>-<image>:<hash>`` tag (with registry prefix when non-default)."""
-    return f"{_tag_base(registry_url, project, image)}:{hash_hex[:16]}"
+_ID_FORMAT = "{{.Id}}"
+_LIST_FORMAT = "{{.Repository}}:{{.Tag}} {{.ID}}"
 
 
-def image_latest_tag(registry_url: str, project: str, image: DockerImage) -> str:
-    """Construct the ``<project>-<image>:latest`` tag (with registry prefix when non-default)."""
-    return f"{_tag_base(registry_url, project, image)}:latest"
+async def _read_back(
+    parent: Host, references: list[str]
+) -> "tuple[list[str], str | None, CommandResult]":
+    """Ask the daemon what it lists for the image the first of *references* names.
 
-
-async def _image_exists(parent: Host, full_tag: str) -> bool:
-    """Whether *full_tag* is already built on *parent*.
-
-    The one absorbed failure in this module that is deliberately kept: a
-    daemon error is indistinguishable here from "no such image", and folding
-    both into False means otto REBUILDS. That is correct-but-slow, the safe
-    direction — the alternative, treating an unanswerable query as "cached",
-    would skip a build the user asked for.
-
-    A dry run's decline is NOT that failure and does not get that fold. The
-    reasoning above turns on a daemon that answered badly; a dry run never
-    asked, and "correct-but-slow" inverts the moment the query is a
-    non-measurement — ``False`` sends ``_build_one`` down the BUILD arm, so
-    the fabrication does not merely mislead a branch, it commissions work.
-    The return type is ``bool`` and cannot carry "I did not look", which is
-    :func:`~otto.host.host.refuse_declined_fact`'s exact case.
+    The id is the one ``docker images`` prints, and the references are the rows
+    of ``docker images <reference>`` carrying that id: a reference with no tag
+    part lists every tag of its repository, and only the just-built image's are
+    this build's. Nothing here is composed by otto.
     """
-    result = await parent.exec(f"docker image inspect {shlex.quote(full_tag)}")
-    refuse_declined_fact(result, asked=f"image_exists({full_tag!r})")
-    return result.status.is_ok
+    inspected = await parent.exec(
+        f"docker image inspect --format {shlex.quote(_ID_FORMAT)} {shlex.quote(references[0])}"
+    )
+    if not inspected.status.is_ok:
+        return [], None, inspected
+    full_id = str(inspected.value).strip().removeprefix("sha256:")
+
+    found: list[str] = []
+    image_id: str | None = None
+    listed = inspected
+    for reference in references:
+        listed = await parent.exec(
+            f"docker images --format {shlex.quote(_LIST_FORMAT)} {shlex.quote(reference)}"
+        )
+        if not listed.status.is_ok:
+            return [], None, listed
+        for line in str(listed.value).splitlines():
+            row_reference, _, row_id = line.strip().rpartition(" ")
+            if row_reference and row_id and full_id.startswith(row_id):
+                image_id = row_id
+                if row_reference not in found:
+                    found.append(row_reference)
+    if not found:
+        missing = CommandResult(
+            Status.Failed,
+            value=(
+                f"docker build succeeded, but the daemon lists no image for {', '.join(references)}"
+            ),
+            command=listed.command,
+            retcode=listed.retcode,
+        )
+        return [], None, missing
+    return found, image_id, listed
 
 
 async def _build_one(
-    parent: Host,
-    project: str,
-    settings: DockerSettings,
-    image: DockerImage,
-    *,
-    rebuild: bool,
-) -> CommandResult:
-    """Build a single image on *parent*.
+    parent: Host, project: str, image: DockerImage, options: BuildOptions
+) -> ImageBuild:
+    """Build a single image on *parent* and read back what the daemon lists for it.
 
-    Returns the build's own :class:`~otto.result.CommandResult`. ``value``
-    carries the full tag on a fresh or cached build; a failure returns the
-    failing result whole — the ``docker build``, or on the cached path the
-    ``docker tag`` that re-points ``:latest`` — so ``value`` holds the captured
-    output and ``command`` / ``retcode`` / ``timed_out`` survive. ``value`` is
-    the payload slot on every branch — ``msg`` stays empty, per its contract.
+    Nothing is asked of the daemon first and nothing is skipped: docker's layer
+    cache decides what a rebuild reuses. A failed build returns its own result
+    whole, so ``value`` holds the captured output and ``command`` / ``retcode`` /
+    ``timed_out`` survive; the daemon is asked only after a build that succeeded,
+    and a build it does not list is a failure.
     """
-    hash_hex = context_hash(image)
-    full_tag = image_full_tag(settings.registry_url, project, image, hash_hex)
-    latest_tag = image_latest_tag(settings.registry_url, project, image)
-
-    if not rebuild and await _image_exists(parent, full_tag):
-        logger.info(rf"\[docker] {full_tag}: already built, skipping")
-        # Make sure :latest also points at the cached digest — and say so if it
-        # does not. Discarding this result reported "cached -> <tag>" while
-        # :latest still resolved to a PREVIOUS build, and :latest is the tag a
-        # user compose.yml names, so the stack would come up on the wrong image
-        # with nothing anywhere reporting a failure.
-        tagged = await parent.exec(f"docker tag {shlex.quote(full_tag)} {shlex.quote(latest_tag)}")
-        if not tagged.status.is_ok:
-            # Named here because neither caller renders `command`: without this
-            # the transcript reads "already built, skipping" and then FAILED
-            # with the daemon's message, and nothing says the failing step was
-            # the re-tag rather than a build that never ran.
-            logger.error(rf"\[docker] {full_tag}: could not re-point {latest_tag}")
-            # Whole, like the build branch below: `value` carries the daemon's
-            # output and command/retcode survive for the caller to render.
-            return tagged
-        # retcode -1: no build ran (is_ok short-circuits exit_code to 0).
-        # The tag goes in `value`, never `msg`: msg is documented as a human
-        # diagnostic, empty on success, and every CommandResult an exec
-        # produces leaves it empty — so `value` is the one slot a caller can
-        # read on every branch.
-        return CommandResult(Status.Skipped, value=full_tag, command="", retcode=-1)
-
-    logger.info(rf"\[docker] building {full_tag}")
-    remote_ctx = await stage_image_context(parent, project, image)
-
-    # Resolve the Dockerfile path relative to the staged context. If the
-    # user-declared Dockerfile lives outside the original context, the tar
-    # step put it at the root of remote_ctx under its basename.
-    try:
-        dockerfile_rel = image.dockerfile.relative_to(image.context).as_posix()
-    except ValueError:
-        dockerfile_rel = image.dockerfile.name
-
-    flags: list[str] = [
-        "-t",
-        shlex.quote(full_tag),
-        "-t",
-        shlex.quote(latest_tag),
-        "-f",
-        shlex.quote(str(remote_ctx / dockerfile_rel)),
-    ]
-    if image.target:
-        flags.extend(["--target", shlex.quote(image.target)])
-    for arg_name, arg_value in image.build_args:
-        flags.extend(["--build-arg", shlex.quote(f"{arg_name}={arg_value}")])
-
-    cmd = f"docker build {' '.join(flags)} {shlex.quote(str(remote_ctx))}"
+    references = image_references(image, options)
+    logger.info(rf"\[docker] building {references[0]}")
     # Unbounded on purpose: an image build/pull has no defensible bound, and a
     # made-up constant would be wrong on a slower builder. `inf` states that.
-    result = await parent.exec(cmd, timeout=float("inf"))
-    if not result.status.is_ok:
-        # Whole, not summarized: the caller wants the build output, and the
-        # retcode/command are diagnostics the tuple used to discard.
-        return result
-    return CommandResult(Status.Success, value=full_tag, command=cmd, retcode=0)
+    if image.is_archive:
+        from ..host.connections import teardown_step  # lazy: keeps the import budget
+
+        remote = await stage_image_archive(parent, project, image)
+        try:
+            result = await parent.exec(build_command(project, image, options), timeout=float("inf"))
+        finally:
+            # Best effort: a failed removal must not replace the build's own outcome.
+            with teardown_step(parent.id, "build archive removal"):
+                removed = await parent.exec(f"rm -f {shlex.quote(str(remote))}")
+                if not removed.is_ok:
+                    logger.warning(
+                        f"{parent.id}: could not remove the uploaded archive {remote}: "
+                        f"{removed.value.strip()}"
+                    )
+    else:
+        await stage_image_context(parent, project, image)
+        result = await parent.exec(build_command(project, image, options), timeout=float("inf"))
+    if not result.is_ok:
+        return ImageBuild(image.name, [], None, result)
+    found, image_id, read = await _read_back(parent, references)
+    if image_id is None:
+        return ImageBuild(image.name, [], None, read)
+    return ImageBuild(image.name, found, image_id, result)
 
 
 async def build_images(
@@ -154,8 +181,8 @@ async def build_images(
     parent: Host,
     *,
     image_names: Iterable[str] | None = None,
-    rebuild: bool = False,
-) -> dict[str, CommandResult]:
+    options: BuildOptions | None = None,
+) -> dict[str, ImageBuild]:
     """Build all (or selected) images for *repo* on *parent*.
 
     Args:
@@ -164,22 +191,18 @@ async def build_images(
         parent: A docker-capable lab host. Builds happen here.
         image_names: Optional filter — only build images whose ``name`` is
             in this iterable. ``None`` builds everything declared.
-        rebuild: When ``True``, skip the context-hash existence check and
-            always invoke ``docker build``.
+        options: The ``docker build`` flags to add; ``None`` adds none.
 
     Returns:
-        Mapping of image name to a :class:`~otto.result.CommandResult`. The
-        status is :attr:`~otto.utils.Status.Skipped` for images that already
-        existed *and whose* ``:latest`` *was re-pointed at them*,
-        :attr:`~otto.utils.Status.Success` for fresh builds, and a failure
-        status otherwise. ``value`` is the full tag on success/skip; on
-        failure the parent's own result is returned whole, so ``value`` holds
-        the captured output and ``command`` / ``retcode`` are preserved.
+        Mapping of image name to its :class:`~otto.docker.reports.ImageBuild`:
+        the references and id the daemon lists for the built image, or a
+        failing ``result`` returned whole, so ``value`` holds the captured
+        output and ``command`` / ``retcode`` are preserved.
 
     Raises:
         ~otto.result.CommandNotRunError: this is a dry run, and at least one
             image was selected. A dry run builds nothing, so there is no
-            honest dict to return -- see the arm below.
+            ``docker build`` result to return -- see the arm below.
     """
     settings = repo.docker_settings
     if not settings.images:
@@ -194,27 +217,20 @@ async def build_images(
     # Below the pure filtering, above every device touch. An empty selection
     # still answers {} because "this repo declares no such image" is settled
     # from configuration and is equally true in a dry run; a NON-empty one has
-    # no honest answer at all. Every value in the dict is documented to carry
-    # the tag that now exists on the parent, and under a dry run none does --
+    # no honest answer at all. Every value in the dict is the result of a
+    # `docker build` that ran on the parent, and under a dry run none did --
     # so a synthesized dict would fabricate one verdict per image. Raising
     # here rather than at the first `exec` is what makes the message name the
-    # BUILD; the decline reached from `_image_exists` or `stage_image_context`
-    # names a `docker image inspect` or an `rm -rf`, which is the wrong story
-    # told at the wrong altitude.
+    # BUILD; the decline reached from `stage_image_context` names an `rm -rf`,
+    # which is the wrong story told at the wrong altitude.
     if selected and is_dry_run():
         raise CommandNotRunError(
             f"build_images({repo.name}: {', '.join(img.name for img in selected)})",
             parent.id,
-            "No context was staged and no image was built or inspected.",
+            "No context was staged and no image was built.",
         )
 
-    results: dict[str, CommandResult] = {}
+    results: dict[str, ImageBuild] = {}
     for image in selected:
-        results[image.name] = await _build_one(
-            parent,
-            repo.name,
-            settings,
-            image,
-            rebuild=rebuild,
-        )
+        results[image.name] = await _build_one(parent, repo.name, image, options or BuildOptions())
     return results

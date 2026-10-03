@@ -13,6 +13,12 @@ over the merged file set.
 
 ```toml
 # repo-a/.otto/settings.toml
+[[docker.images]]
+name = "repo-a-api"                   # the image name, verbatim; only for an
+                                      # image otto builds
+dockerfile = "docker/Dockerfile"
+context = "docker"
+
 [[docker.composes]]
 name = "core"                         # a handle for this file
 path = "docker/compose.yml"

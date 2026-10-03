@@ -81,8 +81,8 @@ async def lab_with_parent(parent):
 @pytest_asyncio.fixture
 async def built_image(parent, repo1):
     """Ensure the repo1 image is built once for tests in this file."""
-    results = await build_images(repo1, parent, rebuild=False)
-    assert results["api"].status in (Status.Success, Status.Skipped), results
+    results = await build_images(repo1, parent)
+    assert results["repo1-api"].is_ok, results
     return results
 
 

@@ -66,8 +66,8 @@ async def test_instruction_uses_composed_context_manager(parent_lab):
     repo = Repo(sut_dir=REPO1_DIR)
     container_id = f"{parent.id}.repo1.api"
 
-    build_results = await build_images(repo, parent, rebuild=False)
-    assert build_results["api"].status in (Status.Success, Status.Skipped)
+    build_results = await build_images(repo, parent)
+    assert build_results["repo1-api"].is_ok, build_results
 
     # Mimic: @instruction async def my_workflow(): async with composed(...) as ...
     async def my_workflow() -> str:
@@ -91,8 +91,8 @@ async def test_session_fixture_holds_stack_for_inner_users(parent_lab):
     repo = Repo(sut_dir=REPO1_DIR)
     container_id = f"{parent.id}.repo1.api"
 
-    build_results = await build_images(repo, parent, rebuild=False)
-    assert build_results["api"].status in (Status.Success, Status.Skipped)
+    build_results = await build_images(repo, parent)
+    assert build_results["repo1-api"].is_ok, build_results
 
     async with composed(repo, lab, on=parent.id, own=True) as outer_hosts:
         outer_id = outer_hosts["api"].container_id

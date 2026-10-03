@@ -327,10 +327,9 @@ def _oldos_repo() -> Repo:
     ``tests/e2e/docker/``) is never touched or referenced."""
     repo = Repo(sut_dir=REPO2_DIR)
     repo.docker_settings = DockerSettings(
-        registry_url=repo.docker_settings.registry_url,
         images=(
             DockerImage(
-                name="oldos",
+                name="repo2-oldos",
                 dockerfile=OLDOS_DOCKER_DIR / "Dockerfile",
                 context=OLDOS_DOCKER_DIR,
             ),

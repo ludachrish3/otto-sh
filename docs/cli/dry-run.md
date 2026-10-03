@@ -294,13 +294,15 @@ the converge directly.
 
 ## `otto docker` previews the exact command
 
-`otto --dry-run docker compose up <usecase>` is the one place a preview is *more* than
+`otto --dry-run docker compose up <usecase>` is a place a preview is *more* than
 a description. Selection, placement, env assembly and a repo's compose adapter
 are all pure — they contact no device — so otto runs the whole resolution and
 declines at the first real touch, printing the resolved plan **and the exact
 per-host `docker compose` command it would have issued**, env prefix included.
 `down` declines the same way with its resolved plan. See
-{doc}`docker/use-cases` for what the plan's parts mean.
+{doc}`docker/use-cases` for what the plan's parts mean. `build` and
+`compose build` preview the exact `docker build` per image, as
+{doc}`docker/build` describes under its dry run.
 
 `otto docker use-cases` opts out of the seam's generic stop as well, because it
 is already a configuration-only inventory: under `--dry-run` it prints the same

@@ -42,6 +42,7 @@ from otto.docker.compose import (
     unregister_container_hosts,
     use_case_project,
 )
+from otto.docker.reports import ImageBuild
 from otto.host import product as product_mod
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
@@ -68,6 +69,23 @@ def _ok(out: str = "") -> CommandResult:
 
 def _fail(out: str = "") -> CommandResult:
     return CommandResult(Status.Failed, value=out, command="", retcode=1)
+
+
+@pytest.fixture(autouse=True)
+def _daemon_lists_the_built_image():
+    """The parent here is a mock that answers every command with success.
+
+    ``compose_up`` runs the real ``build_images`` against it, and the
+    read-back that follows a build would find an empty daemon listing and call
+    the build a failure. What the daemon lists is exercised in ``test_build``;
+    here the daemon lists the image, and ``docker build`` still runs.
+    """
+
+    async def listed(parent, references):
+        return list(references), "abc123abc123", _ok()
+
+    with patch("otto.docker.build._read_back", new=listed):
+        yield
 
 
 # The libnetwork race compose_up retries past: the network is Created, the
@@ -592,8 +610,6 @@ async def test_compose_up_builds_images_first_by_default(tmp_path):
 
     async def exec_side_effect(cmd, *_, **__):
         call_log.append(cmd)
-        if cmd.startswith("docker image inspect"):
-            return _ok()  # pretend the image is already built
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
             return _ok("")
         if "compose" in cmd and " up -d" in cmd:
@@ -607,9 +623,8 @@ async def test_compose_up_builds_images_first_by_default(tmp_path):
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     await compose_up(repo, lab)
-    # The build path must have been consulted (docker image inspect on the
-    # full hash tag is the entry point of build_images).
-    assert any(c.startswith("docker image inspect") for c in call_log), call_log
+    # The build path must have run: `docker build` itself.
+    assert any(c.startswith("docker build ") for c in call_log), call_log
 
 
 @pytest.mark.asyncio
@@ -634,7 +649,7 @@ async def test_compose_up_skips_build_when_build_false(tmp_path):
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     await compose_up(repo, lab, build=False)
-    assert not any(c.startswith("docker image inspect") for c in call_log), (
+    assert not any(c.startswith("docker build ") for c in call_log), (
         "build=False must skip the build path entirely"
     )
 
@@ -1795,10 +1810,15 @@ async def test_compose_up_build_failure_raises(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()
 
-    # build_images returns dict[str, CommandResult]; a non-ok result trips the branch
+    # build_images returns dict[str, ImageBuild]; a non-ok build trips the branch
     fake_results = {
-        "api": CommandResult(
-            Status.Failed, value="push access denied", command="docker build", retcode=1
+        "api": ImageBuild(
+            "api",
+            [],
+            None,
+            CommandResult(
+                Status.Failed, value="push access denied", command="docker build", retcode=1
+            ),
         )
     }
 
@@ -2104,8 +2124,8 @@ async def test_stage_image_context_fails_when_the_dir_cannot_be_prepared(tmp_pat
 
     `&&` means a failed rm skips the mkdir silently, and the later `tar -xf`
     OVERLAYS rather than replaces — so docker build would see a context still
-    holding a file the user deleted locally and produce a wrong image under a
-    context hash that says it is right.
+    holding a file the user deleted locally and produce an image that
+    carries a file the user already deleted.
     """
     from otto.config.repo import DockerImage
     from otto.docker.staging import stage_image_context

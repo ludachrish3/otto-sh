@@ -16,6 +16,7 @@ from otto.config.repo import DockerCompose
 from otto.docker.staging import (
     _relative_bind_sources,
     stage_compose_files,
+    stage_key,
     warn_relative_bind_sources,
 )
 from otto.host.element import Element
@@ -325,3 +326,16 @@ def test_warn_names_the_staged_path_verbatim_not_a_local_symlink_target(tmp_path
 
     assert str(staged_dir / "data") in caplog.text
     assert str(real_target) not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("name", "key"),
+    [
+        ("api", "api"),
+        ("team/api", "team_api"),
+        ("registry.example:5000/team/api", "registry.example_5000_team_api"),
+    ],
+)
+def test_stage_key_flattens_a_reference_into_one_path_segment(name, key):
+    assert stage_key(name) == key
+    assert "/" not in stage_key(name)
