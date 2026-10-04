@@ -48,8 +48,10 @@ class _FakeBackend(ReservationBackendBase):
         super().__init__(username=username)
         self.owners = owners  # resource -> username
         self.ends = dict(ends or {})  # resource -> datetime, for the expiry warning
+        self.fetches = 0
 
     def fetch_reservations(self, username, start=None, end=None):
+        self.fetches += 1
         return [
             Reservation(user=username, resource=r, end=self.ends.get(r))
             for r, u in self.owners.items()
@@ -105,6 +107,7 @@ class TestReservationGateResultMatrix:
         assert outcome.checked is False
         assert outcome.skipped is True
         assert outcome.warning is not None
+        assert outcome.report is None
         assert "SKIPPED" in outcome.warning
         assert "alice" in outcome.warning
         assert "test_lab" in outcome.warning
@@ -160,7 +163,9 @@ class TestReservationGateResultMatrix:
 
         outcome = gate.evaluate()
 
-        assert outcome == ReservationGateResult(checked=True, skipped=False, warning=None)
+        assert dataclasses.replace(outcome, report=None) == ReservationGateResult(
+            checked=True, skipped=False, warning=None
+        )
 
     def test_backend_configured_but_identity_none_raises_runtime_error(self, monkeypatch):
         lab = _lab_with_resources()
@@ -195,7 +200,10 @@ def test_gate_requires_only_the_fleet_in_play(tmp_path, monkeypatch):
         identity=ResolvedIdentity(username="chris", source="$USER"),
     )
 
-    assert gate.evaluate() == ReservationGateResult(checked=True, skipped=False, warning=None)
+    outcome = gate.evaluate()
+    assert dataclasses.replace(outcome, report=None) == ReservationGateResult(
+        checked=True, skipped=False, warning=None
+    )
 
 
 def test_gate_demands_every_host_when_no_repo_declares_a_fleet(tmp_path, monkeypatch):
@@ -273,7 +281,10 @@ def test_empty_declared_fleet_checks_the_lab_level_only(tmp_path, monkeypatch):
         identity=ResolvedIdentity(username="chris", source="$USER"),
     )
 
-    assert gate.evaluate() == ReservationGateResult(checked=True, skipped=False, warning=None)
+    outcome = gate.evaluate()
+    assert dataclasses.replace(outcome, report=None) == ReservationGateResult(
+        checked=True, skipped=False, warning=None
+    )
 
 
 def test_the_gate_ignores_resources_declared_on_the_builtin_local_host(monkeypatch):
@@ -291,7 +302,10 @@ def test_the_gate_ignores_resources_declared_on_the_builtin_local_host(monkeypat
         identity=ResolvedIdentity(username="alice", source="$USER"),
     )
 
-    assert gate.evaluate() == ReservationGateResult(checked=True, skipped=False, warning=None)
+    outcome = gate.evaluate()
+    assert dataclasses.replace(outcome, report=None) == ReservationGateResult(
+        checked=True, skipped=False, warning=None
+    )
 
 
 def test_the_gate_still_enforces_a_lab_declared_local_host(monkeypatch):
@@ -349,7 +363,7 @@ def test_gate_warns_when_a_required_reservation_is_expiring(caplog, monkeypatch)
     with caplog.at_level(logging.WARNING, logger="otto"):
         outcome = gate.evaluate()
 
-    assert outcome == ReservationGateResult(checked=True, skipped=False, warning=None)
+    assert (outcome.checked, outcome.skipped, outcome.warning) == (True, False, None)
     assert "rack1" in caplog.text
     assert "expires" in caplog.text.lower()
 
@@ -503,3 +517,186 @@ def test_an_empty_requirement_never_reaches_the_expiry_helper(caplog, monkeypatc
         assert gate.evaluate().checked is True
 
     assert "expires" not in caplog.text.lower()
+
+
+class TestGateReportAndHosts:
+    def test_evaluate_with_an_explicit_lab_needs_no_context(self):
+        backend = _FakeBackend(owners={"rack1": "alice"}, username="alice")
+        gate = ReservationGate(
+            backend=backend, identity=ResolvedIdentity(username="alice", source="$USER")
+        )
+        outcome = gate.evaluate(_lab_declaring("rack1"))
+        assert outcome.checked is True
+        assert outcome.report is not None
+        assert outcome.report.covered
+
+    def test_evaluate_refusal_carries_the_report(self, monkeypatch):
+        lab = _lab_with_resources()
+        install_scoped_context(monkeypatch, lab, [])
+        gate = ReservationGate(
+            backend=_FakeBackend(owners={}, username="alice"),
+            identity=ResolvedIdentity(username="alice", source="$USER"),
+        )
+        with pytest.raises(MissingReservationError) as exc:
+            gate.evaluate()
+        assert [m.resource for m in exc.value.report.missing] == ["rack1"]
+
+    def test_a_refusal_is_never_trailed_by_an_expiry_nudge(self, caplog):
+        import logging
+
+        from otto.reservations import reset_expiry_warnings
+
+        reset_expiry_warnings()
+        gate = ReservationGate(
+            backend=_FakeBackend(
+                owners={"rack1": "alice"}, username="alice", ends={"rack1": _soon(1)}
+            ),
+            identity=ResolvedIdentity(username="alice", source="$USER"),
+        )
+        with (
+            caplog.at_level(logging.WARNING, logger="otto"),
+            pytest.raises(MissingReservationError),
+        ):
+            gate.evaluate(_lab_declaring("rack1", "rack2"))
+        assert "expires" not in caplog.text.lower()
+
+    def test_report_under_skip_builds_the_backend_lazily(self):
+        built = []
+
+        def _factory():
+            built.append(True)
+            return _FakeBackend(owners={"rack1": "alice"}, username="alice")
+
+        gate = ReservationGate(
+            backend=None,
+            identity=ResolvedIdentity(username="alice", source="$USER"),
+            skip_check=True,
+            backend_factory=_factory,
+        )
+        report = gate.report(_lab_declaring("rack1"))
+        assert built == [True]
+        assert report.covered
+
+    def test_identity_report_names_the_backend(self):
+        gate = ReservationGate(
+            backend=_FakeBackend(owners={}, username="alice"),
+            identity=ResolvedIdentity(username="alice", source="--holder"),
+        )
+        info = gate.identity_report()
+        assert (info.username, info.source, info.backend_name) == ("alice", "--holder", "fake")
+
+    def test_identity_report_without_a_backend_says_none(self):
+        gate = ReservationGate(identity=ResolvedIdentity(username="alice", source="$USER"))
+        assert gate.identity_report().backend_name == "<none>"
+
+    def _gate(self, owners):
+        backend = _FakeBackend(owners=owners, username="alice")
+        gate = ReservationGate(
+            backend=backend, identity=ResolvedIdentity(username="alice", source="$USER")
+        )
+        return gate, backend
+
+    def test_check_hosts_skips_fleet_and_resourceless_hosts_without_a_query(self, monkeypatch):
+        # h-in is in the fleet and declares a slot nobody holds, so only the fleet
+        # filter keeps it out of the query; h-bare is outside it but declares nothing.
+        lab = fleet_lab(("h-in", "a"), ("h-bare", "a"))
+        lab.hosts["h-in"].resources = frozenset({"slot-in"})
+        lab.resources = {"rack1"}  # a real requirement, so a stray query would reach the backend
+        install_scoped_context(monkeypatch, lab, [])
+        gate, backend = self._gate({})
+        monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
+        assert gate.check_hosts(lab, [lab.hosts["h-in"], lab.hosts["h-bare"]]) is None
+        assert backend.fetches == 0
+
+    def test_a_check_hosts_refusal_is_never_trailed_by_an_expiry_nudge(self, monkeypatch, caplog):
+        import logging
+
+        from otto.reservations import reset_expiry_warnings
+
+        reset_expiry_warnings()
+        lab = fleet_lab(("h-in", "a"), ("h-out", "a"))
+        lab.resources = {"rack1"}
+        lab.hosts["h-out"].resources = frozenset({"slot-out"})
+        install_scoped_context(monkeypatch, lab, [])
+        monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
+        backend = _FakeBackend(
+            owners={"rack1": "alice"}, username="alice", ends={"rack1": _soon(1)}
+        )
+        gate = ReservationGate(
+            backend=backend, identity=ResolvedIdentity(username="alice", source="$USER")
+        )
+        with (
+            caplog.at_level(logging.WARNING, logger="otto"),
+            pytest.raises(MissingReservationError),
+        ):
+            gate.check_hosts(lab, [lab.hosts["h-out"]])
+        assert "expires" not in caplog.text.lower()
+
+    def test_report_without_a_backend_or_a_factory_raises(self):
+        gate = ReservationGate(identity=ResolvedIdentity(username="alice", source="$USER"))
+        with pytest.raises(RuntimeError, match="no backend and no backend_factory"):
+            gate.report(_lab_declaring("rack1"))
+
+    def test_check_hosts_refuses_an_unheld_outside_host_in_one_report(self, monkeypatch):
+        lab = fleet_lab(("h-in", "a"), ("h-a", "a"), ("h-b", "a"))
+        lab.hosts["h-a"].resources = frozenset({"slot-a"})
+        lab.hosts["h-b"].resources = frozenset({"slot-b"})
+        install_scoped_context(monkeypatch, lab, [])
+        monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
+        gate, backend = self._gate({})
+        with pytest.raises(MissingReservationError) as exc:
+            gate.check_hosts(lab, [lab.hosts["h-a"], lab.hosts["h-b"]])
+        assert [m.resource for m in exc.value.report.missing] == ["slot-a", "slot-b"]
+        assert backend.fetches == 1
+
+    def test_check_hosts_skips_the_builtin_local_host_but_not_a_labs_own_local(self, monkeypatch):
+        # The built-in host is handed a resource: the hostile condition that
+        # makes the exclusion falsifiable (see add_builtin_local).
+        lab = add_builtin_local(Lab(name="test_lab"), resources={"x"})
+        install_scoped_context(monkeypatch, lab, [])
+        monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", set)
+        gate, _ = self._gate({})
+        assert gate.check_hosts(lab, [lab.hosts["local"]]) is None
+
+        own = fleet_lab(("local", "a"))
+        own.hosts["local"].resources = frozenset({"x"})
+        install_scoped_context(monkeypatch, own, [])
+        with pytest.raises(MissingReservationError):
+            gate.check_hosts(own, [own.hosts["local"]])
+
+    def test_check_hosts_is_a_no_op_under_skip(self, monkeypatch):
+        lab = fleet_lab(("h-a", "a"))
+        lab.hosts["h-a"].resources = frozenset({"x"})
+        install_scoped_context(monkeypatch, lab, [])
+        gate = ReservationGate(
+            backend=_FakeBackend(owners={}, username="alice"),
+            identity=ResolvedIdentity(username="alice", source="$USER"),
+            skip_check=True,
+        )
+        assert gate.check_hosts(lab, [lab.hosts["h-a"]]) is None
+
+    def test_one_expiring_lab_booking_is_announced_once_across_both_checks(
+        self, monkeypatch, caplog
+    ):
+        import logging
+        from datetime import datetime, timedelta, timezone
+
+        from otto.reservations import reset_expiry_warnings
+
+        reset_expiry_warnings()
+        end = datetime.now(tz=timezone.utc) + timedelta(minutes=2)
+        lab = fleet_lab(("h-in", "a"), ("h-out", "a"))
+        lab.resources = {"rack1"}
+        lab.hosts["h-out"].resources = frozenset({"slot"})
+        install_scoped_context(monkeypatch, lab, [])
+        monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
+        backend = _FakeBackend(
+            owners={"rack1": "alice", "slot": "alice"}, username="alice", ends={"rack1": end}
+        )
+        gate = ReservationGate(
+            backend=backend, identity=ResolvedIdentity(username="alice", source="$USER")
+        )
+        with caplog.at_level(logging.WARNING, logger="otto"):
+            gate.evaluate()
+            gate.check_hosts(lab, [lab.hosts["h-out"]])
+        assert sum("'rack1'" in r.message for r in caplog.records) == 1

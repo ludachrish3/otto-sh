@@ -467,67 +467,69 @@ Everything above walks through `otto`'s own subcommands. The library itself —
 `otto.reservations` — has no dependency on Typer, rich, or any other part of
 otto's CLI, so a completely separate tool (a deploy script, a CI gate, your
 own CLI) can run the exact same check without going through `otto` at all.
-Four steps:
+The example CLI below does it the way otto's own commands do, in five steps:
 
-1. **Build** a backend from your tool's own settings with
-   [`build_backend`](../../api/reservations.rst), passing the identity as
-   `username=`. An empty settings dict (no
-   `[reservations]` table at all) or `backend = "none"` resolves to
-   [`NullReservationBackend`](../../api/reservations.rst) — a no-op, so this step
-   needs no live scheduler to exercise in a test. A dict with keys but no
-   `backend` is refused: a present table is a specified checker and must name
-   its backend.
-2. **Resolve** the effective identity with
-   [`resolve_username`](../../api/reservations.rst).
-3. **Construct** a [`ReservationGate`](../../api/reservations.rst) from the
-   backend and identity and call `.evaluate()`.
-4. **Present** the result yourself. `evaluate()` returns a
-   `ReservationGateResult` whose `warning` is plain text — the library never
-   touches your terminal. `MissingReservationError` and
+1. **Parse** the flags. `--holder` and `-R` / `--skip-reservation-check` are
+   otto's own spellings; reuse them so your tool reads like otto.
+2. **Construct** the gate with
+   [`gate_from_settings`](../../api/reservations.rst). Under `-R` it builds no
+   backend at all, so a scheduler that hangs in its constructor cannot block
+   the break-glass; its identity and backend rules are documented with
+   `gate_from_settings` and `build_backend` there.
+3. **Call** one library entry point: `gate.evaluate(lab)` to gate a run, or
+   `gate.report(lab)` for a status report. Passing the `Lab` explicitly needs
+   no otto context.
+4. **Render** the result yourself. `evaluate()` returns a
+   `ReservationGateResult` whose `warning` is plain text, and the report is
+   plain data; the library never touches your terminal, so styling is your
+   call.
+5. **Translate** errors in one place. `MissingReservationError` and
    `ReservationBackendError` (the same two exceptions from
    [Fail-closed behavior](../../cli/reservation/index.md#fail-closed-behavior))
-   are what you catch;
-   exit codes, logging, and styling are entirely your call — `otto`'s own CLI
-   wraps `warning` in rich markup, nothing here requires you to do the same.
+   become exit 1 and a message in a single function, so no command
+   re-derives them.
 
-The identity you resolve in step 2 and the `username=` you pass in step 1 must
-be the same one: `reservations` caches rows for the username the backend was
-*constructed* with, so a mismatch would produce a refusal blaming a user whose
-bookings were never fetched. `check_reservations` raises `RuntimeError` rather
-than let that happen.
+Steps 2 and 5 are the two pieces worth copying verbatim:
+
+```{literalinclude} ../../../src/otto/examples/reservations_cli.py
+:language: python
+:pyobject: _gate
+```
+
+```{literalinclude} ../../../src/otto/examples/reservations_cli.py
+:language: python
+:pyobject: translate
+```
 
 | Exception                 | Raised by                                                      | Means                                                                       |
 |---------------------------|-----------------------------------------------------------------|------------------------------------------------------------------------------|
-| `MissingReservationError` | `evaluate()` / `check_reservations()`                          | The identity doesn't hold every required resource.                         |
-| `ReservationBackendError` | `build_backend()` (construction) or `evaluate()` (query time)  | The backend itself couldn't answer — network, credentials, malformed data. |
+| `MissingReservationError` | `evaluate()` / `check_hosts()` / `check_reservations()`                       | The identity doesn't hold every required resource. Also raised by `MissingReservationError.from_report(report)`, as `check_report()` does. |
+| `ReservationBackendError` | `gate_from_settings()` (construction) or `evaluate()` / `report()` (query time) | The backend itself couldn't answer — network, credentials, malformed data. |
 
 A complete, runnable example ships as
 [`otto.examples.reservations_cli`](../../api/examples.rst)
 (`src/otto/examples/reservations_cli.py`) — copy it as a starting point. Its
-`run_check()` is steps 3-4, kept separate from the Typer command so it is
-directly testable against the Null backend or the
-[`ExampleReservationBackend`](../../api/examples.rst) sample, no real scheduler
-or CLI invocation required:
+`check_report()` is steps 3-4, kept separate from the Typer command so it is
+directly testable against a gate around the
+[`ExampleReservationBackend`](../../api/examples.rst) sample, with no real
+scheduler or CLI invocation:
 
 ```{doctest}
 >>> from otto.config.lab import Lab
 >>> from otto.examples.reservations import ExampleReservationBackend
->>> from otto.reservations import resolve_username
->>> from otto.examples.reservations_cli import run_check
+>>> from otto.examples.reservations_cli import check_report, translate
+>>> from otto.reservations import ReservationGate, resolve_username
 >>> demo = Lab(name="demo", resources={"lab-a"})
->>> run_check(
-...     demo,
-...     backend=ExampleReservationBackend(username="alice"),
-...     identity=resolve_username("alice"),
-... )
-alice: OK
+>>> def gate_for(user):
+...     backend = ExampleReservationBackend(username=user)
+...     return ReservationGate(backend=backend, identity=resolve_username(user))
+>>> translate(lambda: check_report(gate_for("alice"), demo))
+lab-a  lab demo  held
+OK
 0
->>> run_check(
-...     demo,
-...     backend=ExampleReservationBackend(username="carol"),
-...     identity=resolve_username("carol"),
-... )
-carol: User 'carol' does not hold all resources required by lab 'demo'. Missing:
+>>> translate(lambda: check_report(gate_for("carol"), demo))
+lab-a  lab demo  missing
+User 'carol' does not hold all resources required by lab 'demo'. Missing:
   lab-a  lab demo  (held by: alice)
 1
 ```
@@ -536,8 +538,16 @@ Run the full example as a standalone CLI — with no `--backend` flag it falls
 back to the Null backend, so this needs no scheduler either:
 
 ```bash
-python -m otto.examples.reservations_cli --resource rack1
+python -m otto.examples.reservations_cli --resource rack1 gate
+python -m otto.examples.reservations_cli --resource rack1 check
 ```
+
+The example's `--backend` takes only backends that need no configuration
+(`none`, `example`); a backend such as `json` needs its settings table, which
+the example does not pass.
+
+`open_context` applies this same gate for you; see
+{doc}`the library cookbook <../python-library>`.
 
 If you're also writing a custom backend for your tool (rather than reusing
 `json` or `none`), see [Verify your backend](#verify-your-backend) above —

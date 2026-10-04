@@ -374,10 +374,11 @@ order:
 1. `bootstrap()` (lazily, idempotently);
 2. validate the project switches, and refuse if an active repo failed to load;
 3. build the lab, or take a `Lab` object as given;
-4. install the context, then run the dependency preflight;
+4. build the reservation gate, install the context, then run the dependency
+   preflight and the gate;
 5. yield, and on exit tear everything down, scope included.
 
 See [Bring-your-own-CLI](../cookbook/python-library.md#bring-your-own-cli-lower-level-primitives)
-in the library guide for each step and what it raises. It does *not* run the
-reservation gate; that is a CLI-preamble concern, and scripts that want it call
-`check_reservations` explicitly.
+in the library guide for each step and what it raises. The reservation gate
+applies as it does on the CLI; `skip_reservation_check=True` is the `-R`
+break-glass.

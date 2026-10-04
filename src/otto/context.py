@@ -1208,6 +1208,8 @@ async def open_context(
     variant: Variant | None = None,
     dry_run: bool = False,
     log_command_output: bool = True,
+    holder: "str | None" = None,
+    skip_reservation_check: bool = False,
 ) -> "AsyncIterator[OttoContext]":
     """Prepare a run exactly as ``otto --lab ...`` does, install its context, and tear it down.
 
@@ -1220,7 +1222,10 @@ async def open_context(
     containers (:func:`~otto.session.build_lab`), or a
     :class:`~otto.config.lab.Lab` you pass is used as given; once the context
     is installed, an active repo's unmet Python requirement refuses
-    (:func:`~otto.session.check_dependencies`).
+    (:func:`~otto.session.check_dependencies`); last, the reservation gate
+    runs (:meth:`~otto.reservations.check.ReservationGate.evaluate`, built by
+    :func:`~otto.reservations.build_reservation_gate` from the repos'
+    ``[reservations]``), so a lab whose resources you do not hold refuses.
 
     *variant* mirrors ``otto --field/--debug``: it is applied with
     :func:`otto.context.set_variant` before the lab is built, so a product
@@ -1238,10 +1243,12 @@ async def open_context(
     :class:`~otto.config.lab.Lab`. On exit, the running loop's host scope
     closes the hosts that connected on it (:meth:`OttoContext.sweep_loop`) and
     the contextvar is reset. It installs no logging (see
-    :func:`otto.session.install_logging`) and runs no reservation check (a
-    script that wants one calls
-    :func:`otto.reservations.check_reservations
-    <otto.reservations.check.check_reservations>`).
+    :func:`otto.session.install_logging`).
+
+    *holder* mirrors ``--holder`` (check reservations as that user; ``None``
+    or ``""`` means the invoking user). *skip_reservation_check* mirrors
+    ``-R``: no backend is built and a warning says the check was skipped.
+    ``dry_run`` is gated too, as the CLI gates before its dry-run seam.
 
     Raises:
         ValueError: a malformed lab string, such as ``""`` or ``"a++b"`` (an
@@ -1256,6 +1263,13 @@ async def open_context(
             load time (malformed lab data, composite conflicts).
         otto.session.DependencyRefusedError: an active repo's Python
             requirement is not met.
+        ValueError: a misconfigured ``[reservations]`` table (no
+            ``[reservations.json] path``, an unknown backend name), raised by
+            the backend factory.
+        otto.reservations.check.MissingReservationError: the lab needs a resource
+            you do not hold; its ``.report`` lists each one and its holders.
+        otto.reservations.check.ReservationBackendError: the configured backend
+            cannot be built or queried.
     """
     # First, so an invalid value refuses before anything needs undoing.
     variant_token = None if variant is None else set_variant(variant)
@@ -1280,6 +1294,20 @@ async def open_context(
         # A `Lab` object is used as given: `build_lab` (and the `otto.inventory`
         # import it makes, ~77 modules) never runs for it.
         resolved_lab = lab if isinstance(lab, Lab) else build_lab(result.repos, labs)
+        # As the CLI does: the gate is built after the lab and before the
+        # context, so an unbuildable backend refuses with nothing to undo.
+        from pathlib import Path
+
+        from .reservations import build_reservation_gate
+
+        gate = build_reservation_gate(
+            result.repos,
+            holder=holder,
+            skip_reservation_check=skip_reservation_check,
+            cwd_fallback=Path.cwd(),
+        )
+        if holder and gate.identity is not None:
+            logger.info("reservations: acting as %r (holder=)", gate.identity.username)
         ctx = OttoContext(
             lab=resolved_lab,
             dry_run=dry_run,
@@ -1291,6 +1319,9 @@ async def open_context(
         try:
             for warning in check_dependencies(ctx):
                 logger.warning("%s", warning)
+            # Last, as the CLI presents its gate after the dependency refusal;
+            # dry_run is gated too, because the CLI gates before its dry-run seam.
+            gate.evaluate()
         except BaseException:
             reset_context(token)
             raise

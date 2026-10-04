@@ -1,6 +1,7 @@
 """Lab reservation check logic and exceptions.
 
-The :func:`check_reservations` function is the heart of the subsystem:
+The decision lives in :func:`~otto.reservations.report.build_report`;
+:func:`check_reservations` is its raising wrapper:
 given a lab, a username, and a backend, it raises
 :class:`MissingReservationError` if the user does not hold every resource
 the lab needs.  The error message lists missing resources and their current
@@ -27,8 +28,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from ..config.lab import Lab
-    from .identity import ResolvedIdentity
+    from .identity import ReservationIdentity, ResolvedIdentity
     from .protocol import Reservation, ReservationBackend
+    from .report import ReservationReport
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,7 @@ support question with no right answer.
 """
 
 _warned_expiring: "set[tuple[str, datetime]]" = set()
-"""``(resource, end)`` pairs already announced by :func:`warn_expiring_reservations`.
+"""``(resource, end)`` pairs already announced by :func:`announce_expiring`.
 
 Process-wide, because the same lab-level booking is visible to more than one
 call site in a single run — the preamble gate and the out-of-fleet named-host
@@ -58,65 +60,39 @@ def reset_expiry_warnings() -> None:
     _warned_expiring.clear()
 
 
-def warn_expiring_reservations(
-    reservations: "list[Reservation]",
-    needed: "set[str]",
-    *,
-    now: "datetime | None" = None,
-) -> None:
-    """Log a warning for each held reservation in *needed* that ends soon.
+def _announce_expiry(resource: str, end: datetime, reference: datetime) -> None:
+    """Log one expiry nudge, unless this ``(resource, end)`` was already announced."""
+    if (resource, end) in _warned_expiring:
+        return
+    _warned_expiring.add((resource, end))
+    minutes = max(0, int((end - reference).total_seconds() // 60))
+    logger.warning(
+        "\N{WARNING SIGN}  Reservation for %r expires in %d minute(s) (at %s).",
+        resource,
+        minutes,
+        # In the READER's zone, not the backend's. The JSON backend
+        # normalises every `expires` to UTC, and other schedulers answer in
+        # whatever zone they were configured with, so an unconverted clock
+        # time tells a user in CET their booking lapses an hour before it
+        # does — and they hand back hardware they still hold. `%H:%M` alone
+        # carries no offset to disambiguate it, so the conversion is the
+        # only thing that makes the string true.
+        end.astimezone().strftime("%H:%M"),
+    )
 
-    Scoped to *needed* — the resources that would reject the next command —
-    because warning about racks the run does not touch is noise on every
-    invocation. Open-ended bookings never warn; an already-lapsed one does,
-    since that is the most urgent case there is.
 
-    This is deliberately NOT inside :func:`check_reservations`, which has
-    three call sites; a run naming an out-of-fleet host reaches two of them
-    and would warn twice for the lab-level requirement they share. Each
-    caller invokes it after its own short-circuits instead, so the helper
-    never causes a backend query, and a pair seen twice is announced once
-    (see :func:`reset_expiry_warnings`).
+def announce_expiring(report: "ReservationReport", *, now: "datetime | None" = None) -> None:
+    """Log the expiry nudge for each of *report*'s expiring bookings, once per process.
 
-    Parameters
-    ----------
-    reservations : list[Reservation]
-        Rows already fetched for the invoking user — both callers pass
-        :func:`active_reservations`, which is that user's rows by
-        construction. Nothing here fetches.
-    needed : set[str]
-        The resource identifiers this run requires.
-    now : datetime | None
-        The instant to measure from; defaults to
-        ``datetime.now(timezone.utc)``. Present so callers' tests can freeze
-        the clock without patching module globals.
+    Never queries a backend: *report* already holds the rows. Callers choose
+    the moment. The gate announces after a pass, so a refusal is never trailed
+    by a nudge. ``otto reservation check`` announces after its table and before
+    its verdict, because a status report says everything it knows.
     """
     reference = now if now is not None else datetime.now(tz=timezone.utc)
-    expiring = [
-        (r.end, r.resource)
-        for r in reservations
-        if r.end is not None
-        and r.resource in needed
-        and r.expires_within(EXPIRY_WARNING_WINDOW, now=reference)
-    ]
-    for end, resource in sorted(expiring):
-        if (resource, end) in _warned_expiring:
-            continue
-        _warned_expiring.add((resource, end))
-        minutes = max(0, int((end - reference).total_seconds() // 60))
-        logger.warning(
-            "\N{WARNING SIGN}  Reservation for %r expires in %d minute(s) (at %s).",
-            resource,
-            minutes,
-            # In the READER's zone, not the backend's. The JSON backend
-            # normalises every `expires` to UTC, and other schedulers answer in
-            # whatever zone they were configured with, so an unconverted clock
-            # time tells a user in CET their booking lapses an hour before it
-            # does — and they hand back hardware they still hold. `%H:%M` alone
-            # carries no offset to disambiguate it, so the conversion is the
-            # only thing that makes the string true.
-            end.astimezone().strftime("%H:%M"),
-        )
+    for booking in report.expiring:
+        if booking.end is not None:
+            _announce_expiry(booking.resource, booking.end, reference)
 
 
 @dataclass(frozen=True)
@@ -130,6 +106,8 @@ class ReservationGateResult:
     checked: bool
     skipped: bool
     warning: "str | None"
+    report: "ReservationReport | None" = None
+    """The report the check read; ``None`` when no check ran."""
 
 
 @dataclass(frozen=True)
@@ -149,15 +127,58 @@ class ReservationGate:
     # None) so reservation subcommands can construct it only when needed.
     backend_factory: "Callable[[], ReservationBackend] | None" = None
 
-    def evaluate(self) -> ReservationGateResult:
+    def _backend_for_report(self) -> "ReservationBackend | None":
+        """Return the gate's backend, or build one now (under ``-R`` there is none yet)."""
+        if self.backend is not None:
+            return self.backend
+        return self.backend_factory() if self.backend_factory is not None else None
+
+    @staticmethod
+    def _lab_and_hosts(
+        lab: "Lab | None", host_ids: "Iterable[str] | None"
+    ) -> "tuple[Lab, Iterable[str] | None]":
+        """Use an explicit lab as given; otherwise the active lab and its hosts in play."""
+        if lab is not None:
+            return lab, host_ids
+        from ..config import get_lab
+        from ..config.fleet import get_hosts_in_play
+
+        return get_lab(), (get_hosts_in_play() if host_ids is None else host_ids)
+
+    def report(self, lab: "Lab", host_ids: "Iterable[str] | None" = None) -> "ReservationReport":
+        """Report what this gate's user needs from *lab* and holds.
+
+        A status report ignores ``-R``: the backend is built now if the gate
+        skipped building it.
+
+        Raises
+        ------
+        RuntimeError
+            No identity was resolved, or there is no backend and no factory.
+        ReservationBackendError
+            The backend cannot be built or cannot answer.
+        """
+        from .report import build_report
+
+        if self.identity is None:
+            raise RuntimeError("identity must be resolved before report() runs")
+        backend = self._backend_for_report()
+        if backend is None:
+            raise RuntimeError("the gate has no backend and no backend_factory")
+        return build_report(lab, self.identity.username, backend, host_ids=host_ids)
+
+    def evaluate(
+        self, lab: "Lab | None" = None, host_ids: "Iterable[str] | None" = None
+    ) -> ReservationGateResult:
         """Run the reservation check (or the skip path) and report the outcome.
 
         When ``skip_check`` (``-R``) is set, a loud warning is always
         produced — regardless of whether a backend was configured — and no
         check runs. Otherwise, a ``backend`` of ``None`` (no ``[reservations]``
-        section resolved, or nothing to check) is a silent no-op. The active
-        lab is fetched lazily so the no-op paths never require an
-        :class:`~otto.context.OttoContext`.
+        section resolved, or nothing to check) is a silent no-op. An explicit
+        *lab* needs no :class:`~otto.context.OttoContext`; *host_ids* then
+        defaults to every host of that lab. Without one, the active lab is
+        fetched lazily so the no-op paths never require a context.
 
         The requirement is computed over the fleet of interest —
         :meth:`~otto.context.OttoContext.admissible_ids` (spec 2026-08-28
@@ -179,13 +200,12 @@ class ReservationGate:
             a construction invariant, not a runtime condition callers should
             handle.
         """
-        from ..config import get_lab
-        from ..config.fleet import get_hosts_in_play
+        from .report import build_report
 
         if self.skip_check:
-            lab = get_lab()
+            lab, host_ids = self._lab_and_hosts(lab, host_ids)
             username = self.identity.username if self.identity is not None else "<unknown>"
-            needed = required_resources(lab, host_ids=get_hosts_in_play())
+            needed = required_resources(lab, host_ids=host_ids)
             warning = (
                 f"\N{WARNING SIGN}  Reservation check SKIPPED for user {username!r} "
                 f"on lab {lab.name!r}. Required resources: {sorted(needed)!r}"
@@ -201,31 +221,106 @@ class ReservationGate:
         if self.backend is None:
             return ReservationGateResult(checked=False, skipped=False, warning=None)
 
-        lab = get_lab()
+        lab, host_ids = self._lab_and_hosts(lab, host_ids)
         if self.identity is None:
             raise RuntimeError("identity must be resolved before evaluate() runs")
-        in_play = get_hosts_in_play()
-        check_reservations(lab, self.identity.username, self.backend, host_ids=in_play)
-        # AFTER the check, and behind the same two guards it uses, so the
-        # warning never becomes the thing that queries a backend: a lab
-        # needing no reservation, or one configured with no scheduler, still
-        # runs while the scheduler is down.
-        #
-        # After, specifically, so a REFUSAL is never trailed by a nudge: when
-        # check_reservations raises, that message is the one line the user has
-        # to read, and "rack1 expires in 2 minutes" stacked underneath it
-        # competes with the thing actually blocking them. ``otto reservation
-        # check`` deliberately does the opposite — it warns BEFORE its check,
-        # so its report carries the expiry alongside the missing-resource
-        # verdict. That command is a status report and should say everything
-        # it knows; this one is a gate and should say the one thing that stops
-        # the run.
-        from .null_backend import is_null_backend
+        report = build_report(lab, self.identity.username, self.backend, host_ids=host_ids)
+        if not report.covered:
+            raise MissingReservationError.from_report(report)
+        # After the verdict, so a refusal is never trailed by a nudge.
+        announce_expiring(report)
+        return ReservationGateResult(checked=True, skipped=False, warning=None, report=report)
 
-        needed = required_resources(lab, host_ids=in_play)
-        if needed and not is_null_backend(self.backend):
-            warn_expiring_reservations(active_reservations(self.backend), needed)
-        return ReservationGateResult(checked=True, skipped=False, warning=None)
+    def check_hosts(self, lab: "Lab", hosts: "Iterable[object]") -> "ReservationReport | None":
+        """Require the OWN slots of the named hosts the fleet left out.
+
+        Returns ``None`` when there is nothing to check. Needs an installed
+        :class:`~otto.context.OttoContext`, because it reads the hosts in play
+        through :func:`~otto.config.fleet.get_hosts_in_play`.
+
+        ``otto host <id> --hop <id>`` is deliberately unscoped (explicit
+        targeting beats scoping) while :meth:`evaluate` requires only the
+        fleet of interest. Element- and host-level slots make that gap
+        reachable: a project scoped to ``slot1`` would pass the gate holding
+        ``slot-1`` and then touch ``slot2``. *hosts* is every host the caller
+        names, a jump host included: reaching a fleet host through an
+        unreserved jump box is still using the jump box.
+
+        ``-R`` and a gate with no backend are no-ops, and the null backend
+        answers inside the report. Short-circuits, in this order:
+
+        * The built-in ``local`` host is skipped, as it is never a host in
+          play: naming the machine otto is running on must never need a slot.
+          A lab that declares its OWN ``local`` entry is not this host and is
+          not skipped.
+        * A host the fleet already covers is skipped; :meth:`evaluate` asked
+          the backend for exactly that set.
+        * A remaining host that declares neither ``resources`` nor element
+          resources adds nothing beyond the lab-level set the gate already
+          checked. With none that declare any, there is no query at all. The
+          read is local (two frozensets on a built host), never the backend.
+
+        One report covers every remaining host, so a run short of two slots is
+        told about both at once.
+
+        Raises
+        ------
+        MissingReservationError
+            A remaining host's resources are not all held.
+        """
+        from ..config.fleet import get_hosts_in_play, is_builtin_host
+        from .report import build_report
+
+        # No identity is a quiet no-op here, unlike evaluate()/report(): a gate with
+        # nothing to check as has nothing to refuse.
+        if self.skip_check or self.backend is None or self.identity is None:
+            return None
+        fleet = get_hosts_in_play()
+        outside = [
+            host
+            for host in hosts
+            if getattr(host, "id", None) not in fleet and not is_builtin_host(host)
+        ]
+
+        def _declares(host: object) -> bool:
+            element = getattr(host, "element", None)
+            return bool(getattr(host, "resources", ())) or bool(
+                element.resources if element is not None else ()
+            )
+
+        if not any(_declares(host) for host in outside):
+            return None
+        report = build_report(
+            lab,
+            self.identity.username,
+            self.backend,
+            host_ids={getattr(host, "id", "") for host in outside},
+        )
+        if not report.covered:
+            raise MissingReservationError.from_report(report)
+        announce_expiring(report)
+        return report
+
+    def identity_report(self) -> "ReservationIdentity":
+        """Who this gate checks as, and its backend's name; builds the backend under ``-R``.
+
+        Raises
+        ------
+        RuntimeError
+            No identity was resolved.
+        ReservationBackendError
+            The backend cannot be built.
+        """
+        from .identity import ReservationIdentity
+
+        if self.identity is None:
+            raise RuntimeError("identity must be resolved before identity_report() runs")
+        backend = self._backend_for_report()
+        return ReservationIdentity(
+            username=self.identity.username,
+            source=self.identity.source,
+            backend_name=backend.backend_name() if backend is not None else "<none>",
+        )
 
 
 class ReservationBackendError(OttoError):
@@ -265,8 +360,19 @@ class MissingReservationError(OttoError):
     :func:`required_resource_origins` — alongside its current holders. It
     does not mention ``--skip-reservation-check`` — that suggestion belongs
     only in the backend-failure path, never on a legitimate contention
-    failure (or the option gets abused).
+    failure (or the option gets abused). ``report`` is the
+    :class:`~otto.reservations.report.ReservationReport` it was raised from,
+    when there is one.
     """
+
+    def __init__(self, message: str, *, report: "ReservationReport | None" = None) -> None:
+        super().__init__(message)
+        self.report = report
+
+    @classmethod
+    def from_report(cls, report: "ReservationReport") -> "MissingReservationError":
+        """Raise-ready refusal for *report*, worded by :func:`refusal_message`."""
+        return cls(refusal_message(report), report=report)
 
 
 ResourceLevel = Literal["lab", "element", "host"]
@@ -357,14 +463,41 @@ def _describe_holders(holders: "list[Reservation]") -> str:
     return ", ".join(parts)
 
 
+def refusal_message(report: "ReservationReport") -> str:
+    """Word the refusal for *report*: each missing resource, where it is declared, who holds it.
+
+    Meant for a report with missing resources; an empty one yields only the header.
+    """
+    width = max((len(m.resource) for m in report.missing), default=0)
+    header = (
+        f"User {report.username!r} does not hold all resources required by lab "
+        f"{report.lab!r}. Missing:"
+    )
+    lines = [header]
+    for missing in report.missing:
+        held = (
+            "unknown \N{EM DASH} this backend cannot report other users"
+            if missing.holders is None
+            else _describe_holders(missing.holders)
+        )
+        lines.extend(
+            f"  {missing.resource:<{width}}  {row.level} {row.owner}  (held by: {held})"
+            for row in report.rows
+            if row.resource == missing.resource
+        )
+    return "\n".join(lines)
+
+
 def check_reservations(
     lab: "Lab",
     username: str,
     backend: "ReservationBackend",
     *,
     host_ids: "Iterable[str] | None" = None,
-) -> None:
+) -> "ReservationReport":
     """Raise :class:`MissingReservationError` if ``username`` does not cover ``lab``.
+
+    Returns the :class:`~otto.reservations.report.ReservationReport` when it does.
 
     Parameters
     ----------
@@ -379,6 +512,11 @@ def check_reservations(
         :func:`required_resource_origins`. ``None`` (the default) means every
         host in the lab.
 
+    Returns
+    -------
+    ReservationReport
+        The report the verdict was read from.
+
     Raises
     ------
     MissingReservationError
@@ -386,65 +524,9 @@ def check_reservations(
     ReservationBackendError
         If the backend cannot answer the query (network, file, DB failure).
     """
-    # The null backend short-circuits to a no-op so teams without a scheduler
-    # configured aren't blocked.  Importing here avoids a circular import
-    # between this module and the null backend's factory path. The PREDICATE,
-    # not the class: ``otto reservation check`` has to reach the same verdict
-    # to know the held column is unanswerable, and two isinstance checks are
-    # how those two answers drift apart.
-    from .null_backend import is_null_backend
+    from .report import build_report
 
-    # AFTER the walk, not before it. The walk raises on two BUGS — an unknown
-    # id in ``host_ids`` (spec §4) and a host carrying element resources with
-    # no element identity (R17) — and neither is a user condition the backend
-    # has any say in. Under ``backend = "none"`` there is no scheduler to
-    # notice the lab file is wrong, which is exactly where a short-circuit
-    # above this line would let it sit longest. The backend is still never
-    # queried: every return below this point precedes the first call on it,
-    # and ``otto reservation check`` computes its origins first for the same
-    # reason.
-    needed_origins = required_resource_origins(lab, host_ids=host_ids)
-    if is_null_backend(backend):
-        return
-
-    needed = {o.resource for o in needed_origins}
-    if not needed:
-        return
-
-    # The function takes a username AND the backend caches rows for the one it
-    # was constructed with. If they ever disagreed the comprehension below
-    # would yield an empty held set — a refusal blaming a user whose
-    # reservations were never fetched. Fail loudly instead.
-    backend_user = getattr(backend, "username", None)
-    if backend_user is not None and backend_user != username:
-        raise RuntimeError(
-            f"backend was built for {backend_user!r} but the check is for "
-            f"{username!r}; these must agree"
-        )
-
-    reserved = {r.resource for r in active_reservations(backend) if r.user == username}
-    missing = needed - reserved
-    if not missing:
-        return
-
-    from .protocol import SupportsResourceHolders
-
-    width = max(len(r) for r in missing)
-    lines = [
-        f"User {username!r} does not hold all resources required by lab {lab.name!r}. Missing:"
-    ]
-    for resource in sorted(missing):
-        # Absence of the capability is checked BEFORE the call, never
-        # inferred from an empty result: an empty holder list means "nobody
-        # holds it", and printing "nobody" for a backend that simply cannot
-        # tell would be a confident lie to a user who is locked out right now.
-        if isinstance(backend, SupportsResourceHolders):
-            held = _describe_holders(backend.holders(resource))
-        else:
-            held = "unknown — this backend cannot report other users"
-        lines.extend(
-            f"  {resource:<{width}}  {origin.level} {origin.owner}  (held by: {held})"
-            for origin in needed_origins
-            if origin.resource == resource
-        )
-    raise MissingReservationError("\n".join(lines))
+    report = build_report(lab, username, backend, host_ids=host_ids)
+    if not report.covered:
+        raise MissingReservationError.from_report(report)
+    return report

@@ -23,12 +23,8 @@ from ..reservations import (
     MissingReservationError,
     ReservationBackendError,
     ReservationGate,
-    active_reservations,
+    announce_expiring,
     build_reservation_gate,
-    check_reservations,
-    is_null_backend,
-    required_resource_origins,
-    warn_expiring_reservations,
 )
 from .invoke import fail
 
@@ -91,14 +87,10 @@ def _reservation_gate(ctx: typer.Context) -> ReservationGate | None:
 def whoami(ctx: typer.Context) -> None:
     """Show the resolved reservation identity and backend (no lab required)."""
     res = _reservation_gate(ctx)
-    backend = None
-    if res is not None:
-        backend = res.backend or (res.backend_factory() if res.backend_factory else None)
-    backend_name = backend.backend_name() if backend else "<none>"
-    identity = res.identity if res else None
-    if identity is None:
+    if res is None or res.identity is None:
         rprint("[yellow]No identity resolved (did the top-level callback run?)[/yellow]")
         raise typer.Exit(1)
+    info = res.identity_report()
 
     from ..config.lab import LAB_SEPARATOR
     from .invoke import maybe_root_options
@@ -106,9 +98,9 @@ def whoami(ctx: typer.Context) -> None:
     opts = maybe_root_options(ctx)
     labs = LAB_SEPARATOR.join(opts.labs) if opts is not None and opts.labs else "<none>"
     rprint(
-        f"username: [bold]{identity.username}[/bold]\n"
-        f"source:   {identity.source}\n"
-        f"backend:  {backend_name}\n"
+        f"username: [bold]{info.username}[/bold]\n"
+        f"source:   {info.source}\n"
+        f"backend:  {info.backend_name}\n"
         f"lab:      {labs}"
     )
 
@@ -146,97 +138,55 @@ def check(ctx: typer.Context) -> None:
             ensure_lab_context(ctx)
 
     res = ctx.meta.get("otto_reservation")
-
-    backend = None
-    if res is not None:
-        backend = res.backend or (res.backend_factory() if res.backend_factory else None)
-    if res is None or backend is None or res.identity is None:
+    if res is None or res.identity is None or (res.backend is None and res.backend_factory is None):
         rprint("[red]Reservation backend or identity not configured.[/red]")
         raise typer.Exit(1)
 
     lab = get_lab()
-    username = res.identity.username
 
     from rich import box
     from rich.table import Table
 
-    # Function-scope: ``otto.cli.reservation`` is one of the budgeted import
-    # surfaces, and pulling the fleet accessor (and rich's table machinery) in
-    # at module scope would charge them to every ``otto reservation``
-    # invocation, ``--help`` included, not just this subcommand's.
+    # Function-scope: ``otto.cli.reservation`` is a budgeted import surface, and
+    # the fleet accessor and rich's table machinery would otherwise be charged
+    # to every ``otto reservation`` invocation, ``--help`` included.
     from ..config.fleet import get_hosts_in_play
 
-    # NOT rebound onto ``ctx`` — that name is the typer Context this command
-    # was handed, and shadowing it here would be a live bug the moment
-    # anything below reached for ctx.meta again.
-    # The shared reservation reader, not ``admissible_ids`` directly: it bakes
-    # in the two rules this table must agree with the gate about — a
-    # declaration that admits nothing is 0 hosts in play (a lab-level-only
-    # requirement, which is a verdict, and the fleet-shaped refusal belongs to
-    # the walk a run would do next rather than to a read-only report about it),
-    # and the built-in ``local`` host is never in play at all.
+    # The shared reservation reader, not ``admissible_ids`` directly: an empty
+    # declared fleet is 0 hosts in play (a verdict, not a refusal), and the
+    # built-in ``local`` host is never in play.
     in_play = get_hosts_in_play()
-    origins = required_resource_origins(lab, host_ids=in_play)
+    report = res.report(lab, in_play)
 
-    if not origins:
-        # No table: an empty bordered header box is chrome that says nothing,
-        # and the sentence is the whole message. Nor is the backend queried —
-        # check_reservations returns on an empty requirement before it ever
-        # asks, and a table that asked first would fail this command on a
-        # backend outage where it used to succeed.
+    if not report.rows:
+        # No table: an empty bordered box says nothing. And no query was made.
         rprint("(this lab requires no reservation for the hosts in play)")
     else:
-        # The null backend reserves nothing and check_reservations
-        # short-circuits on it, so "does alice hold this?" has no answer to
-        # give; asking anyway answers [] (or raises, for a backend that treats
-        # an unset username as fatal) and would render every row unheld
-        # directly above the OK line. Same predicate as the verdict's — the
-        # user filter included — so the table and the check can never
-        # disagree about what "none" means.
-        null = is_null_backend(backend)
-        held = (
-            set()
-            if null
-            else {r.resource for r in active_reservations(backend) if r.user == username}
-        )
         table = Table(
             title=(
-                f"reservations required by lab {lab.name} for {username} "
+                f"reservations required by lab {lab.name} for {report.username} "
                 f"({len(in_play)} host(s) in play)"
             ),
             box=box.ROUNDED,
         )
         for column in ("resource", "level", "owner", "held"):
             table.add_column(column)
-        for origin in origins:
-            # escape(): a resource identifier is OPAQUE to otto and an owner can
-            # be any host id, while rich reads '[a]' in a cell as a style tag and
-            # drops it — 'rack[a]' would render as 'rack', naming a resource that
-            # is not the one being checked. ``level`` is a closed Literal, so it
-            # needs none, and "n/a" is plain: it is an absence, not a verdict.
-            if null:
+        for row in report.rows:
+            # escape(): identifiers are opaque to otto, and rich would read
+            # 'rack[a]' as a style tag and drop it. "n/a" is the `none`
+            # backend's absence of a verdict.
+            if row.held is None:
                 held_cell = "n/a"
             else:
-                held_cell = "[green]yes[/green]" if origin.resource in held else "[red]no[/red]"
-            table.add_row(
-                escape(origin.resource),
-                origin.level,
-                escape(origin.owner),
-                held_cell,
-            )
+                held_cell = "[green]yes[/green]" if row.held else "[red]no[/red]"
+            table.add_row(escape(row.resource), row.level, escape(row.owner), held_cell)
         rprint(table)
+        # After the table, before the verdict: a status report says everything
+        # it knows. Not suppressed by -R, because this command's whole job is
+        # reporting.
+        announce_expiring(report)
 
-        # After the null/empty-origins short-circuits above, so this never
-        # becomes the call that queries a backend. Unlike the gate and the
-        # named-host check, this one is NOT suppressed by -R: the flag means
-        # "do not block me", and the command whose whole job is reporting
-        # reservation status should still say the booking is lapsing.
-        if not null:
-            warn_expiring_reservations(active_reservations(backend), {o.resource for o in origins})
-
-    try:
-        check_reservations(lab, username, backend, host_ids=in_play)
-    except MissingReservationError as e:
-        fail(e)
+    if not report.covered:
+        fail(MissingReservationError.from_report(report))
 
     rprint("[green]OK — all required resources are reserved.[/green]")

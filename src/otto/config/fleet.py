@@ -460,8 +460,19 @@ def get_hosts_in_play() -> set[str]:
     are as real as any other's.
     """
     from ..context import get_context
-    from ..host.builtin_hosts import is_builtin_host
 
     ctx = get_context()
     in_play = ctx.admissible_ids(require_nonempty=False)
     return {hid for hid in in_play if not is_builtin_host(ctx.lab.hosts.get(hid))}
+
+
+def is_builtin_host(host: object) -> bool:
+    """Report whether *host* is otto's built-in ``local`` host: the reservation readers' reach.
+
+    ``tach.toml`` keeps ``otto.reservations`` out of ``otto.host``, the same
+    reason :func:`get_hosts_in_play` lives here. The rule itself is
+    ``otto.host.builtin_hosts.is_builtin_host``.
+    """
+    from ..host.builtin_hosts import is_builtin_host as _is_builtin_host
+
+    return _is_builtin_host(host)

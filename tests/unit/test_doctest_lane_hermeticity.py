@@ -4,9 +4,9 @@
 src/otto``. Collecting ``src/otto`` does not load ``tests/conftest.py``, so the
 suite's ``OTTO_*`` strip never runs there: a developer shell that sourced
 ``project_env`` hands the doctests ``OTTO_SUT_DIRS=tests/repo1,tests/repo2``.
-That broke the pre-push gate on ``otto.examples.reservations_cli``:
-``run_check`` reaches ``OttoContext.scopes``, which bootstraps those repos, and
-repo1 declares a ``[project]`` scope, so the ``fleet of interest`` INFO line is
+That broke the pre-push gate on ``otto.examples.reservations_cli``: the
+reservations example once reached ``OttoContext.scopes``, which bootstraps those
+repos, and repo1 declares a ``[project]`` scope, so the ``fleet of interest`` INFO line is
 logged mid-example.
 
 That log line is harmful because of the second defect. pyproject turns on

@@ -1,24 +1,38 @@
-"""Smoke tests for the third-party reservations_cli example (sample)."""
+"""The example reservation CLI: parse, build the gate via the library, render, translate."""
 
 from typer.testing import CliRunner
 
 from otto.config.lab import Lab
-from otto.examples import reservations_cli
 from otto.examples.reservations import ExampleReservationBackend
-from otto.examples.reservations_cli import app, run_check
+from otto.examples.reservations_cli import app, check_report, run_gate, translate
 from otto.reservations import (
-    NullReservationBackend,
     Reservation,
     ReservationBackendBase,
     ReservationBackendError,
+    ReservationGate,
+    register_reservation_backend,
     resolve_username,
 )
+from otto.reservations.registry import RESERVATION_BACKENDS
 
 runner = CliRunner()
 
 
+class _UnbuildableBackend(ReservationBackendBase):
+    """A backend whose constructor fails, as a scheduler that is down would."""
+
+    def __init__(self, **kwargs):
+        raise ReservationBackendError("scheduler down")
+
+    def fetch_reservations(self, username, start=None, end=None) -> list[Reservation]:
+        return []
+
+    def backend_name(self) -> str:
+        return "unbuildable"
+
+
 class _BrokenBackend(ReservationBackendBase):
-    """A backend whose queries always fail — no scheduler is actually contacted."""
+    """A backend whose queries always fail; no scheduler is contacted."""
 
     def fetch_reservations(self, username, start=None, end=None) -> list[Reservation]:
         raise ReservationBackendError("network down")
@@ -27,57 +41,74 @@ class _BrokenBackend(ReservationBackendBase):
         return "broken"
 
 
-def test_run_check_ok_with_null_backend_no_scheduler():
-    # NullReservationBackend never touches a real scheduler; the gate is a no-op.
-    lab = Lab(name="demo", resources={"lab-a"})
-    assert run_check(lab, backend=NullReservationBackend(), identity=resolve_username(None)) == 0
+def _gate(backend, user):
+    return ReservationGate(backend=backend, identity=resolve_username(user))
 
 
-def test_run_check_ok_when_identity_holds_resource():
+def test_the_none_backend_passes_with_no_scheduler():
+    result = runner.invoke(app, ["--resource", "rack1", "gate"])
+    assert result.exit_code == 0
+    assert "OK" in result.output
+
+
+def test_skip_prints_the_libraries_warning_and_passes():
+    result = runner.invoke(app, ["--resource", "rack1", "-R", "gate"])
+    assert result.exit_code == 0
+    assert "SKIPPED" in result.output
+
+
+def test_check_with_the_none_backend_reports_n_a_and_passes():
+    result = runner.invoke(app, ["--resource", "rack1", "check"])
+    assert result.exit_code == 0
+    assert "rack1  lab example  n/a" in result.output
+
+
+def test_a_missing_resource_exits_1_with_the_librarys_refusal(capsys):
     lab = Lab(name="demo", resources={"lab-a"})
-    identity = resolve_username("alice")
-    assert (
-        run_check(lab, backend=ExampleReservationBackend(username="alice"), identity=identity) == 0
+    code = translate(
+        lambda: run_gate(_gate(ExampleReservationBackend(username="carol"), "carol"), lab)
     )
+    assert code == 1
+    assert "does not hold all resources required by lab 'demo'" in capsys.readouterr().out
 
 
-def test_run_check_returns_1_and_prints_on_missing_reservation(capsys):
+def test_an_unavailable_backend_exits_1_and_names_the_break_glass(capsys):
     lab = Lab(name="demo", resources={"lab-a"})
-    identity = resolve_username("carol")
-    assert (
-        run_check(lab, backend=ExampleReservationBackend(username="carol"), identity=identity) == 1
+    code = translate(lambda: run_gate(_gate(_BrokenBackend(username="alice"), "alice"), lab))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "reservation backend unavailable" in out
+    assert "-R" in out
+
+
+def test_check_renders_every_row_then_the_verdict(capsys):
+    lab = Lab(name="demo", resources={"lab-a", "shared"})
+    code = translate(
+        lambda: check_report(_gate(ExampleReservationBackend(username="alice"), "alice"), lab)
     )
     out = capsys.readouterr().out
-    assert "carol" in out
-    assert "lab-a" in out
+    assert code == 0
+    assert "lab-a  lab demo  held" in out
+    assert "shared  lab demo  held" in out
+    assert out.rstrip().endswith("OK")
 
 
-def test_run_check_returns_2_on_backend_query_failure():
+def test_check_names_the_missing_row_and_exits_1(capsys):
     lab = Lab(name="demo", resources={"lab-a"})
-    identity = resolve_username("alice")
-    assert run_check(lab, backend=_BrokenBackend(username="alice"), identity=identity) == 2
-
-
-def test_cli_exits_0_with_default_null_backend():
-    # No --backend given -> "none" -> NullReservationBackend fallback, no scheduler.
-    result = runner.invoke(app, ["--resource", "rack1"])
-    assert result.exit_code == 0, result.output
-
-
-def test_cli_exits_1_when_identity_is_missing_a_resource(monkeypatch):
-    monkeypatch.setattr(
-        reservations_cli,
-        "build_backend",
-        lambda settings, repo_dir, username=None: ExampleReservationBackend(username=username),
+    code = translate(
+        lambda: check_report(_gate(ExampleReservationBackend(username="carol"), "carol"), lab)
     )
-    result = runner.invoke(app, ["--resource", "lab-a", "--holder", "carol"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "lab-a  lab demo  missing" in out
+    assert "held by: alice" in out
+
+
+def test_a_backend_that_cannot_be_built_exits_1_through_the_cli_and_names_the_break_glass():
+    register_reservation_backend("example-unbuildable", _UnbuildableBackend)
+    try:
+        result = runner.invoke(app, ["--backend", "example-unbuildable", "--resource", "r", "gate"])
+    finally:
+        RESERVATION_BACKENDS.unregister("example-unbuildable")
     assert result.exit_code == 1
-
-
-def test_cli_exits_2_when_backend_construction_fails(monkeypatch):
-    def _boom(settings, repo_dir, username=None):
-        raise ReservationBackendError("scheduler unreachable")
-
-    monkeypatch.setattr(reservations_cli, "build_backend", _boom)
-    result = runner.invoke(app, [])
-    assert result.exit_code == 2
+    assert "-R" in result.output

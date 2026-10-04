@@ -395,6 +395,26 @@ def _gate(held, *, skip_check=False, ends=None):
     )
 
 
+def _spy_build_report(monkeypatch):
+    """Record the ``host_ids`` of every report the named-host check builds.
+
+    ``build_report`` is the one place a backend is queried, so an empty record
+    is the proof that no query was made. It is patched where it is defined and
+    delegates to the real function, so the verdict is unchanged.
+    """
+    from otto.reservations import report as report_mod
+
+    calls = []
+    real = report_mod.build_report
+
+    def spy(lab, username, backend, *, host_ids=None, now=None):
+        calls.append(None if host_ids is None else sorted(host_ids))
+        return real(lab, username, backend, host_ids=host_ids, now=now)
+
+    monkeypatch.setattr(report_mod, "build_report", spy)
+    return calls
+
+
 def test_targeting_a_host_outside_the_fleet_demands_its_own_slot(monkeypatch, tmp_path, capsys):
     """Holding the fleet's slot is not permission to touch a host outside it.
 
@@ -429,17 +449,12 @@ def test_targeting_a_host_outside_the_fleet_proceeds_when_its_slot_is_held(monke
 def test_a_target_inside_the_fleet_is_not_checked_twice(monkeypatch, tmp_path):
     """The preamble already asked the backend for exactly the fleet's requirement.
 
-    A second ``check_reservations`` for a host already in play would be a
-    second backend query per command for an answer otto has just had. The spy
-    goes red on a check that drops the ``admissible_ids`` guard.
+    A second report for a host already in play would be a second backend query
+    per command for an answer otto has just had. The spy goes red on a check
+    that drops the fleet filter in ``ReservationGate.check_hosts``.
     """
-    from otto.reservations import check as check_mod
-
     _slot_fleet(monkeypatch, tmp_path)
-    calls = []
-    monkeypatch.setattr(
-        check_mod, "check_reservations", lambda *a, **kw: calls.append(kw.get("host_ids"))
-    )
+    calls = _spy_build_report(monkeypatch)
     ctx = _host_ctx(_gate({"slot-1"}), "slot1")
 
     assert host_module.resolve_cli_host(ctx).id == "slot1"
@@ -453,13 +468,8 @@ def test_dash_r_skips_the_targeted_host_check_too(monkeypatch, tmp_path):
     ignored it would make ``-R`` stop working for exactly the command whose
     target is out of scope.
     """
-    from otto.reservations import check as check_mod
-
     _slot_fleet(monkeypatch, tmp_path)
-    calls = []
-    monkeypatch.setattr(
-        check_mod, "check_reservations", lambda *a, **kw: calls.append(kw.get("host_ids"))
-    )
+    calls = _spy_build_report(monkeypatch)
     ctx = _host_ctx(_gate(set(), skip_check=True), "slot2")
 
     assert host_module.resolve_cli_host(ctx).id == "slot2"
@@ -520,10 +530,8 @@ def test_an_out_of_fleet_host_with_no_slot_of_its_own_is_never_queried(monkeypat
     fleet, so without the guard every such run pays a second round trip for a
     verdict otto has just had.
 
-    Red at HEAD: the spy recorded one call with ``{'gw'}``.
+    Red at HEAD: the spy recorded one call with ``['gw']``.
     """
-    from otto.reservations import check as check_mod
-
     lab = _slot_fleet(monkeypatch, tmp_path)
     lab.resources = {"rig-pdu"}  # a lab-level id, so the requirement is non-empty
     from tests._fixtures.fleet import _host
@@ -532,10 +540,7 @@ def test_an_out_of_fleet_host_with_no_slot_of_its_own_is_never_queried(monkeypat
     assert not lab.hosts["gw"].resources  # the premise, stated
     assert not lab.hosts["gw"].element.resources
 
-    calls = []
-    monkeypatch.setattr(
-        check_mod, "check_reservations", lambda *a, **kw: calls.append(kw.get("host_ids"))
-    )
+    calls = _spy_build_report(monkeypatch)
     ctx = _host_ctx(_gate({"rig-pdu", "slot-1"}), "gw")
 
     assert host_module.resolve_cli_host(ctx).id == "gw"
@@ -1183,8 +1188,9 @@ def test_warning_fires_only_once_for_an_out_of_fleet_host(monkeypatch, tmp_path,
 
     The gate requires the lab's own ``rig-pdu`` plus the fleet's ``slot-1``;
     the out-of-fleet check for ``slot2`` requires ``rig-pdu`` again — it is
-    seeded unconditionally — plus ``slot-2``. Put the warning inside
-    ``check_reservations`` instead and this goes red with a count of 2.
+    seeded unconditionally — plus ``slot-2``. Announce from every report
+    rather than once per ``(resource, end)`` and this goes red with a count
+    of 2.
     """
     import logging
 
@@ -1203,10 +1209,10 @@ def test_warning_fires_only_once_for_an_out_of_fleet_host(monkeypatch, tmp_path,
 def test_dash_r_suppresses_the_out_of_fleet_expiry_warning(monkeypatch, tmp_path, caplog):
     """``-R`` returns above the check at this site, so above the warning too.
 
-    Mutation: move the helper above the ``gate.skip_check`` guard and this
-    goes red. The asymmetry with ``otto reservation check`` — which still
-    warns under ``-R`` — is deliberate and pinned in
-    ``tests/unit/cli/test_reservation.py``.
+    Mutation: move the ``skip_check`` return in
+    ``ReservationGate.check_hosts`` below the report and this goes red. The
+    asymmetry with ``otto reservation check`` — which still warns under
+    ``-R`` — is deliberate and pinned in ``tests/unit/cli/test_reservation.py``.
     """
     import logging
 
@@ -1224,12 +1230,12 @@ def test_dash_r_suppresses_the_out_of_fleet_expiry_warning(monkeypatch, tmp_path
 def test_a_null_backend_never_reaches_the_out_of_fleet_expiry_helper(monkeypatch, tmp_path, caplog):
     """The guard that keeps the warning from becoming the thing that queries.
 
-    ``check_reservations`` short-circuits on the null backend before it asks
-    anything; the warning sits behind the same predicate, so a lab configured
+    ``build_report`` short-circuits on the null backend before it asks
+    anything, and the expiry nudge reads that report, so a lab configured
     with no scheduler stays a no-op.
 
-    Mutation: drop ``not is_null_backend(gate.backend)`` from
-    ``_check_named_host_reservations`` and the fetch below raises. A plain
+    Mutation: drop the ``null or`` short-circuit from ``build_report`` and the
+    fetch below raises. A plain
     ``NullReservationBackend`` could not show that — it answers ``[]``, so an
     unguarded call would stay silently green.
     """

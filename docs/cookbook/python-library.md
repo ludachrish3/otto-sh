@@ -129,14 +129,16 @@ async with otto.open_context(lab="mylab") as ctx:
 
 `open_context` accepts:
 
-| Parameter            | Type                        | Default | Description                               |
-|----------------------|-----------------------------|---------|-------------------------------------------|
-| `lab`                | `Lab \| str \| list[str]`   | —       | Lab name(s) as `--lab` takes them (`"a+b"`, or a list, each item like one `--lab`), or a `Lab` object, used as given |
-| `include_projects`   | `list[str] \| None`         | `None`  | Force these projects active (one name per item, no comma lists) |
-| `exclude_projects`   | `list[str] \| None`         | `None`  | Switch these projects off (one name per item)  |
-| `variant`            | `"debug" \| "field" \| None` | `None`  | The product variant, as `otto --field/--debug` selects it ({ref}`variants <product-variants>`); `None` keeps the one already set (`"debug"` by default) |
-| `dry_run`            | `bool`                      | `False` | Log commands without executing them       |
-| `log_command_output` | `bool`                      | `True`  | Stream command output to the otto logger  |
+| Parameter                | Type                         | Default | Description                               |
+|--------------------------|------------------------------|---------|-------------------------------------------|
+| `lab`                    | `Lab \| str \| list[str]`    | —       | Lab name(s) as `--lab` takes them (`"a+b"`, or a list, each item like one `--lab`), or a `Lab` object, used as given |
+| `include_projects`       | `list[str] \| None`          | `None`  | Force these projects active (one name per item, no comma lists) |
+| `exclude_projects`       | `list[str] \| None`          | `None`  | Switch these projects off (one name per item) |
+| `variant`                | `"debug" \| "field" \| None` | `None`  | The product variant, as `otto --field/--debug` selects it ({ref}`variants <product-variants>`); `None` keeps the one already set (`"debug"` by default) |
+| `dry_run`                | `bool`                       | `False` | Log commands without executing them       |
+| `log_command_output`     | `bool`                       | `True`  | Stream command output to the otto logger  |
+| `holder`                 | `str \| None`                | `None`  | Check reservations as this user, as `--holder` does |
+| `skip_reservation_check` | `bool`                       | `False` | Skip the reservation check, as `-R` does; logs a warning |
 
 A `Lab` you pass keeps the products it was built with, so build it under the
 same `variant` (`set_variant` before `build_lab`), while containers started in
@@ -149,10 +151,16 @@ declared containers (see {doc}`../configuration/host-sources`). It refuses
 where the CLI refuses, before your block runs:
 {class}`~otto.session.ProjectSelectionError`,
 {class}`~otto.session.RepoLoadError`, {class}`~otto.session.LabBuildError` or
-{class}`~otto.session.DependencyRefusedError`; {doc}`../api/session` says what
-each one carries. A malformed lab string (`""` or `"a++b"`) raises
-`ValueError`, and lab data that is malformed only when it loads propagates as
-{class}`otto.labs.LabRepositoryError <otto.labs.errors.LabRepositoryError>`. For a lab from somewhere else — built in memory (see
+{class}`~otto.session.DependencyRefusedError`; then, once the lab is known,
+{class}`~otto.reservations.check.MissingReservationError` or
+{class}`~otto.reservations.check.ReservationBackendError`.
+{doc}`../api/session` says what each session error carries. A `[reservations]`
+table that is misconfigured (no `[reservations.json] path`, an unknown backend
+name) raises `ValueError` from the backend factory. A malformed lab string
+(`""` or `"a++b"`) raises `ValueError`, and lab data that is malformed only
+when it loads propagates as
+{class}`otto.labs.LabRepositoryError <otto.labs.errors.LabRepositoryError>`.
+For a lab from somewhere else — built in memory (see
 [In-memory labs](#in-memory-labs-no-lab-file)) or loaded by your own code —
 pass the `Lab` object. It is used as given — no sources, preferences or
 placeholders are added — and the checks still run against it.
@@ -178,24 +186,31 @@ yourself (the `otto.session` functions are on {doc}`../api/session`):
 4. For the field variant, call `otto.context.set_variant("field")` and keep
    the token it returns. The lab build picks each product's
    {ref}`variant <product-variants>` entry, and providers read the variant
-   while the work runs, so set it before step 5 and reset it after step 8.
+   while the work runs, so set it before step 5 and reset it after step 10.
 5. {func}`~otto.session.build_lab` builds the lab, unless you passed a `Lab` object.
    It takes component lab names already split (`["a", "b"]`, not `"a+b"`).
-6. Build an `OttoContext` with that lab, the selection's include / exclude
+6. {func}`~otto.reservations.build_reservation_gate` builds the reservation
+   gate from the repos' `[reservations]` (an unbuildable backend refuses here,
+   before any context exists). Skip it, as `-R` does, with
+   `skip_reservation_check=True`.
+7. Build an `OttoContext` with that lab, the selection's include / exclude
    (`include_projects=`, `exclude_projects=`) and the runtime flags, and
    install it as the active context with `set_context()`, which returns a
    reset token.
-7. {func}`~otto.session.check_dependencies` runs the
+8. {func}`~otto.session.check_dependencies` runs the
    [dependency preflight](../cli/env/index.md#the-dependency-preflight). It needs
    the installed context, because whether a repo is active depends on the
    lab's hosts.
-8. Do the work. Each host that connects joins the host scope of the event loop
+9. `gate.evaluate()` ({meth}`~otto.reservations.check.ReservationGate.evaluate`)
+   refuses with `MissingReservationError` when you do not hold what the lab
+   needs. It runs last, as on the CLI.
+10. Do the work. Each host that connects joins the host scope of the event loop
    it connects on. On the way out, `ctx.sweep_loop(...)` closes the hosts the
    running loop owns, then `reset_context(token)` restores the prior state,
    and `otto.context.reset_variant(variant_token)` restores the prior variant
    if you set one.
 
-The smallest version keeps steps 1, 5, 6 and 8:
+The smallest version keeps steps 1, 5, 7 and 10:
 
 ```python
 import asyncio
@@ -276,11 +291,13 @@ from a different event loop while that one is still running raises
 {class}`~otto.host.loop_owner.HostLoopError`; close the host on its own loop
 first. Once the loop that opened it has closed, the next use simply reconnects.
 
-Reservation checks are a CLI concern — `open_context` does not gate on them.
-If your script needs to verify reservations before running, call
-`otto.reservations.check_reservations(...)` explicitly before entering the
-block. For the full build-a-backend → resolve-identity → gate → present
-walkthrough (including a complete, runnable example CLI to copy), see
+`open_context` applies the reservation gate the way `otto --lab …` does: when a
+repo's `[reservations]` configures a backend and you do not hold what the lab
+needs, it raises {class}`~otto.reservations.check.MissingReservationError`,
+whose `.report` lists each missing resource and its holders. `holder="name"`
+checks as another user (`--holder`); `skip_reservation_check=True` is the `-R`
+break-glass, and logs a loud warning. With no `[reservations]` anywhere, the
+gate does nothing. To build and present the gate in your own CLI, see
 {doc}`Using the reservation library in your own CLI <extending/reservation-backends>`.
 
 ## In-memory labs (no lab file)
@@ -372,8 +389,8 @@ for junit in result.junit_paths:
 - **`bootstrap()` alone skips the CLI's checks.** A script without
   `open_context` gets no project selection (`-I` / `-E`), no bootstrap gate (a
   repo whose `init` module failed to import does not stop the run; whatever it
-  would have registered is simply missing), and no dependency preflight. Call
-  {func}`~otto.session.select_projects`, {func}`~otto.session.check_repos` and
+  would have registered is simply missing), no dependency preflight, and no
+  reservation gate. Call {func}`~otto.session.select_projects`, {func}`~otto.session.check_repos` and
   {func}`~otto.session.check_dependencies` yourself if you want them (see
   [Bring-your-own-CLI](#bring-your-own-cli-lower-level-primitives) for their
   order), or run under `open_context()`.

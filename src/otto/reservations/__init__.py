@@ -20,14 +20,16 @@ if TYPE_CHECKING:
     from .check import ResourceLevel as ResourceLevel
     from .check import ResourceOrigin as ResourceOrigin
     from .check import active_reservations as active_reservations
+    from .check import announce_expiring as announce_expiring
     from .check import check_reservations as check_reservations
     from .check import required_resource_origins as required_resource_origins
     from .check import required_resources as required_resources
     from .check import reset_expiry_warnings as reset_expiry_warnings
-    from .check import warn_expiring_reservations as warn_expiring_reservations
     from .factory import build_backend as build_backend
     from .factory import build_reservation_gate as build_reservation_gate
+    from .factory import gate_from_settings as gate_from_settings
     from .factory import reset_half_ported_warnings as reset_half_ported_warnings
+    from .identity import ReservationIdentity as ReservationIdentity
     from .identity import ResolvedIdentity as ResolvedIdentity
     from .identity import resolve_username as resolve_username
     from .json_backend import JsonReservationBackend as JsonReservationBackend
@@ -38,6 +40,10 @@ if TYPE_CHECKING:
     from .protocol import SupportsResourceHolders as SupportsResourceHolders
     from .protocol import SupportsUsernameCompletion as SupportsUsernameCompletion
     from .registry import register_reservation_backend as register_reservation_backend
+    from .report import MissingResource as MissingResource
+    from .report import ReservationReport as ReservationReport
+    from .report import ReservationRow as ReservationRow
+    from .report import build_report as build_report
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
@@ -49,14 +55,16 @@ _LAZY_ATTRS: dict[str, str] = {
     "ResourceLevel": "otto.reservations.check",
     "ResourceOrigin": "otto.reservations.check",
     "active_reservations": "otto.reservations.check",
+    "announce_expiring": "otto.reservations.check",
     "check_reservations": "otto.reservations.check",
     "required_resource_origins": "otto.reservations.check",
     "required_resources": "otto.reservations.check",
     "reset_expiry_warnings": "otto.reservations.check",
-    "warn_expiring_reservations": "otto.reservations.check",
     "build_backend": "otto.reservations.factory",
     "build_reservation_gate": "otto.reservations.factory",
+    "gate_from_settings": "otto.reservations.factory",
     "reset_half_ported_warnings": "otto.reservations.factory",
+    "ReservationIdentity": "otto.reservations.identity",
     "ResolvedIdentity": "otto.reservations.identity",
     "resolve_username": "otto.reservations.identity",
     "JsonReservationBackend": "otto.reservations.json_backend",
@@ -67,6 +75,10 @@ _LAZY_ATTRS: dict[str, str] = {
     "SupportsResourceHolders": "otto.reservations.protocol",
     "SupportsUsernameCompletion": "otto.reservations.protocol",
     "register_reservation_backend": "otto.reservations.registry",
+    "MissingResource": "otto.reservations.report",
+    "ReservationReport": "otto.reservations.report",
+    "ReservationRow": "otto.reservations.report",
+    "build_report": "otto.reservations.report",
 }
 
 
@@ -87,6 +99,7 @@ def __dir__() -> list[str]:
 __all__ = [
     "JsonReservationBackend",
     "MissingReservationError",
+    "MissingResource",
     "NullReservationBackend",
     "Reservation",
     "ReservationBackend",
@@ -94,15 +107,21 @@ __all__ = [
     "ReservationBackendError",
     "ReservationGate",
     "ReservationGateResult",
+    "ReservationIdentity",
+    "ReservationReport",
+    "ReservationRow",
     "ResolvedIdentity",
     "ResourceLevel",
     "ResourceOrigin",
     "SupportsResourceHolders",
     "SupportsUsernameCompletion",
     "active_reservations",
+    "announce_expiring",
     "build_backend",
+    "build_report",
     "build_reservation_gate",
     "check_reservations",
+    "gate_from_settings",
     "is_null_backend",
     "register_reservation_backend",
     "required_resource_origins",
@@ -110,5 +129,4 @@ __all__ = [
     "reset_expiry_warnings",
     "reset_half_ported_warnings",
     "resolve_username",
-    "warn_expiring_reservations",
 ]

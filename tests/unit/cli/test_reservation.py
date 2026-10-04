@@ -367,9 +367,10 @@ def test_check_says_so_when_nothing_is_required(capsys, monkeypatch):
 def test_check_does_not_query_the_backend_when_nothing_is_required(capsys, monkeypatch):
     """A backend outage must not fail a run that needs no reservation.
 
-    ``check_reservations`` computes the requirement and returns on an empty one
-    BEFORE it ever queries; the table has to make the same call, or the command
-    starts failing where it used to succeed.
+    ``build_report`` (reached through ``gate.report()``) computes the
+    requirement and returns on an empty one BEFORE it ever queries, and the
+    table is rendered from that report, so the command cannot start failing
+    where it used to succeed.
     """
     monkeypatch.setenv("COLUMNS", "300")
 
@@ -394,9 +395,10 @@ def test_check_does_not_query_the_backend_when_nothing_is_required(capsys, monke
 def test_check_table_renders_n_a_under_the_null_backend(capsys, monkeypatch):
     """The ``"none"`` backend reserves nothing, so ``held`` has no answer to give.
 
-    ``check_reservations`` short-circuits on it and prints OK. A table that
-    queried it anyway would get ``set()`` back and render every requirement as
-    unheld directly above that OK line — the display contradicting the verdict.
+    ``build_report`` short-circuits on it, leaving every row's ``held`` as
+    ``None``, and the verdict prints OK. A table that queried it anyway would
+    get ``set()`` back and render every requirement as unheld directly above
+    that OK line — the display contradicting the verdict.
     """
     monkeypatch.setenv("COLUMNS", "300")
 
@@ -456,14 +458,13 @@ def test_check_renders_a_resource_that_looks_like_markup_verbatim(capsys, monkey
 def test_check_table_does_not_credit_a_foreign_users_row(capsys, monkeypatch):
     """A row for someone else must not render ``yes`` for the invoking user.
 
-    ``check_reservations`` filters ``active_reservations`` down to
-    ``r.user == username``; the table's held set must apply the same filter
-    or it can render ``yes`` directly above a refusal naming the same
-    resource as missing — the two predicates would then disagree about what
-    "held" means for one otto run.
+    ``build_report`` filters ``active_reservations`` down to
+    ``r.user == username`` once, for the rows and the verdict alike, so the
+    table cannot render ``yes`` directly above a refusal naming the same
+    resource as missing.
 
-    Mutation: drop the ``if r.user == username`` filter from the held-set
-    comprehension in ``otto.cli.reservation.check`` and this goes red.
+    Mutation: drop the ``if r.user == username`` filter from the ``own`` list
+    in ``otto.reservations.report.build_report`` and this goes red.
     """
     monkeypatch.setenv("COLUMNS", "300")
 

@@ -1,15 +1,14 @@
-"""Unit tests for the five-minute reservation-expiry warning.
+"""Unit tests for ``announce_expiring``, the five-minute reservation-expiry warning.
 
-The warning lives in :func:`~otto.reservations.check.warn_expiring_reservations`
-rather than inside ``check_reservations`` because that function has THREE call
-sites — the preamble gate, ``otto reservation check``, and the out-of-fleet
-named-host check in ``otto.cli.host`` — and every one of them requires the
-lab-level resources. One implementation inside it would announce a lapsing
-lab-level booking twice on any run that names an out-of-fleet host.
+The nudge is :func:`~otto.reservations.check.announce_expiring`, reading the
+``expiring`` rows of a :class:`~otto.reservations.report.ReservationReport`
+rather than living inside ``check_reservations``, so each caller chooses the
+moment and a lapsing lab-level booking is announced once however many call
+sites see it.
 
-The helper never fetches: each caller passes rows it has already got, behind
-that caller's own null-backend and empty-requirement short-circuits, which is
-what keeps a lab needing no reservation usable while the scheduler is down.
+Announcing never fetches: the report already holds the rows, behind
+``build_report``'s own null-backend and empty-requirement short-circuits, which
+is what keeps a lab needing no reservation usable while the scheduler is down.
 """
 
 import os
@@ -18,15 +17,35 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from otto.reservations import Reservation
+from otto.config.lab import Lab
+from otto.reservations import Reservation, ReservationBackendBase
 from otto.reservations.check import (
     EXPIRY_WARNING_WINDOW,
+    announce_expiring,
     reset_expiry_warnings,
-    warn_expiring_reservations,
 )
+from otto.reservations.report import build_report
 
 NOW = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
 NEEDED = {"rack3"}
+
+
+class _Rows(ReservationBackendBase):
+    def __init__(self, rows):
+        super().__init__(username="alice")
+        self.rows = rows
+
+    def fetch_reservations(self, username, start=None, end=None):
+        return self.rows
+
+    def backend_name(self):
+        return "rows"
+
+
+def _announce(rows, needed, *, now):
+    """Announce what a report built over *rows* and the *needed* resources says is expiring."""
+    lab = Lab(name="lab1", resources=set(needed))
+    announce_expiring(build_report(lab, "alice", _Rows(rows), host_ids=[], now=now), now=now)
 
 
 def _rows(**kw):
@@ -36,9 +55,7 @@ def _rows(**kw):
 def test_warns_at_four_minutes_fifty_nine(caplog):
     """Inside the window by one second: the boundary's near side."""
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(
-            _rows(end=NOW + timedelta(minutes=4, seconds=59)), NEEDED, now=NOW
-        )
+        _announce(_rows(end=NOW + timedelta(minutes=4, seconds=59)), NEEDED, now=NOW)
     assert "rack3" in caplog.text
     assert "expires" in caplog.text.lower()
 
@@ -46,16 +63,14 @@ def test_warns_at_four_minutes_fifty_nine(caplog):
 def test_does_not_warn_at_five_minutes_one_second(caplog):
     """Outside it by one second. Paired with the test above, this pins the threshold."""
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(
-            _rows(end=NOW + timedelta(minutes=5, seconds=1)), NEEDED, now=NOW
-        )
+        _announce(_rows(end=NOW + timedelta(minutes=5, seconds=1)), NEEDED, now=NOW)
     assert caplog.text == ""
 
 
 def test_does_not_warn_for_open_ended_reservation(caplog):
     """``end is None`` is a booking with nothing to lapse, not an imminent one."""
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(_rows(end=None), NEEDED, now=NOW)
+        _announce(_rows(end=None), NEEDED, now=NOW)
     assert caplog.text == ""
 
 
@@ -65,21 +80,21 @@ def test_does_not_warn_for_a_resource_this_run_does_not_need(caplog):
         Reservation(user="alice", resource="unrelated", end=NOW + timedelta(minutes=1)),
     ]
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(rows, NEEDED, now=NOW)
+        _announce(rows, NEEDED, now=NOW)
     assert caplog.text == ""
 
 
 def test_already_expired_row_warns(caplog):
     """A booking whose end has passed is the most urgent case, not one to skip."""
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(_rows(end=NOW - timedelta(seconds=1)), NEEDED, now=NOW)
+        _announce(_rows(end=NOW - timedelta(seconds=1)), NEEDED, now=NOW)
     assert "rack3" in caplog.text
 
 
 def test_an_already_expired_row_reports_zero_minutes_not_a_negative_one(caplog):
     """The countdown floors at zero: "expires in -1 minute(s)" is nonsense to read."""
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(_rows(end=NOW - timedelta(minutes=3)), NEEDED, now=NOW)
+        _announce(_rows(end=NOW - timedelta(minutes=3)), NEEDED, now=NOW)
     assert "expires in 0 minute(s)" in caplog.text
 
 
@@ -95,16 +110,16 @@ def test_the_same_booking_is_announced_only_once(caplog):
     """
     rows = _rows(end=NOW + timedelta(minutes=1))
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(rows, NEEDED, now=NOW)
-        warn_expiring_reservations(rows, NEEDED, now=NOW)
+        _announce(rows, NEEDED, now=NOW)
+        _announce(rows, NEEDED, now=NOW)
     assert caplog.text.count("rack3") == 1
 
 
 def test_a_different_end_for_the_same_resource_is_a_new_warning(caplog):
     """Suppression keys on ``(resource, end)``: a re-booked rack is news again."""
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(_rows(end=NOW + timedelta(minutes=1)), NEEDED, now=NOW)
-        warn_expiring_reservations(_rows(end=NOW + timedelta(minutes=2)), NEEDED, now=NOW)
+        _announce(_rows(end=NOW + timedelta(minutes=1)), NEEDED, now=NOW)
+        _announce(_rows(end=NOW + timedelta(minutes=2)), NEEDED, now=NOW)
     assert caplog.text.count("rack3") == 2
 
 
@@ -112,9 +127,9 @@ def test_reset_clears_the_suppression_set(caplog):
     """The fixture's own mechanism, exercised directly."""
     rows = _rows(end=NOW + timedelta(minutes=1))
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(rows, NEEDED, now=NOW)
+        _announce(rows, NEEDED, now=NOW)
         reset_expiry_warnings()
-        warn_expiring_reservations(rows, NEEDED, now=NOW)
+        _announce(rows, NEEDED, now=NOW)
     assert caplog.text.count("rack3") == 2
 
 
@@ -125,7 +140,7 @@ def test_warnings_are_ordered_by_soonest_end(caplog):
         Reservation(user="alice", resource="soon", end=NOW + timedelta(minutes=1)),
     ]
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(rows, {"late", "soon"}, now=NOW)
+        _announce(rows, {"late", "soon"}, now=NOW)
     assert caplog.text.index("soon") < caplog.text.index("late")
 
 
@@ -143,7 +158,7 @@ def test_the_suppression_set_leaks_nothing_between_tests():
 @pytest.mark.parametrize("needed", [set(), {"other"}])
 def test_an_empty_or_disjoint_requirement_warns_about_nothing(caplog, needed):
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(_rows(end=NOW + timedelta(seconds=1)), needed, now=NOW)
+        _announce(_rows(end=NOW + timedelta(seconds=1)), needed, now=NOW)
     assert caplog.text == ""
 
 
@@ -186,5 +201,48 @@ def test_the_warning_renders_the_end_in_the_viewers_local_zone(caplog, far_east_
     """
     end = NOW + timedelta(minutes=3)  # 15:03 UTC, 05:03 the next day at UTC+14
     with caplog.at_level("WARNING"):
-        warn_expiring_reservations(_rows(end=end), NEEDED, now=NOW)
+        _announce(_rows(end=end), NEEDED, now=NOW)
     assert "at 05:03" in caplog.text, caplog.text
+
+
+def _report(*expiring):
+    from otto.reservations.report import ReservationReport
+
+    return ReservationReport(
+        lab="lab1",
+        username="alice",
+        in_play=[],
+        rows=[],
+        null_backend=False,
+        expiring=list(expiring),
+        missing=[],
+    )
+
+
+def test_announce_expiring_logs_one_warning_per_expiring_booking(caplog):
+    from otto.reservations.check import announce_expiring
+
+    report = _report(Reservation(user="alice", resource="rack1", end=NOW + timedelta(minutes=2)))
+    with caplog.at_level("WARNING"):
+        announce_expiring(report, now=NOW)
+    assert len(caplog.records) == 1
+    assert "'rack1'" in caplog.text
+    assert "expires in 2 minute(s)" in caplog.text
+
+
+def test_announce_expiring_announces_a_report_once(caplog):
+    from otto.reservations.check import announce_expiring
+
+    report = _report(Reservation(user="alice", resource="rack1", end=NOW + timedelta(minutes=2)))
+    with caplog.at_level("WARNING"):
+        announce_expiring(report, now=NOW)
+        announce_expiring(report, now=NOW)
+    assert len(caplog.records) == 1
+
+
+def test_announce_expiring_with_nothing_expiring_logs_nothing(caplog):
+    from otto.reservations.check import announce_expiring
+
+    with caplog.at_level("WARNING"):
+        announce_expiring(_report(), now=NOW)
+    assert caplog.text == ""

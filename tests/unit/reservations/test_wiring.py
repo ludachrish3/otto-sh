@@ -134,3 +134,21 @@ class TestAPresentTableMustNameItsBackend:
 
         repo = Repo(sut_dir=make_sut_repo(tmp_path, extra='[reservations]\nbackend = "none"\n'))
         assert repo.reservation_settings == {"backend": "none"}
+
+
+def test_gate_from_settings_builds_no_backend_under_skip(tmp_path):
+    from otto.reservations import gate_from_settings
+
+    gate = gate_from_settings({}, tmp_path, holder="bob", skip_reservation_check=True)
+    assert gate.backend is None
+    assert gate.skip_check is True
+    assert gate.identity.username == "bob"
+    assert gate.backend_factory is not None
+
+
+def test_gate_from_settings_builds_the_backend_for_the_resolved_user(tmp_path):
+    from otto.reservations import gate_from_settings, is_null_backend
+
+    gate = gate_from_settings({}, tmp_path, holder="bob", skip_reservation_check=False)
+    assert is_null_backend(gate.backend)  # no `backend` key resolves to "none"
+    assert gate.backend.username == "bob"

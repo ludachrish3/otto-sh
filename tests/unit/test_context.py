@@ -1069,3 +1069,222 @@ async def test_an_invalid_variant_refuses_before_anything_runs(monkeypatch):
     assert calls == []
     assert variant() == "debug"
     assert try_get_context() is None
+
+
+# --- open_context applies the reservation gate ----------------------------------
+
+
+def _reservations_repo(tmp_path, holdings: "dict[str, list[str]]"):
+    """A repo whose [reservations] is the JSON backend over *holdings* (user -> resources)."""
+    import json
+
+    path = tmp_path / "reservations.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "reservations": [
+                    {"user": user, "resources": resources} for user, resources in holdings.items()
+                ],
+            }
+        )
+    )
+    return fake_repo(
+        "res",
+        sut_dir=tmp_path,
+        settings={"reservations": {"backend": "json", "json": {"path": str(path)}}},
+    )
+
+
+def _lab_needing(*resources):
+    lab = _lab_with("test1")  # Lab is a mutable dataclass
+    lab.resources = set(resources)
+    return lab
+
+
+def _as_user(monkeypatch, name: str) -> None:
+    # getpass.getuser() reads LOGNAME first, then USER.
+    monkeypatch.setenv("LOGNAME", name)
+    monkeypatch.setenv("USER", name)
+
+
+@pytest.mark.asyncio
+async def test_open_context_refuses_an_unheld_resource_with_its_report(tmp_path, monkeypatch):
+    import otto
+    from otto.reservations import MissingReservationError
+
+    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {"bob": ["rack1"]})])
+    _as_user(monkeypatch, "alice")
+    with pytest.raises(MissingReservationError) as exc:
+        async with otto.open_context(lab=_lab_needing("rack1")):
+            pass
+    assert [m.resource for m in exc.value.report.missing] == ["rack1"]
+    assert try_get_context() is None
+
+
+@pytest.mark.asyncio
+async def test_open_context_passes_when_held_and_holder_changes_who_is_checked(
+    tmp_path, monkeypatch
+):
+    import otto
+
+    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {"bob": ["rack1"]})])
+    _as_user(monkeypatch, "alice")
+    async with otto.open_context(lab=_lab_needing("rack1"), holder="bob") as ctx:
+        assert ctx.lab.name
+
+
+@pytest.mark.asyncio
+async def test_an_empty_holder_is_no_holder(tmp_path, monkeypatch, caplog):
+    import otto
+
+    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {"alice": ["rack1"]})])
+    _as_user(monkeypatch, "alice")
+    with caplog.at_level(logging.INFO, logger="otto.context"):
+        # "" falls back to the invoking user (alice, who holds rack1), not a user named "".
+        async with otto.open_context(lab=_lab_needing("rack1"), holder=""):
+            pass
+    assert "acting as" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_holder_is_logged_as_the_identity_acted_as(tmp_path, monkeypatch, caplog):
+    import otto
+
+    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {"bob": ["rack1"]})])
+    _as_user(monkeypatch, "alice")
+    with caplog.at_level(logging.INFO, logger="otto.context"):
+        async with otto.open_context(lab=_lab_needing("rack1"), holder="bob"):
+            pass
+    messages = [r.getMessage() for r in caplog.records]
+    assert "reservations: acting as 'bob' (holder=)" in messages
+
+
+@pytest.mark.asyncio
+async def test_skip_builds_no_backend_and_logs_the_warning(tmp_path, monkeypatch, caplog):
+    import otto
+    from otto.reservations import factory
+
+    calls = []
+
+    def _never(*a, **k):
+        calls.append(True)
+        raise AssertionError("no backend may be built under skip")
+
+    monkeypatch.setattr(factory, "build_backend", _never)
+    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {})])
+    with caplog.at_level(logging.WARNING):
+        async with otto.open_context(lab=_lab_needing("rack1"), skip_reservation_check=True):
+            pass
+    assert calls == []
+    assert "skipped" in caplog.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_dry_run_is_gated_too(tmp_path, monkeypatch):
+    import otto
+    from otto.reservations import MissingReservationError
+
+    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {})])
+    with pytest.raises(MissingReservationError):
+        async with otto.open_context(lab=_lab_needing("rack1"), dry_run=True):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_no_reservations_table_is_a_no_op(monkeypatch):
+    import otto
+
+    _install_result(monkeypatch, repos=[fake_repo("plain")])
+    async with otto.open_context(lab=_lab_needing("rack1")):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_an_unbuildable_backend_refuses_before_any_context(tmp_path, monkeypatch):
+    import otto
+    from otto.context import variant
+    from otto.reservations import ReservationBackendError
+
+    class _Boom:
+        def __init__(self, **kwargs):
+            raise TypeError("cannot connect")
+
+    monkeypatch.setattr(
+        "otto.reservations.registry.get_reservation_backend_class", lambda name: _Boom
+    )
+    repo = fake_repo("res", sut_dir=tmp_path, settings={"reservations": {"backend": "boom"}})
+    _install_result(monkeypatch, repos=[repo])
+    installed = []
+    real_set_context = set_context
+    monkeypatch.setattr(
+        "otto.context.set_context", lambda ctx: installed.append(ctx) or real_set_context(ctx)
+    )
+    before = variant()
+    with pytest.raises(ReservationBackendError):
+        async with otto.open_context(lab=_lab_needing("rack1"), variant="field"):
+            pass
+    assert installed == []
+    assert try_get_context() is None
+    assert variant() == before
+
+
+@pytest.mark.asyncio
+async def test_a_backend_failing_at_query_time_uninstalls_the_context(tmp_path, monkeypatch):
+    import otto
+    from otto.context import variant
+    from otto.reservations import ReservationBackendError
+
+    repo = _reservations_repo(tmp_path, {})
+    (tmp_path / "reservations.json").write_text("{not json")
+    _install_result(monkeypatch, repos=[repo])
+    installed = []
+    real_set_context = set_context
+    monkeypatch.setattr(
+        "otto.context.set_context", lambda ctx: installed.append(ctx) or real_set_context(ctx)
+    )
+    before = variant()
+    with pytest.raises(ReservationBackendError):
+        async with otto.open_context(lab=_lab_needing("rack1"), variant="field"):
+            pass
+    assert len(installed) == 1
+    assert try_get_context() is None
+    assert variant() == before
+
+
+def _owner_of_test1(host_pattern: str):
+    """A repo whose [project] scope claims the hosts matching *host_pattern*."""
+    from otto.config.scope import ProjectScopeConfig
+
+    scope = ProjectScopeConfig(
+        lab_patterns=[re.compile(".*")], host_patterns=[re.compile(host_pattern)]
+    )
+    return fake_repo("owner", sut_dir=Path("/repos/owner"), project_scope=scope)
+
+
+def _lab_whose_test1_needs_slot():
+    lab = _lab_with("test1")
+    lab.hosts["test1"].resources = {"slot"}
+    return lab
+
+
+@pytest.mark.asyncio
+async def test_exclude_projects_does_not_narrow_the_reservation_requirement(tmp_path, monkeypatch):
+    """``exclude_projects`` does not narrow the hosts in play, as the CLI's ``-E`` does not,
+    so the reservation requirement is unchanged; a declared scope that claims no host does."""
+    import otto
+    from otto.reservations import MissingReservationError
+
+    _as_user(monkeypatch, "alice")
+    res = _reservations_repo(tmp_path, {"bob": ["slot"]})
+
+    _install_result(monkeypatch, repos=[res, _owner_of_test1("test1")])
+    with pytest.raises(MissingReservationError) as exc:
+        async with otto.open_context(lab=_lab_whose_test1_needs_slot(), exclude_projects=["owner"]):
+            pass
+    assert [m.resource for m in exc.value.report.missing] == ["slot"]
+
+    # Control: the scope path is live. Owner's patterns claim no host, so `slot` drops out.
+    _install_result(monkeypatch, repos=[res, _owner_of_test1("nomatch")])
+    async with otto.open_context(lab=_lab_whose_test1_needs_slot()):
+        pass

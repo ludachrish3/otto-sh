@@ -129,10 +129,29 @@ required set. Otherwise holding the fleet's slots would be permission to touch
 hardware nobody reserved, and reaching a fleet host through an unreserved jump
 box is still using the jump box.
 
+## One report, many readers
+
+{func}`otto.reservations.report.build_report` is the only place a reservation
+*check* queries a backend (completion's cache reads raw rows for its own store).
+It decides when the answer is not needed at all (nothing required, or
+the `none` backend), so a scheduler outage cannot fail a run that needs
+nothing. Everything else reads the
+{class}`~otto.reservations.report.ReservationReport` it returns:
+
+- the gate's {meth}`~otto.reservations.check.ReservationGate.evaluate`
+- {meth}`~otto.reservations.check.ReservationGate.check_hosts`
+- {meth}`~otto.reservations.check.ReservationGate.report`
+- `otto reservation check`
+- {func}`~otto.context.open_context`, which applies the same gate a CLI run
+  does
+
+The rules live in the API docs, not here, and no reader re-derives them.
+
 ## Where the code lives
 
 - {mod}`otto.reservations` — the gate (`ReservationGate`), identity
   resolution, and the backend registry
+- {mod}`otto.reservations.report` — the report every reservation check reads
 - {mod}`otto.reservations.protocol` — the `ReservationBackend` Protocol every
   backend implements
 - {mod}`otto.reservations.json_backend` / {mod}`otto.reservations.null_backend`

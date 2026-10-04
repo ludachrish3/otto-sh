@@ -68,13 +68,20 @@ surfaced differently in the CLI — see
 .. autoexception:: otto.reservations.check.ReservationBackendError
    :no-index:
 
-.. autoexception:: otto.reservations.check.MissingReservationError
-   :no-index:
+:class:`~otto.reservations.check.MissingReservationError` is documented
+under :ref:`the check <the-check>` below.
+
+.. _the-check:
 
 The check
 ---------
 
 .. automodule:: otto.reservations.check
+
+The report
+~~~~~~~~~~
+
+.. automodule:: otto.reservations.report
 
 .. _skip-flag-hint-policy:
 
@@ -111,8 +118,8 @@ Null backend
 
 Selected when no ``[reservations]`` section is configured at all, or when
 ``backend = "none"`` is set.
-:func:`~otto.reservations.check.check_reservations` recognizes this
-type and becomes a no-op.
+:func:`~otto.reservations.report.build_report` recognizes this
+type and makes no query.
 
 .. automodule:: otto.reservations.null_backend
 
@@ -124,6 +131,8 @@ Backend factory
 .. autofunction:: otto.reservations.register_reservation_backend
 
 .. autofunction:: otto.reservations.build_reservation_gate
+
+.. autofunction:: otto.reservations.gate_from_settings
 
 .. automodule:: otto.reservations.registry
 

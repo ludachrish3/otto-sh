@@ -1,94 +1,132 @@
-"""Reference third-party CLI built directly on the reservation library (sample).
+"""Reference third-party CLI built on the reservation library (sample).
 
-:mod:`otto.reservations` has no dependency on Typer, rich, or otto's own CLI
-machinery — this small app is the starting point for wiring the same plumbing
-into your own tool. Copy it, or run it as-is (see
-``docs/cookbook/extending/reservation-backends.md`` → "Using the reservation library in
-your own CLI" for the walkthrough):
+It follows the same rules as otto's own CLI, and copying it copies them:
 
-1. **Build** a backend from settings with :func:`~otto.reservations.build_backend`.
-   An unconfigured ``backend`` setting (the default here) resolves to
-   :class:`~otto.reservations.NullReservationBackend` — the check becomes a
-   silent no-op, so this module needs no real scheduler to run or test.
-2. **Resolve** the effective identity with :func:`~otto.reservations.resolve_username`.
-3. **Construct** a :class:`~otto.reservations.ReservationGate` and call
-   :meth:`~otto.reservations.ReservationGate.evaluate`.
-4. **Present** the outcome. ``evaluate()`` returns plain text with no markup
-   baked in — otto's own CLI wraps it in rich markup
-   (:func:`~otto.cli.invoke.present_reservation_gate`); this example uses a
-   bare ``typer.echo`` to make the point that presentation is entirely the
-   caller's choice.
+1. **Parse** the flags. ``--holder`` and ``-R`` / ``--skip-reservation-check``
+   are otto's own spellings.
+2. **Construct** the gate through the library:
+   :func:`~otto.reservations.gate_from_settings` resolves the identity before
+   building the backend for it, and under ``-R`` builds no backend at all.
+3. **Call** one library entry point:
+   :meth:`~otto.reservations.ReservationGate.evaluate` for ``gate``, or
+   :meth:`~otto.reservations.ReservationGate.report` for ``check``. An explicit
+   ``Lab`` needs no otto context.
+4. **Render** the result. Presentation is the caller's choice; this one prints
+   plain lines.
+5. **Translate** errors in one place (:func:`translate`), with otto's exit
+   codes: 1 for a missing resource and 1 for an unavailable backend, whose
+   message names ``-R``.
 
-:func:`run_check` is steps 3-4, kept separate from the Typer command so it is
-directly testable against a :class:`~otto.reservations.NullReservationBackend`
-or the :class:`~otto.examples.reservations.ExampleReservationBackend` sample —
-no CLI invocation and no real scheduler involved:
+Nothing here decides a reservation question itself.
+
+The helpers take a gate, so a test can hand them one around an in-memory
+backend. The commands build theirs from settings:
 
 >>> from otto.config.lab import Lab
 >>> from otto.examples.reservations import ExampleReservationBackend
->>> from otto.reservations import resolve_username
->>> from otto.examples.reservations_cli import run_check
+>>> from otto.examples.reservations_cli import check_report, translate
+>>> from otto.reservations import ReservationGate, resolve_username
 >>> demo = Lab(name="demo", resources={"lab-a"})
->>> alice = resolve_username("alice")
->>> run_check(demo, backend=ExampleReservationBackend(username="alice"), identity=alice)
-alice: OK
+>>> def gate_for(user):
+...     backend = ExampleReservationBackend(username=user)
+...     return ReservationGate(backend=backend, identity=resolve_username(user))
+>>> translate(lambda: check_report(gate_for("alice"), demo))
+lab-a  lab demo  held
+OK
 0
->>> carol = resolve_username("carol")
->>> run_check(demo, backend=ExampleReservationBackend(username="carol"), identity=carol)
-carol: User 'carol' does not hold all resources required by lab 'demo'. Missing:
+>>> translate(lambda: check_report(gate_for("carol"), demo))
+lab-a  lab demo  missing
+User 'carol' does not hold all resources required by lab 'demo'. Missing:
   lab-a  lab demo  (held by: alice)
 1
 
-Run the full CLI (steps 1-2 included) directly — with no ``--backend`` it
-resolves the Null fallback, so this needs no scheduler either::
+Run the full CLI. With no ``--backend`` it uses the ``none`` backend, so it
+needs no scheduler::
 
-    python -m otto.examples.reservations_cli --resource rack1
+    python -m otto.examples.reservations_cli --resource rack1 gate
+    python -m otto.examples.reservations_cli --resource rack1 check
 """
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 
 from otto.config.lab import Lab
-from otto.context import OttoContext, reset_context, set_context
 from otto.reservations import (
     MissingReservationError,
-    ReservationBackend,
     ReservationBackendError,
     ReservationGate,
-    ResolvedIdentity,
-    build_backend,
-    resolve_username,
+    gate_from_settings,
 )
 
 app = typer.Typer(add_completion=False, help="Third-party reservation-gate demo.")
 
 
-def run_check(lab: Lab, *, backend: ReservationBackend, identity: ResolvedIdentity) -> int:
-    """Evaluate the gate for *lab* and print the outcome; return a process exit code.
+@dataclass(frozen=True)
+class _Options:
+    resources: list[str]
+    backend: str
+    holder: str | None
+    skip: bool
 
-    0 on success (covered, or a silent no-op); 1 if *identity* is missing a
-    required resource; 2 if the backend itself could not answer the query.
-    """
-    token = set_context(OttoContext(lab=lab))
+
+def translate(action: Callable[[], int]) -> int:
+    """Run *action*, turning the library's refusals into otto's exit codes in one place."""
     try:
-        outcome = ReservationGate(backend=backend, identity=identity).evaluate()
+        return action()
     except MissingReservationError as e:
-        typer.echo(f"{identity.username}: {e}")
+        typer.echo(str(e))
         return 1
     except ReservationBackendError as e:
-        typer.echo(f"{identity.username}: reservation backend unavailable: {e}")
-        return 2
-    finally:
-        reset_context(token)
-    status = outcome.warning or "OK"
-    typer.echo(f"{identity.username}: {status}")
+        typer.echo(
+            f"reservation backend unavailable: {e}\n"
+            "Pass --skip-reservation-check / -R to proceed without the check."
+        )
+        return 1
+
+
+def run_gate(gate: ReservationGate, lab: Lab) -> int:
+    """Evaluate *gate* for *lab* and print the outcome; a refusal raises for :func:`translate`."""
+    outcome = gate.evaluate(lab)
+    typer.echo(outcome.warning or "OK")
     return 0
 
 
-@app.command()
+def check_report(gate: ReservationGate, lab: Lab) -> int:
+    """Print *gate*'s report for *lab*, one line per requirement, then the verdict."""
+    report = gate.report(lab)
+    for row in report.rows:
+        held = "n/a" if row.held is None else ("held" if row.held else "missing")
+        typer.echo(f"{row.resource}  {row.level} {row.owner}  {held}")
+    if not report.covered:
+        raise MissingReservationError.from_report(report)
+    typer.echo("OK")
+    return 0
+
+
+def _options(ctx: typer.Context) -> _Options:
+    return cast("_Options", ctx.obj)  # set by main(), which runs before every command
+
+
+def _gate(opts: _Options) -> ReservationGate:
+    return gate_from_settings(
+        {"backend": opts.backend},
+        Path.cwd(),
+        holder=opts.holder,
+        skip_reservation_check=opts.skip,
+    )
+
+
+def _lab(opts: _Options) -> Lab:
+    return Lab(name="example", resources=set(opts.resources))
+
+
+@app.callback()
 def main(
+    ctx: typer.Context,
     resource: Annotated[
         list[str] | None,
         typer.Option("--resource", help="Resource id this run needs (repeatable)."),
@@ -99,23 +137,31 @@ def main(
     ] = "none",
     holder: Annotated[
         str | None,
-        typer.Option("--holder", help="Query as this user instead of $USER."),
+        typer.Option("--holder", help="Check reservations as this user instead of $USER."),
     ] = None,
+    skip: Annotated[
+        bool,
+        typer.Option(
+            "--skip-reservation-check", "-R", help="Skip the check (break-glass); warns loudly."
+        ),
+    ] = False,
 ) -> None:
-    """Build a backend + identity from CLI flags, then delegate to `run_check`."""
-    # Resolve identity before building the backend: the backend is constructed
-    # with the username it will query for, so there is nothing to build until
-    # we know who is asking.
-    identity = resolve_username(holder)
-    try:
-        backend = build_backend(
-            {"backend": backend_name}, repo_dir=Path.cwd(), username=identity.username
-        )
-    except ReservationBackendError as e:
-        typer.echo(f"reservation backend unavailable: {e}")
-        raise typer.Exit(2) from e
-    lab = Lab(name="example", resources=set(resource or []))
-    raise typer.Exit(run_check(lab, backend=backend, identity=identity))
+    """Parse the shared flags; the commands build the gate from them."""
+    ctx.obj = _Options(list(resource or []), backend_name, holder, skip)
+
+
+@app.command()
+def gate(ctx: typer.Context) -> None:
+    """Gate a run: refuse unless every required resource is held."""
+    opts = _options(ctx)
+    raise typer.Exit(translate(lambda: run_gate(_gate(opts), _lab(opts))))
+
+
+@app.command()
+def check(ctx: typer.Context) -> None:
+    """Report every required resource and whether you hold it."""
+    opts = _options(ctx)
+    raise typer.Exit(translate(lambda: check_report(_gate(opts), _lab(opts))))
 
 
 if __name__ == "__main__":

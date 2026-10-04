@@ -186,95 +186,21 @@ def main(
 
 
 def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]") -> None:
-    """Require the OWN slots of every host the user named that sits outside the fleet.
+    """Refuse an out-of-fleet named host whose slot is not held.
 
-    ``otto host <id> --hop <id>`` is deliberately unscoped — explicit targeting
-    beats scoping — while the preamble's gate requires only the fleet of
-    interest (spec 2026-08-28 three-level-reservations §5). Before this branch
-    every reservation was lab-level, so a whole-lab lock covered any host the
-    fleet left out; element- and host-level slots make that gap reachable: a
-    project scoped to ``slot1`` would pass the gate holding ``slot-1`` and then
-    touch ``slot2``.
-
-    *named* is BOTH explicitly named hosts — the target and the resolved
-    ``--hop``. The hop is not a lesser target: ``rebuild_connections`` opens a
-    jump session through it, and reaching a fleet host through an unreserved
-    jump box is still using the jump box.
-
-    Three short-circuits, in this order:
-
-    * The built-in ``local`` host is not a target here any more than it is a
-      host in play (spec 2026-08-28 three-level-reservations §5): naming the
-      machine otto is already running on must never need a slot. A lab that
-      declares its OWN ``local`` entry is not this host and is not skipped —
-      see :func:`~otto.host.builtin_hosts.is_builtin_host`.
-    * A host the fleet already covers is skipped — the preamble asked the
-      backend for exactly that set, and asking again for the same answer is a
-      second query per command.
-    * A named out-of-fleet host that declares neither ``resources`` nor
-      element resources can add nothing to the requirement:
-      :func:`~otto.reservations.check.required_resource_origins` seeds the
-      lab-level set unconditionally, so checking such a host re-asks for
-      exactly what the preamble already required. Without this, naming any
-      resource-less host under a lab with a lab-level identifier costs a
-      second backend round trip for a verdict otto has just had. The read is
-      local (two frozensets on a built host), never the backend.
-
-    Everything else mirrors :func:`~otto.cli.invoke.present_reservation_gate` —
-    the same memoized gate off ``ctx.meta``, its ``skip_check`` (``-R`` already
-    printed its loud warning; a second one says nothing new), and a ``None``
-    backend that means no ``[reservations]`` section resolved. The null backend
-    short-circuits inside ``check_reservations`` itself. One query for both
-    hosts, so a run short of two slots is told about both at once.
-
-    Local imports: ``otto host`` is a budgeted import surface
-    (``scripts/import_budget.py``) and neither ``otto.reservations`` nor the
-    lab accessor belongs on ``otto host --help``.
+    The rules are :meth:`otto.reservations.ReservationGate.check_hosts`'s.
+    Local imports: ``otto host`` is a budgeted import surface.
     """
     gate = ctx.meta.get("otto_reservation")
-    if gate is None or gate.skip_check or gate.backend is None or gate.identity is None:
+    if gate is None:
         return
-    from ..config.fleet import get_hosts_in_play
-    from ..host.builtin_hosts import is_builtin_host
-
-    fleet = get_hosts_in_play()
-    outside = [host for host in named if host.id not in fleet and not is_builtin_host(host)]
-    if not any(
-        host.resources or (host.element.resources if host.element else ()) for host in outside
-    ):
-        return
-
     from ..config import get_lab
-    from ..reservations.check import (
-        MissingReservationError,
-        active_reservations,
-        check_reservations,
-        required_resources,
-        warn_expiring_reservations,
-    )
-    from ..reservations.null_backend import is_null_backend
+    from ..reservations import MissingReservationError
 
-    lab = get_lab()
-    host_ids = {host.id for host in outside}
     try:
-        check_reservations(
-            lab,
-            gate.identity.username,
-            gate.backend,
-            host_ids=host_ids,
-        )
+        gate.check_hosts(get_lab(), named)
     except MissingReservationError as e:
         fail(e)
-
-    # The expiry nudge for the slots this command is about to use, which the
-    # preamble never saw: its requirement covered the fleet, and these hosts
-    # are precisely the ones the fleet left out. Behind the same two guards
-    # ``check_reservations`` uses, so the warning is never what queries the
-    # backend. A lab-level identifier reaches both sites and is announced once
-    # — the suppression set is what makes that true.
-    needed = required_resources(lab, host_ids=host_ids)
-    if needed and not is_null_backend(gate.backend):
-        warn_expiring_reservations(active_reservations(gate.backend), needed)
 
 
 def resolve_cli_host(ctx: typer.Context) -> "RemoteHost":

@@ -59,7 +59,7 @@ def _warn_if_half_ported(backend: object) -> None:
     * **Never during shell completion.** Completion returns from the root
       callback before any log handler is installed, so
       :data:`logging.lastResort` would write this line straight into the
-      middle of the user's TAB (spec §6.1, §8). The completion path
+      middle of the user's TAB. The completion path
       suppresses the PAYLOAD only: nothing is recorded in
       :data:`_warned_half_ported`, so the next real invocation — where there
       is a terminal to write to — still announces it.
@@ -236,6 +236,40 @@ def build_backend(
     return backend  # type: ignore[no-any-return]
 
 
+def gate_from_settings(
+    settings: "dict[str, Any]",
+    repo_dir: Path,
+    *,
+    holder: "str | None",
+    skip_reservation_check: bool,
+) -> ReservationGate:
+    """Build the reservation gate from one ``[reservations]`` table.
+
+    The rules every caller shares: the identity is resolved first, because the
+    backend is built for that username. Under ``skip_reservation_check`` (the
+    ``-R`` break-glass) no backend is built at all, so a scheduler that fails
+    or hangs in its constructor can never block lab access. A lazy
+    ``backend_factory`` is always attached for status reports.
+
+    Raises
+    ------
+    ReservationBackendError
+        The backend cannot be built and ``skip_reservation_check`` is False.
+    """
+    identity = resolve_username(holder)
+
+    def _factory() -> ReservationBackend:
+        return build_backend(settings, repo_dir, username=identity.username)
+
+    backend = None if skip_reservation_check else _factory()
+    return ReservationGate(
+        backend=backend,
+        identity=identity,
+        skip_check=skip_reservation_check,
+        backend_factory=_factory,
+    )
+
+
 def build_reservation_gate(
     repos: "list[Repo]",
     *,
@@ -245,40 +279,20 @@ def build_reservation_gate(
 ) -> ReservationGate:
     """Resolve the per-invocation reservation gate from the active repos.
 
-    The first repo with a ``[reservations]`` section wins. With
-    ``skip_reservation_check`` (the ``-R`` break-glass flag) the backend is
-    **not** constructed at all — a scheduler that fails or hangs in its
-    constructor can never block lab access. A ``backend_factory`` thunk is
-    always attached so ``otto reservation`` subcommands can build it on demand.
+    The first repo with a ``[reservations]`` section wins. Construction follows
+    :func:`gate_from_settings`.
 
     Raises
     ------
     ReservationBackendError
         If construction fails and ``skip_reservation_check`` is False.
     """
-    reservation_settings: dict[str, Any] = {}
-    reservation_repo_dir: Path = repos[0].sut_dir if repos else cwd_fallback
+    settings: dict[str, Any] = {}
+    repo_dir: Path = repos[0].sut_dir if repos else cwd_fallback
     for repo in repos:
         if repo.reservation_settings:
-            reservation_settings = repo.reservation_settings
-            reservation_repo_dir = repo.sut_dir
+            settings, repo_dir = repo.reservation_settings, repo.sut_dir
             break
-
-    # Resolve identity BEFORE constructing the backend: the backend is given
-    # the username at construction and queries for it lazily, so there is no
-    # backend to build until we know who is asking.
-    identity = resolve_username(holder)
-
-    def _factory() -> ReservationBackend:
-        return build_backend(reservation_settings, reservation_repo_dir, username=identity.username)
-
-    backend: ReservationBackend | None = None
-    if not skip_reservation_check:
-        backend = _factory()  # may raise ReservationBackendError
-
-    return ReservationGate(
-        backend=backend,
-        identity=identity,
-        skip_check=skip_reservation_check,
-        backend_factory=_factory,
+    return gate_from_settings(
+        settings, repo_dir, holder=holder, skip_reservation_check=skip_reservation_check
     )

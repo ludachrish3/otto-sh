@@ -261,6 +261,10 @@ depends_on = [
     # open_context makes the CLI's decisions through otto.session: project
     # selection, the bootstrap gate, the lab build and the dependency preflight.
     "otto.session",
+    # open_context applies the reservation gate the CLI preamble applies
+    # (build_reservation_gate + ReservationGate.evaluate). Function-local.
+    # Both modules were already in one import cycle, so this adds no member.
+    "otto.reservations",
 ]
 
 [[modules]]

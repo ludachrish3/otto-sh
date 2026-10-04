@@ -33,6 +33,19 @@ class ResolvedIdentity:
     source: IdentitySource
 
 
+@dataclass(frozen=True)
+class ReservationIdentity:
+    """Who the reservation check runs as, and against which backend."""
+
+    username: str
+    source: IdentitySource
+    backend_name: str
+    """The backend's :meth:`~otto.reservations.protocol.ReservationBackend.backend_name`.
+
+    ``"<none>"`` when no backend can be built.
+    """
+
+
 def resolve_username(holder: str | None) -> ResolvedIdentity:
     """Resolve the effective reservation identity.
 
