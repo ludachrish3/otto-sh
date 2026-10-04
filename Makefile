@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -638,6 +638,10 @@ wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + w
 		exit 1; \
 	fi; \
 	echo "wheel-check: OK — otto/kmodcov/build.sh stored executable (0o755)."
+
+wheel-smoke: wheel-check ## (Build & Release) Install the checked wheel over otto's locked RUNTIME dependencies only (no dev group, no editable src/) and smoke it from outside the checkout: every module imports, and the hostless CLI lists and runs tests with pytest's plugin autoload on and off (scripts/wheel_smoke.py, #593)
+	@$(SAY) "wheel smoke: dist/*.whl over runtime dependencies only"
+	@uv run nox -s wheel_smoke
 
 docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, clips, termynal blocks) in docs/_static/generated/
 	@$(SAY) "capturing docs GUI media (screenshots + clips)"

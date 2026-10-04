@@ -585,6 +585,44 @@ def dashboard(session: nox.Session, browser: str) -> None:
     )
 
 
+@nox.session(python=[PRIMARY_PYTHON])
+def wheel_smoke(session: nox.Session) -> None:
+    """Smoke the built wheel in a venv of runtime dependencies only (scripts/wheel_smoke.py).
+
+    Every other session installs the `dev` group into an editable otto, so a
+    development dependency or an auto-loaded plugin can hide what an
+    installed otto lacks (#593: pytest-cov's `--no-cov`). This one installs
+    `dist/*.whl` with `--no-deps` over the locked runtime dependencies
+    (`uv export --no-dev`) — what `pip install otto-sh` resolves, pinned —
+    and runs the smoke from a scratch directory, so neither `src/` nor the
+    checkout's tests are importable.
+
+    It needs a built wheel. Building one needs the web assets (the build
+    backend refuses an asset-less wheel), so the Node step stays outside
+    this Python-only session, as for `dashboard`: `make wheel-smoke` builds
+    first, and so does CI's `wheel-smoke` job.
+    """
+    wheels = sorted(Path("dist").glob("*.whl"))
+    if len(wheels) != 1:
+        session.error(f"expected one wheel in dist/, found {len(wheels)}: run `make wheel-smoke`")
+    runtime = Path(session.create_tmp()) / "runtime-requirements.txt"
+    session.run_install(
+        "uv",
+        "export",
+        "--frozen",
+        "--no-dev",
+        "--no-emit-project",
+        "--no-hashes",
+        f"--output-file={runtime}",
+        external=True,
+    )
+    session.install("-r", str(runtime))
+    session.install("--no-deps", str(wheels[0].resolve()))
+    script = Path("scripts/wheel_smoke.py").resolve()
+    session.chdir(session.create_tmp())
+    session.run("python", str(script))
+
+
 @nox_uv.session(uv_groups=["dev", "lint"])
 def lint(session: nox.Session) -> None:
     """Run ruff lint + format checks, then the architecture gates.

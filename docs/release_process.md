@@ -66,7 +66,13 @@ Pushing a `v*` tag fires [`.github/workflows/release.yml`](https://github.com/lu
   including that the wheel carries the `py.typed` marker described in the
   {doc}`library docs <cookbook/python-library>`. The build backend itself refuses an asset-less wheel,
   so a bare `uv build` without the web step fails rather than publishing a
-  frontend-less package.
+  frontend-less package. The build then goes through `make wheel-smoke`:
+  the wheel is installed over otto's locked runtime dependencies alone (no
+  dev group, nothing from `src/`) and `scripts/wheel_smoke.py` imports every
+  module and runs `otto test` from it, with pytest's plugin autoload on and
+  off. Every other lane runs an editable otto in the dev venv, where a
+  development dependency can hide what an installed otto lacks. CI's
+  `wheel-smoke` job runs the same target on every push.
 - **publish** uploads to PyPI via OIDC, gated by the `pypi` GitHub
   Environment.
 - **docs** builds the HTML documentation on a clean runner and packs the two

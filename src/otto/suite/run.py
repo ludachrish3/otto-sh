@@ -970,6 +970,14 @@ def _pytest_session(
     base_args: list[str] = [
         *targets,
         "-s",
+        # The runtime-dependency plugins the arguments below belong to, named
+        # by their entry points: pytest's plugin autoload is the user's to
+        # switch off (PYTEST_DISABLE_PLUGIN_AUTOLOAD), and without these an
+        # argument is a usage error or an ini option silently ignored.
+        "-p",
+        "asyncio",
+        "-p",
+        "timeout",
         "-o",
         "asyncio_mode=auto",
         *ASYNCIO_LOOP_ARGS,
@@ -979,7 +987,11 @@ def _pytest_session(
         # interrupts blocking calls and the session still reaches sessionfinish.
         "-o",
         "timeout_method=signal",
-        "--no-cov",
+        # pytest-cov is a development dependency, so the inner session blocks
+        # it with pytest's own `-p no:` (which parses with or without the
+        # plugin) rather than pytest-cov's `--no-cov` (which does not, #593).
+        "-p",
+        "no:pytest_cov",
         "--no-header",
         "--override-ini",
         "log_cli=false",
@@ -1004,14 +1016,15 @@ def _pytest_session(
         "--override-ini",
         "filterwarnings=ignore::pytest.PytestAssertRewriteWarning",
     ]
-    # pytest-randomly is a runtime dependency and pytest auto-loads it, so
-    # random order is the default and costs no argument; only the two
-    # departures are spelled out. `--no-header` above hides the plugin's own
+    # pytest-randomly is a runtime dependency, named like the plugins above:
+    # random order is the default. `--no-header` above hides the plugin's own
     # "Using --randomly-seed=N" line — OttoPlugin logs the seed instead.
     if not opts.random_order:
         base_args += ["-p", "no:randomly"]
-    elif opts.seed is not None:
-        base_args.append(f"--randomly-seed={opts.seed}")
+    else:
+        base_args += ["-p", "randomly"]
+        if opts.seed is not None:
+            base_args.append(f"--randomly-seed={opts.seed}")
     if selection.markers:
         # -m deselects after OttoPlugin matched the names, so a name the
         # expression excludes is still a known name (it matches nothing).

@@ -483,13 +483,33 @@ jobs:
           uv run playwright install --with-deps chromium
       - run: uv run nox -s docs
 
+  # The one lane that runs otto as a user installs it: the built wheel over
+  # its locked runtime dependencies, no dev group, nothing from src/. Every
+  # other job runs an editable otto in the dev venv, which is how a dev-only
+  # pytest-cov option shipped in every `otto test` session (#593). The wheel
+  # needs the web assets (the build backend refuses an asset-less one), and
+  # `make wheel-smoke` builds them, checks the wheel, then runs the session.
+  wheel-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Set up Node
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - run: uv python install 3.10
+      - run: make wheel-smoke
+
   # If any job above fails on a push to main, open (or update) a tracking
   # issue so a broken main surfaces without anyone having to watch the
   # Actions tab. Skipped for pull_request — PR failures are already visible
   # to the PR author in the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [lint-python, tests, unit-repeat, dashboard, busybox, check-ts, typecheck-python, docs]
+    needs: [lint-python, tests, unit-repeat, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke]
     if: failure() && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -503,7 +523,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of lint-python / tests / unit-repeat / dashboard / busybox / check-ts / typecheck-python / docs failed."
+            echo "Check the job logs to see which of lint-python / tests / unit-repeat / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke failed."
           } > issue-body.md
 
       - name: Create issue from file

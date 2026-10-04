@@ -30,8 +30,8 @@ jobs:
           uv sync
           make web-install
 
-      - name: Build web assets + sdist + wheel (gated)
-        run: make wheel-check
+      - name: Build web assets + sdist + wheel, then smoke the installed wheel (gated)
+        run: make wheel-smoke
 
       - name: Upload dist artifact
         uses: actions/upload-artifact@v7
