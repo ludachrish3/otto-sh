@@ -7,6 +7,7 @@ import typer
 
 from otto.cli.invoke import validate_project_switches
 from otto.cli.main import _project_completer, parse_project_list
+from tests._fixtures.fake_repo import fake_repo
 from tests.unit.cli.test_bootstrap_gate import _fake_ctx, _install_result
 
 
@@ -65,9 +66,7 @@ class TestProjectCompleter:
     def test_offers_discovered_repo_names(self, monkeypatch):
         monkeypatch.setattr(
             "otto.bootstrap.discover",
-            lambda: SimpleNamespace(
-                repos=[SimpleNamespace(name="repo1"), SimpleNamespace(name="repo2")]
-            ),
+            lambda: SimpleNamespace(repos=[fake_repo("repo1"), fake_repo("repo2")]),
         )
         assert _project_completer(None, "repo") == ["repo1", "repo2"]
         assert _project_completer(None, "repo2") == ["repo2"]
@@ -89,7 +88,7 @@ class TestProjectCompleter:
         """
         monkeypatch.setattr(
             "otto.bootstrap.discover",
-            lambda: SimpleNamespace(repos=[SimpleNamespace(name="repo1")]),
+            lambda: SimpleNamespace(repos=[fake_repo("repo1")]),
         )
 
         def _forbidden(*args, **kwargs):
@@ -112,7 +111,7 @@ class TestUnknownName:
     """
 
     def test_unknown_name_exits_2_with_a_suggestion(self, monkeypatch, capsys):
-        _install_result(monkeypatch, repos=[SimpleNamespace(name="repo2")])
+        _install_result(monkeypatch, repos=[fake_repo("repo2")])
         with pytest.raises(typer.Exit) as excinfo:
             validate_project_switches(_fake_ctx(exclude=("repoo2",)))
         assert excinfo.value.exit_code == 2
@@ -120,14 +119,14 @@ class TestUnknownName:
 
     def test_an_unknown_include_name_is_caught_too(self, monkeypatch, capsys):
         """Both switches are validated; -I is not the untested half."""
-        _install_result(monkeypatch, repos=[SimpleNamespace(name="repo2")])
+        _install_result(monkeypatch, repos=[fake_repo("repo2")])
         with pytest.raises(typer.Exit) as excinfo:
             validate_project_switches(_fake_ctx(include=("ghost",)))
         assert excinfo.value.exit_code == 2
         assert "no project 'ghost'" in capsys.readouterr().out
 
     def test_known_names_pass(self, monkeypatch):
-        _install_result(monkeypatch, repos=[SimpleNamespace(name="repo2")])
+        _install_result(monkeypatch, repos=[fake_repo("repo2")])
         validate_project_switches(_fake_ctx(exclude=("repo2",)))  # must not raise
 
     def test_a_repo_name_is_normalized_before_comparison(self, monkeypatch):
@@ -136,7 +135,7 @@ class TestUnknownName:
         Parse normalizes the switch value; the repo side has to be normalized
         too or the only spelling the CLI can produce is rejected as unknown.
         """
-        _install_result(monkeypatch, repos=[SimpleNamespace(name="Repo_2")])
+        _install_result(monkeypatch, repos=[fake_repo("Repo_2")])
         validate_project_switches(_fake_ctx(exclude=("repo-2",)))  # must not raise
 
     def test_no_switches_never_bootstraps(self, monkeypatch):

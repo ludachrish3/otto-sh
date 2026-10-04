@@ -10,7 +10,6 @@ switched to defaults (verified when written: swap the bound context's
 """
 
 import dataclasses
-from types import SimpleNamespace
 from typing import Annotated
 
 import pytest
@@ -33,6 +32,7 @@ from otto.project import actions as actions_mod
 from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 
 
 @options
@@ -84,14 +84,12 @@ class _FakeCtx:
 def _wire_lab(monkeypatch, repo_names, ctx):
     """Point the orchestrator's two lookups at *repo_names* and *ctx*.
 
-    Copied from test_orchestrator.py's ``_wire_lab`` (single-repo shape):
-    every fake repo carries ``dependencies`` (empty here) and
-    ``inventory_settings = {}`` -- the repo-double rule, since a Mock's
-    truthy-but-empty attribute reads as a broken ``[inventory]`` declaration.
+    Copied from test_orchestrator.py's ``_wire_lab`` (single-repo shape).
+    The doubles are real repos from ``fake_repo``, not Mocks: a Mock's
+    truthy-but-empty ``inventory_settings`` reads as a broken ``[inventory]``
+    declaration.
     """
-    ordered = [
-        SimpleNamespace(name=name, dependencies=[], inventory_settings={}) for name in repo_names
-    ]
+    ordered = [fake_repo(name) for name in repo_names]
     monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: ordered)
     monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: ordered)
     monkeypatch.setattr("otto.context.get_context", lambda: ctx)

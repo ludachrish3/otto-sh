@@ -290,9 +290,11 @@ the recommended "Biome" and "Vitest" VS Code extensions (see
 
 One asymmetry inside that shape, because it is the kind that bites: `make
 lint-python` also runs the architecture gates (`lint-arch` — tach, ast-grep,
-and `ast-grep test`, which runs each rule's own valid/invalid snippets from
-`.ast-grep/rule-tests/`), so it matches CI's `lint-python` job, which is `nox -s lint` and
-has always run them. It ran ruff only until 2026-08-10, and the difference
+`ast-grep test`, which runs each rule's own valid/invalid snippets from
+`.ast-grep/rule-tests/`, and the two parse-only tests behind
+[Patching lazily exported names](#patching-lazily-exported-names)), so it
+matches CI's `lint-python` job, which is `nox -s lint` and has always run
+them; CI runs the two import-rule tests in its `tests` job. It ran ruff only until 2026-08-10, and the difference
 was invisible: a file could pass `make lint`, `make format` and every
 coverage lane while still violating an architecture rule. Those rules mostly
 police *test* code — deadline polls, `parents[N]` path arithmetic,
@@ -612,6 +614,22 @@ module level: binding one defeats no patch.
 `tests/unit/test_no_import_time_lazy_exports.py` flags both spellings; its
 `ALLOWED` table lists the sites that cannot move (a decorator applied at
 import), each with its reason.
+
+Both static checks run in `make lint-arch` as well as in every pytest lane, so
+the per-change gate catches a violation that a targeted test run would never
+select.
+
+### Standing in for a Repo
+
+A test that needs a {class}`~otto.config.repo.Repo` without a SUT on disk builds
+one with `fake_repo(name, **overrides)` from `tests/_fixtures/fake_repo.py`,
+never a hand-built `SimpleNamespace`. The factory returns a real `Repo` with
+every field at its declared default, so a reader added to `src/` tomorrow finds
+the attribute it reads; a namespace carries only what its author's code path
+read the day it was written, and breaks the test for an unrelated reason the
+first time a patch reaches further. The module docstring records the two
+incidents that made this the rule; `tests/unit/test_fake_repo_fixture.py` pins
+the factory against a parsed `Repo`.
 
 ### Embedded coverage bed
 

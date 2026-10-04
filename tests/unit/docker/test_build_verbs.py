@@ -17,6 +17,7 @@ from otto.docker.reports import BuildReport, ImageBuild
 from otto.docker.resolve import Displacement, SelectedFragment, Selection, UseCaseResolutionError
 from otto.result import CommandNotRunError, CommandResult
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 
 from .test_deploy import _frag, _host, _lab
 
@@ -42,8 +43,8 @@ def _image(name, *, is_archive=False, context=None):
 
 
 def _repo(name, *, images=(), composes=("core",)):
-    return SimpleNamespace(
-        name=name,
+    return fake_repo(
+        name,
         docker_settings=SimpleNamespace(
             images=tuple(_image(n) for n in images), composes=tuple(composes), use_cases=()
         ),
@@ -161,9 +162,8 @@ async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds,
     df = tmp_path / "Dockerfile"
     df.write_text("FROM alpine\n")
     image = DockerImage(name="api", dockerfile=df, context=tmp_path)
-    repo = SimpleNamespace(
-        name="a",
-        docker_settings=SimpleNamespace(images=(image,), composes=("core",), use_cases=()),
+    repo = fake_repo(
+        "a", docker_settings=SimpleNamespace(images=(image,), composes=("core",), use_cases=())
     )
     with (
         install([repo]),
@@ -331,8 +331,8 @@ async def test_dry_run_declines_with_the_whole_plan_and_builds_nothing(install, 
 
 
 def _uc_repo(name, *fragments, images=()):
-    return SimpleNamespace(
-        name=name,
+    return fake_repo(
+        name,
         docker_settings=SimpleNamespace(
             images=tuple(_image(n) for n in images), composes=("core",), use_cases=tuple(fragments)
         ),
@@ -524,9 +524,8 @@ async def test_compose_build_hands_the_flags_to_every_build(lab, builds):
 @pytest.mark.asyncio
 async def test_a_missing_archive_context_is_refused_before_any_host_is_touched(install, builds):
     missing = SimpleNamespace(name="api", is_archive=True, context=Path("/nonexistent/ctx.tar"))
-    repo = SimpleNamespace(
-        name="a",
-        docker_settings=SimpleNamespace(images=(missing,), composes=(), use_cases=()),
+    repo = fake_repo(
+        "a", docker_settings=SimpleNamespace(images=(missing,), composes=(), use_cases=())
     )
     with install([repo]), pytest.raises(DockerVerbError, match=r"/nonexistent/ctx\.tar") as e:
         await build_on("test3")

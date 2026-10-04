@@ -1,6 +1,5 @@
 """``otto.session.check_dependencies`` — whose unmet requirement refuses, whose warns."""
 
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -10,6 +9,7 @@ from otto.config.scope import ProjectScope
 from otto.context import OttoContext
 from otto.env.preflight import PreflightResult, Unsatisfied
 from tests._fixtures.bootstrapstub import bootstrap_stub
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.scoping import verdict
 
 _BAD = Unsatisfied(repo="acme", requirement="x>=1", found="0.1")
@@ -29,7 +29,7 @@ def _ctx(
     return ctx
 
 
-_REPOS = [SimpleNamespace(name="acme"), SimpleNamespace(name="beta")]
+_REPOS = [fake_repo("acme"), fake_repo("beta")]
 
 
 def _preflight(monkeypatch: pytest.MonkeyPatch, *, unsatisfied, warnings) -> "list[Any]":

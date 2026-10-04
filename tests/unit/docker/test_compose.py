@@ -55,6 +55,7 @@ from otto.labs.errors import LabRepositoryError
 from otto.registry import registering_repo
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.sutrepo import make_sut_repo
 from tests.conftest import active_context
 
@@ -1495,11 +1496,10 @@ def test_ingest_runs_after_the_source_lab_stamp(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _uc_repo(name: str, *fragments: DockerUseCase, composes: tuple = ()) -> SimpleNamespace:
+def _uc_repo(name: str, *fragments: DockerUseCase, composes: tuple = ()) -> Repo:
     """A use-case-declaring repo table, in the shape register_declared_container_hosts reads."""
-    return SimpleNamespace(
-        name=name,
-        docker_settings=SimpleNamespace(use_cases=tuple(fragments), composes=tuple(composes)),
+    return fake_repo(
+        name, docker_settings=SimpleNamespace(use_cases=tuple(fragments), composes=tuple(composes))
     )
 
 

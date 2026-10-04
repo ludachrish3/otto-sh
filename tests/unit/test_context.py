@@ -17,6 +17,7 @@ from otto.context import (
 )
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
+from tests._fixtures.fake_repo import fake_repo
 
 
 class _FakeHost:
@@ -761,7 +762,6 @@ def installed_repos(monkeypatch):
 
 def _broken_repo(name: str, *, lab_patterns: "list[str] | None" = None):
     """A discovered repo whose init failed, and its load error (its [project] parsed)."""
-    from types import SimpleNamespace
 
     from otto.config.scope import ProjectScopeConfig
 
@@ -773,7 +773,7 @@ def _broken_repo(name: str, *, lab_patterns: "list[str] | None" = None):
         )
     )
     sut_dir = Path(f"/repos/{name}")
-    repo = SimpleNamespace(name=name, sut_dir=sut_dir, project_scope=scope)
+    repo = fake_repo(name, sut_dir=sut_dir, project_scope=scope)
     return repo, bs.DependencyError(str(sut_dir), "dependency 'y' is not satisfied")
 
 

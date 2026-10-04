@@ -10,8 +10,6 @@ the root guard cannot see. Pinned by ``test_registration_survives_a_repeat_run``
 below, which registers the same repo name a second time in the same process.
 """
 
-from types import SimpleNamespace
-
 import pytest
 
 from otto import layout
@@ -38,9 +36,10 @@ from otto.project import (
 from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 
-REPO = SimpleNamespace(name="acme")
-OTHER_REPO = SimpleNamespace(name="other")
+REPO = fake_repo("acme")
+OTHER_REPO = fake_repo("other")
 
 
 def _fail(msg):
@@ -874,7 +873,7 @@ def test_owns_products_sees_only_this_repos_products():
     ctx, _ = _ctx_with_products("acme", [False], other_flags=[True])
     assert _actions(ctx).owns_products is True
     assert _actions(ctx, OTHER_REPO).owns_products is True
-    assert _actions(ctx, SimpleNamespace(name="docs")).owns_products is False
+    assert _actions(ctx, fake_repo("docs")).owns_products is False
 
 
 def test_owns_products_is_false_for_an_empty_fleet():
@@ -975,7 +974,7 @@ def test_actions_for_prefers_registered_class_else_default():
         register_project_actions(Custom)
     ctx, _ = _fake_ctx(n=0)
     assert type(actions_for(REPO, ctx)) is Custom
-    assert type(actions_for(SimpleNamespace(name="unregistered"), ctx)) is ProjectActions
+    assert type(actions_for(fake_repo("unregistered"), ctx)) is ProjectActions
 
 
 def test_actions_for_hands_the_instance_a_view_bound_to_its_own_repo():

@@ -58,6 +58,10 @@ docs/cli/cov/instrumenting/kmodcov-matrix.md
 # Sphinx build (docs/conf.py, builder-inited); the committed copy would be the stale one.
 docs/cli/known-good.md
 
+# Rendered from tach.toml by scripts/render_module_graph.py on every Sphinx build
+# (docs/conf.py, builder-inited); the committed copy would be the stale one.
+docs/architecture/modules.md
+
 # Claude files
 .claude
 

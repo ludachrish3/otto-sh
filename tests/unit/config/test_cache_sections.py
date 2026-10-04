@@ -15,6 +15,7 @@ import json
 import pytest
 
 from otto import bootstrap
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.generated_repo import generate_repo
 
 
@@ -269,7 +270,6 @@ def test_lab_file_edits_move_the_names_digest(tmp_path, monkeypatch):
     edit must invalidate it. The edit APPENDS (size change), so this cannot
     pass or fail on a same-clock-tick mtime coincidence.
     """
-    from types import SimpleNamespace
 
     from otto.config.cache_sections import section_by_name, section_digest
     from tests._fixtures.labdata import json_lab_sources, write_lab_json
@@ -282,15 +282,7 @@ def test_lab_file_edits_move_the_names_digest(tmp_path, monkeypatch):
     touch_settings(sut)
     lab_file = lab / "lab.json"
     write_lab_json(lab_file, [], declare_labs=True)
-    repo = SimpleNamespace(
-        sut_dir=sut,
-        init=[],
-        libs=[],
-        tests=[],
-        lab_sources=json_lab_sources(sut, [lab]),
-        inventory_settings={},
-        creds_settings={},
-    )
+    repo = fake_repo(sut_dir=sut, lab_sources=json_lab_sources(sut, [lab]))
     names = section_by_name("names")
     names_before = section_digest(names, [repo])
 

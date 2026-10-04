@@ -3,7 +3,6 @@
 import json
 import re
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -18,12 +17,13 @@ from otto.inventory import (
     construct_inventory,
 )
 from otto.models.settings import CredsConfigSpec, InventoryConfigSpec, UserSettingsModel
+from tests._fixtures.fake_repo import fake_repo
 
 
 def _repo(tmp_path, name, table, creds=None):
     root = tmp_path / name
     root.mkdir()
-    return SimpleNamespace(sut_dir=root, inventory_settings=table, creds_settings=creds or {})
+    return fake_repo(name, sut_dir=root, settings={"inventory": table, "creds": creds or {}})
 
 
 def _inventory_file(dir_: Path, name="inventory.json"):

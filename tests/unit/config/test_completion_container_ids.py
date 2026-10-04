@@ -13,14 +13,14 @@ that mismatch is the point, not incidental naming.
 """
 
 from pathlib import Path
-from types import SimpleNamespace
 
 from otto.config.completion_cache import collect_host_ids
-from otto.config.repo import DockerCompose, DockerSettings, DockerUseCase
+from otto.config.repo import DockerCompose, DockerSettings, DockerUseCase, Repo
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 
-def _repo(tmp_path: Path, *, name: str, docker: DockerSettings) -> SimpleNamespace:
+def _repo(tmp_path: Path, *, name: str, docker: DockerSettings) -> Repo:
     """A duck-typed Repo carrying one docker-capable host and a [docker] block."""
     labs_dir = tmp_path / "labs"
     labs_dir.mkdir()
@@ -36,14 +36,10 @@ def _repo(tmp_path: Path, *, name: str, docker: DockerSettings) -> SimpleNamespa
             }
         ],
     )
-    return SimpleNamespace(
-        name=name,
+    return fake_repo(
+        name,
         lab_sources=json_lab_sources(labs_dir.parent, [labs_dir]),
         sut_dir=labs_dir.parent,
-        # `build_inventory` reads it on the enumeration path; without it the
-        # enumeration is contained and offers no hosts at all.
-        inventory_settings={},
-        creds_settings={},
         docker_settings=docker,
     )
 

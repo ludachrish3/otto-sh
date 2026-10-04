@@ -10,12 +10,12 @@ exclude. :func:`load_hosts_pattern` refuses both by name, through the same
 """
 
 import re
-from types import SimpleNamespace
 
 import pytest
 
 from otto.config.coverage_settings import CoverageConfigError, load_hosts_pattern
 from otto.coverage.collect import collect_coverage
+from tests._fixtures.fake_repo import fake_repo
 
 
 class TestLoadHostsPattern:
@@ -41,6 +41,6 @@ class TestLoadHostsPattern:
 async def test_collect_coverage_refuses_a_non_string_selector(tmp_path):
     # The caller-level contract: the loader's refusal propagates out of
     # collect_coverage as the CoverageConfigError its callers already print.
-    repo = SimpleNamespace(settings={"coverage": {"hosts": ["host1", "host2"]}})
+    repo = fake_repo(settings={"coverage": {"hosts": ["host1", "host2"]}})
     with pytest.raises(CoverageConfigError, match="hosts must be a string"):
         await collect_coverage(tmp_path, repos=[repo])

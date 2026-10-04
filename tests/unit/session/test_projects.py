@@ -2,7 +2,6 @@
 
 import re
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +15,7 @@ from otto.session import (
     check_repos,
     select_projects,
 )
+from tests._fixtures.fake_repo import fake_repo
 
 
 def _repo(name, *, lab_patterns=None):
@@ -26,7 +26,7 @@ def _repo(name, *, lab_patterns=None):
             lab_patterns=[re.compile(p) for p in lab_patterns], host_patterns=[]
         )
     )
-    return SimpleNamespace(name=name, sut_dir=Path(f"/repos/{name}"), project_scope=scope)
+    return fake_repo(name, sut_dir=Path(f"/repos/{name}"), project_scope=scope)
 
 
 def _result(*, errors=(), repos=()):

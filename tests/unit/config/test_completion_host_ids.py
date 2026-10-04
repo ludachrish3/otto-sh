@@ -8,24 +8,18 @@ from otto.config.completion_cache import (
     collect_host_ids,
     collect_host_ids_by_lab,
 )
+from otto.config.repo import Repo
 from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 
-def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
+def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> Repo:
     """A fake Repo whose single lab search path holds *hosts* in lab.json."""
     lab = tmp_path / "lab"
     lab.mkdir(parents=True, exist_ok=True)
     write_lab_json(lab / "lab.json", hosts)
-    return SimpleNamespace(
-        lab_sources=json_lab_sources(tmp_path, [lab]),
-        sut_dir=tmp_path,
-        # Read by `build_inventory` on the enumeration path: a Repo stand-in
-        # that omits it models a Repo that no longer exists, and the
-        # enumeration silently returns no hosts at all.
-        inventory_settings={},
-        creds_settings={},
-    )
+    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), sut_dir=tmp_path)
 
 
 _TEST1 = {

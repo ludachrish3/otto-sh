@@ -12,7 +12,6 @@ Tests cover:
 import logging
 import os
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
@@ -26,6 +25,7 @@ from otto.logger.levels import LEVEL_NAMES
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.bootstrapstub import bootstrap_stub
+from tests._fixtures.fake_repo import fake_repo
 
 runner = CliRunner()
 
@@ -156,7 +156,7 @@ class TestEagerOptions:
         # every other caller sees it — would silently run the real bootstrap.
         from rich.panel import Panel
 
-        repo = SimpleNamespace(get_lab_panel=lambda: Panel("sentinel-lab-from-patch"))
+        repo = fake_repo(get_lab_panel=lambda: Panel("sentinel-lab-from-patch"))
         with patch("otto.config.bootstrapped.get_repos", return_value=[repo]):
             result = runner.invoke(app, ["--list-labs"])
         assert result.exit_code == 0, result.output
@@ -767,7 +767,7 @@ class TestProjectSwitchWiring:
         validator with exit 2 and witness none of the wiring it exists for.
         Names are the NORMALIZED spellings the validator compares against.
         """
-        repos = [SimpleNamespace(name=n) for n in ("repo-a", "other-repo", "a", "b", "c")]
+        repos = [fake_repo(n) for n in ("repo-a", "other-repo", "a", "b", "c")]
         monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: bootstrap_stub(repos))
 
     def _capture_root_options(self, monkeypatch):
@@ -901,7 +901,7 @@ class TestProjectSwitchWiring:
         """Install a discovered world where ``repo-a`` failed to load."""
         from otto.bootstrap import BootstrapError
 
-        broken = SimpleNamespace(name="repo-a", sut_dir=Path("/repos/repo-a"), project_scope=None)
+        broken = fake_repo("repo-a", sut_dir=Path("/repos/repo-a"), project_scope=None)
         monkeypatch.setattr(
             "otto.bootstrap.bootstrap",
             lambda: bootstrap_stub(

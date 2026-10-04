@@ -13,6 +13,7 @@ from otto.project.plan import HostPlan, ProductPlanEntry, RepoPlan, plan_instruc
 from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 
 
 class _Planned:
@@ -66,7 +67,7 @@ class _Ctx:
 
 
 def _wire(monkeypatch, repo_names, ctx):
-    ordered = [SimpleNamespace(name=n, dependencies=[]) for n in repo_names]
+    ordered = [fake_repo(n) for n in repo_names]
     monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: ordered)
     monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: ordered)
     monkeypatch.setattr("otto.context.get_context", lambda: ctx)

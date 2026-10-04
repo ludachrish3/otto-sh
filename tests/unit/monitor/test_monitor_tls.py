@@ -6,17 +6,17 @@ openssl CLI, as in ``test_server_tls.py``.
 
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from otto.config.repo import MonitorSettings
+from otto.config.repo import MonitorSettings, Repo
 from otto.monitor.errors import MonitorTlsError
 from otto.monitor.tls import resolve_monitor_tls
+from tests._fixtures.fake_repo import fake_repo
 
 
-def _repo(name: str, cert=None, key=None) -> SimpleNamespace:
-    return SimpleNamespace(name=name, monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
+def _repo(name: str, cert=None, key=None) -> Repo:
+    return fake_repo(name, monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
 
 
 def _make_cert(tmp_path: Path) -> Path:

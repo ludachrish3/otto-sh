@@ -17,6 +17,7 @@ from otto.logger.mode import LogMode
 from otto.monitor.errors import MonitorInputError, MonitorTlsError, NoMonitorableHostsError
 from otto.monitor.export import build_db_export
 from otto.monitor.live import LiveReport, run_live, select_monitor_hosts
+from tests._fixtures.fake_repo import fake_repo
 
 
 def _unix(name: str) -> UnixHost:
@@ -103,9 +104,7 @@ class TestRunLiveRefusesBeforeAnyFile:
         else refuses could not tell run_live's own check from the builder's.
         """
         db = tmp_path / "m.db"
-        bad = SimpleNamespace(
-            name="r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem")
-        )
+        bad = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
         monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [bad])
         with pytest.raises(MonitorInputError, match="at least") as e:
             await run_live(hosts="z.*", interval=0.5, db=db)
@@ -122,9 +121,7 @@ class TestRunLiveRefusesBeforeAnyFile:
     @pytest.mark.asyncio
     async def test_tls(self, lab, tmp_path, monkeypatch):
         db = tmp_path / "m.db"
-        bad = SimpleNamespace(
-            name="r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem")
-        )
+        bad = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
         monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [bad])
         with pytest.raises(MonitorTlsError):
             await run_live(db=db)
@@ -155,7 +152,7 @@ async def test_run_live_hands_the_server_the_declared_cert_and_key(
     lab, served, tls_pair, monkeypatch
 ):
     cert, key = tls_pair
-    repo = SimpleNamespace(name="r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
+    repo = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
     monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
     await run_live(hosts="web1")
     kwargs = served.call_args.kwargs
@@ -285,8 +282,8 @@ class TestDrivingRepoScopeGate:
         monkeypatch.setattr(
             "otto.config.bootstrapped.get_repos",
             lambda: [
-                SimpleNamespace(name="app", monitor_settings=MonitorSettings()),
-                SimpleNamespace(name="base", monitor_settings=MonitorSettings()),
+                fake_repo("app", monitor_settings=MonitorSettings()),
+                fake_repo("base", monitor_settings=MonitorSettings()),
             ],
         )
         monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(scopes=scopes))
@@ -361,7 +358,7 @@ class TestDrivingRepoScopeGate:
 
         monkeypatch.setattr(
             "otto.config.bootstrapped.get_repos",
-            lambda: [SimpleNamespace(name="app", monitor_settings=MonitorSettings())],
+            lambda: [fake_repo("app", monitor_settings=MonitorSettings())],
         )
         monkeypatch.setattr("otto.context.get_context", _boom)
 

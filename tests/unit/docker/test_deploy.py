@@ -30,6 +30,7 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 
 from .test_resolve_select import _frag  # reuse the fragment table builder
 
@@ -79,12 +80,8 @@ def _repo(name, *fragments, composes=(), images=()):
     build verbs' pre-flight asks of each, and a build dry run renders each
     one's ``docker build`` command from the rest).
     """
-    return SimpleNamespace(
-        name=name,
-        # No `[project]` table: the getters are patched where they are defined,
-        # so every reader of the repos sees this double, the project-scope lookup
-        # included, and a repo without a table reads as None there.
-        project_scope=None,
+    return fake_repo(
+        name,
         docker_settings=SimpleNamespace(
             use_cases=tuple(fragments),
             composes=tuple(composes),

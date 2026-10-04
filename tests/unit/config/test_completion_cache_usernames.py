@@ -1,8 +1,7 @@
 """Tests for cached --holder usernames + the best-effort collector."""
 
-import types
-
 import otto.config.completion_cache as cc
+from tests._fixtures.fake_repo import fake_repo
 
 
 def test_usernames_round_trip(tmp_path, monkeypatch):
@@ -11,18 +10,8 @@ def test_usernames_round_trip(tmp_path, monkeypatch):
     # The section digests enumerate real repo attributes (sut_dir, init,
     # libs, tests, lab_sources), and `_fingerprint_is_ephemeral` reads
     # `inventory_settings` — absent, that raises, the digest is treated as
-    # ephemeral, and the write silently stands down. Pin all of them.
-    repos = [
-        types.SimpleNamespace(
-            sut_dir=tmp_path / "sut",
-            init=[],
-            libs=[],
-            tests=[],
-            lab_sources=[],
-            inventory_settings={},
-            creds_settings={},
-        )
-    ]
+    # ephemeral, and the write silently stands down. A real Repo has them all.
+    repos = [fake_repo(sut_dir=tmp_path / "sut")]
 
     cc.write_cache(repos, [], [], usernames=["alice", "bob"])
     result = cc.read_cache(repos)
@@ -50,26 +39,24 @@ def test_collect_usernames_from_capable_backend(tmp_path):
 
     register_reservation_backend("uc-test", UCBackend)
     try:
-        repo = types.SimpleNamespace(reservation_settings={"backend": "uc-test"}, sut_dir=tmp_path)
+        repo = fake_repo(sut_dir=tmp_path, settings={"reservations": {"backend": "uc-test"}})
         assert cc.collect_reservation_usernames([repo]) == ["alice", "bob"]
     finally:
         RESERVATION_BACKENDS.unregister("uc-test")
 
 
 def test_collect_usernames_empty_when_capability_absent(tmp_path):
-    repo = types.SimpleNamespace(reservation_settings={"backend": "none"}, sut_dir=tmp_path)
+    repo = fake_repo(sut_dir=tmp_path, settings={"reservations": {"backend": "none"}})
     assert cc.collect_reservation_usernames([repo]) == []
 
 
 def test_collect_usernames_empty_when_no_reservation_settings(tmp_path):
-    repo = types.SimpleNamespace(reservation_settings={}, sut_dir=tmp_path)
+    repo = fake_repo(sut_dir=tmp_path)
     assert cc.collect_reservation_usernames([repo]) == []
 
 
 def test_collect_usernames_swallows_build_errors(tmp_path):
     # An unknown backend name makes build_backend raise ValueError; the collector
     # must swallow it and return [] (best-effort, never block the slow path).
-    repo = types.SimpleNamespace(
-        reservation_settings={"backend": "no-such-backend"}, sut_dir=tmp_path
-    )
+    repo = fake_repo(sut_dir=tmp_path, settings={"reservations": {"backend": "no-such-backend"}})
     assert cc.collect_reservation_usernames([repo]) == []

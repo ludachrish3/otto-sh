@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 
 from otto.config import completion_cache as cc
 from otto.config.completion_cache import collect_logins_by_host
+from otto.config.repo import Repo
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests._fixtures.sutrepo import touch_settings
 
@@ -17,16 +19,11 @@ _CREDS = [
 ]
 
 
-def _repo(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
+def _repo(tmp_path: Path, hosts: list[dict]) -> Repo:
     lab = tmp_path / "lab"
     lab.mkdir()
     write_lab_json(lab / "lab.json", hosts)
-    return SimpleNamespace(
-        lab_sources=json_lab_sources(tmp_path, [lab]),
-        sut_dir=tmp_path,
-        inventory_settings={},
-        creds_settings={},
-    )
+    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), sut_dir=tmp_path)
 
 
 def test_maps_ids_to_login_entries_sorted_by_login(tmp_path):
@@ -68,17 +65,17 @@ def test_empty_without_repos():
 
 def test_write_and_read_round_trip_and_no_password_is_written(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
-    fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir()
-    touch_settings(fake_repo.sut_dir)
-    fake_repo.init = []
-    fake_repo.libs = []
-    fake_repo.tests = []
-    fake_repo.inventory_settings = {}
+    mock_repo = MagicMock()
+    mock_repo.sut_dir = tmp_path / "sut"
+    mock_repo.sut_dir.mkdir()
+    touch_settings(mock_repo.sut_dir)
+    mock_repo.init = []
+    mock_repo.libs = []
+    mock_repo.tests = []
+    mock_repo.inventory_settings = {}
     entries = {"u1": [{"login": "u", "protocols": [], "proxy": False}]}
-    cc.write_cache([fake_repo], instructions=[], hosts=["u1"], logins_by_host=entries)
-    out = cc.read_cache([fake_repo])
+    cc.write_cache([mock_repo], instructions=[], hosts=["u1"], logins_by_host=entries)
+    out = cc.read_cache([mock_repo])
     assert out is not None
     assert out["logins_by_host"] == entries
     raw = cc._cache_path().read_text()
@@ -89,16 +86,16 @@ def test_write_and_read_round_trip_and_no_password_is_written(tmp_path, monkeypa
 
 def test_read_cache_rejects_a_malformed_login_map(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
-    fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir()
-    touch_settings(fake_repo.sut_dir)
-    fake_repo.init = []
-    fake_repo.libs = []
-    fake_repo.tests = []
-    fake_repo.inventory_settings = {}
-    cc.write_cache([fake_repo], instructions=[], hosts=[])
+    mock_repo = MagicMock()
+    mock_repo.sut_dir = tmp_path / "sut"
+    mock_repo.sut_dir.mkdir()
+    touch_settings(mock_repo.sut_dir)
+    mock_repo.init = []
+    mock_repo.libs = []
+    mock_repo.tests = []
+    mock_repo.inventory_settings = {}
+    cc.write_cache([mock_repo], instructions=[], hosts=[])
     data = json.loads(cc._cache_path().read_text())
     data["sections"]["names"]["payload"]["logins_by_host"] = ["not", "a", "dict"]
     cc._cache_path().write_text(json.dumps(data))
-    assert cc.read_cache([fake_repo]) is None
+    assert cc.read_cache([mock_repo]) is None

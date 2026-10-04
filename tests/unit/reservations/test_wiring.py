@@ -1,7 +1,5 @@
 """Unit tests for build_reservation_gate — the callback's reservation assembly."""
 
-import types
-
 import pytest
 
 from otto.reservations import (
@@ -10,10 +8,11 @@ from otto.reservations import (
     build_reservation_gate,
     factory,
 )
+from tests._fixtures.fake_repo import fake_repo
 
 
 def _repo(reservation_settings, sut_dir):
-    return types.SimpleNamespace(reservation_settings=reservation_settings, sut_dir=sut_dir)
+    return fake_repo(sut_dir=sut_dir, settings={"reservations": reservation_settings})
 
 
 def test_skip_does_not_build_backend(tmp_path, monkeypatch):

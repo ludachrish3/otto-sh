@@ -67,6 +67,7 @@ from scripts.render_support_matrix import (
 )
 from scripts.render_support_matrix import main as render_main
 from tests._ambient_env import ambient_opt_ins
+from tests._fixtures.docs_conf import assert_conf_renders
 from tests._fixtures.paths import PROJECT_ROOT
 from tests._fixtures.profiles import Cell
 from tests._fixtures.support_matrix import (
@@ -5499,13 +5500,7 @@ def test_the_docs_build_renders_the_page_and_fails_when_the_renderer_does():
     also runs has to find it on disk too. A non-zero exit RAISES, which is what makes
     §5's fail-on-undeclared a build failure and not a warning.
     """
-    conf = (PROJECT_ROOT / "docs" / "conf.py").read_text(encoding="utf-8")
-    assert 'app.connect("builder-inited", _generate_support_matrix)' in conf
-    hook = conf[conf.index("def _generate_support_matrix") :]
-    hook = hook[: hook.index("\ndef ")]
-    assert '"-m", "scripts.render_support_matrix"' in hook
-    assert "raise RuntimeError" in hook, "a failed render would only warn"
-    assert "app.builder.name" not in hook, "the page is a source file; every builder needs it"
+    assert_conf_renders("scripts.render_support_matrix", "docs/architecture/support-matrix.md")
 
 
 def test_the_page_is_reachable_from_the_architecture_index():
@@ -5520,7 +5515,9 @@ def test_the_page_is_reachable_from_the_architecture_index():
     index = (PROJECT_ROOT / "docs" / "architecture" / "index.rst").read_text(encoding="utf-8")
     entries = [line.strip() for line in index.splitlines()]
     assert "support-matrix" in entries, "no toctree entry, so the page is an orphan"
-    overview = entries[entries.index("overview") : entries.index("overview") + 6]
+    overview = entries[
+        entries.index(":caption: Overview") : entries.index(":caption: Design by area")
+    ]
     assert "support-matrix" in overview, (
         "the page belongs in the Overview toctree beside testing and quality-gates, "
         "not among the per-area subsystem pages"

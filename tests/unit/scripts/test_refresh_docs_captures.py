@@ -5,6 +5,8 @@ tests exercise substitution, redaction, expected-exit handling and the
 --check diff without a bed or a project.
 """
 
+import fcntl
+import threading
 from pathlib import Path
 
 import pytest
@@ -479,3 +481,27 @@ def test_settings_append_without_a_project_refuses_before_copying_anything(tmp_p
     with pytest.raises(rdc.CaptureError, match="needs project"):
         rdc.run_capture(cap, ctx)
     assert not (ctx.tmp / "p").exists()
+
+
+def test_scratch_lock_holds_the_lock_for_the_block(tmp_path, capsys):
+    lock = tmp_path / "otto-gs.lock"
+    with rdc.scratch_lock(lock), lock.open("a") as other, pytest.raises(BlockingIOError):
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    assert capsys.readouterr().err == ""
+    with lock.open("a") as other:
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)  # released on exit
+
+
+def test_scratch_lock_says_it_is_waiting_then_takes_the_lock(tmp_path, capsys):
+    # A second docs build waits for the first instead of deleting its scratch dir.
+    lock = tmp_path / "otto-gs.lock"
+    with lock.open("a") as holder:
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        release = threading.Timer(0.2, fcntl.flock, (holder, fcntl.LOCK_UN))
+        release.start()
+        try:
+            with rdc.scratch_lock(lock):
+                assert not release.is_alive()
+        finally:
+            release.cancel()
+    assert f"another capture run holds {lock}; waiting" in capsys.readouterr().err

@@ -5,6 +5,7 @@ import re
 import pytest
 
 from otto.check.proven import ProvenEntry, ProvenRange
+from tests._fixtures.docs_conf import assert_conf_renders
 from tests._fixtures.paths import PROJECT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -145,13 +146,7 @@ def test_the_docs_build_renders_the_page_and_fails_when_the_renderer_does() -> N
     Every builder, not html-only: the link toctree names the page, so the doctest
     builder ``make docs`` also runs has to find it on disk. A non-zero exit raises.
     """
-    conf = (PROJECT_ROOT / "docs" / "conf.py").read_text(encoding="utf-8")
-    assert 'app.connect("builder-inited", _generate_proven_range)' in conf
-    hook = conf[conf.index("def _generate_proven_range") :]
-    hook = hook[: hook.index("\ndef ")]
-    assert '"-m", "scripts.render_proven_range"' in hook
-    assert "raise RuntimeError" in hook, "a failed render would only warn"
-    assert "app.builder.name" not in hook, "the page is a source file; every builder needs it"
+    assert_conf_renders("scripts.render_proven_range", "docs/cli/known-good.md")
 
 
 def test_sphinx_srcs_names_the_proven_range_and_its_renderer() -> None:

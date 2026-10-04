@@ -2,11 +2,11 @@
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from otto.config.repo import Repo
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -113,8 +113,8 @@ def test_an_unknown_backend_is_a_sources_refusal(tmp_path):
 def test_preferences_merge_lists_atomically_and_tables_per_key():
     from otto.session import merge_host_preferences
 
-    a = SimpleNamespace(host_preferences={"*": {"transfer": ["scp"], "ssh": {"port": 22, "x": 1}}})
-    b = SimpleNamespace(host_preferences={"*": {"transfer": ["nc"], "ssh": {"port": 2222}}})
+    a = fake_repo(host_preferences={"*": {"transfer": ["scp"], "ssh": {"port": 22, "x": 1}}})
+    b = fake_repo(host_preferences={"*": {"transfer": ["nc"], "ssh": {"port": 2222}}})
     assert merge_host_preferences([a, b]) == {
         "*": {"transfer": ["nc"], "ssh": {"port": 2222, "x": 1}}
     }

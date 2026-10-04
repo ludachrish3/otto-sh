@@ -1,11 +1,12 @@
 """HostSummary carries each host's login identities so --user can complete without a host."""
 
 from pathlib import Path
-from types import SimpleNamespace
 
 from otto.config import completion_cache as cc
+from otto.config.repo import Repo
 from otto.host.element import Element
 from otto.labs import HostSummary, LoginSummary
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 _CREDS = [
@@ -15,16 +16,11 @@ _CREDS = [
 ]
 
 
-def _repo(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
+def _repo(tmp_path: Path, hosts: list[dict]) -> Repo:
     lab = tmp_path / "lab"
     lab.mkdir()
     write_lab_json(lab / "lab.json", hosts)
-    return SimpleNamespace(
-        lab_sources=json_lab_sources(tmp_path, [lab]),
-        sut_dir=tmp_path,
-        inventory_settings={},
-        creds_settings={},
-    )
+    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), sut_dir=tmp_path)
 
 
 def _summaries(repo) -> dict[str, HostSummary]:

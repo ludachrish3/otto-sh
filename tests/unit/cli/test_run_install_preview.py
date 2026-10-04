@@ -1,12 +1,12 @@
 """``otto -n run install|uninstall|install-tools`` prints the plan before the dry-run block."""
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from otto.host.product import ProductPlan
 from otto.project.plan import HostPlan, ProductPlanEntry, RepoPlan
+from tests._fixtures.fake_repo import fake_repo
 from tests.unit.cli.conftest import _flat
 from tests.unit.cli.test_project_instruction_commands import _publish_the_six
 
@@ -120,7 +120,7 @@ def test_the_leaf_drives_the_real_planner_over_a_lab_without_contacting_the_host
     product.owner = "r1"
     host.products = [product]
     ctx = OttoContext(lab=Lab(name="bench", hosts={host.id: host}), dry_run=True)
-    repos = [SimpleNamespace(name="r1", dependencies=[], project_scope=None, sut_dir=tmp_path)]
+    repos = [fake_repo("r1", project_scope=None, sut_dir=tmp_path)]
     monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: repos)
     monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
     token = set_context(ctx)

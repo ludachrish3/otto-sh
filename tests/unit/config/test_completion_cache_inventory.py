@@ -11,12 +11,12 @@ import contextlib
 import json
 import logging
 from pathlib import Path
-from types import SimpleNamespace
 
 import otto.config.completion_cache as cc
 from otto.inventory import register_inventory_backend
 from otto.inventory.registry import INVENTORY_BACKENDS
 from otto.models.inventory import InventoryRecord
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests._fixtures.sutrepo import touch_settings
 
@@ -37,14 +37,10 @@ def _repo(
     lab.mkdir(parents=True, exist_ok=True)
     touch_settings(sut)
     write_lab_json(lab / "lab.json", hosts if hosts is not None else [], declare_labs=True)
-    return SimpleNamespace(
+    return fake_repo(
         sut_dir=sut,
-        init=[],
-        libs=[],
-        tests=[],
         lab_sources=json_lab_sources(sut, [lab]),
-        inventory_settings=dict(inventory_settings),
-        creds_settings={},
+        settings={"inventory": dict(inventory_settings)},
     )
 
 
@@ -67,7 +63,7 @@ def _with_inventory(repo, inventory_settings: dict):
     settings table makes every other fingerprint input byte-identical, which
     is what the comparison claims.
     """
-    return SimpleNamespace(**{**vars(repo), "inventory_settings": dict(inventory_settings)})
+    return fake_repo(**{**vars(repo), "settings": {"inventory": dict(inventory_settings)}})
 
 
 def _json_inventory(tmp_path: Path, records: dict, *, name: str = "sut") -> dict:

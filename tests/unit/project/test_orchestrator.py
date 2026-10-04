@@ -79,6 +79,7 @@ from otto.tunnel import (
     TunnelHop,
 )
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 
 # ── doubles ──────────────────────────────────────────────────────────────
 
@@ -282,9 +283,7 @@ def _wire_lab(monkeypatch, repo_names, ctx, current=None, dependencies=None):
     *dependencies* maps a repo name to the resolved entries it declares.
     """
     deps = dependencies or {}
-    ordered = [
-        SimpleNamespace(name=name, dependencies=list(deps.get(name, []))) for name in repo_names
-    ]
+    ordered = [fake_repo(name, dependencies=list(deps.get(name, []))) for name in repo_names]
     driving = current if current is not None else (repo_names[-1] if repo_names else None)
     configured = [repo for repo in ordered if repo.name == driving]
     configured += [repo for repo in ordered if repo.name != driving]

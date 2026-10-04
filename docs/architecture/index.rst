@@ -19,6 +19,7 @@ cross-cutting spines; the principles are the recurring design rules.
    :maxdepth: 1
 
    overview
+   modules
    lifecycle
    startup-performance
    testing

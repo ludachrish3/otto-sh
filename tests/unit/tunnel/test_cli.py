@@ -24,6 +24,7 @@ from otto.cli.tunnel import (
     _tunnel_id_completer,
     tunnel_app,
 )
+from otto.config.repo import Repo
 from otto.tunnel import (
     DEFAULT_CARRIER,
     AddedTunnel,
@@ -37,6 +38,7 @@ from otto.tunnel import (
 from otto.tunnel.check import TunnelCheckColumn, TunnelCheckHop, TunnelCheckReport
 from otto.tunnel.socat import NoFreePortError
 from tests._fixtures.dispatch import DispatchRunner
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests.conftest import active_context
 
@@ -92,19 +94,12 @@ def test_l2_reachable_sorted_and_stable():
 # ── _hosts_completer wiring ──────────────────────────────────────────────────
 
 
-def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
+def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> Repo:
     """A fake Repo whose single lab search path holds *hosts* in lab.json."""
     lab = tmp_path / "lab"
     lab.mkdir(parents=True, exist_ok=True)
     write_lab_json(lab / "lab.json", hosts)
-    return SimpleNamespace(
-        lab_sources=json_lab_sources(tmp_path, [lab]),
-        sut_dir=tmp_path,
-        # `build_inventory` reads it on the enumeration path; a stand-in that
-        # omits it enumerates no hosts at all.
-        inventory_settings={},
-        creds_settings={},
-    )
+    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), sut_dir=tmp_path)
 
 
 _A = {"ip": "10.0.0.1", "element": "a", "creds": [{"login": "u", "password": "p"}]}

@@ -13,6 +13,7 @@ from otto.declared import (
     validate_match_table,
 )
 from otto.host.element import Element
+from tests._fixtures.fake_repo import fake_repo
 
 
 @pytest.fixture(autouse=True)
@@ -464,8 +465,8 @@ from otto.declared import declared_for_host
 
 
 def _repo(name="repo1", scope=None, products=(), dev_tools=()):
-    return SimpleNamespace(
-        name=name,
+    return fake_repo(
+        name,
         project_scope=scope,
         declared_products=list(products),
         declared_dev_tools=list(dev_tools),

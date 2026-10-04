@@ -1,10 +1,10 @@
 import os
 import time
 from collections import Counter
-from types import SimpleNamespace
 
 import otto.config.completion_cache as cc
 from otto.config.repo import Repo
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo, touch_settings
 
@@ -12,18 +12,7 @@ from tests._fixtures.sutrepo import make_sut_repo, touch_settings
 def _repos(tmp_path):
     # one repo whose fingerprint sources exist under tmp_path/.otto
     touch_settings(tmp_path)
-    return [
-        SimpleNamespace(
-            sut_dir=tmp_path,
-            init=[],
-            libs=[],
-            tests=[],
-            labs=[],
-            lab_sources=[],
-            inventory_settings={},
-            creds_settings={},
-        )
-    ]
+    return [fake_repo(sut_dir=tmp_path)]
 
 
 def _repo_with_corpus_and_lab(tmp_path):

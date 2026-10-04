@@ -23,6 +23,7 @@ from otto.host.login_proxy import Cred
 from otto.host.mount import Mount
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 from tests.conftest import active_context
 
 
@@ -938,9 +939,8 @@ async def test_placeholder_use_case_project_auto_starts_via_deploy(monkeypatch):
         service="api",
         compose_project="unix-integration-vagrant",
     )
-    uc_repo = SimpleNamespace(
-        name="a",
-        docker_settings=SimpleNamespace(use_cases=[SimpleNamespace(name="integration")]),
+    uc_repo = fake_repo(
+        "a", docker_settings=SimpleNamespace(use_cases=[SimpleNamespace(name="integration")])
     )
     started = _make_container(parent, container_id="freshcid")
     stack = SimpleNamespace(
@@ -964,10 +964,7 @@ async def test_placeholder_use_case_project_auto_starts_via_deploy(monkeypatch):
 
 def _uc_repos(use_case: str = "integration"):
     return [
-        SimpleNamespace(
-            name="a",
-            docker_settings=SimpleNamespace(use_cases=[SimpleNamespace(name=use_case)]),
-        )
+        fake_repo("a", docker_settings=SimpleNamespace(use_cases=[SimpleNamespace(name=use_case)]))
     ]
 
 

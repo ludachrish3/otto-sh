@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import otto.config.completion_cache as cc
 from otto.labs.drops import HostDrop, collecting_drops, record_drop
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests._fixtures.sutrepo import touch_settings
 
@@ -36,15 +37,11 @@ def _repo(tmp_path: Path, inventory_settings: dict, *, hosts: list[dict], name: 
     lab.mkdir(parents=True, exist_ok=True)
     touch_settings(sut)
     write_lab_json(lab / "lab.json", hosts, declare_labs=True)
-    return SimpleNamespace(
-        name=name,
+    return fake_repo(
+        name,
         sut_dir=sut,
-        init=[],
-        libs=[],
-        tests=[],
         lab_sources=json_lab_sources(sut, [lab]),
-        inventory_settings=dict(inventory_settings),
-        creds_settings={},
+        settings={"inventory": dict(inventory_settings)},
     )
 
 
@@ -147,7 +144,7 @@ def test_a_malformed_lab_file_is_dropped_by_name(tmp_path, monkeypatch):
 def test_a_stalled_host_source_is_dropped_with_the_deadline(tmp_path, monkeypatch):
     """The deadline wrapper's give-up is a drop too, not just a warning."""
     monkeypatch.setenv(cc.HOST_SUMMARY_DEADLINE_ENV_VAR, "0.05")
-    repo = SimpleNamespace(sut_dir=tmp_path / "slow")
+    repo = fake_repo(sut_dir=tmp_path / "slow")
 
     def _stalls(abandoned: threading.Event) -> cc.RepoEnumeration:
         abandoned.wait(5)  # returns as soon as the wrapper gives up on us

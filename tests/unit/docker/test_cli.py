@@ -22,6 +22,7 @@ from otto.host.element import Element
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 from tests.conftest import active_context
@@ -478,12 +479,10 @@ def _uc(
     )
 
 
-def _uc_repo(name: str, *fragments: DockerUseCase) -> SimpleNamespace:
+def _uc_repo(name: str, *fragments: DockerUseCase) -> Repo:
     """A repo table in the shape `declared_use_cases`/`select_fragments` read."""
-    return SimpleNamespace(
-        name=name,
-        project_scope=None,  # no `[project]` table; every repo reader sees this double
-        docker_settings=SimpleNamespace(use_cases=tuple(fragments), composes=(), images=()),
+    return fake_repo(
+        name, docker_settings=SimpleNamespace(use_cases=tuple(fragments), composes=(), images=())
     )
 
 
@@ -1294,14 +1293,8 @@ def test_completer_cache_miss_filters_by_selected_lab(tmp_path):
             },
         ],
     )
-    repo = SimpleNamespace(
-        lab_sources=json_lab_sources(tmp_path, [lab]),
-        docker_settings=None,
-        sut_dir=tmp_path,
-        # `build_inventory` reads it on the enumeration path; a stand-in that
-        # omits it enumerates no hosts at all.
-        inventory_settings={},
-        creds_settings={},
+    repo = fake_repo(
+        lab_sources=json_lab_sources(tmp_path, [lab]), docker_settings=None, sut_dir=tmp_path
     )
     with (
         patch("otto.config.bootstrapped.get_completion_names", return_value=None),

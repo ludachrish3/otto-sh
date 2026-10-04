@@ -28,7 +28,10 @@ against the *pre-redaction* scratch path, so the artifact's layout depends on
 that path's length. A directory that moves with ``$TMPDIR`` freezes a
 layout that only holds on the machine (and environment) that took it. Because
 the scratch directory is fixed and reused, two refreshes must not run
-concurrently on one machine.
+concurrently on one machine -- across worktrees and sessions too, since the
+path is machine-wide. ``SCRATCH_LOCK`` enforces that: a second run says it is
+waiting, then waits, instead of appending to (or deleting) the first run's
+copy, which corrupted both runs whenever two ``make docs`` overlapped.
 """
 
 import argparse
@@ -51,12 +54,40 @@ EXAMPLES = ROOT / "docs" / "examples"
 DEFAULT_MANIFEST = EXAMPLES / "getting-started" / "captures.toml"
 DEFAULT_CAPTURES = EXAMPLES / "getting-started" / "captures"
 SCRATCH_DIR = Path("/tmp/otto-gs")  # noqa: S108 -- a fixed, documented scratch path; the artifact layout depends on its length
+# Beside the scratch directory, never inside it: every run deletes that.
+SCRATCH_LOCK = Path("/tmp/otto-gs.lock")  # noqa: S108 -- pairs with SCRATCH_DIR, machine-wide on purpose
 
 _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?")
 
 
 class CaptureError(RuntimeError):
     """A capture could not be taken as the manifest describes."""
+
+
+@contextlib.contextmanager
+def scratch_lock(path: Path = SCRATCH_LOCK) -> Iterator[None]:
+    """Hold the machine-wide lock on the scratch directory for the block.
+
+    A run that finds the lock taken says so on stderr, then blocks until the
+    holder finishes. The lock is an ``flock`` on an open file, so the kernel
+    drops it when its holder exits, however it exits, and a crashed run can
+    never leave it stuck.
+    """
+    import fcntl  # POSIX-only, like the fixed /tmp path this guards
+
+    with path.open("a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(
+                f"docs captures: another capture run holds {path}; waiting for it to finish",
+                file=sys.stderr,
+            )
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -411,16 +442,19 @@ def main(argv: list[str] | None = None) -> int:
         for cap in caps:
             print(f"{cap.id:32} {'labless' if cap.labless else 'bed':8} {render_command(cap.argv)}")
         return 0
-    shutil.rmtree(SCRATCH_DIR, ignore_errors=True)
-    SCRATCH_DIR.mkdir(parents=True)
-    try:
-        ctx = RunContext(examples_root=EXAMPLES, captures_dir=args.captures_dir, tmp=SCRATCH_DIR)
-        if args.check:
-            return check(caps, ctx)
-        refresh(caps, ctx)
-        return 0
-    finally:
+    with scratch_lock():
         shutil.rmtree(SCRATCH_DIR, ignore_errors=True)
+        SCRATCH_DIR.mkdir(parents=True)
+        try:
+            ctx = RunContext(
+                examples_root=EXAMPLES, captures_dir=args.captures_dir, tmp=SCRATCH_DIR
+            )
+            if args.check:
+                return check(caps, ctx)
+            refresh(caps, ctx)
+            return 0
+        finally:
+            shutil.rmtree(SCRATCH_DIR, ignore_errors=True)
 
 
 if __name__ == "__main__":

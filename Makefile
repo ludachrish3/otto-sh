@@ -1360,13 +1360,23 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 # no-op success when RANGE has nothing to scan — true on `main` itself only
 # once a local `main` is caught up with `origin/main` (a `main` that is
 # ahead, or an `origin/main` a fetch would move, still has commits in range).
-lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts) + ast-grep (pattern rules) + check-breaking (public-API golden marking)
+#
+# The import rules are the one architecture rule ast-grep cannot express: a
+# name's lazy-export status lives in its package's `_LAZY_ATTRS` /
+# `_LAZY_EXPORTS` table, which a pattern cannot read. Two parse-only tests
+# enforce them (docs/contributing.md, "Patching lazily exported names"). They
+# also run in every pytest lane; this leg puts them in the per-change gate,
+# where a targeted test run would never select them. Plain `uv run`, not
+# `--group lint`: a group sync reshapes the venv the import-budget tests count.
+lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts) + ast-grep (pattern rules) + the lazy-export import rules + check-breaking (public-API golden marking)
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
 	@uv run --group lint tach check
 	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
 	@uv run --group lint ast-grep scan src/otto web/src tests
 	@$(SAY) "ast-grep: rule tests (.ast-grep/rule-tests/)"
 	@uv run --group lint ast-grep test --skip-snapshot-tests
+	@$(SAY) "import rules: lazy exports patched where defined, read at call time"
+	@uv run pytest tests/unit/test_patch_targets.py tests/unit/test_no_import_time_lazy_exports.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
 
 # `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
 # `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports
@@ -1537,7 +1547,8 @@ check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; R
 # changed leaves docs/_build/html/index.html newer than every listed input,
 # `make docs` no-ops, and the release publishes a page disagreeing with the
 # artifact it just committed. src/otto/check/proven.json and its renderer are the
-# same shape again, for the setup checks' known-good environments page.
+# same shape again, for the setup checks' known-good environments page, and
+# tach.toml with its renderer for the architecture docs' module dependencies page.
 SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.rst')    \
                 $(shell find docs -name '*.md')    \
@@ -1548,6 +1559,8 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 scripts/render_kmodcov_matrix.py      \
                 src/otto/check/proven.json          \
                 scripts/render_proven_range.py      \
+                tach.toml                           \
+                scripts/render_module_graph.py      \
 
 docs: docs-lint docs-html doctest doctest-src ## (Docs) Build HTML docs + Sphinx & src doctests (sub-targets: docs-lint, docs-html, doctest, doctest-src, docs-inventories)
 

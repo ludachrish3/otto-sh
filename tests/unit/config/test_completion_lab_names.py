@@ -1,9 +1,9 @@
 """Static, user-code-free collector behind ``--lab`` completion."""
 
 from pathlib import Path
-from types import SimpleNamespace
 
 from otto.config.completion_cache import collect_lab_names
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 _HOSTS = [
@@ -16,10 +16,9 @@ def _repo(*, labs: list[Path] | None = None):
     """A stand-in Repo whose only host source is a json one over `labs` —
     what a real repo without a custom backend compiles to."""
     sut_dir = (labs or [Path()])[0]
-    return SimpleNamespace(
-        name="stand-in",
+    return fake_repo(
+        "stand-in",
         lab_sources=json_lab_sources(sut_dir, labs or []) if labs else [],
-        tests=[],
         sut_dir=sut_dir,
     )
 

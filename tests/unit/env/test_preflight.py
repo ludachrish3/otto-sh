@@ -14,10 +14,10 @@ tmp_path.
 import subprocess
 import sys
 import textwrap
-import types
 from pathlib import Path
 
 from otto.env.preflight import Unsatisfied, check_repo, preflight, read_project_table
+from tests._fixtures.fake_repo import fake_repo
 
 
 def _install(site: Path, name: str, version: str, requires: "list[str] | None" = None) -> None:
@@ -56,7 +56,7 @@ def _repo(tmp_path: Path, name: str, deps: "list[str] | None", *, dynamic: bool 
             {body}
             """)
     )
-    repo = types.SimpleNamespace(name=name, sut_dir=root)
+    repo = fake_repo(name, sut_dir=root)
     project = read_project_table(repo)
     assert project is not None, "fixture wrote a pyproject the evaluator cannot read"
     if not dynamic:
@@ -91,7 +91,7 @@ class TestSatisfaction:
         """repo1-repo3 are this shape, and they must keep working untouched."""
         root = tmp_path / "repo1"
         root.mkdir()
-        repo = types.SimpleNamespace(name="repo1", sut_dir=root)
+        repo = fake_repo("repo1", sut_dir=root)
         assert check_repo(repo, site_dirs=[tmp_path / "site"]) == []
 
     def test_an_unreadable_pyproject_is_vacuously_satisfied(self, tmp_path):
@@ -104,7 +104,7 @@ class TestSatisfaction:
         root = tmp_path / "repo4"
         root.mkdir()
         (root / "pyproject.toml").write_text("[project\nname = ")
-        repo = types.SimpleNamespace(name="repo4", sut_dir=root)
+        repo = fake_repo("repo4", sut_dir=root)
         assert check_repo(repo, site_dirs=[tmp_path / "site"]) == []
 
     def test_an_unparseable_installed_version_is_not_judged(self, tmp_path):

@@ -1,24 +1,20 @@
 """The class map completion scopes host verbs with, without building a host."""
 
 from pathlib import Path
-from types import SimpleNamespace
 
 from otto.config.completion_cache import collect_host_classes_by_id
+from otto.config.repo import Repo
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 _CREDS = [{"login": "u", "password": "p"}]
 
 
-def _repo(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
+def _repo(tmp_path: Path, hosts: list[dict]) -> Repo:
     lab = tmp_path / "lab"
     lab.mkdir()
     write_lab_json(lab / "lab.json", hosts)
-    return SimpleNamespace(
-        lab_sources=json_lab_sources(tmp_path, [lab]),
-        sut_dir=tmp_path,
-        inventory_settings={},
-        creds_settings={},
-    )
+    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), sut_dir=tmp_path)
 
 
 def test_maps_ids_to_the_profile_base_class(tmp_path):

@@ -74,6 +74,7 @@ from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.dispatch import DispatchRunner
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.sutrepo import make_sut_repo
 
 SIX = ["install", "uninstall", "cleanup", "get-logs", "install-tools", "status"]
@@ -936,8 +937,8 @@ async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
     from otto.config.scope import resolve_scopes
 
     repos = [
-        types.SimpleNamespace(name="acme", sut_dir="/repos/acme", project_scope=None),
-        types.SimpleNamespace(name="widgets", sut_dir="/repos/widgets", project_scope=None),
+        fake_repo("acme", sut_dir="/repos/acme", project_scope=None),
+        fake_repo("widgets", sut_dir="/repos/widgets", project_scope=None),
     ]
     hosts = {
         "h0": types.SimpleNamespace(source_lab="bench"),
@@ -999,9 +1000,9 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
     from otto.config.scope import ProjectScopeConfig, resolve_scopes
 
     repos = [
-        types.SimpleNamespace(name="acme", sut_dir="/repos/acme", project_scope=None),
-        types.SimpleNamespace(
-            name="widgets",
+        fake_repo("acme", sut_dir="/repos/acme", project_scope=None),
+        fake_repo(
+            "widgets",
             sut_dir="/repos/widgets",
             project_scope=ProjectScopeConfig([_re.compile("bench")], [_re.compile("sensor-.*")]),
         ),
@@ -1496,15 +1497,9 @@ class TestProjectInstructionOwnOptionValidation:
         (:func:`otto.config.scope._lab_applies`) -- the whole-lab fallback,
         never a narrowing.
         """
-        from types import SimpleNamespace
-
         monkeypatch.setattr(
             "otto.config.bootstrapped.get_ordered_repos",
-            lambda: [
-                SimpleNamespace(
-                    name="guarded", dependencies=[], project_scope=None, sut_dir="/tmp/guarded"
-                )
-            ],
+            lambda: [fake_repo("guarded", project_scope=None, sut_dir="/tmp/guarded")],
         )
 
     def test_a_bad_own_option_exits_2_on_a_real_run(self, monkeypatch, registered) -> None:
@@ -1541,8 +1536,6 @@ def _wire_widget_lab(monkeypatch, seen: list, names=("widget", "dormant")) -> No
     ``exclude_projects=("dormant",)`` to make the walk announce a skip.
     Needs the ``registered`` fixture first; this republishes over it.
     """
-    from types import SimpleNamespace
-
     from otto.context import try_get_context
 
     with registering_repo("widget"):
@@ -1555,10 +1548,7 @@ def _wire_widget_lab(monkeypatch, seen: list, names=("widget", "dormant")) -> No
                 return Result(Status.Success)
 
     publish_project_instructions()
-    repos = [
-        SimpleNamespace(name=n, dependencies=[], project_scope=None, sut_dir=f"/tmp/{n}")
-        for n in names
-    ]
+    repos = [fake_repo(n, project_scope=None, sut_dir=f"/tmp/{n}") for n in names]
     monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: repos)
     monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
 

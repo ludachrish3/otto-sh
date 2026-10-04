@@ -72,8 +72,11 @@ bootstrap, dispatch, preamble, teardown — before its command takes over.
 
 ## Layer map
 
-The package splits into four layers. Dependencies point downward only —
-a lower layer never imports from a higher one.
+The package splits into four layers, and dependencies are meant to point
+downward — a lower layer importing from a higher one is debt. The
+foundation holds to that today; the boundary, domain and application
+layers do not yet, and share one import cycle. {doc}`modules` draws the
+declared dependency graph from `tach.toml`, cycle included.
 
 **Foundation** — small, dependency-light modules everything else builds on:
 

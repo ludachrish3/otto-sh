@@ -18,6 +18,7 @@ from otto.cli.remote_completion import (
 from otto.config.remote_completion_cache import ListingEntry
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 
 
 @pytest.mark.parametrize(
@@ -261,7 +262,7 @@ def gate_env(monkeypatch, tmp_path):
     monkeypatch.setattr("otto.config.completion_cache._cache_path", lambda: main)
     monkeypatch.setattr(
         "otto.config.bootstrapped.get_repos",
-        lambda: [SimpleNamespace(reservation_settings={"backend": "json"})],
+        lambda: [fake_repo(settings={"reservations": {"backend": "json"}})],
     )
     monkeypatch.setattr(
         "otto.reservations.identity.resolve_username",
@@ -309,9 +310,7 @@ class _Backend:
 
 
 def test_gate_no_reservation_config_allows(monkeypatch, gate_env):
-    monkeypatch.setattr(
-        "otto.config.bootstrapped.get_repos", lambda: [SimpleNamespace(reservation_settings={})]
-    )
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [fake_repo()])
     _install_backend(monkeypatch, _Backend([]))  # would refuse if it were ever consulted
     assert rc._reservation_allows(_chain()) is True
 

@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from otto.cli import host as host_module
 from otto.cli.host import _host_id_completer, _resolve_host, host_app
+from otto.config.repo import Repo
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.session import SessionManager, ShellSession
@@ -29,6 +30,7 @@ from otto.reservations import Reservation, ReservationBackendBase
 from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.dispatch import DispatchRunner
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 # The dynamic verbs are plain ``async def`` leaves bridged by the leaf-invoke
@@ -810,19 +812,13 @@ def _write_hosts_json(path: Path, hosts: list[dict]) -> Path:
     return write_lab_json(path / "lab.json", hosts)
 
 
-def _fake_repo(*lab_paths: Path) -> SimpleNamespace:
-    """Stand-in for :class:`Repo` exposing what the completer reads.
+def _fake_repo(*lab_paths: Path) -> Repo:
+    """Stand-in for :class:`Repo` whose ``[[lab.sources]]`` are *lab_paths*.
 
     ``lab_sources`` is the compiled ``[[lab.sources]]`` list the host source is
-    built from; ``inventory_settings`` is what ``build_inventory`` reads on the
-    same path (an omitted one makes the enumeration return no hosts at all)."""
+    built from."""
     sut_dir = lab_paths[0].parent if lab_paths else Path()
-    return SimpleNamespace(
-        lab_sources=json_lab_sources(sut_dir, list(lab_paths)),
-        sut_dir=sut_dir,
-        inventory_settings={},
-        creds_settings={},
-    )
+    return fake_repo(lab_sources=json_lab_sources(sut_dir, list(lab_paths)), sut_dir=sut_dir)
 
 
 class TestHostIdCompleter:

@@ -30,6 +30,7 @@ from otto.cli import invoke
 from otto.cli.invoke import refuse_unsatisfied_dependencies
 from otto.cli.registry import CommandSpec
 from tests._fixtures.clickctx import chain
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.rootoptions import make_root_options
 from tests._fixtures.scoping import verdict
 
@@ -60,7 +61,7 @@ def _repo(tmp_path, name: str, requirement: str) -> Any:
         f'[project]\nname = "otto-sample-{name}"\nversion = "0.1.0"\n'
         f"dependencies = ['{requirement}']\n"
     )
-    return types.SimpleNamespace(name=name, sut_dir=root)
+    return fake_repo(name, sut_dir=root)
 
 
 def _wire(
@@ -267,7 +268,7 @@ class TestRendering:
             '[project]\nname = "nothing-installed-anywhere"\n'
             'version = "0.1.0"\ndynamic = ["dependencies"]\n'
         )
-        _wire(monkeypatch, [types.SimpleNamespace(name="repo4", sut_dir=root)])
+        _wire(monkeypatch, [fake_repo("repo4", sut_dir=root)])
         refuse_unsatisfied_dependencies()  # must not raise
         captured = capsys.readouterr()
         assert "cannot preflight repo4" in captured.err

@@ -532,17 +532,32 @@ def _generate_docs_media(app):
         _run_capture_script("capture_docs_media.py")
 
 
-def _generate_support_matrix(app):  # noqa: ARG001 — Sphinx event signature
-    """Render docs/architecture/support-matrix.md from the committed artifact.
+_RENDERED_PAGES = {
+    "scripts.render_support_matrix": "docs/architecture/support-matrix.md",
+    "scripts.render_kmodcov_matrix": "docs/cli/cov/instrumenting/kmodcov-matrix.md",
+    "scripts.render_proven_range": "docs/cli/known-good.md",
+    "scripts.render_module_graph": "docs/architecture/modules.md",
+}
+"""Each git-ignored page rendered at build time, keyed by the renderer that writes it.
 
-    EVERY BUILDER, not html-only: the page is a real source file that the toctree
+Their sources are schemas/support_matrix.json, schemas/kmodcov_matrix.json,
+src/otto/check/proven.json and tach.toml. Makefile SPHINX_SRCS lists every
+source and renderer, so editing one re-triggers the build.
+"""
+
+
+def _generate_rendered_pages(app):  # noqa: ARG001 — Sphinx event signature
+    """Render every page in :data:`_RENDERED_PAGES` from its committed source.
+
+    EVERY BUILDER, not html-only: each page is a real source file that a toctree
     names, so the doctest builder has to find it on disk too — the same reason the
     termynal capture above runs unconditionally.
 
-    A `-m` invocation rather than a path, because the renderer imports `tests.*` to
-    ask the tree which surfaces and profiles it still declares; run as a path,
-    `sys.path[0]` would be `scripts/`. A non-zero exit RAISES, so a matrix whose axes
-    the tree no longer backs is a build FAILURE and not a warning (spec §5).
+    A `-m` invocation rather than a path, because the support-matrix renderer
+    imports `tests.*` to ask the tree which surfaces and profiles it still
+    declares; run as a path, `sys.path[0]` would be `scripts/`. A non-zero exit
+    RAISES, so a source the renderer cannot read, or a matrix whose axes the tree
+    no longer backs, is a build FAILURE and not a warning (spec §5).
     """
     import subprocess
 
@@ -550,93 +565,26 @@ def _generate_support_matrix(app):  # noqa: ARG001 — Sphinx event signature
 
     logger = sphinx_logging.getLogger(__name__)
     root = pathlib.Path(__file__).parent.parent
-    # No S603 suppression here, unlike `_run_capture_script` above: ruff reports one
-    # as UNUSED on this call, and a suppression that suppresses nothing is a claim
-    # about a risk that was never raised. (Spelled without the directive word on
-    # purpose -- ruff parses that token even inside a comment and warns.)
-    proc = subprocess.run(
-        [sys.executable, "-m", "scripts.render_support_matrix"],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=str(root),
-    )
-    if proc.stdout.strip():
-        logger.info(proc.stdout.strip())
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"scripts/render_support_matrix.py failed with exit code "
-            f"{proc.returncode}:\n{proc.stderr}"
+    for module, page in _RENDERED_PAGES.items():
+        proc = subprocess.run(  # noqa: S603 — fixed interpreter + a repo-local module named above
+            [sys.executable, "-m", module],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(root),
         )
-
-
-def _generate_kmodcov_matrix(app):  # noqa: ARG001 — Sphinx event signature
-    """Render docs/cli/cov/instrumenting/kmodcov-matrix.md from the committed artifact.
-
-    The sibling of the hook above for the kmodcov compatibility matrix; every builder,
-    for the same reason — the page is a real source file the instrumenting toctree
-    names, so every builder has to find it on disk, and a non-zero exit RAISES so a
-    matrix whose axes the tree no longer backs is a build FAILURE and not a warning.
-    """
-    import subprocess
-
-    from sphinx.util import logging as sphinx_logging
-
-    logger = sphinx_logging.getLogger(__name__)
-    root = pathlib.Path(__file__).parent.parent
-    proc = subprocess.run(
-        [sys.executable, "-m", "scripts.render_kmodcov_matrix"],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=str(root),
-    )
-    if proc.stdout.strip():
-        logger.info(proc.stdout.strip())
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"scripts/render_kmodcov_matrix.py failed with exit code "
-            f"{proc.returncode}:\n{proc.stderr}"
-        )
-
-
-def _generate_proven_range(app):  # noqa: ARG001 — Sphinx event signature
-    """Render docs/cli/known-good.md from src/otto/check/proven.json.
-
-    The sibling of the two matrix hooks above for the proven-range page; every
-    builder, for the same reason — the page is a real source file the CLI
-    topics toctree names, so every builder has to find it on disk, and a non-zero exit
-    RAISES so a proven-range file the renderer cannot read is a build FAILURE
-    and not a warning.
-    """
-    import subprocess
-
-    from sphinx.util import logging as sphinx_logging
-
-    logger = sphinx_logging.getLogger(__name__)
-    root = pathlib.Path(__file__).parent.parent
-    proc = subprocess.run(
-        [sys.executable, "-m", "scripts.render_proven_range"],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=str(root),
-    )
-    if proc.stdout.strip():
-        logger.info(proc.stdout.strip())
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"scripts/render_proven_range.py failed with exit code "
-            f"{proc.returncode}:\n{proc.stderr}"
-        )
+        if proc.stdout.strip():
+            logger.info(proc.stdout.strip())
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"{module} ({page}) failed with exit code {proc.returncode}:\n{proc.stderr}"
+            )
 
 
 def setup(app):
     app.connect("source-read", _substitute_version_token)
     app.connect("builder-inited", _generate_docs_media)
-    app.connect("builder-inited", _generate_support_matrix)
-    app.connect("builder-inited", _generate_kmodcov_matrix)
-    app.connect("builder-inited", _generate_proven_range)
+    app.connect("builder-inited", _generate_rendered_pages)
     app.connect("missing-reference", _resolve_short_types)
     app.connect("missing-reference", _resolve_internal_aliases)
     app.connect("missing-reference", _resolve_external_doc_links)

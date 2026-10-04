@@ -24,6 +24,7 @@ from otto.host.product import Product, ShellProduct, register_product_provider
 from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 
 ROOT1 = Path("/work/repo1")
 ROOT2 = Path("/work/repo2")
@@ -104,8 +105,8 @@ def _entry(repo, name, kind="shell", *, seam="products", match=None, variant=Non
 
 
 def _repo(name, products=(), dev_tools=(), scope=None):
-    return SimpleNamespace(
-        name=name,
+    return fake_repo(
+        name,
         sut_dir=ROOT1 if name == "repo1" else ROOT2,
         declared_products=list(products),
         declared_dev_tools=list(dev_tools),
@@ -639,8 +640,8 @@ def test_declared_rows_scan_the_anchored_artifact(tmp_path):
     )
     clean = _artifact(tmp_path, "no.bin", b"plain")
     (tmp_path / "fw.tar.gz").write_bytes(b"archive")
-    repo = SimpleNamespace(
-        name="repo1",
+    repo = fake_repo(
+        "repo1",
         sut_dir=tmp_path,
         project_scope=None,
         declared_dev_tools=[],
@@ -680,8 +681,8 @@ def test_lab_rows_answer_instrumented_from_the_built_product(ingest, tmp_path):
         _shell(tmp_path, "gone", artifact="gone.bin"),
     ]
     repos = [
-        SimpleNamespace(
-            name="repo1",
+        fake_repo(
+            "repo1",
             sut_dir=tmp_path,
             project_scope=None,
             declared_products=entries,
@@ -772,8 +773,8 @@ def test_a_declared_product_on_three_hosts_scans_its_artifact_once(ingest, tmp_p
     monkeypatch.setattr(listing_mod, "scan_for_instrumentation", counting_scan)
     monkeypatch.setattr("otto.host.product.scan_for_instrumentation", counting_scan)
     repos = [
-        SimpleNamespace(
-            name="repo1",
+        fake_repo(
+            "repo1",
             sut_dir=tmp_path,
             project_scope=None,
             declared_dev_tools=[],

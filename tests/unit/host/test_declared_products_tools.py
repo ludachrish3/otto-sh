@@ -13,6 +13,7 @@ from otto.declared import DeclaredEntry
 from otto.host import dev_tool as dev_tool_mod
 from otto.host import product as product_mod
 from otto.host.element import Element
+from tests._fixtures.fake_repo import fake_repo
 
 
 @pytest.fixture(autouse=True)
@@ -305,8 +306,8 @@ def _factory_world(monkeypatch):
         match={"id": "probe-box.*"},
         params={"artifact": "tools/probe.sh"},
     )
-    repo = SimpleNamespace(
-        name="declrepo",
+    repo = fake_repo(
+        "declrepo",
         project_scope=_scope_for_factory(["somelab"]),
         declared_products=[product_entry],
         declared_dev_tools=[dev_tool_entry],

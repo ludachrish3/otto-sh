@@ -599,7 +599,10 @@ def lint(session: nox.Session) -> None:
     (scripts/check_breaking_marks.py), is deliberately NOT run here — it
     needs a resolved commit range, which this session has no opinion about;
     CI's lint-python job runs it as its own step, after this session, with
-    the range computed from the workflow's push/pull_request event.
+    the range computed from the workflow's push/pull_request event. Its
+    fourth leg, the lazy-export import rules (two parse-only pytest files),
+    is not repeated here either: they are ordinary unit tests, so the
+    `tests_hostless` session already runs them on every interpreter.
     """
     session.run("ruff", "check", ".")
     session.run("ruff", "format", "--check", ".")

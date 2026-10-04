@@ -32,7 +32,6 @@ point.
 """
 
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 
 import pytest
 
@@ -54,6 +53,7 @@ from otto.project import (
 from otto.registry import registering_repo
 from otto.result import CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.fake_repo import fake_repo
 
 # ── doubles ──────────────────────────────────────────────────────────────
 
@@ -201,18 +201,7 @@ def _wire_lab(monkeypatch, tmp_path, repo_names, hosts, *, declarations=None):
         lab.add_host(host)
     set_context(OttoContext(lab=lab, output_dir=tmp_path))
     ordered = [
-        SimpleNamespace(
-            name=name,
-            project_scope=(declarations or {}).get(name),
-            sut_dir=tmp_path / name,
-            # The real :class:`~otto.config.repo.Repo` always carries this (a
-            # field with ``default_factory=list``, filled by bootstrap's
-            # resolution pass), and the orchestrator's dependency pass reads it
-            # off every repo it keeps. Empty here because nothing in this module
-            # declares a dependency IN THE [dependencies] sense -- the walk
-            # order it asserts on is handed over ready-made.
-            dependencies=[],
-        )
+        fake_repo(name, project_scope=(declarations or {}).get(name), sut_dir=tmp_path / name)
         for name in repo_names
     ]
     monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: ordered)

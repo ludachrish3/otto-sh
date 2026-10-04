@@ -48,6 +48,8 @@ and is not, which is the failure mode this whole page exists against.
 is listed with a `DEBT:` comment explaining it, and the list may only
 shrink. `tach sync` is forbidden as a fix — it rewrites the file and strips
 every comment, converting a documented debt list into a blessed one.
+{doc}`modules` draws the declared graph, redrawn from `tach.toml` on every
+docs build.
 
 ### The ast-grep rules
 
@@ -179,6 +181,7 @@ job that enforces it on push.
 | --- | --- | --- | --- |
 | ruff (lint + format) | `lint-python` | `lint` | `lint-python` |
 | tach + ast-grep | `lint-arch`, and pulled in by `lint-python` | `lint` | `lint-python` |
+| lazy-export import rules (two parse-only tests; see {doc}`../contributing`) | `lint-arch`, and every pytest lane | via `tests_hostless` | `tests` |
 | ty | `typecheck-python` | `typecheck` | `typecheck-python` |
 | Biome + knip | `lint-ts` | — | `check-ts` |
 | tsc | `typecheck-ts` | — | `check-ts` |

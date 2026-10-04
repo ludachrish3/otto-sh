@@ -10,6 +10,7 @@ import typer
 from otto import bootstrap as bs
 from otto.cli.invoke import fail_loud_on_bootstrap_errors
 from otto.config.scope import ProjectScopeConfig
+from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.rootoptions import make_root_options
 
 
@@ -47,7 +48,7 @@ def _broken_repo(name, *, lab_patterns=None):
             lab_patterns=[re.compile(p) for p in lab_patterns], host_patterns=[]
         )
     )
-    return SimpleNamespace(name=name, sut_dir=Path(f"/repos/{name}"), project_scope=scope)
+    return fake_repo(name, sut_dir=Path(f"/repos/{name}"), project_scope=scope)
 
 
 def test_gate_ignores_warnings(monkeypatch):

@@ -12,10 +12,11 @@ from otto.docker.resolve import (
     declared_use_cases,
     select_fragments,
 )
+from tests._fixtures.fake_repo import fake_repo
 
 
 def _repo(name, *fragments):
-    return SimpleNamespace(name=name, docker_settings=SimpleNamespace(use_cases=tuple(fragments)))
+    return fake_repo(name, docker_settings=SimpleNamespace(use_cases=tuple(fragments)))
 
 
 def _frag(name="integration", **kw):
