@@ -689,6 +689,42 @@ def test_only_a_whole_tree_collection_dates_the_table(repo, monkeypatch):
     assert whole.generated_at == later
 
 
+def _again(repo, table, classification):
+    """The table a whole-tree collection that found everything as it was merges."""
+    return tr.updated_table(
+        repo,
+        table,
+        classification,
+        {},
+        registered_markers=list(table.registered_markers),
+        whole_tree=True,
+        dirs=dict(table.dirs),
+    )
+
+
+def test_a_whole_tree_collection_that_finds_the_table_as_it_was_keeps_its_date(repo, monkeypatch):
+    """Every named run collects the whole tree: one that learns nothing writes nothing."""
+    table = _table(repo)
+    later = table.generated_at + 3600
+    monkeypatch.setattr(tr.time, "time", lambda: later)
+
+    assert _again(repo, table, tr.classify(repo, table)) is table
+
+
+def test_a_whole_tree_collection_past_the_ttl_dates_the_table_though_nothing_changed(
+    repo, monkeypatch
+):
+    table = _table(repo)
+    classification = tr.classify(repo, table)
+    later = table.generated_at + cc.CACHE_TTL_SECONDS + 1
+    monkeypatch.setattr(tr.time, "time", lambda: later)
+
+    again = _again(repo, table, classification)
+
+    assert again.generated_at == later
+    assert dataclasses.replace(again, generated_at=table.generated_at) == table
+
+
 def test_a_changed_conftest_without_its_subtree_recorded_keeps_the_subtree_changed(repo):
     """The conftest is re-stamped, so its subtree must not read as fresh by default."""
     table = _table(repo)

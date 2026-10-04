@@ -330,8 +330,7 @@ home: {doc}`../../cli/test/selection`, "What the cache can't follow".
 
 **One refresh.** A reader of test names that is not a run (the collect
 child, `--list-markers`) brings the tables up to date with
-`otto.suite.run._refresh_tables`, which does for each repo what a run does
-for a repo it must search. A cold table is seeded by one whole-tree
+`otto.suite.run._refresh_tables`. A cold table is seeded by one whole-tree
 `--collect-only` session, and a warm one collects only what is not fresh.
 A table whose only news is a deleted file drops that record with no session.
 `--list-markers` has it seed a cold table only. A run, a listing and a dry
@@ -528,8 +527,10 @@ the last thing in a rebuild that read one. 26 added
   so do the collect child and every full-path test-name TAB; a bash TAB
   never does.
 - **A collection** costs pytest's own start plus roughly a hundred file
-  operations per test file it imports. The tables keep a run's session to
-  the files that hold its names and the files that changed.
+  operations per test file it imports. A run's session imports every test
+  file of its repo: the tables are a hint, so they cannot narrow it
+  ({doc}`execution`, #592). Only the collect child's refresh is narrowed,
+  to the files that changed.
 - **Everything else** costs nothing: `otto --version` and ordinary commands
   do no completion-cache I/O.
 
@@ -548,8 +549,8 @@ pins these on a generated repo shaped like a real one:
   TAB the shim answers) and `test_cold_rebuild_does_not_scale_with_corpus_size`
   (a cold rebuild; its `workspace` count only).
 - The `test_repo` surface gates a repeated `otto test TestTop0`: its seed is
-  the same command, so the measured run finds a current table and imports
-  only the file that holds the name.
+  the same command, so the measured run finds a current table, and its
+  session imports the whole generated tree, as every run does.
 
 The scaling pins assert a shape, not a count, so they hold whatever the
 ceilings are. The counters are described in {doc}`../startup-performance`

@@ -80,7 +80,11 @@ class TestBootstrapContainment:
         assert r.returncode == 0, r.stdout + r.stderr
 
     def test_broken_test_file_is_a_collection_error_the_run_survives(self, tmp_path: Path) -> None:
-        """Name resolution logs the file that failed to collect; the named tests still run."""
+        """The broken file is logged and the named tests still run; the run exits 1, as pytest's.
+
+        Every repo's session collects its whole tree, since any repo may hold
+        a name (#592), so ``repo_broken``'s collection error is the run's too.
+        """
         r = run_otto(
             ["test", "TestE2EFixture"],
             xdir=tmp_path,
@@ -89,7 +93,8 @@ class TestBootstrapContainment:
             extra_argv_prefix=["-R"],
         )
         out = r.stdout + r.stderr
-        assert r.returncode == 0, out
+        assert r.returncode == 1, out
+        assert "1 passed" in out, out
         assert "test_syntax_error.py" in out
         assert "Cannot run commands while a repo fails to load" not in out
 

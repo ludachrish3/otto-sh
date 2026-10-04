@@ -15,8 +15,8 @@ digraph testpipeline {
     node [shape=box];
 
     cli [label="otto test NAMES [-m EXPR] [flags]\nbuild every class registered for test\n→ bind on OttoContext"];
-    resolve [label="before any session, across every repo: the files\nthe test-names cache says hold a name,\nplus changed files (a name placed nowhere:\nthose files first, else a did-you-mean)"];
-    session [label="one pytest session per repo over its test dirs:\nOttoPlugin prunes to those files, matches\nthe names, records what it collected"];
+    resolve [label="before any session, across every repo: the order\n(a name the test-names cache places nowhere is\nlooked for first, else a did-you-mean)"];
+    session [label="one pytest session per repo over its whole test\ntree: OttoPlugin matches the names and\nrecords what it collected"];
     pytest_ [label="pytest\ncollection · fixtures · parametrize · markers"];
     plugin [label="OttoPlugin · OttoFixturesPlugin\nfixtures · artifact dirs · stability ·\nretry · monitor events · per-loop host\nsweep · coverage fetch after the session"];
 
@@ -64,23 +64,23 @@ name. Tests are not registered anywhere: pytest finds them.
 {func}`~otto.suite.run.run_tests` backs both `otto test` and the library call.
 It runs one `pytest.main()` per repo, over the repo's test directories, and
 that one session both finds the names and runs what they select, in
-collection order. There is no separate collection pass: pytest collects
-once. {class}`~otto.suite.plugin.OttoPlugin` does the selecting inside the
+collection order. There is no `--collect-only` pass: a repo's session
+collects once, except when it searched for a name it lacked and stopped
+before its tests, then runs again (see below). {class}`~otto.suite.plugin.OttoPlugin` does the selecting inside the
 session:
 
-- **Pruning.** `pytest_ignore_collect` skips every file that is not a
-  *candidate* and every directory holding none, so pytest imports only the
-  candidates. The candidates come from the test-names cache
-  (`otto.config.collected_tests`): the files whose last pytest collection
-  held one of the names, plus every file that changed since, which one
-  `stat` per file, directory and dependency detects. A directory whose stat
-  moved (a file was added, removed or renamed in it) is taken whole: every
-  file and subdirectory in it that pytest would collect, which is how a new
-  file is found without otto listing a directory or matching `python_files`
-  itself. The session's arguments stay the test directories, never file
-  paths, so a conftest's `collect_ignore` still applies. Only pytest ever
-  writes the cache: a repo with no cache is collected whole by the run's
-  own session, which then seeds it.
+- **Collection.** A run's session collects its repo's whole test tree:
+  `pytest_ignore_collect` keeps pytest inside the configured test
+  directories and otherwise leaves the decision to pytest, so a conftest's
+  `collect_ignore` and `python_files` still apply. The test-names cache
+  (`otto.config.collected_tests`) never narrows it. The cache follows a
+  file's `stat` and its Python dependencies, and a test can appear without
+  either moving (a JSON file a module loops over, an environment variable, a
+  plain value imported from another module), so a cache-pruned collection
+  could run fewer tests than the names select and pass (#592). Pruning to
+  *candidate* files (the ones that changed, and directories whose stat
+  moved) is kept for tab completion's background refresh only, where a
+  stale answer costs a suggestion, not a verdict.
 - **Matching.** Every collected item is matched against the names
   ({func}`~otto.suite.selection.matches_name`) as pytest reports it, and the
   ones no name selects are deselected before `-m` or `-k` apply, so a name
@@ -102,24 +102,30 @@ session:
   dependencies are tracked is on {doc}`completion-cache` ("Dependencies",
   under "The test-names cache").
 
-Which files hold the names is decided before any session starts, across
-every repo, from the caches alone. A name no trusted record holds can only
-be in a file the cache can't vouch for (changed, new, in a directory that
-gained an entry, or anywhere in a repo whose cache is cold). With one repo
-holding such files, its own session collects them and must match the name
-(a missing one stops it with a usage error before any test) and runs before
-every other repo's; with several, each is collected first by a
-`--collect-only` session. Either way, a collection that can't finish ends
-the run before any test, with its exit code and the reason logged. A name
-still placed nowhere is an
+Before any session starts, the caches decide only the order of the sessions
+and how early a name is refused (`otto.suite.run._decide`). A name
+no record places is looked for by one repo not yet searched in the run
+(one whose cache is stale, where a test was just written, else the first):
+its run session runs first and must match the name, and one that lacks it
+stops with a usage error before any test. That repo is then searched (what
+its session collected is the truth for the rest of the run) and the run
+decides again, so a typo is refused before any test in any repo, each repo
+collected once, with no `--collect-only` pass. A repo a search stopped in
+runs again if it holds a name, so names split across N repos that no cache
+has seen cost 2N - 1 collections: every repo but the last searcher must be
+collected before any test runs, and pytest cannot pause a session between
+collecting and running. A collection error a stopped search read is logged
+once and, if no later session of that repo runs, still fails the run. A search that can't finish
+ends the run before any test, with its exit code and the reason logged. A
+name still placed nowhere is an
 {class}`~otto.suite.selection.UnknownSelectionError` with did-you-mean
-suggestions (and the files that did not collect), and no test runs in any
-repo. A test generated from a data file or a plain imported value, which no
-Python file's stat follows, is not seen until its own file is next collected
-(the cases, and what to do about them, are in
-{doc}`../../cli/test/selection`, "What the cache can't follow").
+suggestions (and the files that did not collect). Every repo then runs one
+session, except one already searched that holds none of the names; each
+must match the names no other repo of the run can hold.
 The remote coverage pre-clean waits for the first session that is about to
-run a test, so a run that ends in an unknown name never touches a host. Every session of a run uses one random seed, logged once. A file that fails to collect is
+run a test, so a run that refuses a name the caches place nowhere never
+touches a host. (A name a stale record places in a repo, which turns out
+to be gone, is an error after the sessions ran.) Every session of a run uses one random seed, logged once. A file that fails to collect is
 logged and, under `--continue-on-collection-errors`, doesn't stop the tests
 that were asked for; the run exits 1, as pytest does. Conftest loading is cut
 at the *owning repo's root* (`--confcutdir`), so the user repo's full

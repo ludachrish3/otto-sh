@@ -111,7 +111,7 @@ def test_a_first_run_adds_nothing_to_any_directory_of_the_repo(repo, tmp_path):
     assert tr.classify(_the_repo(), table).is_current
 
 
-def test_a_pruned_run_after_a_collect_only_seed_leaves_the_table_current(repo, tmp_path):
+def test_a_run_after_a_collect_only_seed_leaves_the_table_current(repo, tmp_path):
     assert tr.read_table(_the_repo()) is None, "cold"
     [seeded] = _refresh_tables([_the_repo()])
     assert seeded is not None
@@ -120,7 +120,7 @@ def test_a_pruned_run_after_a_collect_only_seed_leaves_the_table_current(repo, t
 
     assert run_tests(["test_b1"], output_dir=tmp_path / "out").exit_code == 0
 
-    assert repo.imported() == ["test_b"], "a pruned session"
+    assert repo.imported() == ["test_a", "test_b", "test_c"], "a whole-tree session"
     assert _listings(repo.root) == before
     table = tr.read_table(_the_repo())
     assert table is not None

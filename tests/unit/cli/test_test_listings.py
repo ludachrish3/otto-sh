@@ -72,7 +72,7 @@ def test_a_cold_dry_run_is_one_collection_that_prints_what_it_found_and_seeds_th
     assert {"TestA", "test_a1", "test_b1"} <= set(table.names)
 
 
-def test_a_warm_dry_run_imports_only_the_file_holding_the_name(
+def test_a_warm_dry_run_collects_the_whole_tree_and_lists_only_the_name(
     otto_test_cli, sut_repo, tmp_path, sessions
 ):
     shell = ImportLogRepo(tmp_path / "sut")
@@ -91,10 +91,11 @@ def test_a_warm_dry_run_imports_only_the_file_holding_the_name(
     result = otto_test_cli(["-n", "test", "TestA"])
 
     assert result.exit_code == 0, result.output
-    assert shell.imported() == ["test_a"]
+    assert shell.imported() == ["test_a", "test_b"]
     assert shell.ran_tests() == []
     assert [s for s in sessions if "--collect-only" not in s] == []
     assert "test_a1" in _lines(result.output)
+    assert "test_b1" not in _lines(result.output)
 
 
 def test_the_dry_run_expands_parametrizations_and_files_an_inherited_test_under_its_subclass(

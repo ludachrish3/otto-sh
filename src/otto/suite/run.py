@@ -1079,7 +1079,7 @@ def _pytest_session(
         sys.stdout,
         partial=str(partial_junit),
         final=str(final_junit),
-        kept=lambda: otto_plugin.exitstatus not in _NOTHING_RAN,
+        kept=lambda: otto_plugin.collection_finished and otto_plugin.exitstatus not in _NOTHING_RAN,
         silent=collect_only,
     )
 
@@ -1106,7 +1106,11 @@ def _pytest_session(
         for name in otto_plugin.imported_modules():
             sys.modules.pop(name, None)
         if partial_junit is not None and final_junit is not None:
-            if rc not in _NOTHING_RAN and partial_junit.exists():
+            # A session whose collection did not finish ran no test: what
+            # pytest wrote on its way out is no result, and no earlier one
+            # is replaced by it.
+            ran = otto_plugin.collection_finished and rc not in _NOTHING_RAN
+            if ran and partial_junit.exists():
                 partial_junit.replace(final_junit)
             else:
                 partial_junit.unlink(missing_ok=True)
@@ -1189,110 +1193,108 @@ def _print_stability_report(
 class _Known:
     """What a run knows of one repo's tests before its session: its table, and how far to trust it.
 
-    A record is trusted to say what its file holds and lacks when
-    :func:`~otto.config.collected_tests.classify` found it fresh, or when a
-    collection earlier in this run read the file (*read*): that record is
-    what pytest just saw, even while a dependency seen for the first time
-    keeps it changed.
+    The table is what pytest last collected, and a hint only: a test can
+    appear or vanish without any file the table watches changing (a JSON
+    file a module loops over, an environment variable, a plain value
+    imported from another module), so a run never lets it decide what a
+    session collects (#592). It is the truth only once a collection earlier
+    in this run read the whole tree (*searched*); *found* is what its names
+    matched there.
     """
 
     table: "RepoTable | None"
     classification: "Classification"
-    read: set[str] = dataclasses.field(default_factory=set)
-    """Files a collection earlier in this run read."""
     searched: bool = False
-    """A collection earlier in this run read every file the table could not vouch for."""
+    """A session earlier in this run collected the whole tree: :attr:`found` is all there is."""
+    found: set[str] = dataclasses.field(default_factory=set)
+    """The requested names that session matched (only meaningful when :attr:`searched`)."""
 
     @property
     def stale(self) -> bool:
-        """Whether the table is cold, or a file or a directory's entries changed since it."""
+        """Whether the table is cold, or a file or a directory's entries changed since it.
+
+        Where a name no record holds most likely is: a test just written.
+        """
         c = self.classification
         return c.whole_tree or bool(c.changed or c.new or c.candidate_dirs)
 
-    @property
-    def uncertain(self) -> bool:
-        """Whether a name no trusted record holds may still be here: stale, and not yet searched."""
-        return self.stale and not self.searched
+    def holds(self, name: str) -> bool:
+        """Whether *name* is here: what this run's session matched when :attr:`searched`.
 
-    def holding(self, name: str) -> list[Path]:
-        """Return the files whose trusted record holds a test *name* selects."""
+        Otherwise whether a record of a file still there holds a test *name*
+        selects: a hint of where the name is.
+        """
         from .selection import matches_name
 
-        if self.table is None or self.classification.whole_tree:
-            return []
-        trusted = {str(p) for p in self.classification.fresh} | self.read
-        return sorted(
-            Path(key)
+        if self.searched:
+            return name in self.found
+        if self.table is None:
+            return False
+        gone = {str(p) for p in self.classification.deleted}
+        return any(
+            matches_name(name, test.classes, test.name)
             for key, record in self.table.files.items()
-            if key in trusted
-            and any(matches_name(name, test.classes, test.name) for test in record.tests)
+            if key not in gone
+            for test in record.tests
         )
 
 
 @dataclasses.dataclass(frozen=True)
 class _Decision:
-    """What a run does before its first session; see :func:`_decide`."""
+    """What a run does next; see :func:`_decide`."""
 
-    refresh: list[int] = dataclasses.field(default_factory=list)
-    """Repos to collect (``--collect-only``) before anything else is decided."""
     unknown: list[str] = dataclasses.field(default_factory=list)
-    """Names no repo can hold: refused before any session starts."""
+    """Names no repo holds: refused before any session starts."""
     sessions: dict[int, _Selection] = dataclasses.field(default_factory=dict)
     """Each run session, by its repo's position in the run's repo list, in the order they run."""
     searching: int | None = None
-    """The one uncertain repo whose run session must find the names no table places."""
+    """The repo, not yet searched, whose run session runs first and looks for the names
+    no record places."""
 
 
 def _decide(names: list[str], repos: list[_Known], markers: str = "") -> _Decision:
-    """Decide which repo collects which files for *names*, from the tables alone.
+    """Decide which repos run a session for *names*, and which names each must find.
 
-    The rule a run's sessions follow. A name is placed when a trusted record
-    in some repo holds it (:meth:`_Known.holding`). A name placed nowhere
-    may only be in an uncertain repo (:attr:`_Known.uncertain`):
+    Every session collects its repo's whole tree, and the names select from
+    what pytest collected: the tables never narrow a collection, because a
+    table is a hint (:class:`_Known`). They decide only the order of the
+    sessions, and how early a name no repo holds is refused.
 
-    - with none, it is unknown, before any session;
-    - with exactly one, that repo's run session is its collection too: it
-      runs first and must find the name, so a name it lacks, or a
-      collection that cannot finish, stops the run before any test in any
-      repo;
-    - with more, each is collected first (``--collect-only``), and the
-      caller decides again over what those collections read, which leaves
-      none uncertain (a collection that cannot finish ends the run: see
-      :class:`_Sessions`).
+    A name is placed when some repo holds it (:meth:`_Known.holds`). A name
+    placed nowhere may be in any repo this run has not searched. With none,
+    it is unknown, before any session. Otherwise one of them searches: the first whose table is
+    :attr:`~_Known.stale` (where a test was just written), or the first.
+    Its run session runs first and must find the name: lacking it, the
+    session stops before any test, the repo is searched, and the caller
+    decides again (:meth:`_Sessions.run`). So a name no repo holds is
+    refused before any test in any repo, each repo collected once.
 
-    Every repo that holds a name or has a file the table cannot vouch for
-    gets one run session over those files, in the configured order: so a
-    name runs wherever it is, and a file that changed is read and recorded.
-    A file a collection earlier in this run already read (:attr:`_Known.read`)
-    is not read again unless it holds a name.
-    Each must find the names only it is known to hold (should a record be
-    wrong, the session says so before its tests run), and *markers* narrows
-    what it selects.
+    Every repo gets one run session, in the configured order, except one
+    this run searched that holds none of the names. Each must find the
+    names no other repo of the run can hold (should it lack one, it says so
+    before its tests run), and *markers* narrows what it selects.
     """
-    holding = [{name: known.holding(name) for name in names} for known in repos]
-    holders = {name: [i for i, found in enumerate(holding) if found[name]] for name in names}
-    unplaced = [name for name in names if not holders[name]]
-    uncertain = [i for i, known in enumerate(repos) if known.uncertain]
-    if unplaced and not uncertain:
+    holding = [{name: known.holds(name) for name in names} for known in repos]
+    unplaced = [name for name in names if not any(held[name] for held in holding)]
+    unsearched = [i for i, known in enumerate(repos) if not known.searched]
+    if unplaced and not unsearched:
         return _Decision(unknown=unplaced)
-    if unplaced and len(uncertain) > 1:
-        return _Decision(refresh=uncertain)
-    searching = uncertain[0] if unplaced else None
+    searching = None
+    if unplaced:
+        searching = next((i for i in unsearched if repos[i].stale), unsearched[0])
+    running = [i for i, known in enumerate(repos) if not known.searched or any(holding[i].values())]
+
+    def elsewhere(i: int, name: str) -> bool:
+        return any(j != i and (not repos[j].searched or holding[j][name]) for j in running)
+
     sessions: dict[int, _Selection] = {}
-    for i in sorted(range(len(repos)), key=lambda i: i != searching):
-        known, c = repos[i], repos[i].classification
-        held = {path for paths in holding[i].values() for path in paths}
-        unread = {*c.changed, *c.new} - {Path(key) for key in known.read}
-        if not (held or unread or c.candidate_dirs or c.whole_tree):
-            continue
+    for i in sorted(running, key=lambda i: i != searching):
+        must_match = [n for n in names if not elsewhere(i, n) or (i == searching and n in unplaced)]
         sessions[i] = _Selection(
-            table=known.table,
-            classification=c,
-            candidates=None if c.whole_tree else sorted({*held, *unread}),
+            table=repos[i].table,
+            classification=repos[i].classification,
             names=names,
-            must_match=[
-                n for n in names if holders[n] == [i] or (i == searching and not holders[n])
-            ],
+            must_match=must_match,
             markers=markers,
         )
     return _Decision(sessions=sessions, searching=searching)
@@ -1326,6 +1328,9 @@ class _RepoRun:
     """The requested names this repo's run session found."""
     outcome: _SessionOutcome | None = None
     """The session that ran this repo's tests, or whose collection did not finish."""
+    broken: bool = False
+    """A search of this repo that stopped read a file that did not collect: should no
+    later session of the repo run, the run still exits 1 for it, as pytest would."""
 
 
 class _Sessions:
@@ -1366,6 +1371,8 @@ class _Sessions:
         """The exit code of the collection that could not finish, which ended the run."""
         self._cleaned = False
         self._clean_error: BaseException | None = None
+        self._logged: set[tuple[str, str]] = set()
+        """(repo, file) pairs whose collection failure this run already logged."""
 
     def run(self) -> None:
         """Run every repo's session; stop at an interrupt or an unfinished search."""
@@ -1376,17 +1383,18 @@ class _Sessions:
                 if not self._session(run, selection):
                     return
             return
-        decision = _decide(self.names, [run.known for run in self.runs], markers)
-        if decision.refresh:
-            for i in decision.refresh:
-                if not self.refresh(self.runs[i]):
-                    return
+        while True:
             decision = _decide(self.names, [run.known for run in self.runs], markers)
-        if decision.unknown:
-            raise self._unknown(decision.unknown)
-        for i, selection in decision.sessions.items():
-            if not self._session(self.runs[i], selection, searching=i == decision.searching):
-                return
+            if decision.unknown:
+                raise self._unknown(decision.unknown)
+            for i, selection in decision.sessions.items():
+                done = self._session(self.runs[i], selection, searching=i == decision.searching)
+                if done is None:
+                    break  # the search missed a name: decide again over what it read
+                if not done:
+                    return
+            else:
+                break
         unfinished = any(r.outcome is not None and r.outcome.table is None for r in self.runs)
         unmatched = [n for n in self.names if not any(n in run.matched for run in self.runs)]
         if unmatched and not unfinished:
@@ -1395,12 +1403,13 @@ class _Sessions:
             raise self._unknown(unmatched)
 
     def refresh(self, run: _RepoRun) -> bool:
-        """Collect what *run*'s table cannot vouch for, running nothing; ``False`` to stop.
+        """Bring *run*'s table up to date for completion, running nothing; ``False`` to stop.
 
         One ``--collect-only`` session over the changed and new files and the
         candidate directories, or the whole tree when the table is cold. A
         table whose only news is deleted files, in directories whose stat did
-        not move, drops their records with no session.
+        not move, drops their records with no session. Incremental, for tab
+        completion's background refresh: a run never trusts what it leaves.
         """
         from ..config.collected_tests import classify, updated_table, write_tables
 
@@ -1410,25 +1419,24 @@ class _Sessions:
             table = updated_table(run.repo, run.known.table, c, {})
             if table != run.known.table:
                 write_tables([table], home=self.home)
-            run.known = _Known(table=table, classification=classify(run.repo, table), searched=True)
+            run.known = _Known(table=table, classification=classify(run.repo, table))
             return True
         selection = _Selection(run.known.table, c, candidates)
         outcome = self._collected(run, selection, None, searching=True)
         if outcome is None or outcome.table is None:
             return False
-        run.known = _Known(
-            table=outcome.table,
-            classification=classify(run.repo, outcome.table),
-            read=set(outcome.records),
-            searched=True,
-        )
+        run.known = _Known(table=outcome.table, classification=classify(run.repo, outcome.table))
         return True
 
-    def _session(self, run: _RepoRun, selection: _Selection, *, searching: bool = False) -> bool:
+    def _session(
+        self, run: _RepoRun, selection: _Selection, *, searching: bool = False
+    ) -> bool | None:
         """Run *run*'s one session over *selection*; ``False`` to stop.
 
         *searching*: the session must find names no table places
-        (:attr:`_Decision.searching`), so one that cannot finish ends the run.
+        (:attr:`_Decision.searching`), so one that cannot finish ends the
+        run, and one that lacks a name ran no test: it returns ``None``, the
+        repo now searched, for the run to decide again.
 
         Raises:
             otto.suite.selection.UnknownSelectionError: the session stopped
@@ -1444,6 +1452,18 @@ class _Sessions:
             run.known = dataclasses.replace(run.known, table=outcome.table)
             run.matched |= {n for n in self.names if n not in outcome.unmatched_names}
             missing = [n for n in selection.must_match if n in outcome.unmatched_names]
+            if missing and searching:
+                # Its classification stays: stamped before either read, it can
+                # only make a record look stale, and another stat pass is the
+                # one thing a missed search must not cost.
+                run.known = _Known(
+                    table=outcome.table,
+                    classification=run.known.classification,
+                    searched=True,
+                    found={n for n in self.names if n not in outcome.unmatched_names},
+                )
+                run.broken = any(r.error is not None for r in outcome.records.values())
+                return None
             if missing:
                 raise self._unknown(missing)
         run.outcome = outcome
@@ -1524,9 +1544,10 @@ class _Sessions:
         return UnknownSelectionError(unknown_names_message(unknown, known, broken=broken))
 
     def _log_broken(self, run: _RepoRun, outcome: _SessionOutcome) -> None:
-        """Log each file *outcome*'s session could not collect."""
+        """Log each file *outcome*'s session could not collect, once per run."""
         for key, record in outcome.records.items():
-            if record.error is not None:
+            if record.error is not None and (run.repo.name, key) not in self._logged:
+                self._logged.add((run.repo.name, key))
                 logger.error(
                     "Test collection failed for %s in repo %r: %s",
                     _shown(run.repo, key),
@@ -1738,6 +1759,8 @@ def run_tests(
     outcomes = [outcome for _, outcome in taking_part]
     reports = [o.report for o in outcomes if o.report is not None]
     failed = [] if sessions.failed is None else [sessions.failed]
+    if any(run.broken and run.outcome is None for run in runs):
+        failed.append(1)
     return SuiteRunResult(
         exit_code=max([_final_exit_code(o.rc, o.unstable) for o in outcomes] + failed),
         junit_paths=[run.setup.results_path for run, _ in taking_part if run.setup is not None],

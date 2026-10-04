@@ -654,9 +654,11 @@ def classify(repo: "Repo", table: RepoTable | None) -> Classification:
     is changed.
 
     An edit that keeps both mtime and size is invisible, and so are tests
-    generated from a non-Python data file. A run stays right because pytest
-    collects what it runs; a completer can offer such a name until the file
-    is next collected, or the TTL sends the tree to a whole collection.
+    generated from a non-Python data file, an environment variable or a
+    plain value imported from another module. So the table is a hint, for
+    completion: a completer can offer a stale name until the file is next
+    collected, or the TTL sends the tree to a whole collection. A run never
+    lets it narrow what pytest collects (``otto.suite.run._decide``, #592).
     """
     env = current_env(repo)
     whole_tree = table is None or table.env != env or _expired(table)
@@ -926,7 +928,7 @@ def updated_table(
         else:
             deps[dep] = classification.stats.get(dep)
     merged = _merged_dirs(repo, stored, classification, dirs, whole_tree=whole_tree)
-    return RepoTable(
+    table = RepoTable(
         sut_dir=repo.sut_dir,
         env=classification.env,
         dirs=dict(sorted(merged.items())),
@@ -935,6 +937,16 @@ def updated_table(
         registered_markers=sorted(registered_markers),
         generated_at=now if whole_tree else (stored.generated_at if stored is not None else 0),
     )
+    if (
+        stored is not None
+        and not _expired(stored)
+        and replace(table, generated_at=stored.generated_at) == stored
+    ):
+        # Collected whole and found as it was: it keeps its date, as a file
+        # does, so a run (every one collects its whole tree) that learns
+        # nothing new writes nothing. Past the TTL the date moves on.
+        return stored
+    return table
 
 
 # --- what completion offers -----------------------------------------------------

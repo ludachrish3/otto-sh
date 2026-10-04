@@ -1,12 +1,13 @@
-"""Which files hold the names, decided across every repo before any pytest session starts.
+"""Which repos run a session for the names, and which names each must find.
 
-``otto.suite.run._decide`` reads only the tables and what ``classify`` found:
-a name a trusted record holds is placed; a repo that is cold or has files the
-table cannot vouch for is uncertain. A name no trusted record holds sends the
-uncertain repos to a collection first (one uncertain repo folds that
-collection into its own run session, which then must match the name), and a
-name still unplaced is unknown before any session runs. Design:
-``docs/superpowers/specs/2026-09-27-test-name-cache-design.md`` §11.2, §12.2.
+``otto.suite.run._decide`` reads only the tables and what ``classify`` found,
+and never narrows a collection: every session collects its repo's whole
+tree, because a table is a hint (a test can appear without any file it
+watches changing, #592). The tables decide the order of the sessions and how
+early a name no repo holds is refused: a name no record places is searched
+for by one repo not yet searched in this run (one whose table is stale
+first), whose session runs first and must find it, and a name still unplaced
+once every repo is searched is unknown before any session runs.
 
 Every table here is synthetic: no file is read, no pytest runs.
 """
@@ -26,91 +27,70 @@ def _known(
     files: dict[str, list[str]],
     *,
     changed: tuple[str, ...] = (),
-    new: tuple[str, ...] = (),
-    candidate_dirs: tuple[str, ...] = (),
     cold: bool = False,
-    read: tuple[str, ...] = (),
-    searched: bool = False,
+    deleted: tuple[str, ...] = (),
+    found: tuple[str, ...] | None = None,
 ) -> _Known:
-    """A repo under *root* whose records hold *files* (name -> tests), classified as given."""
+    """A repo under *root* whose records hold *files* (name -> tests), classified as given.
+
+    *found*: the repo was searched in this run, and its session matched these names.
+    """
     table = RepoTable(
         sut_dir=root,
         env={},
         dirs={},
         files={str(root / k): _record(*tests) for k, tests in files.items()},
     )
-    stale = {*changed, *new} if not cold else set(files)
+    stale = {*changed, *deleted} if not cold else set(files)
     classification = Classification(
         fresh=[root / k for k in files if k not in stale],
         changed=[root / k for k in (changed if not cold else files)],
-        new=[root / k for k in new],
-        deleted=[],
+        new=[],
+        deleted=[root / k for k in deleted],
         whole_tree=cold,
         env={},
         stats={},
         dirs={},
-        candidate_dirs=[root / d for d in candidate_dirs],
+        candidate_dirs=[],
     )
     return _Known(
         table=None if cold and not files else table,
         classification=classification,
-        read={str(root / k) for k in read},
-        searched=searched,
+        searched=found is not None,
+        found=set(found or ()),
     )
 
 
-def _sessions(decision, roots: list[Path]) -> list[tuple[int, list[str] | None, list[str]]]:
-    """Each planned session as (repo index, candidate names relative to the repo, must_match)."""
-    return [
-        (
-            i,
-            None if s.candidates is None else [str(p.relative_to(roots[i])) for p in s.candidates],
-            s.must_match,
-        )
-        for i, s in decision.sessions.items()
-    ]
+def _sessions(decision) -> list[tuple[int, list[str]]]:
+    """Each planned session as (repo index, must_match); every one collects the whole tree."""
+    assert all(s.candidates is None for s in decision.sessions.values())
+    return [(i, s.must_match) for i, s in decision.sessions.items()]
 
 
-def test_names_trusted_records_hold_run_where_they_are_held(tmp_path):
+def test_a_session_collects_the_whole_tree_even_where_a_record_places_the_name(tmp_path):
     a = tmp_path / "a"
     known = [_known(a, {"test_a.py": ["test_x"], "test_b.py": ["test_y"]})]
 
     decision = _decide(["test_x"], known)
 
-    assert decision.refresh == []
     assert decision.unknown == []
-    assert _sessions(decision, [a]) == [(0, ["test_a.py"], ["test_x"])]
+    assert decision.searching is None
+    assert _sessions(decision) == [(0, ["test_x"])]
 
 
-def test_the_files_the_table_cannot_vouch_for_ride_along_with_the_holders(tmp_path):
-    a = tmp_path / "a"
-    known = [
-        _known(
-            a,
-            {"test_a.py": ["test_x"], "test_b.py": ["test_y"]},
-            changed=("test_b.py",),
-            candidate_dirs=("sub",),
-        )
-    ]
-
-    decision = _decide(["test_x"], known)
-
-    assert decision.sessions[0].candidate_dirs == [a / "sub"]
-    assert _sessions(decision, [a]) == [(0, ["test_a.py", "test_b.py"], ["test_x"])]
-
-
-def test_an_unplaced_name_with_nothing_uncertain_is_unknown_before_any_session(tmp_path):
+def test_one_repo_must_find_every_name_it_may_hold(tmp_path):
+    """Placed or not, a name in a one-repo run can only be there: its session searches."""
     a = tmp_path / "a"
     known = [_known(a, {"test_a.py": ["test_x"]})]
 
-    decision = _decide(["test_x", "test_nowhere"], known)
+    decision = _decide(["test_x", "test_generated"], known)
 
-    assert decision.unknown == ["test_nowhere"]
-    assert decision.sessions == {}
-    assert decision.refresh == []
+    assert decision.unknown == []
+    assert decision.searching == 0
+    assert _sessions(decision) == [(0, ["test_x", "test_generated"])]
 
 
-def test_one_uncertain_repo_folds_its_refresh_into_its_session_and_runs_first(tmp_path):
+def test_an_unplaced_name_is_searched_first_where_a_test_was_just_written(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     known = [
         _known(a, {"test_a.py": ["test_x"]}),
@@ -119,107 +99,94 @@ def test_one_uncertain_repo_folds_its_refresh_into_its_session_and_runs_first(tm
 
     decision = _decide(["test_x", "test_new"], known)
 
-    assert decision.refresh == []
-    assert decision.unknown == []
-    assert _sessions(decision, [a, b]) == [
-        (1, ["test_b.py"], ["test_new"]),
-        (0, ["test_a.py"], ["test_x"]),
-    ]
+    assert decision.searching == 1
+    assert _sessions(decision) == [(1, ["test_new"]), (0, [])]
 
 
-def test_one_cold_repo_with_an_unplaced_name_folds_its_seed_into_its_session(tmp_path):
+def test_an_unplaced_name_with_nothing_stale_is_searched_by_the_first_repo(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    known = [_known(a, {"test_a.py": ["test_x"]}), _known(b, {"test_b.py": ["test_y"]})]
+
+    decision = _decide(["test_generated"], known)
+
+    assert decision.searching == 0
+    assert _sessions(decision) == [(0, ["test_generated"]), (1, [])]
+
+
+def test_a_cold_repo_searches_for_an_unplaced_name(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     known = [_known(a, {"test_a.py": ["test_x"]}), _known(b, {}, cold=True)]
 
     decision = _decide(["test_x", "test_new"], known)
 
-    assert _sessions(decision, [a, b]) == [(1, None, ["test_new"]), (0, ["test_a.py"], ["test_x"])]
+    assert _sessions(decision) == [(1, ["test_new"]), (0, [])]
 
 
-def test_a_cold_repo_beside_a_warm_one_is_searched_whole_even_when_every_name_is_placed(tmp_path):
-    a, b = tmp_path / "a", tmp_path / "b"
-    known = [_known(a, {"test_a.py": ["test_x"]}), _known(b, {"test_b.py": ["test_x"]}, cold=True)]
-
-    decision = _decide(["test_x"], known)
-
-    assert decision.refresh == []
-    assert _sessions(decision, [a, b]) == [(0, ["test_a.py"], ["test_x"]), (1, None, [])]
-
-
-def test_names_split_across_repos_must_match_where_they_are_held(tmp_path):
+def test_a_name_another_repo_may_hold_is_required_of_neither(tmp_path):
+    """Records place test_x in a and test_y in b, but either may now be in the other."""
     a, b = tmp_path / "a", tmp_path / "b"
     known = [_known(a, {"test_a.py": ["test_x"]}), _known(b, {"test_b.py": ["test_y"]})]
 
     decision = _decide(["test_x", "test_y"], known)
 
-    assert _sessions(decision, [a, b]) == [
-        (0, ["test_a.py"], ["test_x"]),
-        (1, ["test_b.py"], ["test_y"]),
-    ]
+    assert decision.searching is None
+    assert _sessions(decision) == [(0, []), (1, [])]
 
 
-def test_a_name_two_repos_hold_is_required_of_neither(tmp_path):
+def test_every_repo_runs_even_one_whose_records_hold_none_of_the_names(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
-    known = [_known(a, {"test_a.py": ["test_x"]}), _known(b, {"test_b.py": ["test_x"]})]
+    known = [_known(a, {"test_a.py": ["test_x"]}), _known(b, {"test_b.py": ["test_y"]})]
 
     decision = _decide(["test_x"], known)
 
-    assert _sessions(decision, [a, b]) == [(0, ["test_a.py"], []), (1, ["test_b.py"], [])]
+    assert list(decision.sessions) == [0, 1]
 
 
-def test_two_uncertain_repos_and_an_unplaced_name_are_refreshed_first(tmp_path):
-    a, b, c = tmp_path / "a", tmp_path / "b", tmp_path / "c"
+def test_a_repo_searched_whole_that_holds_none_of_the_names_gets_no_session(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
     known = [
-        _known(a, {"test_a.py": ["test_x"]}, changed=("test_a.py",)),
+        _known(a, {"test_a.py": ["test_x"]}, found=()),
         _known(b, {"test_b.py": ["test_y"]}),
-        _known(c, {}, cold=True),
-    ]
-
-    decision = _decide(["test_new"], known)
-
-    assert decision.refresh == [0, 2]
-    assert decision.sessions == {}
-    assert decision.unknown == []
-
-
-def test_two_uncertain_repos_with_every_name_placed_are_not_refreshed(tmp_path):
-    a, b, c = tmp_path / "a", tmp_path / "b", tmp_path / "c"
-    known = [
-        _known(a, {"test_a.py": ["test_x"]}, changed=("test_a.py",)),
-        _known(b, {"test_b.py": ["test_y"]}),
-        _known(c, {}, cold=True),
     ]
 
     decision = _decide(["test_y"], known)
 
-    assert decision.refresh == []
-    assert _sessions(decision, [a, b, c]) == [
-        (0, ["test_a.py"], []),
-        (1, ["test_b.py"], ["test_y"]),
-        (2, None, []),
+    assert _sessions(decision) == [(1, ["test_y"])]
+
+
+def test_after_a_search_misses_the_next_unsearched_repo_searches(tmp_path):
+    a, b, c = tmp_path / "a", tmp_path / "b", tmp_path / "c"
+    known = [
+        _known(a, {"test_a.py": ["test_x"]}, found=("test_x",)),
+        _known(b, {"test_b.py": ["test_y"]}),
+        _known(c, {"test_c.py": ["test_z"]}),
     ]
 
+    decision = _decide(["test_x", "test_new"], known)
 
-def test_after_a_refresh_what_it_read_places_a_name_even_when_still_changed(tmp_path):
-    """A record the refresh just wrote is trusted, even one a new dependency keeps changed."""
+    assert decision.searching == 1
+    assert _sessions(decision) == [(1, ["test_new"]), (0, []), (2, [])]
+
+
+def test_what_a_search_read_places_a_name_for_certain(tmp_path):
+    """A searched repo holding the name is the only place it can be once the rest are searched."""
     a, b = tmp_path / "a", tmp_path / "b"
     known = [
-        _known(a, {"test_a.py": ["test_new"]}, changed=("test_a.py",), read=("test_a.py",)),
-        _known(b, {"test_b.py": ["test_y"]}, searched=True),
+        _known(a, {"test_a.py": ["test_new"]}, found=("test_new",)),
+        _known(b, {"test_b.py": ["test_y"]}, found=()),
     ]
-    known[0].searched = True
 
     decision = _decide(["test_new"], known)
 
     assert decision.unknown == []
-    assert _sessions(decision, [a, b]) == [(0, ["test_a.py"], ["test_new"])]
+    assert _sessions(decision) == [(0, ["test_new"])]
 
 
-def test_a_name_still_unplaced_after_the_refresh_is_unknown(tmp_path):
+def test_a_name_unplaced_once_every_repo_is_searched_is_unknown(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     known = [
-        _known(a, {"test_a.py": ["test_x"]}, read=("test_a.py",), searched=True),
-        _known(b, {"test_b.py": ["test_y"]}, searched=True),
+        _known(a, {"test_a.py": ["test_x"]}, found=()),
+        _known(b, {"test_b.py": ["test_y"]}, found=()),
     ]
 
     decision = _decide(["test_nowhere"], known)
@@ -228,22 +195,38 @@ def test_a_name_still_unplaced_after_the_refresh_is_unknown(tmp_path):
     assert decision.sessions == {}
 
 
-def test_a_repo_holding_nothing_asked_for_and_vouched_for_whole_gets_no_session(tmp_path):
+def test_a_searched_repo_trusts_only_what_its_session_matched(tmp_path):
+    """A record the session did not bear out (pytest no longer collects it) places nothing."""
+    a = tmp_path / "a"
+    known = [_known(a, {"test_a.py": ["test_x"], "test_gone.py": ["test_y"]}, found=())]
+
+    decision = _decide(["test_y"], known)
+
+    assert decision.unknown == ["test_y"]
+
+
+def test_a_name_a_searched_session_matched_is_placed_though_no_record_holds_it(tmp_path):
+    """A custom collector's item matches without a module record: the match is what counts."""
     a, b = tmp_path / "a", tmp_path / "b"
-    known = [_known(a, {"test_a.py": ["test_x"]}), _known(b, {"test_b.py": ["test_y"]})]
+    known = [
+        _known(a, {"test_a.py": []}, found=("test_custom",)),
+        _known(b, {"test_b.py": ["test_y"]}, found=("test_y",)),
+    ]
 
-    decision = _decide(["test_x"], known)
+    decision = _decide(["test_custom", "test_y"], known)
 
-    assert list(decision.sessions) == [0]
+    assert decision.unknown == []
+    assert _sessions(decision) == [(0, ["test_custom"]), (1, ["test_y"])]
 
 
 def test_a_deleted_holder_places_nothing(tmp_path):
-    """A record whose file is gone is not fresh: its names are not placed by it."""
-    a = tmp_path / "a"
-    known = _known(a, {"test_a.py": ["test_x"], "test_b.py": ["test_y"]})
-    known.classification.fresh.remove(a / "test_b.py")
-    known.classification.deleted.append(a / "test_b.py")
+    """A record whose file is gone is no hint: its name is searched for."""
+    a, b = tmp_path / "a", tmp_path / "b"
+    known = [
+        _known(a, {"test_a.py": ["test_x"], "test_b.py": ["test_y"]}, deleted=("test_b.py",)),
+        _known(b, {"test_c.py": ["test_z"]}, changed=("test_c.py",)),
+    ]
 
-    decision = _decide(["test_y"], [known])
+    decision = _decide(["test_y"], known)
 
-    assert decision.unknown == ["test_y"]
+    assert decision.searching == 1

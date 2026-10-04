@@ -640,7 +640,7 @@ def test_a_run_before_the_refresh_collects_the_saved_file_itself(
 
     assert result.exit_code == 0
     assert repo.ran_tests() == ["test_b_new"]
-    assert sessions == [{"files": ["test_b.py"], "dirs": [], "collect_only": False}]
+    assert sessions == [{"files": None, "dirs": [], "collect_only": False}]
     assert "test_b_new" in _tab()
 
 
@@ -655,9 +655,9 @@ def _age(path: Path, seconds: float) -> None:
     os.utime(path, (then, then))
 
 
-def test_a_run_restarts_the_check_window_but_not_the_ttl(repo, tmp_path, sessions):
+def test_a_run_restarts_the_check_window_and_the_ttl(repo, tmp_path, sessions):
     """A run classified the whole table before it wrote it, so the next TAB starts no
-    check; only a whole-tree collection dates the table, so the 24 h TTL still runs."""
+    check; and every named run collects the whole tree, so it dates the table too."""
     _warm(repo, tmp_path, sessions)
     cache = cc._cache_path()
     data = json.loads(cache.read_text())
@@ -670,12 +670,12 @@ def test_a_run_restarts_the_check_window_but_not_the_ttl(repo, tmp_path, session
 
     assert run_tests(["test_b2"], output_dir=tmp_path / "out").exit_code == 0
 
-    assert sessions == [{"files": ["test_b.py"], "dirs": [], "collect_only": False}]
+    assert sessions == [{"files": None, "dirs": [], "collect_only": False}]
     assert time.time() - _check_marker().stat().st_mtime < 60, "the window restarted"
     [repo_] = _repos()
     table = tr.read_table(repo_)
     assert table is not None
-    assert table.generated_at == dated, "a run that collected part of the tree dates nothing"
+    assert table.generated_at > dated, "a run that collected the whole tree dates it"
 
 
 # ── the check behind a TAB: the collect child does the stat pass ──────────────

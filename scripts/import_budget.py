@@ -482,13 +482,18 @@ SURFACES: list[Surface] = [
     #
     # The one verb that must import pytest. Its warm state is a repeated
     # run: the seed is the same `otto test TestTop0`, which writes the repo's
-    # collected-tests table, so the measured run's session imports only the
-    # file that holds the name. Seeded with root help instead, it would
-    # measure the first run in a fresh home: a collection of the whole tree.
+    # collected-tests table, so the measured run finds it current. Its
+    # session collects the whole tree all the same, as every run does: the
+    # table is a hint and never narrows a run (#592). Seeded with root help
+    # instead, it would measure the first run in a fresh home, which also
+    # seeds the table. 11.66: the whole-tree session's ratio on 3.10 (11.10x,
+    # the highest minor; 9.98x on 3.14) plus 5%, as 9.46 was for the session
+    # the table used to narrow to one file. The cost of a verdict pytest
+    # would agree with (#592).
     _verb_surface(
         "test_repo",
         ["otto", "test", "TestTop0"],
-        target_ratio=9.46,
+        target_ratio=11.66,
         seed_argv=["otto", "test", "TestTop0"],
     ),
     # The built-in `local` host stands in for the ~30 host subverbs that run a

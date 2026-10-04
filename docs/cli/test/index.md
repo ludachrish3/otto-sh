@@ -148,7 +148,7 @@ repo1 1.0.0
 With no names and no `--markers` it lists every collected test. Every
 listing is a fresh pytest collection of the files it covers, and what it
 collects updates the test-name cache
-([What a run imports](selection.md#what-a-run-imports)).
+([What a run collects](selection.md#what-a-run-collects)).
 
 ### Dry run
 
@@ -333,7 +333,7 @@ A repo's panel lists every marker pytest knew when it last collected the
 repo's tests: the ones a pytest config declares, the ones pytest itself, a
 plugin or a conftest registers (such as `asyncio`), and the ones a test
 applies. When a repo's test-name cache must be collected whole (the first
-time, for instance; see [What a run imports](selection.md#what-a-run-imports)),
+time, for instance; see [What the cache can't follow](selection.md#what-the-cache-cant-follow)),
 `--list-markers` collects it first. otto's panel lists the markers otto itself adds, `ensure` and `retry`, which the
 repo panels leave out.
 
