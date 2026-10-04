@@ -117,6 +117,19 @@ def cycles(graph: ModuleGraph) -> "list[list[str]]":
     return sorted(found, key=lambda c: (-len(c), c))
 
 
+def cycle_edges(graph: ModuleGraph) -> "dict[str, list[str]]":
+    """Map each module in a cycle to the modules it depends on inside that same cycle.
+
+    An edge from one cycle to another, or out to a module in no cycle, is left
+    out: it points down the layering, which is where an edge should point.
+    """
+    owner = {member: number for number, members in enumerate(cycles(graph)) for member in members}
+    return {
+        module: [dep for dep in graph.depends_on[module] if owner.get(dep) == number]
+        for module, number in sorted(owner.items())
+    }
+
+
 def cycle_label(number: int, members: "list[str]") -> str:
     """Name the node a condensed cycle is drawn as."""
     return f"cycle {number} ({len(members)} modules)"
@@ -214,6 +227,14 @@ def _cycle_section(graph: ModuleGraph, found: "list[list[str]]") -> "list[str]":
             f"**{cycle_label(number, members)}:** " + ", ".join(_short(m) for m in members) + ".",
             "",
         ]
+    inside = sum(len(deps) for deps in cycle_edges(graph).values())
+    lines += [
+        f"{inside} of the {graph.edge_count()} dependencies run between two modules of",
+        "one cycle. `tests/unit/test_import_cycle_ratchet.py` (run by `make lint-arch`)",
+        "lists the modules in a cycle and the edges inside one, and neither list may",
+        "grow: a module that joins a cycle, or a new edge inside one, fails the gate.",
+        "",
+    ]
     pairs = mutual_pairs(graph)
     lines += [
         "## Modules that import each other",

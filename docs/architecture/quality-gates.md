@@ -55,6 +55,16 @@ with its last import. What the file declares is the import graph, not a
 superset of it. {doc}`modules` draws that graph, redrawn from `tach.toml`
 on every docs build.
 
+tach checks one edge at a time, so it cannot see a loop. The goal is
+`forbid_circular_dependencies = true`, and an import cycle keeps that flag
+off. Until it can go on, `tests/unit/test_import_cycle_ratchet.py` holds
+the cycle to what it is. It reads the same graph, and pins which modules
+are in a cycle and which edges run inside one. Both lists only shrink. A
+module that joins the cycle fails the gate, and so does a new edge between
+two of its members. An entry left behind after a cut fails too, so the cut
+is recorded and the edge cannot come back unseen. `make lint-arch` runs it,
+because a targeted test run would never select it.
+
 ### The ast-grep rules
 
 `.ast-grep/rules/` holds twenty-eight rules — twenty-seven at `severity: error`,

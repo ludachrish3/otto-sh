@@ -12,118 +12,16 @@
 # Maintain BY HAND. `tach sync` REWRITES this file and strips every comment —
 # never run it to "fix" a check failure; add or (preferably) question the edge.
 #
-# End state: forbid_circular_dependencies = true. Blocked today by far more
-# than the four edges this line used to name. MEASURED by setting the flag and
-# running `tach check` (2026-08-17): SIXTEEN of the modules below are in one
-# strongly connected component — bootstrap, cli, config, context, coverage,
-# docker, host, labs, lifecycle, link, models, monitor, project, reservations,
-# suite, tunnel. THIRTEEN mutually-importing pairs run through it:
-#
-#   bootstrap<->config, cli<->config, config<->context, config<->host,
-#   config<->labs, config<->lifecycle, config<->models, config<->reservations,
-#   config<->suite, context<->host, docker<->host, host<->models, link<->models
-#
-# THAT ENUMERATION IS A 2026-08-17 SNAPSHOT AND ONE PAIR POST-DATES IT.
-# 2026-08-28 (host-inventory §6/§8/§11) added config<->inventory: otto.inventory
-# already read otto.config for the user settings file, and otto.config.
-# completion_cache now resolves the inventory for the digest and the host
-# enumeration. So the component is SEVENTEEN modules (the sixteen above plus
-# inventory) and FOURTEEN mutually-importing pairs. Both ends of the new pair
-# import lazily, which changes nothing here: tach counts function-scope
-# imports as edges (see the note at the end of this header), and so does the
-# SCC. NOT re-measured with the flag — the two figures above are arithmetic on
-# the snapshot, not a fresh `tach check --forbid-circular` run; re-measure
-# before quoting the "cut both cli edges" numbers below, which were.
-#
-# 2026-09-28 (#457) REMOVED ONE PAIR: otto.config no longer imports otto.suite
-# (the collect child's refresh is otto.suite.run's, handed in by otto.cli), so
-# config<->suite is gone, and with it the `config -> suite` hop of the fifth
-# loop below. Not re-measured either.
-#
-# 2026-09-29 (thin-CLI series item 1) RETIRED THE project -> cli -> suite ->
-# project LOOP: the `@instruction` decorator now lives in otto.instructions, so
-# project/actions.py no longer imports otto.cli, and otto.suite's note below
-# was rewritten to say so (the loop's own entry, further down this header, is
-# marked retired too). This also surfaced two edges the ratchet had missed:
-# otto.cli already reached otto.project directly (run.py's `_project_leaf`,
-# function-scope, since project instructions started registering data) without
-# a declared dependency, and otto.instructions now reaches otto.context,
-# otto.params and otto.project (also function-scope, in bind_handler_kwargs and
-# run_instruction).
-#
-# 2026-10-03 (thin-CLI series item 6): otto.init (the `otto init` doctor and
-# scaffolder library) JOINS the component through cli -> init -> config, since
-# config -> cli is still the completion-cache DEBT edge. It adds no
-# mutually-importing pair: otto.init imports nothing from otto.cli, and
-# nothing below otto.cli imports otto.init. Not re-measured.
-#
-# RE-MEASURED with forbid_circular_dependencies: TWENTY modules are in the
-# component today — bootstrap, check, cli, config, context, coverage, creds,
-# docker, host, instructions, inventory, labs, lifecycle, link, models,
-# monitor, project, reservations, suite, tunnel. The SEVENTEEN quoted above
-# (2026-08-28) is not a baseline to diff against here: it was never run
-# through the flag, only arithmetic on the 2026-08-17 snapshot, as that
-# paragraph itself says. The last figure the flag actually produced was
-# SIXTEEN (2026-08-23, on otto.project below). The only member THIS series
-# added is otto.instructions, through its new function-scope cycle with
-# otto.project: otto.project already imported otto.instructions at module
-# scope, for the `@instruction` decorator, and otto.instructions now imports
-# otto.project back, inside run_instruction. otto.check and otto.creds are
-# new to a flag-measured RUN, not new to the component: both were already
-# reachable from inside it before today (through otto.cli and otto.inventory
-# respectively) — this is simply the first time the flag ran since they
-# joined.
-#
-# 2026-10-02 (thin-CLI series item 5) ADDED THE FIRST NESTED MODULE,
-# otto.monitor.live. `otto monitor --live`'s pipeline moved into the library,
-# and its lab-aware entry points (select_monitor_hosts, run_live) must read the
-# active lab, the repos, the driving repo's scope and full-lab tunnel
-# discovery: otto.config, otto.context and otto.tunnel. The engine
-# (otto.monitor) keeps those injected, as its own note says, so the entry
-# points live in a child module with its own edges instead of widening the
-# engine's. otto.cli and otto.suite declare otto.monitor.live as the callers.
-# RE-MEASURED with forbid_circular_dependencies: TWENTY-ONE modules — the
-# twenty above plus otto.monitor.live, which joins through its declared
-# callers (monitor.live -> config -> cli -> monitor.live). Measured both ways
-# the same day: with the otto.cli/otto.suite -> otto.monitor.live edges
-# removed it is the same twenty as before, so the new member is those two
-# inbound edges, not the module's own imports.
-#
-# THOSE PAIRS ARE NOT THE WHOLE FORMATION — they accounted for only TWELVE of
-# the sixteen (2026-08-17 snapshot). The other four joined through longer
-# loops that contain no mutual pair of their own:
-#
-#   project  -> cli -> suite -> project     RETIRED 2026-09-29, thin-CLI item 1
-#                                            -- see otto.suite below
-#   coverage -> config -> cli -> coverage
-#   monitor  -> host -> config -> cli -> monitor
-#   tunnel   -> host -> config -> cli -> tunnel
-#   tunnel   -> host -> config -> suite -> project -> tunnel   (2026-08-17)
-#
-# Every one of those closed through otto.cli until the project->link/tunnel
-# edges landed (2026-08-17, `otto run cleanup` resetting impairments and
-# reaping tunnels — see otto.project below). The last line is the one that
-# does not, and it is why the both-cuts figure below moved. Of these four,
-# only the first is gone as of 2026-09-29; the other three are unaffected by
-# that change and still stand.
-#
-# FOUR OF THOSE PAIRS HAVE OWNERS, and are the ones the DEBT/NOTE comments in
-# this file track: cli<->config, config<->context, context<->host and
-# docker<->host (spelled host<->context and host<->docker down there). The rest
-# is recorded here so that the marked backlog is never mistaken for the whole
-# count. EXPECT NO SINGLE-EDGE FIX: otto.cli has exactly two inbound edges from
-# inside the component (config->cli and project->cli), and cutting EITHER alone
-# leaves it at sixteen — measured. Cutting both drops it to FIFTEEN, which is
-# where the real work starts rather than ends. Re-measure with the flag before
-# quoting any of these numbers; never adjust them by guess.
-#
-# THAT LAST FIGURE WAS FOURTEEN until 2026-08-17, and what moved it belongs in
-# writing because nothing else in this file would show it: with both cli edges
-# cut, otto.cli and otto.tunnel used to leave the component together — tunnel's
-# only loop ran through cli. The project->tunnel edge added that day gives it a
-# second one that does not (the fifth loop above), so cutting cli out now
-# strands cli alone. All four states re-measured the same day: sixteen with the
-# new edges, sixteen with either cli edge cut, fifteen with both.
+# End state: forbid_circular_dependencies = true. An import cycle keeps it
+# off: a set of modules that can all reach each other through the edges below.
+# tests/unit/test_import_cycle_ratchet.py (run by lint-arch) is the record of
+# that cycle. It pins which modules are in it and which edges run inside it,
+# and both lists can only shrink, so a module that joins the cycle, or a new
+# edge between two of its members, fails the gate. Read the numbers there, not
+# here: this header used to keep them in prose, and the cycle grew from sixteen
+# members to twenty-three with nobody deciding it should (#522).
+# docs/architecture/modules.md draws the cycle and the pairs of modules that
+# import each other; #590 tracks taking it apart.
 #
 # Note tach counts function-scope (lazy) imports as edges, same as module
 # scope. Scope-sensitive rules (e.g. "models may import config lazily but
@@ -154,7 +52,7 @@ depends_on = [
     # than after phase 2, when a bootstrap() call has already pulled otto.host
     # in via config's os_profile registration anyway. Adds NO new mutual pair
     # (otto.host does not import otto.bootstrap) and no new module to the
-    # sixteen-member component — both ends were already in it.
+    # import cycle — both ends were already in it.
     "otto.host",
 ]
 
@@ -205,12 +103,10 @@ depends_on = [
     # `_enumerate_host_summaries` passes it to the enumeration, so a referenced
     # host completes (spec 2026-08-28 host-inventory §11). This edge CLOSES A
     # NEW CYCLE — otto.inventory imports otto.config for the user settings
-    # file — so it is the FOURTEENTH mutually-importing pair and it brings
-    # otto.inventory into the strongly connected component as its SEVENTEENTH
-    # member. The header's enumeration is the 2026-08-17 snapshot and does not
-    # list either; see the correction there. Lazy at both ends, which buys
-    # import cost and nothing else: tach and the SCC both count a
-    # function-scope import as an edge.
+    # file — so it is a mutually-importing pair, and it brought otto.inventory
+    # into the import cycle. Lazy at both ends, which buys import cost and
+    # nothing else: tach and the cycle ratchet both count a function-scope
+    # import as an edge.
     "otto.inventory",
     # DEBT: survives on fleet.py's DEFAULT_COMMAND_TIMEOUT (Tier 1.7),
     # lab.py's RemoteHost/slug/builtin_hosts, and repo.py's os_profile
@@ -559,10 +455,9 @@ path = "otto.project"
 # are `link.manage.repair_all` / `read_link_states` and
 # `tunnel.manage.remove_all_tunnels` / `tunnel.discovery.discover_tunnels`,
 # each handed `ctx.lab` and nothing else. Neither package knows this one
-# exists, so neither edge is a mutual pair; the component is unchanged at
-# sixteen (re-measured, see the header). What DID move is the header's
-# both-cuts figure: project->tunnel is now tunnel's only cli-free way back
-# into the component.
+# exists, so neither edge is a mutual pair, and neither added a member to the
+# import cycle. What they did change: project->tunnel is tunnel's one way back
+# into the cycle that does not run through otto.cli.
 #
 # otto.errors is the exception hierarchy's root and a zero-import leaf, so it
 # cannot invert layering or create a cycle (otto.config, otto.monitor and
@@ -580,12 +475,8 @@ path = "otto.project"
 # re-export. It points DOWN (nothing under otto.models imports otto.project)
 # and every module otto.models itself depends on is already reachable here.
 #
-# BOTH RE-MEASURED with forbid_circular_dependencies (2026-08-23), because the
-# header says never to quote those numbers by guess: SIXTEEN with these two
-# edges and sixteen without them; FIFTEEN with both cli edges cut, either way.
-# Neither figure in the header moves. project already reached the component
-# without cli (project -> config -> suite -> project), so a second cli-free
-# loop through models adds no member and strands nobody new.
+# Neither edge added a member to the import cycle: otto.project was already
+# in it.
 depends_on = [
     "otto.registry",
     "otto.result",
@@ -625,7 +516,7 @@ path = "otto.result"
 # zero-import leaf. The error is defined HERE, not in otto.host.errors with its
 # two peers, precisely to avoid a result->host edge -- otto.host depends on
 # otto.result, so that direction is both a runtime circular import and one more
-# mutually-importing pair added to the inventory the header measures and this
+# mutually-importing pair added to the import cycle the ratchet pins and this
 # file is trying to shrink.
 depends_on = ["otto.utils", "otto.errors"]
 

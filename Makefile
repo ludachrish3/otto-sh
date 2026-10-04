@@ -1374,7 +1374,12 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 # also run in every pytest lane; this leg puts them in the per-change gate,
 # where a targeted test run would never select them. Plain `uv run`, not
 # `--group lint`: a group sync reshapes the venv the import-budget tests count.
-lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts) + ast-grep (pattern rules) + the lazy-export import rules + check-breaking (public-API golden marking)
+#
+# The cycle ratchet rides the same leg for the same reason. tach checks each
+# edge on its own and cannot see a loop; tests/unit/test_import_cycle_ratchet.py
+# pins which modules are in an import cycle and which edges run inside one,
+# shrink-only (#522), until forbid_circular_dependencies can be turned on.
+lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts) + the import-cycle ratchet + ast-grep (pattern rules) + the lazy-export import rules + check-breaking (public-API golden marking)
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
 	@uv run --group lint tach check --exact
 	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
@@ -1383,6 +1388,8 @@ lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependen
 	@uv run --group lint ast-grep test --skip-snapshot-tests
 	@$(SAY) "import rules: lazy exports patched where defined, read at call time"
 	@uv run pytest tests/unit/test_patch_targets.py tests/unit/test_no_import_time_lazy_exports.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
+	@$(SAY) "import cycle: no module joins it, no edge inside it is added (shrink-only)"
+	@uv run pytest tests/unit/test_import_cycle_ratchet.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
 
 # `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
 # `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports

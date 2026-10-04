@@ -59,6 +59,25 @@ def test_the_cycle_is_found_whole_and_the_pair_inside_it_separately(tmp_path) ->
     assert rmg.mutual_pairs(graph) == [("a", "b")], "c -> a, but a never declares c"
 
 
+def test_cycle_edges_keep_only_the_edges_that_stay_inside_one_cycle(tmp_path) -> None:
+    # A second cycle, x <-> y, that also reaches down into the first: x -> a
+    # joins two cycles, so it is neither cycle's internal edge.
+    graph = _graph(
+        tmp_path,
+        CYCLE
+        + '[[modules]]\npath = "x"\ndepends_on = ["y", "a"]\n'
+        + '[[modules]]\npath = "y"\ndepends_on = ["x", "e"]\n',
+    )
+    assert rmg.cycles(graph) == [["a", "b", "c"], ["x", "y"]]
+    assert rmg.cycle_edges(graph) == {
+        "a": ["b"],
+        "b": ["a", "c"],
+        "c": ["a"],
+        "x": ["y"],
+        "y": ["x"],
+    }
+
+
 def test_the_condensed_graph_drops_the_edges_another_route_already_covers(tmp_path) -> None:
     graph = _graph(tmp_path, CYCLE)
     cycle = rmg.cycle_label(1, ["a", "b", "c"])
@@ -86,6 +105,8 @@ def test_the_page_draws_both_graphs_and_tables_every_module(tmp_path) -> None:
     assert page.count("```{graphviz}") == 2
     assert '"cycle 1 (3 modules)" [style="bold,rounded"];' in page
     assert '"a" -- "b";' in page
+    # a->b, b->a, b->c, c->a; a->d and c->d leave the cycle.
+    assert "4 of the 9 dependencies run between two modules of" in page
     assert "| `a` | `b`, `d` | `b`, `c`, `top` |" in page
     assert "| `top` | `a`, `e` | — |" in page
 
