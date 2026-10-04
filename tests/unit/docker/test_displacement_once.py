@@ -170,7 +170,7 @@ def test_use_cases_shows_a_displacement_once(caplog):
     lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
     with (
         caplog.at_level(logging.INFO),
-        patch.object(docker_cli, "get_repos", return_value=[winner, loser]),
+        patch("otto.config.bootstrapped.get_repos", return_value=[winner, loser]),
         patch("otto.config.fleet.get_lab", return_value=lab),
     ):
         result = _invoke("use-cases")
@@ -250,7 +250,7 @@ def test_use_cases_renders_through_describe(sentinel):
     lab = Lab(name="unix")
     lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
     with (
-        patch.object(docker_cli, "get_repos", return_value=[winner, loser]),
+        patch("otto.config.bootstrapped.get_repos", return_value=[winner, loser]),
         patch("otto.config.fleet.get_lab", return_value=lab),
     ):
         result = _invoke("use-cases")

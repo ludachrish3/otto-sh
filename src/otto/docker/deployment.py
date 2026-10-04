@@ -23,7 +23,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from ..config import get_lab, get_ordered_repos, get_repos
 from ..host.docker_host import DockerContainerHost
 from ..host.errors import HostCommandError
 from ..host.host import is_dry_run
@@ -604,6 +603,9 @@ def resolve_use_case(
     and another on the way down: a teardown that resolved differently would
     tear down a project nobody deployed and leave the real one running.
     """
+    from ..config.bootstrapped import get_ordered_repos, get_repos
+    from ..config.fleet import get_lab
+
     lab = get_lab()
     on_id = _canonical_on(lab, on)
     selection = select_fragments(use_case, get_repos(), provide=provide)

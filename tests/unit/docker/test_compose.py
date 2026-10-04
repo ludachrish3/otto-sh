@@ -1712,7 +1712,7 @@ def test_register_declared_use_case_respects_repo_project_scope(tmp_path):
     other = _wire_parent_mock(_capable_host("test1", ne="test1"))
     lab.hosts[other.id] = other
 
-    with patch("otto.config.get_repos", return_value=[repo]):
+    with patch("otto.config.bootstrapped.get_repos", return_value=[repo]):
         n = register_declared_container_hosts(lab, [repo])
 
     assert n == 1
@@ -1771,7 +1771,7 @@ def test_get_container_host_success(tmp_path):
     fake_lab = Lab(name="test")
     fake_lab.hosts[container.id] = container  # type: ignore[assignment]
 
-    with patch("otto.config.get_lab", return_value=fake_lab):
+    with patch("otto.config.fleet.get_lab", return_value=fake_lab):
         result = get_container_host(container.id)
     assert result is container
 
@@ -1779,7 +1779,7 @@ def test_get_container_host_success(tmp_path):
 def test_get_container_host_missing_raises(tmp_path):
     """Raises KeyError when the host_id is not in the lab."""
     fake_lab = Lab(name="test")
-    with patch("otto.config.get_lab", return_value=fake_lab), pytest.raises(KeyError):
+    with patch("otto.config.fleet.get_lab", return_value=fake_lab), pytest.raises(KeyError):
         get_container_host("does_not_exist")
 
 
@@ -1788,7 +1788,7 @@ def test_get_container_host_wrong_type_raises(tmp_path):
     parent = _wire_parent_mock(_capable_host())
     fake_lab = Lab(name="test")
     fake_lab.hosts[parent.id] = parent  # a UnixHost, not a DockerContainerHost
-    with patch("otto.config.get_lab", return_value=fake_lab), pytest.raises(KeyError):
+    with patch("otto.config.fleet.get_lab", return_value=fake_lab), pytest.raises(KeyError):
         get_container_host(parent.id)
 
 

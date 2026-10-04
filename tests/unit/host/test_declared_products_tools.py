@@ -286,7 +286,6 @@ async def test_shell_kind_commands_run_on_the_host():
 
 def _factory_world(monkeypatch):
     """A scoped fake repo declaring one product and one dev tool for ``probe-box.*``."""
-    import otto.config as config_mod
 
     product_entry = DeclaredEntry(
         name="fw",
@@ -312,9 +311,9 @@ def _factory_world(monkeypatch):
         declared_products=[product_entry],
         declared_dev_tools=[dev_tool_entry],
     )
-    monkeypatch.setattr(config_mod, "get_repos", lambda: [repo])
-    monkeypatch.setattr(config_mod, "get_ordered_repos", lambda: [repo])
-    monkeypatch.setattr(config_mod, "is_bootstrapped", lambda: True)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.bootstrapped.is_bootstrapped", lambda: True)
 
 
 def _factory_host():

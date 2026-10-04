@@ -881,7 +881,7 @@ class TestCheckCommand:
 class TestCompleter:
     def test_link_completer_filters_prefix(self) -> None:
         with (
-            patch("otto.cli.link.get_repos", return_value=[]),
+            patch("otto.config.bootstrapped.get_repos", return_value=[]),
             patch(
                 "otto.cli.link.collect_link_ids",
                 return_value=["edge", "dataplane", "lnk-1"],

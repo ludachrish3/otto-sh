@@ -493,14 +493,13 @@ def repos_table(monkeypatch):
     patched only the latter would have every test below silently collect
     nothing — patching both keeps the simulated state honest.
     """
-    import otto.config as config_mod
 
     table: list = []
-    monkeypatch.setattr(config_mod, "get_repos", lambda: table)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: table)
     # Every faked repo survives the dependency pass unless a test says
     # otherwise — declared_for_host filters against the survivors' names.
-    monkeypatch.setattr(config_mod, "get_ordered_repos", lambda: table)
-    monkeypatch.setattr(config_mod, "is_bootstrapped", lambda: True)
+    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: table)
+    monkeypatch.setattr("otto.config.bootstrapped.is_bootstrapped", lambda: True)
     return table
 
 
@@ -524,14 +523,13 @@ def test_declared_for_host_skips_dependency_skipped_repos(repos_table, monkeypat
     Precedence among survivors stays get_repos() discovery order — the
     surviving list here is deliberately REVERSED to prove the filter never
     reorders."""
-    import otto.config as config_mod
 
     e1, e2, e3 = _entry("a"), _entry("b"), _entry("c")
     r1 = _repo("first", products=[e1])
     r2 = _repo("dep-skipped", products=[e2])
     r3 = _repo("last", products=[e3])
     repos_table.extend([r1, r2, r3])
-    monkeypatch.setattr(config_mod, "get_ordered_repos", lambda: [r3, r1])
+    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: [r3, r1])
     assert declared_for_host(_host(), "declared_products") == [e1, e3]
 
 
@@ -558,13 +556,11 @@ def test_declared_for_host_unreachable_config_yields_nothing(monkeypatch, caplog
     # the non-forcing probe short-circuit (that path is a separate test).
     import logging
 
-    import otto.config as config_mod
-
     def boom():
         raise RuntimeError("no bootstrap")
 
-    monkeypatch.setattr(config_mod, "get_repos", boom)
-    monkeypatch.setattr(config_mod, "is_bootstrapped", lambda: True)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", boom)
+    monkeypatch.setattr("otto.config.bootstrapped.is_bootstrapped", lambda: True)
     with caplog.at_level(logging.DEBUG, logger="otto.declared"):
         assert declared_for_host(_host(), "declared_products") == []
     assert "config unreachable" in caplog.text
@@ -576,7 +572,6 @@ def test_declared_for_host_never_forces_bootstrap(monkeypatch):
     must not pay discovery's cost or run repo init imports just to ask what
     entries exist yet — there are none until something else bootstraps.
     """
-    import otto.config as config_mod
 
     called: list[bool] = []
 
@@ -584,8 +579,8 @@ def test_declared_for_host_never_forces_bootstrap(monkeypatch):
         called.append(True)
         raise AssertionError("bootstrap forced")
 
-    monkeypatch.setattr(config_mod, "get_repos", boom)
-    monkeypatch.setattr(config_mod, "is_bootstrapped", lambda: False)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", boom)
+    monkeypatch.setattr("otto.config.bootstrapped.is_bootstrapped", lambda: False)
     assert declared_for_host(_host(), "declared_products") == []
     assert not called  # get_repos must never be reached when not bootstrapped
 

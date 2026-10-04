@@ -482,16 +482,27 @@ def test_plugin_subclasses_a_lazily_exported_builtin_host():
 # cached in its package's __dict__. These pin the guard's reach and its red.
 
 
-def test_the_leak_guard_checks_every_package_with_a_lazy_attrs_table():
+def _on_the_package(package: str, name: str) -> str:
+    """A patch target that DELIBERATELY names a lazy export on its package.
+
+    The leak tests below must make the leak the way a careless test would. Built
+    at run time so the static scan in ``test_patch_targets.py``, which reads
+    string literals, does not report this file; that scan has no allowlist.
+    """
+    return f"{package}.{name}"
+
+
+def test_the_leak_guard_checks_every_package_with_a_lazy_table():
     """A guard whose package scan came back short would pass vacuously."""
     from tests._fixtures._lazy_exports import lazy_package_names
 
-    declares = re.compile(r"^_LAZY_ATTRS\b", re.MULTILINE)
+    declares = re.compile(r"^_LAZY_(ATTRS|EXPORTS)\b", re.MULTILINE)
     expected = {
         _package_of(path) for path in _lazy_package_inits() if declares.search(path.read_text())
     }
     assert set(lazy_package_names()) == expected
     assert {"otto.session", *PACKAGES} <= expected
+    assert {"otto", "otto.config", "otto.logger"} <= set(lazy_package_names())
 
 
 def test_a_monkeypatch_on_the_lazy_package_is_caught_and_evicted():
@@ -505,7 +516,7 @@ def test_a_monkeypatch_on_the_lazy_package_is_caught_and_evicted():
 
     assert leaked_lazy_exports() == []
     patcher = pytest.MonkeyPatch()
-    patcher.setattr("otto.session.build_lab", lambda repos, labs: None)
+    patcher.setattr(_on_the_package("otto.session", "build_lab"), lambda repos, labs: None)
     patcher.undo()
     try:
         assert leaked_lazy_exports() == ["otto.session.build_lab"]
@@ -517,6 +528,65 @@ def test_a_monkeypatch_on_the_lazy_package_is_caught_and_evicted():
         assert "build_lab" not in vars(otto.session)  # evicted, so it cannot cascade
     finally:
         vars(otto.session).pop("build_lab", None)
+
+
+def test_a_monkeypatch_on_a_lazy_exports_package_is_caught_and_evicted():
+    """``otto.config`` declares ``_LAZY_EXPORTS``, whose values are ``(module, attr)`` pairs."""
+    import otto.config
+    from tests._fixtures._lazy_exports import (
+        LeakedLazyExportError,
+        leaked_lazy_exports,
+        raise_on_leaked_lazy_exports,
+    )
+
+    assert leaked_lazy_exports() == []
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr(_on_the_package("otto.config", "get_repos"), list)
+    patcher.undo()
+    try:
+        assert leaked_lazy_exports() == ["otto.config.get_repos"]
+        with pytest.raises(
+            LeakedLazyExportError,
+            match=re.escape("otto.config.get_repos -> patch otto.config.bootstrapped.get_repos"),
+        ):
+            raise_on_leaked_lazy_exports("the-leaking-test")
+        assert "get_repos" not in vars(otto.config)
+    finally:
+        vars(otto.config).pop("get_repos", None)
+
+
+def test_the_guard_names_the_module_that_really_defines_a_hopped_export():
+    """``otto.get_lab`` is declared as ``otto.config.get_lab``, itself lazy: name the true home."""
+    import otto
+    from tests._fixtures._lazy_exports import (
+        LeakedLazyExportError,
+        leaked_lazy_exports,
+        raise_on_leaked_lazy_exports,
+    )
+
+    assert leaked_lazy_exports() == []
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr(_on_the_package("otto", "get_lab"), lambda: None)
+    patcher.undo()
+    try:
+        assert leaked_lazy_exports() == ["otto.get_lab"]
+        with pytest.raises(
+            LeakedLazyExportError,
+            match=re.escape("otto.get_lab -> patch otto.config.fleet.get_lab"),
+        ):
+            raise_on_leaked_lazy_exports("the-leaking-test")
+        assert "get_lab" not in vars(otto)
+    finally:
+        vars(otto).pop("get_lab", None)
+
+
+def test_an_eager_name_in_a_lazy_exports_package_is_not_a_leak():
+    """``otto.config`` binds ``load_otto_env`` as a real global; only table names can leak."""
+    import otto.config
+    from tests._fixtures._lazy_exports import leaked_lazy_exports
+
+    assert "load_otto_env" in vars(otto.config)
+    assert leaked_lazy_exports() == []
 
 
 def test_a_monkeypatch_on_the_defining_module_leaves_nothing_behind():

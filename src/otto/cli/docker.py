@@ -45,7 +45,6 @@ import typer
 from rich import print as rprint
 from rich.markup import escape
 
-from ..config import get_repos
 from .completers import completion_source
 from .invoke import fail, print_error
 
@@ -165,6 +164,7 @@ def _default_use_case(use_case: str | None) -> str:
     if use_case is not None:
         return use_case
 
+    from ..config.bootstrapped import get_repos
     from ..docker.resolve import declared_use_cases
 
     names = sorted(declared_use_cases(get_repos()))
@@ -639,6 +639,7 @@ def _use_cases(
     # five, and not a reason to exit 1.
     from rich.table import Table
 
+    from ..config.bootstrapped import get_repos
     from ..config.fleet import get_lab
     from ..docker.resolve import (
         UseCaseResolutionError,

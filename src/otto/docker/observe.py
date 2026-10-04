@@ -11,7 +11,6 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..config.fleet import get_lab
 from ..errors import FieldError
 from ..host.errors import HostUnreachableError
 from ..host.host import refuse_declined_fact
@@ -164,12 +163,16 @@ async def run_on(parents: "list[UnixHost]", command: str, *, asked: str) -> Obse
 
 async def list_containers(on: "str | None" = None, *, all: bool = False) -> ObserveReport:  # noqa: A002 -- docker's flag name
     """``docker ps [-a]`` on every docker-capable host, or the one *on* names."""
+    from ..config.fleet import get_lab
+
     command = "docker ps -a" if all else "docker ps"
     return await run_on(docker_parents(get_lab(), on), command, asked="list_containers")
 
 
 async def list_images(on: "str | None" = None) -> ObserveReport:
     """``docker images`` on every docker-capable host, or the one *on* names."""
+    from ..config.fleet import get_lab
+
     return await run_on(docker_parents(get_lab(), on), "docker images", asked="list_images")
 
 
@@ -303,6 +306,7 @@ async def resolve_logs(
     is docker's error, not otto's. With *follow*, a parent not reached by SSH
     is refused before it is probed.
     """
+    from ..config.fleet import get_lab
     from ..host.docker_host import DockerContainerHost, compose_container_probe
 
     lab = get_lab()

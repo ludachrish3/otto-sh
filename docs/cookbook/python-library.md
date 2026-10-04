@@ -134,8 +134,13 @@ async with otto.open_context(lab="mylab") as ctx:
 | `lab`                | `Lab \| str \| list[str]`   | —       | Lab name(s) as `--lab` takes them (`"a+b"`, or a list, each item like one `--lab`), or a `Lab` object, used as given |
 | `include_projects`   | `list[str] \| None`         | `None`  | Force these projects active (one name per item, no comma lists) |
 | `exclude_projects`   | `list[str] \| None`         | `None`  | Switch these projects off (one name per item)  |
+| `variant`            | `"debug" \| "field" \| None` | `None`  | The product variant, as `otto --field/--debug` selects it ({ref}`variants <product-variants>`); `None` keeps the one already set (`"debug"` by default) |
 | `dry_run`            | `bool`                      | `False` | Log commands without executing them       |
 | `log_command_output` | `bool`                      | `True`  | Stream command output to the otto logger  |
+
+A `Lab` you pass keeps the products it was built with, so build it under the
+same `variant` (`set_variant` before `build_lab`), while containers started in
+the block (`compose_up`) are ingested under the variant you pass.
 
 The project switches follow {doc}`../cli/projects`. Given names, `open_context`
 builds the lab `otto --lab` builds: from the repos' `[[lab.sources]]`, their
@@ -170,21 +175,27 @@ yourself (the `otto.session` functions are on {doc}`../api/session`):
    `exclude_projects`.
 3. {func}`~otto.session.check_repos` refuses if an active repo failed to load, and
    returns the load errors of inactive repos, which `open_context` logs.
-4. {func}`~otto.session.build_lab` builds the lab, unless you passed a `Lab` object.
+4. For the field variant, call `otto.context.set_variant("field")` and keep
+   the token it returns. The lab build picks each product's
+   {ref}`variant <product-variants>` entry, and providers read the variant
+   while the work runs, so set it before step 5 and reset it after step 8.
+5. {func}`~otto.session.build_lab` builds the lab, unless you passed a `Lab` object.
    It takes component lab names already split (`["a", "b"]`, not `"a+b"`).
-5. Build an `OttoContext` with that lab, the selection's include / exclude
+6. Build an `OttoContext` with that lab, the selection's include / exclude
    (`include_projects=`, `exclude_projects=`) and the runtime flags, and
    install it as the active context with `set_context()`, which returns a
    reset token.
-6. {func}`~otto.session.check_dependencies` runs the
+7. {func}`~otto.session.check_dependencies` runs the
    [dependency preflight](../cli/env/index.md#the-dependency-preflight). It needs
    the installed context, because whether a repo is active depends on the
    lab's hosts.
-7. Do the work. Each host that connects joins the host scope of the event loop
+8. Do the work. Each host that connects joins the host scope of the event loop
    it connects on. On the way out, `ctx.sweep_loop(...)` closes the hosts the
-   running loop owns, then `reset_context(token)` restores the prior state.
+   running loop owns, then `reset_context(token)` restores the prior state,
+   and `otto.context.reset_variant(variant_token)` restores the prior variant
+   if you set one.
 
-The smallest version keeps steps 1, 4, 5 and 7:
+The smallest version keeps steps 1, 5, 6 and 8:
 
 ```python
 import asyncio

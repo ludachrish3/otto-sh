@@ -72,6 +72,26 @@ def test_dependency_refused_error_names_each_requirement():
     )
 
 
+def test_dependency_refused_error_with_no_requirements_still_has_a_message():
+    from otto.session import DependencyRefusedError
+
+    err = DependencyRefusedError([])
+    assert str(err) == "no unsatisfied requirements were given"
+    assert err.unsatisfied == []
+
+
+def test_dependency_refused_error_keeps_one_line_per_requirement():
+    from otto.env.preflight import Unsatisfied
+    from otto.session import DependencyRefusedError
+
+    first = Unsatisfied(repo="a", requirement="x>=1", found="0.1")
+    second = Unsatisfied(repo="b", requirement="y", found="none")
+    assert str(DependencyRefusedError([first, second])) == (
+        "repo 'a' requires 'x>=1' — not satisfied in this environment (found: 0.1)\n"
+        "repo 'b' requires 'y' — not satisfied in this environment (found: none)"
+    )
+
+
 def test_instruction_inactive_error_message_names_fields_not_flags():
     from otto.session import InstructionInactiveError
 

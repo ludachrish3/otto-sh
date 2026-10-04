@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ... import layout
-from ...config.fleet import do_for_all_hosts
 from ...utils import Status
 
 if TYPE_CHECKING:
@@ -172,6 +171,8 @@ class GcdaFetcher:
 
         Hosts and products with no counters, and failed transfers, are omitted.
         """
+        from ...config.fleet import do_for_all_hosts
+
         self.staging_root.mkdir(parents=True, exist_ok=True)
 
         fetch_results = await do_for_all_hosts(

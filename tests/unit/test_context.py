@@ -298,7 +298,7 @@ def test_admissible_ids_is_public_and_the_private_name_is_an_alias(monkeypatch):
     cannot be reached through an underscored method; the private spelling stays
     as an alias for one release rather than breaking any caller that has it.
     """
-    monkeypatch.setattr("otto.config.get_ordered_repos", list)
+    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", list)
     ctx = OttoContext(lab=_lab_with("test1"))
 
     assert ctx.admissible_ids() == {"test1"}
@@ -622,8 +622,6 @@ def cov_detection(monkeypatch):
     """
     from types import SimpleNamespace
 
-    import otto.config
-
     state = {"repos": [_CovRepo({"hosts": "test.*"})], "instrumented": [True], "scans": []}
 
     def _all_hosts(_self, pattern=None, *, include_containers=False, **_kw):
@@ -635,7 +633,7 @@ def cov_detection(monkeypatch):
             for i, verdict in enumerate(state["instrumented"])
         ]
 
-    monkeypatch.setattr(otto.config, "get_repos", lambda: state["repos"])
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: state["repos"])
     monkeypatch.setattr(OttoContext, "all_hosts", _all_hosts)
     return state
 
@@ -675,12 +673,11 @@ def test_a_decision_wins_over_detection(cov_detection):
 
 
 def test_cov_on_the_library_sentinel_lab_is_false_without_touching_repos(monkeypatch):
-    import otto.config
 
     def _boom():
         raise AssertionError("the sentinel lab must not reach the repos")
 
-    monkeypatch.setattr(otto.config, "get_repos", _boom)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _boom)
     assert OttoContext(lab=Lab(name=LIBRARY_LAB_NAME)).cov is False
 
 
@@ -697,12 +694,11 @@ def test_cov_detection_failure_is_false_with_one_warning(cov_detection, caplog):
 
 
 def test_cov_detection_with_unreachable_repos_is_false(monkeypatch):
-    import otto.config
 
     def _unreachable():
         raise RuntimeError("no bootstrap")
 
-    monkeypatch.setattr(otto.config, "get_repos", _unreachable)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _unreachable)
     assert OttoContext(lab=_lab_with("test1")).cov is False
 
 
@@ -968,3 +964,108 @@ def test_open_context_has_no_search_paths():
     import otto
 
     assert "search_paths" not in inspect.signature(otto.open_context.__wrapped__).parameters
+
+
+# --- open_context selects the product variant, as --field/--debug do ----------
+
+
+@pytest.mark.asyncio
+async def test_the_variant_is_set_for_the_lab_build_and_the_body(monkeypatch):
+    """``variant="field"`` is active when the lab is built and inside the body."""
+    import otto
+    from otto.context import variant
+
+    seen_at_build = []
+
+    def _build_lab(repos, labs):
+        seen_at_build.append(variant())
+        return _lab_with("test1")
+
+    _install_result(monkeypatch)
+    monkeypatch.setattr("otto.session.lab.build_lab", _build_lab)
+    async with otto.open_context(lab="test1", variant="field"):
+        assert variant() == "field"
+    assert seen_at_build == ["field"]
+    assert variant() == "debug"
+
+
+@pytest.mark.asyncio
+async def test_the_variant_is_restored_when_the_body_raises(monkeypatch):
+    import otto
+    from otto.context import variant
+
+    seen = []
+
+    async def _body_raises():
+        async with otto.open_context(lab=_lab_with("test1"), variant="field"):
+            seen.append(variant())
+            raise RuntimeError("body")
+
+    _install_result(monkeypatch)
+    with pytest.raises(RuntimeError, match="body"):
+        await _body_raises()
+    assert seen == ["field"]
+    assert variant() == "debug"
+
+
+@pytest.mark.asyncio
+async def test_the_variant_is_restored_when_setup_refuses(monkeypatch):
+    import otto
+    from otto.context import variant
+    from otto.session import ProjectSelectionError
+
+    repo, _ = _broken_repo("Repo2")
+    _install_result(monkeypatch, repos=[repo])
+    with pytest.raises(ProjectSelectionError):
+        async with otto.open_context(
+            lab=_lab_with("test1"), include_projects=["nope"], variant="field"
+        ):
+            pass
+    assert variant() == "debug"
+    assert try_get_context() is None
+
+
+@pytest.mark.asyncio
+async def test_the_variant_restores_the_previous_value_not_the_default(monkeypatch):
+    """A caller's own ``set_variant`` is what an exit returns to."""
+    import otto
+    from otto.context import reset_variant, set_variant, variant
+
+    _install_result(monkeypatch)
+    token = set_variant("field")
+    try:
+        async with otto.open_context(lab=_lab_with("test1"), variant="debug"):
+            assert variant() == "debug"
+        assert variant() == "field"
+    finally:
+        reset_variant(token)
+
+
+@pytest.mark.asyncio
+async def test_no_variant_keeps_the_one_already_set(monkeypatch):
+    import otto
+    from otto.context import reset_variant, set_variant, variant
+
+    _install_result(monkeypatch)
+    token = set_variant("field")
+    try:
+        async with otto.open_context(lab=_lab_with("test1")):
+            assert variant() == "field"
+        assert variant() == "field"
+    finally:
+        reset_variant(token)
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_variant_refuses_before_anything_runs(monkeypatch):
+    import otto
+    from otto.context import variant
+
+    calls = []
+    monkeypatch.setattr(bs, "bootstrap", lambda: calls.append("bootstrap"))
+    with pytest.raises(ValueError, match="variant must be 'debug' or 'field'"):
+        async with otto.open_context(lab=_lab_with("test1"), variant="release"):  # type: ignore[arg-type]
+            pass
+    assert calls == []
+    assert variant() == "debug"
+    assert try_get_context() is None

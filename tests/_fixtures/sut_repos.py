@@ -75,10 +75,9 @@ def pytest_main_returning(rc: int = pytest.ExitCode.OK) -> "Callable[..., int]":
 @pytest.fixture
 def one_repo_double(tmp_path, monkeypatch) -> MagicMock:
     """Make a :func:`repo_double` the lab's only repo; return it."""
-    import otto.config
 
     repo = repo_double(tmp_path)
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
     return repo
 
 
@@ -108,11 +107,10 @@ def _generated_modules_evicted(tmp_path, monkeypatch):
 
 def _wire_repos(monkeypatch, sut_dirs):
     """Make ``otto.config.get_repos`` answer real ``Repo`` objects for *sut_dirs*."""
-    import otto.config
     from otto.config.repo import Repo
 
     repos = [Repo(sut_dir=d) for d in sut_dirs]
-    monkeypatch.setattr(otto.config, "get_repos", lambda: repos)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
     return repos
 
 

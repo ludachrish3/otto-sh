@@ -49,15 +49,10 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.root_conftest_pytester import INNER_ARGS, isolate_inner_session
 
 pytest_plugins = ["pytester"]
 
-# An inert rootdir config: the inner session's behaviour must be pytest's and
-# the probe's, never this repo's addopts.
-PROBE_INI = """\
-[pytest]
-"""
 
 # The INTERMEDIATE level (no argument anchors here): its autouse fixture is
 # the dangerous half (it vanishes in silence); the plain fixture is the loud
@@ -151,29 +146,12 @@ BARE_ROOT_CONFTEST = """\
 # deliberately no rebind plugin — this leg is the standing reproduction
 """
 
-# `-p no:tach`: tach's pytest11 plugin panics on repeated in-tree sessions
-# (issue #193), same guard the repo addopts use.
-INNER_ARGS = ("-p", "no:tach", "-p", "no:cacheprovider")
-
 
 def _probe_tree(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, conftest: str):
     """Build the probe rootdir and return the three arguments, in order."""
-    # The inner session must not inherit the outer one's env-based config.
-    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
-    for var in (
-        "COV_CORE_SOURCE",
-        "COV_CORE_CONFIG",
-        "COV_CORE_DATAFILE",
-        "COV_CORE_CONTEXT",
-        "PYTEST_XDIST_WORKER",
-        "PYTEST_XDIST_WORKER_COUNT",
-        "PYTEST_XDIST_TESTRUNUID",
-    ):
-        monkeypatch.delenv(var, raising=False)
-    # The rebind leg's root conftest imports the REAL module from the repo.
-    monkeypatch.setenv("PYTHONPATH", str(PROJECT_ROOT))
-
-    pytester.makeini(PROBE_INI)
+    # The inner session must not inherit the outer one's env-based config, and
+    # the rebind leg's root conftest imports the REAL module from the repo.
+    isolate_inner_session(pytester, monkeypatch)
     root: Path = pytester.path
     (root / "conftest.py").write_text(conftest)
     (root / "test_sibling.py").write_text(SIBLING_TEST)

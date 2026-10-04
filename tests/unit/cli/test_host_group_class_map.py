@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pytest
 
 import otto.cli.expose as expose_module
-import otto.config as cm
 from otto.cli.expose import HostGroup, cached_host_class_for_id, exposed_cli_names
 from otto.host.embedded_host import ZephyrHost
 from otto.host.unix_host import UnixHost
@@ -17,14 +16,16 @@ def _ctx(host_id: str | None) -> SimpleNamespace:
 
 def test_cached_map_resolves_the_class_without_a_lab(monkeypatch):
     monkeypatch.setattr(
-        cm, "get_completion_names", lambda: {"host_classes_by_id": {"z1": "zephyr"}}
+        "otto.config.bootstrapped.get_completion_names",
+        lambda: {"host_classes_by_id": {"z1": "zephyr"}},
     )
     assert cached_host_class_for_id("z1") is ZephyrHost
 
 
 def test_unknown_id_or_unregistered_name_yields_none(monkeypatch):
     monkeypatch.setattr(
-        cm, "get_completion_names", lambda: {"host_classes_by_id": {"z1": "nosuch"}}
+        "otto.config.bootstrapped.get_completion_names",
+        lambda: {"host_classes_by_id": {"z1": "nosuch"}},
     )
     assert cached_host_class_for_id("z1") is None
     assert cached_host_class_for_id("ghost") is None
@@ -36,10 +37,11 @@ def test_falls_back_to_discovery_when_the_cache_is_cold(monkeypatch):
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
-    monkeypatch.setattr(cm, "get_completion_names", lambda: None)
+    monkeypatch.setattr("otto.config.bootstrapped.get_completion_names", lambda: None)
     monkeypatch.setattr(bs, "discover", lambda: SimpleNamespace(repos=["discovered"]))
     monkeypatch.setattr(
-        cm, "get_repos", lambda: pytest.fail("get_repos() must not run during completion")
+        "otto.config.bootstrapped.get_repos",
+        lambda: pytest.fail("get_repos() must not run during completion"),
     )
     monkeypatch.setattr(
         cc,
@@ -56,7 +58,7 @@ def test_cold_cache_collector_runs_once_per_process(monkeypatch):
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
-    monkeypatch.setattr(cm, "get_completion_names", lambda: None)
+    monkeypatch.setattr("otto.config.bootstrapped.get_completion_names", lambda: None)
     monkeypatch.setattr(bs, "discover", lambda: SimpleNamespace(repos=["discovered"]))
     calls: list[list[str]] = []
 
@@ -77,7 +79,8 @@ def test_non_dict_mapping_falls_back_to_discovery_without_raising(monkeypatch):
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
     monkeypatch.setattr(
-        cm, "get_completion_names", lambda: {"host_classes_by_id": ["not", "a", "dict"]}
+        "otto.config.bootstrapped.get_completion_names",
+        lambda: {"host_classes_by_id": ["not", "a", "dict"]},
     )
     monkeypatch.setattr(bs, "discover", lambda: SimpleNamespace(repos=["discovered"]))
     monkeypatch.setattr(
@@ -98,17 +101,21 @@ def test_non_str_class_name_yields_none(monkeypatch):
     ``TypeError: unhashable type`` for it instead of returning ``False``. Both
     are asserted so the guard is proven load-bearing, not just documented.
     """
-    monkeypatch.setattr(cm, "get_completion_names", lambda: {"host_classes_by_id": {"z1": 123}})
+    monkeypatch.setattr(
+        "otto.config.bootstrapped.get_completion_names", lambda: {"host_classes_by_id": {"z1": 123}}
+    )
     assert cached_host_class_for_id("z1") is None
     monkeypatch.setattr(
-        cm, "get_completion_names", lambda: {"host_classes_by_id": {"z1": ["nested"]}}
+        "otto.config.bootstrapped.get_completion_names",
+        lambda: {"host_classes_by_id": {"z1": ["nested"]}},
     )
     assert cached_host_class_for_id("z1") is None
 
 
 def test_resilient_menu_is_scoped_to_the_cached_class(monkeypatch):
     monkeypatch.setattr(
-        cm, "get_completion_names", lambda: {"host_classes_by_id": {"z1": "zephyr"}}
+        "otto.config.bootstrapped.get_completion_names",
+        lambda: {"host_classes_by_id": {"z1": "zephyr"}},
     )
     group = HostGroup(name="host")
     names = set(group.list_commands(_ctx("z1")))
@@ -121,6 +128,8 @@ def test_resilient_menu_is_scoped_to_the_cached_class(monkeypatch):
 
 
 def test_resilient_menu_is_the_union_for_an_unknown_id(monkeypatch):
-    monkeypatch.setattr(cm, "get_completion_names", lambda: {"host_classes_by_id": {}})
+    monkeypatch.setattr(
+        "otto.config.bootstrapped.get_completion_names", lambda: {"host_classes_by_id": {}}
+    )
     group = HostGroup(name="host")
     assert set(group.list_commands(_ctx("ghost"))) == set(group.list_commands(_ctx(None)))

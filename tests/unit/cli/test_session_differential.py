@@ -20,8 +20,12 @@ each over repo layouts built with ``make_sut_repo`` + ``Repo`` and installed as
    equal to an empty preference table.
    The lab-parity cases drive the CLI side from ``ensure_lab_context``, not
    through ``entry()``, so a future preamble step that changed the lab after
-   ``ensure_lab_context`` would not be seen here. Only the
-   refusal cases go through ``entry()``.
+   ``ensure_lab_context`` would not be seen here. One lab-parity case runs the
+   CLI through ``entry()``: ``--field``, whose variant only the root callback
+   sets, against ``open_context(variant="field")`` over a product declared
+   once per variant. Its facts carry each host's products, and its witness is
+   that the field entry is the one the lab carries.
+   The refusal cases also go through ``entry()``.
 2. **Refusal parity.** For each case the library raises the typed error and
    the real CLI — ``otto.cli.main.entry()``, so the boundary frame that
    prints an unknown lab is in the loop — exits with today's code and prints
@@ -81,6 +85,12 @@ normalises to ``sibling-repo`` and no longer matched ``Sibling_Repo``.
 ``merge_host_preferences`` (``dest[key] = dict(val)``): lab parity's
 ``preferences`` layout failed on its witness (``port=2222`` gone from
 alpha's ``ssh_options``: Beta's ``connect_timeout`` table replaced Acme's).
+
+(vii) dropping ``variant="field"`` from the library side of the ``--field``
+case: the equality failed (the library's lab carried ``fw-debug.bin``, the
+CLI's ``fw-field.bin``). Dropping it AND the CLI's ``--field``: the equality
+stayed green, as predicted, and the witness failed
+(``fw=.../Acme/build/fw-debug.bin``).
 """
 
 import ast
@@ -201,6 +211,8 @@ class LabFacts:
     preferences: dict[str, dict[str, str]]
     addresses: dict[str, "str | None"]
     placeholders: list[str]
+    products: dict[str, list[str]]
+    """Per host, ``name=artifact`` for each product it carries, in order."""
 
 
 def _attr(host: Any, name: str) -> Any:
@@ -227,6 +239,10 @@ def _facts(lab: Any) -> LabFacts:
             for hid, host in lab.hosts.items()
             if isinstance(host, DockerContainerHost) and not host.container_id
         ),
+        products={
+            hid: [f"{p.name}={_attr(p, 'artifact')}" for p in _attr(host, "products") or []]
+            for hid, host in sorted(lab.hosts.items())
+        },
     )
 
 
@@ -362,6 +378,31 @@ LAYOUTS = [
 ]
 
 
+def _variants(root: Path) -> "list[Repo]":
+    """One product declared twice, once per variant.
+
+    Both entries name their variant, so their order decides nothing in a
+    working run. Debug goes first so that a broken variant filter, falling
+    back to first match wins, picks debug, which the witness catches.
+    """
+    products = "".join(
+        f'\n[[products]]\nname = "fw"\nkind = "shell"\nvariant = "{v}"\n'
+        f'artifact = "build/fw-{v}.bin"\n'
+        for v in ["debug", "field"]
+    )
+    return [_repo(root, "Acme", hosts=[_host("alpha", "10.0.0.1")], extra=products)]
+
+
+def _field_witness(facts: LabFacts) -> None:
+    [fw] = facts.products["alpha"]
+    assert fw.startswith("fw=")
+    assert fw.endswith("build/fw-field.bin"), fw  # the field entry, not fw-debug.bin
+
+
+FIELD = Layout("field-variant", _variants, "lab1", _field_witness)
+"""The ``--field`` row: run through ``entry()``, because the root callback sets the variant."""
+
+
 def _cli_lab(lab: str) -> LabFacts:
     """The CLI's lab: the real ``--lab`` parse, then ``ensure_lab_context`` on what it stashes."""
     from otto.cli.invoke import ensure_lab_context
@@ -376,10 +417,10 @@ def _cli_lab(lab: str) -> LabFacts:
         reset_cli_context()
 
 
-async def _library_lab(lab: str) -> LabFacts:
+async def _library_lab(lab: str, **kwargs: Any) -> LabFacts:
     import otto
 
-    async with otto.open_context(lab=lab) as ctx:
+    async with otto.open_context(lab=lab, **kwargs) as ctx:
         return _facts(ctx.lab)
 
 
@@ -391,6 +432,33 @@ async def test_otto_lab_and_open_context_build_the_same_lab(layout, tmp_path, mo
     cli = _cli_lab(layout.lab)
     assert cli == library
     layout.witness(library)
+
+
+def test_otto_field_and_open_context_variant_field_build_the_same_lab(tmp_path, monkeypatch):
+    """``otto --field --lab X`` and ``open_context(lab=X, variant="field")`` pick the same entry.
+
+    The CLI side is the real ``entry()``, so the ``--field`` parse and the root
+    callback's ``set_cli_variant`` are in the loop; its lab is read off the
+    context ``ensure_lab_context`` installs. Sync, with the library side under
+    its own ``asyncio.run``, so ``entry()`` never runs inside a live loop.
+    """
+    from otto import context
+
+    _install(monkeypatch, FIELD.build(tmp_path))
+    library = asyncio.run(_library_lab(FIELD.lab, variant="field"))
+    installed: "list[LabFacts]" = []
+    real_set_cli_context = context.set_cli_context
+
+    def _spy(ctx: Any) -> None:
+        installed.append(_facts(ctx.lab))
+        real_set_cli_context(ctx)
+
+    monkeypatch.setattr("otto.context.set_cli_context", _spy)
+    run = _otto(monkeypatch, ["--field", "-n", "--lab", FIELD.lab, "cov", "clean"])
+    assert run.code == 0, run
+    [cli] = installed
+    assert cli == library
+    FIELD.witness(library)
 
 
 # ── 2. Refusal parity ────────────────────────────────────────────────────────

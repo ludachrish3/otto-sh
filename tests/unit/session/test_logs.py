@@ -1,16 +1,19 @@
 """The repo-aware logging install, decided by the library."""
 
+import io
 import logging
-from types import SimpleNamespace
+from datetime import datetime, timezone
 
 import pytest
+from rich.console import Console
 
 from otto.logger import management
+from otto.logger.formatters import format_log_time
 from otto.session import LoggingLevelsConflictError, install_logging, merge_logging_levels
 
 
 class _LevelsRepo:
-    """A repo double carrying only what ``merge_logging_levels`` reads."""
+    """A repo double carrying only what ``merge_logging_levels`` and ``install_logging`` read."""
 
     def __init__(self, name: str, levels: dict[str, str]) -> None:
         self.name = name
@@ -86,11 +89,37 @@ def _clean_logging():
 
 
 def _repos(monkeypatch, *tables):
-    repos = [
-        SimpleNamespace(name=f"r{i}", logging_levels=dict(table)) for i, table in enumerate(tables)
-    ]
-    monkeypatch.setattr("otto.config.get_repos", lambda: repos)
+    repos = [_LevelsRepo(f"r{i}", dict(table)) for i, table in enumerate(tables)]
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
     return repos
+
+
+# The record's timestamp, fixed so the time column it would render is known
+# exactly. Rich renders it in local time.
+_CREATED = datetime(2021, 6, 15, 12, 34, 56, 789000, tzinfo=timezone.utc).timestamp()
+_LOCAL = datetime.fromtimestamp(_CREATED, tz=timezone.utc).astimezone()
+_TIME_COLUMN = format_log_time(_LOCAL).plain
+_DATE = _LOCAL.strftime("%Y-%m-%d")
+
+
+def _render_through_console_handler() -> str:
+    """Log one record through the installed console handler into a captured console."""
+    handler = management._state.console_handler
+    assert handler is not None
+    captured = io.StringIO()
+    handler.console = Console(file=captured, width=200, color_system=None)
+    handler.handle(
+        logging.makeLogRecord(
+            {
+                "name": "probe",
+                "levelno": logging.INFO,
+                "levelname": "INFO",
+                "msg": "probe-message",
+                "created": _CREATED,
+            }
+        )
+    )
+    return captured.getvalue()
 
 
 @pytest.mark.usefixtures("_clean_logging")
@@ -133,16 +162,19 @@ def test_the_host_filter_goes_on_the_console_only(monkeypatch, tmp_path):
 def test_log_level_and_show_time_reach_the_console_handler(monkeypatch):
     _repos(monkeypatch)
     install_logging(log_level="DEBUG", show_time=True)
-    console = management._state.console_handler
-    assert console.level == logging.DEBUG
-    assert console._log_render.show_time is True
+    assert management._state.console_handler.level == logging.DEBUG
+    line = _render_through_console_handler()
+    assert "probe-message" in line
+    assert _TIME_COLUMN in line, line
 
 
 @pytest.mark.usefixtures("_clean_logging")
 def test_the_console_has_no_timestamp_by_default(monkeypatch):
     _repos(monkeypatch)
     install_logging()
-    assert management._state.console_handler._log_render.show_time is False
+    line = _render_through_console_handler()
+    assert "probe-message" in line
+    assert _DATE not in line, line
 
 
 @pytest.mark.usefixtures("_clean_logging")

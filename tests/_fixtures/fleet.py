@@ -94,7 +94,7 @@ def install_scoped_context(monkeypatch, lab, repos):
     run their body in a COPY of the context, so the token is from a different
     Context object and ``ContextVar.reset`` raises.
     """
-    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: list(repos))
+    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: list(repos))
     ctx = OttoContext(lab=lab)
     set_context(ctx)
     return ctx

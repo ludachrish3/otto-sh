@@ -16,6 +16,8 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
+from .host.host import DEFAULT_COMMAND_TIMEOUT
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -224,6 +226,11 @@ def reset_context(token: "Token[OttoContext | None]") -> None:
     _active.reset(token)
 
 
+def reset_variant(token: "Token[Variant]") -> None:
+    """Restore the variant ContextVar to the value it held before the matching ``set_variant``."""
+    _variant.reset(token)
+
+
 _cli_token: "Token[OttoContext | None] | None" = None
 
 
@@ -266,17 +273,8 @@ def reset_cli_context() -> None:
     finally:
         # Each reset stands on its own: the second runs even if the first throws.
         if _variant_token is not None:
-            _variant.reset(_variant_token)
+            reset_variant(_variant_token)
             _variant_token = None
-
-
-# Deferred to here (rather than the top-of-file imports) on purpose: importing
-# otto.host at module scope pulls in otto.host.interact, which imports
-# try_get_context from this module at ITS module scope. Doing so before
-# try_get_context is defined above would raise ImportError on a fresh
-# `import otto.context` (circular import). Only a plain value is needed here,
-# so the deferred position is enough — no need to push this to TYPE_CHECKING.
-from .host.host import DEFAULT_COMMAND_TIMEOUT  # noqa: E402
 
 
 def _flags_hiding_every_match(
@@ -1207,6 +1205,7 @@ async def open_context(
     lab: "Lab | str | list[str]",
     include_projects: "list[str] | None" = None,
     exclude_projects: "list[str] | None" = None,
+    variant: Variant | None = None,
     dry_run: bool = False,
     log_command_output: bool = True,
 ) -> "AsyncIterator[OttoContext]":
@@ -1223,6 +1222,17 @@ async def open_context(
     is installed, an active repo's unmet Python requirement refuses
     (:func:`~otto.session.check_dependencies`).
 
+    *variant* mirrors ``otto --field/--debug``: it is applied with
+    :func:`otto.context.set_variant` before the lab is built, so a product
+    declared once per variant resolves to the chosen entry, and it stays set
+    for the body, where providers read it. ``None`` keeps the variant already
+    active (``"debug"`` unless the caller set one). Every exit restores the
+    previous variant, a refusal during setup included. A
+    :class:`~otto.config.lab.Lab` you pass keeps the products it was built
+    with, so build it under the same variant (:func:`set_variant` before
+    :func:`~otto.session.build_lab`); containers started in the body
+    (``compose_up``) are ingested under the variant you pass.
+
     *lab* is a lab name, a ``+``-joined combination, a list of either (each
     item split like a repeated ``--lab``), or a
     :class:`~otto.config.lab.Lab`. On exit, the running loop's host scope
@@ -1235,7 +1245,8 @@ async def open_context(
 
     Raises:
         ValueError: a malformed lab string, such as ``""`` or ``"a++b"`` (an
-            empty ``+``-segment).
+            empty ``+``-segment), or a *variant* other than ``"debug"`` or
+            ``"field"`` (raised before anything else runs).
         otto.session.ProjectSelectionError: an unknown project name, or one
             in both lists.
         otto.session.RepoLoadError: an active repo failed to load.
@@ -1246,46 +1257,52 @@ async def open_context(
         otto.session.DependencyRefusedError: an active repo's Python
             requirement is not met.
     """
-    from .bootstrap import bootstrap
-    from .config import get_env
-    from .config.lab import Lab, split_lab_names
-    from .session import build_lab, check_dependencies, check_repos, select_projects
+    # First, so an invalid value refuses before anything needs undoing.
+    variant_token = None if variant is None else set_variant(variant)
+    try:
+        from .bootstrap import bootstrap
+        from .config import get_env
+        from .config.lab import Lab, split_lab_names
+        from .session import build_lab, check_dependencies, check_repos, select_projects
 
-    result = bootstrap()  # composition root — idempotent; registers user init components
-    deadline = get_env().teardown_deadline  # bounds the closing sweep on exit
-    selection = select_projects(result.repos, include_projects or [], exclude_projects or [])
-    if isinstance(lab, Lab):
-        labs = list(lab.component_names)
-    elif isinstance(lab, str):
-        labs = split_lab_names(lab)
-    else:
-        # Each item splits on `+`, as each repeated `--lab` value does.
-        labs = [name for item in lab for name in split_lab_names(item)]
-    for demoted in check_repos(result, labs, selection).demoted:
-        logger.warning("%s", demoted.message)
-    # A `Lab` object is used as given: `build_lab` (and the `otto.inventory`
-    # import it makes, ~77 modules) never runs for it.
-    resolved_lab = lab if isinstance(lab, Lab) else build_lab(result.repos, labs)
-    ctx = OttoContext(
-        lab=resolved_lab,
-        dry_run=dry_run,
-        log_command_output=log_command_output,
-        include_projects=tuple(selection.include),
-        exclude_projects=tuple(selection.exclude),
-    )
-    token = set_context(ctx)
-    try:
-        for warning in check_dependencies(ctx):
-            logger.warning("%s", warning)
-    except BaseException:
-        reset_context(token)
-        raise
-    try:
-        yield ctx
-    finally:
+        result = bootstrap()  # composition root — idempotent; registers user init components
+        deadline = get_env().teardown_deadline  # bounds the closing sweep on exit
+        selection = select_projects(result.repos, include_projects or [], exclude_projects or [])
+        if isinstance(lab, Lab):
+            labs = list(lab.component_names)
+        elif isinstance(lab, str):
+            labs = split_lab_names(lab)
+        else:
+            # Each item splits on `+`, as each repeated `--lab` value does.
+            labs = [name for item in lab for name in split_lab_names(item)]
+        for demoted in check_repos(result, labs, selection).demoted:
+            logger.warning("%s", demoted.message)
+        # A `Lab` object is used as given: `build_lab` (and the `otto.inventory`
+        # import it makes, ~77 modules) never runs for it.
+        resolved_lab = lab if isinstance(lab, Lab) else build_lab(result.repos, labs)
+        ctx = OttoContext(
+            lab=resolved_lab,
+            dry_run=dry_run,
+            log_command_output=log_command_output,
+            include_projects=tuple(selection.include),
+            exclude_projects=tuple(selection.exclude),
+        )
+        token = set_context(ctx)
         try:
-            await ctx.sweep_loop(
-                asyncio.get_running_loop(), label="open_context", deadline=deadline
-            )
-        finally:
+            for warning in check_dependencies(ctx):
+                logger.warning("%s", warning)
+        except BaseException:
             reset_context(token)
+            raise
+        try:
+            yield ctx
+        finally:
+            try:
+                await ctx.sweep_loop(
+                    asyncio.get_running_loop(), label="open_context", deadline=deadline
+                )
+            finally:
+                reset_context(token)
+    finally:
+        if variant_token is not None:
+            reset_variant(variant_token)

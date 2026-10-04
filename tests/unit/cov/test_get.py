@@ -106,7 +106,7 @@ def all_hosts_of(monkeypatch):
     """Install *hosts as ``otto.config.all_hosts``'s answer."""
 
     def install(*hosts):
-        monkeypatch.setattr("otto.config.all_hosts", lambda pattern=None, **kw: iter(hosts))
+        monkeypatch.setattr("otto.config.fleet.all_hosts", lambda pattern=None, **kw: iter(hosts))
 
     return install
 
@@ -217,7 +217,7 @@ async def test_a_selector_matching_no_host_refuses(monkeypatch):
         raise EmptySelectionError("sensor", 3)
         yield  # pragma: no cover — unreachable; keeps this a generator function
 
-    monkeypatch.setattr("otto.config.all_hosts", _raising_all_hosts)
+    monkeypatch.setattr("otto.config.fleet.all_hosts", _raising_all_hosts)
     repo = _repo({"hosts": "sensor"})
     with pytest.raises(EmptySelectionError):
         await get_coverage(repos=[repo])

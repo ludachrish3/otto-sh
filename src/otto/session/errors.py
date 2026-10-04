@@ -96,12 +96,15 @@ class DependencyRefusedError(OttoError):
         self, unsatisfied: "list[Unsatisfied]", warnings: "list[str] | None" = None
     ) -> None:
         """One line per blocking requirement, the requirement quoted as written."""
+        # An empty list still says something: an exception with an empty
+        # message renders as a bare class name.
         super().__init__(
             "\n".join(
                 f"repo {bad.repo!r} requires {bad.requirement!r} — not satisfied in "
                 f"this environment (found: {bad.found})"
                 for bad in unsatisfied
             )
+            or "no unsatisfied requirements were given"
         )
         self.unsatisfied = list(unsatisfied)
         self.warnings = list(warnings or [])

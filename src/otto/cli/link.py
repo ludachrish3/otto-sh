@@ -15,7 +15,6 @@ from rich import get_console
 from rich import print as rprint
 from rich.markup import escape
 
-from ..config import get_repos
 from ..config.completion_cache import collect_link_ids
 from ..link import (
     DirectionState,
@@ -67,6 +66,8 @@ def _link_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     same source ``otto host <TAB>`` uses — rather than offering every lab
     file's links and letting ``find_link`` refuse most of them.
     """
+    from ..config.bootstrapped import get_repos
+
     try:
         labs = selected_lab_names(ctx)
         loaded_ids = set(lab_scoped_host_ids(ctx)) if labs else None

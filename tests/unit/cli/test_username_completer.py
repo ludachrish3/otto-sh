@@ -2,11 +2,9 @@
 
 
 def test_username_completer_prefers_cache(monkeypatch):
-    import otto.config as cm
 
     monkeypatch.setattr(
-        cm,
-        "get_completion_names",
+        "otto.config.bootstrapped.get_completion_names",
         lambda: {"usernames": ["alice", "alfred", "bob"]},
     )
     from otto.cli.main import _username_completer
@@ -15,11 +13,10 @@ def test_username_completer_prefers_cache(monkeypatch):
 
 
 def test_username_completer_falls_back_to_live(monkeypatch):
-    import otto.config as cm
     import otto.config.completion_cache as cc
 
-    monkeypatch.setattr(cm, "get_completion_names", lambda: None)
-    monkeypatch.setattr(cm, "get_repos", list)
+    monkeypatch.setattr("otto.config.bootstrapped.get_completion_names", lambda: None)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
     monkeypatch.setattr(cc, "collect_reservation_usernames", lambda repos: ["zoe", "zed"])
     from otto.cli.main import _username_completer
 

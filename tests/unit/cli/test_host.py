@@ -851,7 +851,7 @@ class TestHostIdCompleter:
             ],
         )
         # _host_id_completer lazy-imports get_repos from otto.config.
-        with patch("otto.config.get_repos", return_value=[_fake_repo(lab)]):
+        with patch("otto.config.bootstrapped.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         # collect_host_ids also surfaces the built-in `local` host (sorted).
         assert result == ["local", "test1", "test2"]
@@ -875,7 +875,7 @@ class TestHostIdCompleter:
                 },
             ],
         )
-        with patch("otto.config.get_repos", return_value=[_fake_repo(lab)]):
+        with patch("otto.config.bootstrapped.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="test2")
         assert result == ["test2"]
         # A STRICT prefix must narrow too. Since the rename, `test1` and `test2`
@@ -883,7 +883,7 @@ class TestHostIdCompleter:
         # satisfied by an `==` filter as well as a `startswith` one. `loc` is a
         # genuine strict prefix of exactly one offered id, and an `==` filter
         # returns [] for it.
-        with patch("otto.config.get_repos", return_value=[_fake_repo(lab)]):
+        with patch("otto.config.bootstrapped.get_repos", return_value=[_fake_repo(lab)]):
             strict = _host_id_completer(ctx=MagicMock(), incomplete="loc")
         assert strict == ["local"]
 
@@ -913,7 +913,7 @@ class TestHostIdCompleter:
                 },
             ],
         )
-        with patch("otto.config.get_repos", return_value=[_fake_repo(lab1, lab2)]):
+        with patch("otto.config.bootstrapped.get_repos", return_value=[_fake_repo(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["beet-seed", "local", "test1"]  # + built-in local
 
@@ -929,13 +929,15 @@ class TestHostIdCompleter:
         }
         _write_hosts_json(lab1, [dup])
         _write_hosts_json(lab2, [dup])
-        with patch("otto.config.get_repos", return_value=[_fake_repo(lab1, lab2)]):
+        with patch("otto.config.bootstrapped.get_repos", return_value=[_fake_repo(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local", "test1"]  # + built-in local
 
     def test_skips_missing_path(self, tmp_path):
         """Non-existent search path must not raise; completer is best-effort."""
-        with patch("otto.config.get_repos", return_value=[_fake_repo(tmp_path / "nope")]):
+        with patch(
+            "otto.config.bootstrapped.get_repos", return_value=[_fake_repo(tmp_path / "nope")]
+        ):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local"]  # only the built-in local (no lab.json to scan)
 
@@ -943,7 +945,7 @@ class TestHostIdCompleter:
         lab = tmp_path / "bad"
         lab.mkdir()
         (lab / "lab.json").write_text("{not json")
-        with patch("otto.config.get_repos", return_value=[_fake_repo(lab)]):
+        with patch("otto.config.bootstrapped.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local"]  # malformed json skipped; built-in local remains
 
@@ -962,7 +964,7 @@ class TestHostIdCompleter:
                 },
             ],
         )
-        with patch("otto.config.get_repos", return_value=[_fake_repo(lab)]):
+        with patch("otto.config.bootstrapped.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local", "test1"]  # invalid entry skipped; built-in local remains
 
@@ -979,9 +981,9 @@ class TestHostIdCompleter:
             "hosts": ["router1", "router2", "switch7"],
         }
         with (
-            patch("otto.config.get_completion_names", return_value=fake_cache),
+            patch("otto.config.bootstrapped.get_completion_names", return_value=fake_cache),
             patch(
-                "otto.config.get_repos",
+                "otto.config.bootstrapped.get_repos",
                 return_value=[_fake_repo(tmp_path / "does-not-exist")],
             ),
         ):
@@ -1004,8 +1006,8 @@ class TestHostIdCompleter:
             ],
         )
         with (
-            patch("otto.config.get_completion_names", return_value=None),
-            patch("otto.config.get_repos", return_value=[_fake_repo(lab)]),
+            patch("otto.config.bootstrapped.get_completion_names", return_value=None),
+            patch("otto.config.bootstrapped.get_repos", return_value=[_fake_repo(lab)]),
         ):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local", "test1"]  # live scan + built-in local
@@ -1064,8 +1066,8 @@ class TestHostIdCompleterLabFilter:
             ],
         )
         with (
-            patch("otto.config.get_completion_names", return_value=None),
-            patch("otto.config.get_repos", return_value=[_fake_repo(lab)]),
+            patch("otto.config.bootstrapped.get_completion_names", return_value=None),
+            patch("otto.config.bootstrapped.get_repos", return_value=[_fake_repo(lab)]),
         ):
             result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="")
         # test1 (unix) + built-in local; alt2 (unix_alt) excluded.
@@ -1081,9 +1083,9 @@ class TestHostIdCompleterLabFilter:
             },
         }
         with (
-            patch("otto.config.get_completion_names", return_value=fake_cache),
+            patch("otto.config.bootstrapped.get_completion_names", return_value=fake_cache),
             patch(
-                "otto.config.get_repos",
+                "otto.config.bootstrapped.get_repos",
                 return_value=[_fake_repo(tmp_path / "does-not-exist")],
             ),
         ):
@@ -1097,7 +1099,7 @@ class TestHostIdCompleterLabFilter:
             "hosts": ["test1", "alt2"],
             "hosts_by_lab": {"unix": ["test1"], "unix_alt": ["alt2"]},
         }
-        with patch("otto.config.get_completion_names", return_value=fake_cache):
+        with patch("otto.config.bootstrapped.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="")
         assert result == ["local", "test1"]
 
@@ -1107,7 +1109,7 @@ class TestHostIdCompleterLabFilter:
             "hosts": ["test1"],
             "hosts_by_lab": {"unix": ["test1"]},
         }
-        with patch("otto.config.get_completion_names", return_value=fake_cache):
+        with patch("otto.config.bootstrapped.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(["ghosts"]), incomplete="")
         assert result == ["local"]
 
@@ -1117,7 +1119,7 @@ class TestHostIdCompleterLabFilter:
             "hosts": ["test1", "alt2", "alt3"],
             "hosts_by_lab": {"unix": ["test1"]},
         }
-        with patch("otto.config.get_completion_names", return_value=fake_cache):
+        with patch("otto.config.bootstrapped.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(None), incomplete="")
         assert result == ["alt2", "alt3", "test1"]
 
@@ -1126,7 +1128,7 @@ class TestHostIdCompleterLabFilter:
             "hosts": ["test1", "cabbage-seed", "alt2"],
             "hosts_by_lab": {"unix": ["test1", "cabbage-seed"]},
         }
-        with patch("otto.config.get_completion_names", return_value=fake_cache):
+        with patch("otto.config.bootstrapped.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="test")
         assert result == ["test1"]
 

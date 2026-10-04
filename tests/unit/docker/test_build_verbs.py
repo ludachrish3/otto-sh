@@ -1,5 +1,6 @@
 """build_on: the image-level verb. Every rule is the library's; the host is required."""
 
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -58,13 +59,17 @@ def lab():
 def install(lab):
     """Patch the config seams; returns a function taking the repo list (dependency order)."""
 
+    @contextmanager
     def _install(repos, ordered=None):
-        return patch.multiple(
-            verbs_mod,
-            get_lab=lambda: lab,
-            get_repos=lambda: list(repos),
-            get_ordered_repos=lambda: list(ordered or repos),
-        )
+        with (
+            patch("otto.config.fleet.get_lab", lambda: lab),
+            patch.multiple(
+                "otto.config.bootstrapped",
+                get_repos=lambda: list(repos),
+                get_ordered_repos=lambda: list(ordered or repos),
+            ),
+        ):
+            yield
 
     return _install
 

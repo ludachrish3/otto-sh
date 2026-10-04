@@ -336,6 +336,26 @@ def pytest_configure(config):  # type: ignore[no-untyped-def]
         config.pluginmanager.register(_conftest_rebind, name="otto-conftest-rebind")
 
 
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool | None:
+    """Do not collect a doctest-free ``conftest.py`` as a doctest module.
+
+    ``--doctest-modules`` imports every ``conftest.py`` a second time, as a
+    ``DoctestModule``, under the bare name ``conftest`` when its directory is
+    not a package — and without the ``sys.modules`` delete the plugin loader
+    does first. pytest loads every command-line argument's conftest before
+    collection starts, so with two such directories on one command line
+    (``pytest tests/unit/monitor tests/unit/suite``) the first one's import
+    finds the other's module: "import file mismatch".
+
+    The conftest still loads as a plugin; only its empty doctest collector is
+    skipped. A conftest that carries a doctest stays collected. Pinned by
+    ``tests/unit/test_conftest_doctest_collection.py``.
+    """
+    if collection_path.name == "conftest.py" and b">>>" not in collection_path.read_bytes():
+        return True
+    return None
+
+
 def pytest_collection_finish(session):  # type: ignore[no-untyped-def]
     """Pre-initialize this worker's coverage SQLite schema, single-threaded.
 

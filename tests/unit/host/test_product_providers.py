@@ -326,12 +326,11 @@ def test_a_registration_made_outside_any_repo_admits(monkeypatch):
     # code (or by a test) has no declaration to be bounded by, and refusing it
     # would break every such use. `get_repos` is made hostile so a lookup that
     # consulted config for a None owner cannot pass this quietly.
-    from otto import config as config_mod
 
     def _unavailable():
         raise RuntimeError("no bootstrap in this process")
 
-    monkeypatch.setattr(config_mod, "get_repos", _unavailable)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _unavailable)
     register_product_provider(lambda host: [_prod("app")])
     host = _host(source_lab="b")
 
@@ -345,13 +344,12 @@ def test_an_owner_config_cannot_resolve_admits(monkeypatch):
     # that ran where no bootstrap is reachable must attach exactly what it
     # attached before this gate existed. A gate that let the lookup's failure
     # propagate would turn an unbootstrapped process into an ingest crash.
-    from otto import config as config_mod
     from otto.registry import registering_repo
 
     def _unavailable():
         raise RuntimeError("no bootstrap in this process")
 
-    monkeypatch.setattr(config_mod, "get_repos", _unavailable)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _unavailable)
     with registering_repo("ghost"):
         register_product_provider(lambda host: [_prod("app")])
     host = _host(source_lab="b")

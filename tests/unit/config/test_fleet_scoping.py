@@ -361,7 +361,7 @@ def test_an_unresolvable_repo_set_leaves_every_owner_walkable(monkeypatch):
     def _boom():
         raise RuntimeError("no bootstrap here")
 
-    monkeypatch.setattr("otto.config.get_ordered_repos", _boom)
+    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", _boom)
     ctx = OttoContext(lab=_lab(("h1", "a"), ("h2", "a")))
 
     assert sorted(h.id for h in ctx.all_hosts(_scope_owner="anything")) == ["h1", "h2"]
@@ -601,7 +601,7 @@ def test_unavailable_bootstrap_falls_back_to_the_whole_lab(monkeypatch):
     def _boom():
         raise RuntimeError("no bootstrap here")
 
-    monkeypatch.setattr("otto.config.get_ordered_repos", _boom)
+    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", _boom)
     ctx = OttoContext(lab=_lab(("h1", "a"), ("h2", "a")))
 
     assert ctx.scopes == {}

@@ -67,8 +67,8 @@ class _Ctx:
 
 def _wire(monkeypatch, repo_names, ctx):
     ordered = [SimpleNamespace(name=n, dependencies=[]) for n in repo_names]
-    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: ordered)
-    monkeypatch.setattr("otto.config.get_repos", lambda: ordered)
+    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: ordered)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: ordered)
     monkeypatch.setattr("otto.context.get_context", lambda: ctx)
     return ordered
 

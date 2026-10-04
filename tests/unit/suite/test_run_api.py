@@ -31,9 +31,8 @@ from tests._fixtures.sut_repos import repo_double as _stub_repo
 
 def _use_repo(monkeypatch, repo: MagicMock) -> MagicMock:
     """Make *repo* the lab's only repo."""
-    import otto.config
 
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
     return repo
 
 
@@ -918,9 +917,8 @@ def test_run_tests_raises_value_error_when_nothing_matches(monkeypatch):
     than a did-you-mean UnknownSelectionError, matching the library's
     no-typer contract.
     """
-    import otto.config
 
-    monkeypatch.setattr(otto.config, "get_repos", list)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
 
     with pytest.raises(ValueError, match="No tests matched"):
         run_tests(["test_nonexistent_zzz"])
@@ -933,9 +931,8 @@ def test_run_tests_no_match_raises_no_tests_matched_error(monkeypatch):
     so an unrelated pipeline ValueError can never be misreported as "No tests
     matched the selection."
     """
-    import otto.config
 
-    monkeypatch.setattr(otto.config, "get_repos", list)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
 
     with pytest.raises(NoTestsMatchedError, match="No tests matched"):
         run_tests(["test_nonexistent_zzz"])
@@ -948,10 +945,9 @@ def test_run_tests_empty_options_raises(monkeypatch):
     the library must guard it too so a bare run_tests() can never silently
     match every test in every repo.
     """
-    import otto.config
 
     # Guard fires before get_repos, but stub it so a regression can't run pytest.
-    monkeypatch.setattr(otto.config, "get_repos", list)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
 
     with pytest.raises(ValueError, match=r"at least one test name or run_options\.markers"):
         run_tests()
@@ -959,9 +955,8 @@ def test_run_tests_empty_options_raises(monkeypatch):
 
 def test_run_tests_marker_alone_raises_when_no_repo_matches(monkeypatch):
     """The -m-alone path funnels through the same "nothing matched" ValueError."""
-    import otto.config
 
-    monkeypatch.setattr(otto.config, "get_repos", list)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
 
     with pytest.raises(ValueError, match="No tests matched"):
         run_tests(run_options=RunOptions(markers="not-a-real-marker"))
@@ -1026,7 +1021,6 @@ def test_run_tests_multi_repo_junit_fan_out(tmp_path, monkeypatch):
     """Two searched repos fan the default junit name out to junit_<repo>.xml each, and each
     session's ArtifactLayout root gets the repo layer (spec §5.3) and mirrors module paths
     from THAT repo's own test roots, never the other repo's."""
-    import otto.config
 
     repos = [
         _stub_repo(
@@ -1037,7 +1031,7 @@ def test_run_tests_multi_repo_junit_fan_out(tmp_path, monkeypatch):
         )
         for name in ("repoA", "repoB")
     ]
-    monkeypatch.setattr(otto.config, "get_repos", lambda: repos)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
     layouts = _captured_layouts(monkeypatch)
 
     # A marker run: each repo's one session, with no collection before it.
@@ -1066,14 +1060,13 @@ def test_run_tests_single_repo_layout_keeps_the_plain_output_dir(tmp_path, monke
 
 def test_run_tests_a_repo_with_no_test_directory_is_not_searched(tmp_path, monkeypatch):
     """Only a repo with a test directory on disk counts toward the repo layer, or gets a session."""
-    import otto.config
 
     searched = _stub_repo(
         tmp_path, name="repoA", sut_dir=tmp_path / "repoA", tests=[tmp_path / "repoA" / "tests"]
     )
     bare = _stub_repo(tmp_path, name="repoB", sut_dir=tmp_path / "repoB", tests=[])
     bare.tests = [tmp_path / "repoB" / "tests"]
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [searched, bare])
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [searched, bare])
     layouts = _captured_layouts(monkeypatch)
 
     result = run_tests([_ALPHA], output_dir=tmp_path)

@@ -136,11 +136,10 @@ def ingest(monkeypatch):
     """Return a function that ingests *hosts* against *repos* the way a lab load does."""
 
     def go(repos, hosts):
-        from otto import config
 
-        monkeypatch.setattr(config, "is_bootstrapped", lambda: True)
-        monkeypatch.setattr(config, "get_repos", lambda: list(repos))
-        monkeypatch.setattr(config, "get_ordered_repos", lambda: list(repos))
+        monkeypatch.setattr("otto.config.bootstrapped.is_bootstrapped", lambda: True)
+        monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: list(repos))
+        monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: list(repos))
         for host in hosts:
             apply_providers(host)
         return SimpleNamespace(name="labA", hosts={h.id: h for h in hosts})

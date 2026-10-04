@@ -289,8 +289,8 @@ class TestContainerLiveness:
 
         compose_up = AsyncMock()
         monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-        monkeypatch.setattr("otto.config.get_repos", MagicMock(return_value=[]))
-        monkeypatch.setattr("otto.config.get_lab", MagicMock())
+        monkeypatch.setattr("otto.config.bootstrapped.get_repos", MagicMock(return_value=[]))
+        monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
         ctr = _real_placeholder(running_cid="")
         lab, parent, other = self._lab_with(ctr)
 

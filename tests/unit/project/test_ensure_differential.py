@@ -92,8 +92,8 @@ def _wire_lab(monkeypatch, repo_names, ctx):
     ordered = [
         SimpleNamespace(name=name, dependencies=[], inventory_settings={}) for name in repo_names
     ]
-    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: ordered)
-    monkeypatch.setattr("otto.config.get_repos", lambda: ordered)
+    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: ordered)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: ordered)
     monkeypatch.setattr("otto.context.get_context", lambda: ctx)
     return ordered
 

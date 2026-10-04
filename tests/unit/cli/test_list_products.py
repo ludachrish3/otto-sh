@@ -64,7 +64,7 @@ def listing_world(real_main_mocks):
     repo = real_main_mocks["repo"]
     saved_p = list(product_mod._PRODUCT_PROVIDERS)
     saved_t = list(dev_tool_mod._DEV_TOOL_PROVIDERS)
-    with patch("otto.config.get_ordered_repos", return_value=[repo]):
+    with patch("otto.config.bootstrapped.get_ordered_repos", return_value=[repo]):
         yield repo
     product_mod._PRODUCT_PROVIDERS[:] = saved_p
     dev_tool_mod._DEV_TOOL_PROVIDERS[:] = saved_t

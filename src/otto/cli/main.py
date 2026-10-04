@@ -16,10 +16,6 @@ import typer
 from typer.core import TyperGroup
 from typing_extensions import override
 
-from ..config import (
-    get_completion_names,
-    get_repos,
-)
 from ..config.env import (
     DEFAULT_LOG_RETENTION_DAYS,
     FIELD_PRODUCT_ENV_VAR,
@@ -100,6 +96,8 @@ def list_labs_callback(value: bool) -> None:
         from rich import print as rprint
         from rich.panel import Panel
         from rich.table import Table
+
+        from ..config.bootstrapped import get_repos
 
         # Extract lab search paths from all repos
         panels: list[Panel] = [repo.get_lab_panel() for repo in get_repos()]
@@ -384,6 +382,7 @@ class _OttoGroup(TyperGroup):
         cache = getattr(self, "_real_cache", None) or {}
         self._real_cache = cache
         if spec.name not in cache:
+            from ..config.bootstrapped import get_completion_names
             from .registry import resolve_spec_command
 
             loader = spec.loader
@@ -409,6 +408,7 @@ class _OttoGroup(TyperGroup):
 
     @override
     def list_commands(self, ctx: Any) -> list[str]:
+        from ..config.bootstrapped import get_completion_names
         from .registry import CLI_COMMANDS
 
         static = [n for n in super().list_commands(ctx) if n not in CLI_COMMANDS]
@@ -448,6 +448,7 @@ class _OttoGroup(TyperGroup):
         are never dispatched and dispatch resolves through CLI_COMMANDS on the
         slow path.
         """
+        from ..config.bootstrapped import get_completion_names
         from .registry import CommandSpec
 
         cached = {

@@ -45,7 +45,6 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import override
 
-from ..context import try_get_context
 from ..logger.mode import LogMode
 from .command_frame import BashFrame, CommandFrame
 from .host import DEFAULT_COMMAND_TIMEOUT
@@ -196,6 +195,8 @@ class _SessionLogFile:
 
 def _session_log_path() -> Path | None:
     """Return the path to the current invocation's ``session.log``, if any."""
+    from ..context import try_get_context
+
     ctx = try_get_context()
     output_dir = ctx.output_dir if ctx is not None else None
     if output_dir is None:

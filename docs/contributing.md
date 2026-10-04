@@ -572,6 +572,47 @@ the run stays green while doing the wrong thing. That is issue #192: nightly's
 instead, and the same bug had quietly disabled the chaos seed's reproduce path
 and `make stability-tunnel CYCLES=N`.
 
+### Patching lazily exported names
+
+Every otto package exports its public names lazily (PEP 562):
+`otto.config.get_repos` is resolved by the package's `__getattr__` from its lazy
+table (`_LAZY_ATTRS` or `_LAZY_EXPORTS`), and the package `__dict__` never holds
+it. Two rules follow, each with a static check and a run-time backstop.
+
+**Tests patch a name where it is defined, never on its package.**
+`monkeypatch.setattr("otto.config.bootstrapped.get_repos", fake)`, not
+`"otto.config.get_repos"`; `otto.session.lab.build_lab`, not
+`otto.session.build_lab`. A package-level `monkeypatch` leaves the real object
+cached in the package `__dict__` when it undoes, and from then on, on that xdist
+worker, every `from otto.config import get_repos` binds the cached object and a
+later defining-module patch reaches nothing — the failure lands on an unrelated
+test. `mock.patch` on the package does not leak, but shadows a defining-module
+patch inside its block, so the rule covers it too. The lazy table in the
+package's `__init__` names the defining module; a name declared through another
+lazy package (`otto.get_lab` → `otto.config.get_lab`) is defined one hop further
+(`otto.config.fleet.get_lab`). `tests/unit/test_patch_targets.py` parses every
+test tree, integration and e2e included, and names the module to patch instead;
+the root conftest's teardown hook (`tests/_fixtures/_lazy_exports.py`) catches a
+leak at run time, fails the leaking test by name and evicts the cached object.
+Names from a `_LAZY_ATTRS` package that a consumer binds at module level
+(`otto.cli.link.find_link`) are patched on the consumer; that is correct and
+leaks nothing.
+
+**Source reads lazily exported functions at call time.** The function entries of
+the `otto`, `otto.config` and `otto.logger` lazy tables (`get_repos`,
+`get_ordered_repos`, `get_completion_names`, `get_env`, `get_lab`, `all_hosts`,
+`do_for_all_hosts`, `get_context`, `try_get_context`, ... and the registrars,
+such as `register_options` and `register_cli_command`) are imported inside the
+function that uses them, by either spelling (`from ..config import get_repos` or
+`from ..config.bootstrapped import get_repos`), never at module level outside
+`if TYPE_CHECKING:`. A module-level binding keeps the real function under a
+patch every other caller sees, so the module's tests run the real bootstrap
+without anyone noticing. Classes (`Repo`, `OttoContext`) are free to import at
+module level: binding one defeats no patch.
+`tests/unit/test_no_import_time_lazy_exports.py` flags both spellings; its
+`ALLOWED` table lists the sites that cannot move (a decorator applied at
+import), each with its reason.
+
 ### Embedded coverage bed
 
 `zephyr37_llext` is the embedded coverage instance: an ARM `mps2_an385` Zephyr in the

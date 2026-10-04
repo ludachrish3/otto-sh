@@ -449,14 +449,13 @@ def test_unknown_current_repo_name_returns_none(tmp_path):
 
 
 def test_scope_for_repo_returns_the_named_repos_declaration(tmp_path, monkeypatch):
-    from otto import config as config_mod
     from otto.config.scope import scope_for_repo
 
     wanted = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=["sensor-.*"])
     other = _project_repo(tmp_path, "gateways", labs=["bench"], hosts=["gw-.*"])
     # `other` first, so a lookup that returned the FIRST declaration it saw
     # rather than the matching one answers with the wrong repo's fleet.
-    monkeypatch.setattr(config_mod, "get_repos", lambda: [other, wanted])
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [other, wanted])
 
     scope = scope_for_repo("sensors")
 
@@ -472,11 +471,10 @@ def test_scope_for_repo_admits_an_owner_no_repo_claims(tmp_path, monkeypatch):
     # repo bootstrap skipped), and refusing ingest over it would take a working
     # lab offline. The gate is a narrowing, so its failure mode is to narrow
     # nothing.
-    from otto import config as config_mod
     from otto.config.scope import scope_for_repo
 
     known = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=["sensor-.*"])
-    monkeypatch.setattr(config_mod, "get_repos", lambda: [known])
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [known])
 
     assert scope_for_repo("ghost") is None
 
@@ -484,11 +482,10 @@ def test_scope_for_repo_admits_an_owner_no_repo_claims(tmp_path, monkeypatch):
 def test_scope_for_repo_of_an_undeclared_repo_is_none(tmp_path, monkeypatch):
     # A known repo with no `[project]` block: None again, and for the same
     # reason repo_targets reads None as everything — it scoped nothing out.
-    from otto import config as config_mod
     from otto.config.scope import scope_for_repo
 
     plain = _project_repo(tmp_path, "toolsrepo")
-    monkeypatch.setattr(config_mod, "get_repos", lambda: [plain])
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [plain])
 
     assert scope_for_repo("toolsrepo") is None
 
@@ -497,7 +494,6 @@ def test_scope_for_repo_never_asks_config_for_an_unowned_registration(monkeypatc
     # Kills: looking the owner up before testing it for None. `get_repos()`
     # bootstraps lazily, so a needless call here would drag a full composition
     # root into every library import that registers a provider outside a repo.
-    from otto import config as config_mod
     from otto.config.scope import scope_for_repo
 
     asked = []
@@ -506,7 +502,7 @@ def test_scope_for_repo_never_asks_config_for_an_unowned_registration(monkeypatc
         asked.append(1)
         return []
 
-    monkeypatch.setattr(config_mod, "get_repos", _record)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _record)
 
     assert scope_for_repo(None) is None
     assert asked == [], "a registration made outside any repo has nothing to look up"
@@ -517,13 +513,12 @@ def test_scope_for_repo_admits_when_config_cannot_be_reached(monkeypatch):
     # what a bare `import otto` or an in-process unit test looks like from here,
     # and a lookup that let that propagate would turn every such use into an
     # ingest crash.
-    from otto import config as config_mod
     from otto.config.scope import scope_for_repo
 
     def _unavailable():
         raise RuntimeError("no bootstrap in this process")
 
-    monkeypatch.setattr(config_mod, "get_repos", _unavailable)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _unavailable)
 
     assert scope_for_repo("sensors") is None
 
@@ -533,13 +528,12 @@ def test_scope_for_repo_admits_when_config_answers_with_no_repos(monkeypatch):
     # nothing to iterate rather than one that blew up. Same verdict, and it must
     # not become a TypeError on the way there — the lookup has to be TOTAL, or
     # the carve-out it exists to provide is conditional on config's mood.
-    from otto import config as config_mod
     from otto.config.scope import scope_for_repo
 
-    monkeypatch.setattr(config_mod, "get_repos", lambda: None)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: None)
     assert scope_for_repo("sensors") is None
 
-    monkeypatch.setattr(config_mod, "get_repos", list)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
     assert scope_for_repo("sensors") is None
 
 

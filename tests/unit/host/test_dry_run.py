@@ -2462,10 +2462,10 @@ class TestADeclineNeverResurfacesAsAFabricatedFailure:
         repo = dataclasses.make_dataclass("Repo", ["name", "docker_settings"])(
             name="repo1", docker_settings=docker_settings
         )
-        monkeypatch.setattr("otto.config.get_repos", lambda: [repo])
+        monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
         # `_auto_up` hands the lab straight to the spied `compose_up` and
         # never looks inside it, so an opaque object is the honest stub.
-        monkeypatch.setattr("otto.config.get_lab", object)
+        monkeypatch.setattr("otto.config.fleet.get_lab", object)
 
     @pytest.mark.asyncio
     async def test_auto_up_hands_a_decline_back_unwrapped(self, monkeypatch):

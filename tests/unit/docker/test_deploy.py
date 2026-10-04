@@ -81,6 +81,10 @@ def _repo(name, *fragments, composes=(), images=()):
     """
     return SimpleNamespace(
         name=name,
+        # No `[project]` table: the getters are patched where they are defined,
+        # so every reader of the repos sees this double, the project-scope lookup
+        # included, and a repo without a table reads as None there.
+        project_scope=None,
         docker_settings=SimpleNamespace(
             use_cases=tuple(fragments),
             composes=tuple(composes),
@@ -151,9 +155,9 @@ def _staged_env_text(host: UnixHost) -> str:
 def _install(lab, repos, ordered=None):
     """Patch deploy.py's three config seams for the duration of the block."""
     with (
-        patch.object(deploy_mod, "get_lab", return_value=lab),
-        patch.object(deploy_mod, "get_repos", return_value=list(repos)),
-        patch.object(deploy_mod, "get_ordered_repos", return_value=list(ordered or repos)),
+        patch("otto.config.fleet.get_lab", return_value=lab),
+        patch("otto.config.bootstrapped.get_repos", return_value=list(repos)),
+        patch("otto.config.bootstrapped.get_ordered_repos", return_value=list(ordered or repos)),
     ):
         yield
 

@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import layout
-from ...config.fleet import do_for_all_hosts
 from ...utils import Status
 
 if TYPE_CHECKING:
@@ -194,6 +193,8 @@ class EmbeddedGcdaCollector:
         Returns ``{(host_id, product): staging_dir}``. Non-embedded hosts,
         uninstrumented products, and failed dumps are omitted.
         """
+        from ...config.fleet import do_for_all_hosts
+
         self.staging_root.mkdir(parents=True, exist_ok=True)
 
         collect_results = await do_for_all_hosts(

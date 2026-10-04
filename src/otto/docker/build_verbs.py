@@ -13,7 +13,6 @@ on exactly the hosts a deployment would use.
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from ..config import get_lab, get_ordered_repos, get_repos
 from ..host.host import is_dry_run
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError
@@ -30,6 +29,8 @@ if TYPE_CHECKING:
 
 def _select_docker_repos(repo: "str | None") -> "list[Repo]":
     """Every loaded repo with a ``[docker]`` section, narrowed to *repo* when given."""
+    from ..config.bootstrapped import get_repos
+
     docker_repos = [
         r
         for r in get_repos()
@@ -113,6 +114,8 @@ def _check_images(repos: "Sequence[Repo]", images: "Sequence[str] | None") -> No
 
 def _dependency_order(repos: "Sequence[Repo]") -> "list[Repo]":
     """*repos* in bootstrap dependency order; a repo the order omits sorts last."""
+    from ..config.bootstrapped import get_ordered_repos
+
     order = {r.name: i for i, r in enumerate(get_ordered_repos())}
     return sorted(repos, key=lambda r: order.get(r.name, len(order)))
 
@@ -248,6 +251,8 @@ async def build_on(
         ~otto.result.CommandNotRunError: this is a dry run; the message carries
             the whole plan.
     """
+    from ..config.fleet import get_lab
+
     lab = get_lab()
     parent = docker_parent(lab, host)
     repos = _dependency_order(_select_docker_repos(repo))

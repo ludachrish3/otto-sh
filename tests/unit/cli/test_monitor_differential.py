@@ -80,7 +80,7 @@ def test_review_hands_serve_review_the_source_and_the_repos(tmp_path, monkeypatc
     src = tmp_path / "x.json"
     src.write_text("{}")
     repos = [object()]
-    monkeypatch.setattr("otto.config.get_repos", lambda: repos)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
     fake = AsyncMock(return_value=None)
     with patch("otto.monitor.review.serve_review", fake):
         result = _invoke([str(src)])
@@ -100,7 +100,7 @@ USAGE_ROWS = [
 
 @pytest.mark.parametrize(("argv", "flag", "text"), USAGE_ROWS, ids=["interval", "hosts"])
 def test_library_input_refusals_are_usage_errors_in_flag_spelling(argv, flag, text, monkeypatch):
-    monkeypatch.setattr("otto.config.get_repos", list)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
     result = _invoke(argv)
     assert result.exit_code == 2, result.output
     flat = _flat(result.output)
@@ -109,7 +109,7 @@ def test_library_input_refusals_are_usage_errors_in_flag_spelling(argv, flag, te
 
 
 def test_a_bad_review_source_is_a_usage_error_naming_source(tmp_path, monkeypatch):
-    monkeypatch.setattr("otto.config.get_repos", list)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
     src = tmp_path / "x.csv"
     src.write_text("a")
     result = _invoke([str(src)])

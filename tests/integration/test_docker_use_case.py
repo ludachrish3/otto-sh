@@ -35,7 +35,6 @@ import pytest_asyncio
 
 from otto.config.lab import Lab
 from otto.config.repo import Repo
-from otto.docker import deployment as deploy_mod
 from otto.docker import resolve as resolve_mod
 from otto.docker.compose import use_case_project
 from otto.docker.deployment import deploy, teardown
@@ -148,9 +147,9 @@ def _deployment_config(monkeypatch, lab, repos, suffix):
     """
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", suffix)
     with (
-        patch.object(deploy_mod, "get_lab", return_value=lab),
-        patch.object(deploy_mod, "get_repos", return_value=list(repos)),
-        patch.object(deploy_mod, "get_ordered_repos", return_value=list(repos)),
+        patch("otto.config.fleet.get_lab", return_value=lab),
+        patch("otto.config.bootstrapped.get_repos", return_value=list(repos)),
+        patch("otto.config.bootstrapped.get_ordered_repos", return_value=list(repos)),
         patch.object(resolve_mod, "scope_for_repo", return_value=None),
     ):
         yield

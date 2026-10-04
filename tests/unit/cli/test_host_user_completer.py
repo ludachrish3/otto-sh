@@ -52,25 +52,28 @@ def test_host_group_request_walks_to_the_host_group():
 
 
 def test_completer_prefers_the_cache(monkeypatch):
-    import otto.config as cm
 
-    monkeypatch.setattr(cm, "get_completion_names", lambda: {"logins_by_host": {"dut1": ENTRIES}})
+    monkeypatch.setattr(
+        "otto.config.bootstrapped.get_completion_names",
+        lambda: {"logins_by_host": {"dut1": ENTRIES}},
+    )
     assert host_user_completer("direct")(_ctx(), "") == ["ssh_only", "tel", "u"]
 
 
 def test_completer_offers_nothing_for_an_unknown_host(monkeypatch):
-    import otto.config as cm
 
-    monkeypatch.setattr(cm, "get_completion_names", lambda: {"logins_by_host": {"dut1": ENTRIES}})
+    monkeypatch.setattr(
+        "otto.config.bootstrapped.get_completion_names",
+        lambda: {"logins_by_host": {"dut1": ENTRIES}},
+    )
     assert host_user_completer("any")(_ctx("ghost"), "") == []
 
 
 def test_completer_falls_back_to_live(monkeypatch):
-    import otto.config as cm
     import otto.config.completion_cache as cc
 
-    monkeypatch.setattr(cm, "get_completion_names", lambda: None)
-    monkeypatch.setattr(cm, "get_repos", list)
+    monkeypatch.setattr("otto.config.bootstrapped.get_completion_names", lambda: None)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
     monkeypatch.setattr(cc, "collect_logins_by_host", lambda repos: {"dut1": ENTRIES})
     assert host_user_completer("any")(_ctx(term="telnet"), "") == ["root", "tel", "u"]
 

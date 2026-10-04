@@ -134,7 +134,6 @@ def test_two_repos_with_the_same_test_file_name_both_list_and_both_run(
 
 def _lib_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, str]) -> Path:
     """A repo whose ``pylib`` is a library on ``sys.path``, wired as the only repo."""
-    import otto.config
     from otto.config.repo import Repo
     from tests._fixtures.sutrepo import make_sut_repo
 
@@ -142,7 +141,7 @@ def _lib_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, 
         tmp_path / "sut", name="sut", tests=["tests"], extra='libs = ["pylib"]\n', files=files
     )
     repo = Repo(sut_dir=sut)
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
     monkeypatch.syspath_prepend(str(sut / "pylib"))
     return sut
 
@@ -241,7 +240,6 @@ def test_a_session_keeps_what_it_imported_from_outside_the_test_directories(tmp_
     The bootstrap imports the libraries, and what their init modules
     register must stay the one class a test reaches.
     """
-    import otto.config
     from otto.config.repo import Repo
     from tests._fixtures.sutrepo import make_sut_repo
 
@@ -257,7 +255,7 @@ def test_a_session_keeps_what_it_imported_from_outside_the_test_directories(tmp_
         },
     )
     repo = Repo(sut_dir=sut)
-    monkeypatch.setattr(otto.config, "get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
     monkeypatch.syspath_prepend(str(sut / "pylib"))
     try:
         assert run_tests(["test_l"], output_dir=tmp_path / "out").exit_code == 0

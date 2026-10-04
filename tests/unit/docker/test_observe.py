@@ -112,7 +112,7 @@ def _record(host, *, fail: bool = False):
 
 @pytest.fixture
 def two_hosts(lab):
-    with patch.object(observe_mod, "get_lab", return_value=lab):
+    with patch("otto.config.fleet.get_lab", return_value=lab):
         yield _record(lab.hosts["test3"]), _record(lab.hosts["alt2"])
 
 

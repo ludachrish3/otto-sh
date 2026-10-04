@@ -10,7 +10,7 @@ from typing import Annotated
 
 import typer
 
-from .. import options
+from ..params import options
 
 
 @options

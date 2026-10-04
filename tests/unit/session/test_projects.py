@@ -70,12 +70,26 @@ class TestSelectProjects:
             "project(s) b, ghost appear in both include_projects and exclude_projects — pick one"
         )
 
+    def test_the_suggestion_is_computed_from_the_normalised_name(self):
+        # Raw, ``My_Rep0`` is too far from ``my-repo`` for any suggestion;
+        # normalised to ``my-rep0`` it is one character off.
+        with pytest.raises(ProjectSelectionError) as exc:
+            select_projects([_repo("my-repo")], ["My_Rep0"], [])
+        assert (exc.value.names, exc.value.suggestion) == (["my-rep0"], "my-repo")
+
     def test_no_switches_selects_nothing_and_needs_no_repos(self):
         assert select_projects([], [], []) == ProjectSelection()
 
 
 def test_check_project_overlap_passes_disjoint_lists():
     check_project_overlap(["a"], ["b"])  # must not raise
+
+
+def test_check_project_overlap_refuses_a_name_in_both_lists_once_normalised():
+    with pytest.raises(ProjectSelectionError) as exc:
+        check_project_overlap(["Beta", "a", "c.d"], ["C_D", "beta"])
+    err = exc.value
+    assert (err.kind, err.field, err.names) == ("overlap", "include_projects", ["beta", "c-d"])
 
 
 class TestCheckRepos:
@@ -126,12 +140,16 @@ class TestCheckRepos:
 
     def test_a_fatal_error_keeps_the_demotions_beside_it(self):
         active, excluded = _repo("a"), _repo("b")
+        fatal, demoted = _broken(active), _broken(excluded)
         with pytest.raises(RepoLoadError) as exc:
             check_repos(
-                _result(errors=[_broken(active), _broken(excluded)], repos=[active, excluded]),
+                _result(errors=[fatal, demoted], repos=[active, excluded]),
                 [],
                 ProjectSelection(exclude=["b"]),
             )
+        # The demoted error sits beside the fatal one, never among it.
+        assert exc.value.errors == [fatal]
+        assert [d.error for d in exc.value.demoted] == [demoted]
         assert [d.repo for d in exc.value.demoted] == ["b"]
 
     def test_no_labs_never_infers_out_of_scope(self):

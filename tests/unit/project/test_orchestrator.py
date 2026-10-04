@@ -288,8 +288,8 @@ def _wire_lab(monkeypatch, repo_names, ctx, current=None, dependencies=None):
     driving = current if current is not None else (repo_names[-1] if repo_names else None)
     configured = [repo for repo in ordered if repo.name == driving]
     configured += [repo for repo in ordered if repo.name != driving]
-    monkeypatch.setattr("otto.config.get_ordered_repos", lambda: ordered)
-    monkeypatch.setattr("otto.config.get_repos", lambda: configured)
+    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: ordered)
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: configured)
     monkeypatch.setattr("otto.context.get_context", lambda: ctx)
     return ordered
 
