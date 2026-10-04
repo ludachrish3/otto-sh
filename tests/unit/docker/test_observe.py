@@ -8,8 +8,12 @@ import pytest
 from otto.config.repo import DockerUseCase
 from otto.docker import observe as observe_mod
 from otto.docker.observe import (
+    CONTAINERS_PROBE,
+    IMAGES_PROBE,
     DockerVerbError,
     LogsTarget,
+    ObservedContainers,
+    ObservedImages,
     capable_ids,
     compose_logs,
     compose_ps,
@@ -20,6 +24,8 @@ from otto.docker.observe import (
     list_containers,
     list_images,
     logs_flags,
+    observed_containers,
+    observed_images,
     resolve_compose_logs,
     resolve_logs,
     run_on,
@@ -529,3 +535,102 @@ async def test_a_follow_on_a_telnet_parent_is_refused_before_the_probe(lab, two_
     parent.exec.assert_not_awaited()
     with pytest.raises(DockerVerbError, match="follow needs an SSH parent"):
         await resolve_logs("web-1", on="test3", follow=True)
+
+
+def test_the_probes_are_dockers_format_flags_verbatim():
+    assert IMAGES_PROBE == r"docker images --format '{{.Repository}}:{{.Tag}}\t{{.ID}}'"
+    assert CONTAINERS_PROBE == r"docker ps -a --format '{{.Names}}\t{{.ID}}'"
+    # a literal tab is eaten as completion by a PTY shell's line editor
+    assert "\t" not in IMAGES_PROBE
+    assert "\t" not in CONTAINERS_PROBE
+
+
+@pytest.mark.asyncio
+async def test_observed_images_parses_the_format_lines_and_drops_dangling_rows(lab, two_hosts):
+    parent = lab.hosts["test3"]
+    parent.exec = AsyncMock(
+        return_value=_ok(
+            "repo1-api:latest\tsha256:aa\n<none>:<none>\tsha256:bb\nalpine:3.19\tcc\n", IMAGES_PROBE
+        )
+    )
+    seen = await observed_images("test3")
+    assert seen == ObservedImages(
+        refs=["repo1-api:latest", "alpine:3.19"], ids=["sha256:aa", "cc"], answered=True
+    )
+    assert parent.exec.await_args.args[0] == IMAGES_PROBE
+    assert parent.exec.await_args.kwargs["log"] is LogMode.QUIET
+
+
+@pytest.mark.asyncio
+async def test_observed_containers_parses_the_format_lines(lab, two_hosts):
+    parent = lab.hosts["test3"]
+    parent.exec = AsyncMock(
+        return_value=_ok("unix-x-api-1\t3f9a\nunix-x-db-1\t77ee\n", CONTAINERS_PROBE)
+    )
+    seen = await observed_containers("test3")
+    assert seen == ObservedContainers(
+        names=["unix-x-api-1", "unix-x-db-1"], ids=["3f9a", "77ee"], answered=True
+    )
+    assert parent.exec.await_args.args[0] == CONTAINERS_PROBE
+    assert parent.exec.await_args.kwargs["log"] is LogMode.QUIET
+
+
+@pytest.mark.asyncio
+async def test_a_failed_probe_is_unanswered_not_an_error(lab, two_hosts):
+    lab.hosts["test3"].exec = AsyncMock(
+        return_value=_fail("Cannot connect to the Docker daemon", IMAGES_PROBE)
+    )
+    assert await observed_images("test3") == ObservedImages([], [], answered=False)
+
+
+@pytest.mark.asyncio
+async def test_a_declined_probe_is_unanswered_not_an_error(lab, two_hosts):
+    lab.hosts["test3"].exec = AsyncMock(
+        return_value=NotRunResult(Status.NotRun, command=CONTAINERS_PROBE)
+    )
+    assert await observed_containers("test3") == ObservedContainers([], [], answered=False)
+
+
+@pytest.mark.asyncio
+async def test_an_empty_successful_probe_is_an_answer_of_nothing(lab, two_hosts):
+    lab.hosts["test3"].exec = AsyncMock(return_value=_ok("", IMAGES_PROBE))
+    assert await observed_images("test3") == ObservedImages([], [], answered=True)
+    lab.hosts["test3"].exec = AsyncMock(return_value=_ok("", CONTAINERS_PROBE))
+    assert await observed_containers("test3") == ObservedContainers([], [], answered=True)
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_line_is_skipped_not_fatal(lab, two_hosts):
+    lab.hosts["test3"].exec = AsyncMock(
+        return_value=_ok("good:1\tid1\nno-tab-here\n\n", IMAGES_PROBE)
+    )
+    assert await observed_images("test3") == ObservedImages(["good:1"], ["id1"], answered=True)
+
+
+@pytest.mark.asyncio
+async def test_an_answer_with_no_parsable_row_is_not_an_answer(lab, two_hosts):
+    # A PTY expanding the tab to spaces, or a --format regression: the daemon said
+    # something otto cannot read, which must not replace good hints with none.
+    lab.hosts["test3"].exec = AsyncMock(
+        return_value=_ok("repo1-api:latest    sha256:aa\n", IMAGES_PROBE)
+    )
+    assert await observed_images("test3") == ObservedImages([], [], answered=False)
+    lab.hosts["test3"].exec = AsyncMock(
+        return_value=_ok("unix-x-api-1    3f9a\n", CONTAINERS_PROBE)
+    )
+    assert await observed_containers("test3") == ObservedContainers([], [], answered=False)
+
+
+@pytest.mark.asyncio
+async def test_only_dangling_rows_are_still_an_answer(lab, two_hosts):
+    lab.hosts["test3"].exec = AsyncMock(
+        return_value=_ok("<none>:<none>\tsha256:bb\n", IMAGES_PROBE)
+    )
+    assert await observed_images("test3") == ObservedImages([], [], answered=True)
+
+
+@pytest.mark.asyncio
+async def test_a_probe_on_a_non_docker_host_refuses_by_field(lab, two_hosts):
+    with pytest.raises(DockerVerbError) as exc:
+        await observed_images("nowhere")
+    assert exc.value.field == "host"

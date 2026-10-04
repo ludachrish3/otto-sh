@@ -276,6 +276,10 @@ def test_schema_constants_track_the_product():
     assert sc.TABLE_SCHEMA == ct.RECORDS_SCHEMA_VERSION
     assert sc.TABLE_TTL_SECONDS == cc.CACHE_TTL_SECONDS
     assert sc.TABLES_KEY == cc.COLLECTED_TESTS_KEY
+    assert sc.DOCKER_OBSERVED_KEY == cc.DOCKER_OBSERVED_KEY
+    assert sc.DOCKER_OBSERVED_SCHEMA == cc.DOCKER_OBSERVED_SCHEMA_VERSION
+    assert sc.DOCKER_OBSERVED_CONTAINERS_TTL_SECONDS == cc.DOCKER_OBSERVED_CONTAINERS_TTL_SECONDS
+    assert sc.DOCKER_OBSERVED_IMAGES_TTL_SECONDS == cc.DOCKER_OBSERVED_IMAGES_TTL_SECONDS
     assert str(TOML_SETTINGS_PATH) == sc.SETTINGS_RELPATH
     assert sc.CACHE_FILENAME == cc.CACHE_FILENAME
     for classes, name in [([], "test_x"), (["TestA"], "test_y[1]"), (["TestA", "TestB"], "t")]:

@@ -39,7 +39,7 @@ import time
 from typing import Any
 
 CACHE_FILENAME = "completion_cache.json"
-SCHEMA = 24
+SCHEMA = 25
 """Must equal ``otto.config.completion_cache.SCHEMA_VERSION`` (pinned by tests/unit/shim)."""
 WINDOW_SECONDS = 60
 """How long the ``names`` marker vouches for the ``names`` key set."""
@@ -53,6 +53,12 @@ TABLE_SCHEMA = 5
 """``otto.config.collected_tests.RECORDS_SCHEMA_VERSION``."""
 TABLE_TTL_SECONDS = 24 * 60 * 60
 """``otto.config.completion_cache.CACHE_TTL_SECONDS``, which a table's ``generated_at`` obeys."""
+DOCKER_OBSERVED_KEY = "__docker_observed__"
+DOCKER_OBSERVED_SCHEMA = 1
+"""``otto.config.completion_cache.DOCKER_OBSERVED_SCHEMA_VERSION``."""
+DOCKER_OBSERVED_CONTAINERS_TTL_SECONDS = 15 * 60
+DOCKER_OBSERVED_IMAGES_TTL_SECONDS = 24 * 60 * 60
+"""The two TTLs of ``__docker_observed__``, each sub-entry judged against its own."""
 SETTINGS_RELPATH = os.path.join(".otto", "settings.toml")
 """``otto.config.repo.TOML_SETTINGS_PATH``: the ``settings`` stat of a table's ``env``."""
 COLLECT_LOCK_FILENAME = ".completion_collect.lock"
@@ -175,6 +181,8 @@ class Resolution:
         "host_id",
         "last_token",
         "node",
+        "option_values",
+        "positional_words",
         "positionals",
         "root_lab_values",
         "seen_dashdash",
@@ -192,6 +200,8 @@ class Resolution:
         self.node = node
         self.given: set[str] = set()  # options given a value on THIS command (COMMANDLINE source)
         self.positionals = 0  # positionals consumed on this command
+        self.option_values: dict[str, str] = {}  # value-taking options' last value, by param name
+        self.positional_words: list[str] = []  # the words this command's positionals consumed
         self.dashdash = False  # THIS command's parser saw `--`: its option parsing is over
         self.seen_dashdash = False  # `"--" in args`, textual: set once by resolve()
         self.host_id = host_id
@@ -328,8 +338,10 @@ def resolve(tree: dict[str, Any], args: list[str], classes: dict[str, str]) -> R
             if res.node.get("scoped_by") == param["name"]:
                 res.host_id = args[index]
             if param["nargs"] == -1:
+                res.positional_words.extend(args[index:])
                 index = total  # the variadic absorbs the rest; no subcommand can follow
                 break
+            res.positional_words.append(args[index])
             res.positionals += 1
             index += 1
         if index >= total:
@@ -356,10 +368,12 @@ def _consume_positional(res: Resolution, word: str) -> None:
             raise Handover(f"nargs={param['nargs']} positional {param['name']}")  # not modelled
         if res.node.get("scoped_by") == param["name"]:
             res.host_id = word
+        res.positional_words.append(word)
         if param["nargs"] != -1:
             res.positionals += 1
         return
     if positionals and positionals[-1]["nargs"] == -1:
+        res.positional_words.append(word)
         return  # the variadic absorbs everything that is not an option
     raise Handover(f"unknown command {word!r}")
 
@@ -386,6 +400,7 @@ def _descend(
 def _note_value(res: Resolution, param: dict[str, Any], value: str) -> None:
     """Record a value-taking option's value: NOW it is given (click: COMMANDLINE source)."""
     res.given.add(param["name"])
+    res.option_values[param["name"]] = value
     if param["name"] == "labs" and res.node["name"] == "otto":
         res.root_lab_values = [*(res.root_lab_values or []), value]
     if param["name"] == "term" and res.node.get("scoped_by"):
@@ -410,11 +425,14 @@ class TestNames:
 class Payloads:
     """Payloads an answer reads: ``names`` always; the test tables' answer on a tests site."""
 
-    __slots__ = ("names", "tests")
+    __slots__ = ("names", "observed", "tests")
 
-    def __init__(self, names: dict[str, Any], tests: TestNames | None = None) -> None:
+    def __init__(
+        self, names: dict[str, Any], tests: TestNames | None = None, observed: Any = None
+    ) -> None:
         self.names = names
         self.tests = tests
+        self.observed = observed  # the raw ``__docker_observed__`` namespace, or None
 
 
 def site_of(source: dict[str, Any]) -> str:
@@ -462,11 +480,29 @@ def _payload_values(
     labs: list[str],
     host_id: str | None = None,
     term: str | None = None,
+    res: "Resolution | None" = None,
 ) -> list[str]:
     if source.get("host_scoped"):
         values = _host_logins(source, names, host_id, term)
         return sorted(values) if source.get("sort") else values
     key = source["key"]
+    scope_param = source.get("by_positional")
+    if scope_param:
+        # Scoped by the word a sibling positional consumed (``docker compose up USE_CASE SERVICE``).
+        if res is None:
+            return []
+        index = next(
+            (i for i, p in enumerate(_positionals(res.node)) if p["name"] == scope_param), None
+        )
+        if index is None or index >= len(res.positional_words):
+            return []
+        by_scope = names.get(key, {})
+        values = (
+            [str(v) for v in by_scope.get(res.positional_words[index], [])]
+            if isinstance(by_scope, dict)
+            else []
+        )
+        return sorted(values) if source.get("sort") else values
     scoped = None
     if labs and source.get("lab_scoped"):
         scoped = _lab_host_set(names, labs, source.get("always", []))
@@ -493,10 +529,96 @@ def _payload_values(
     return sorted(values) if source.get("sort") else values
 
 
+def _fresh_sub_entry(
+    entry: Any, ttl: int, keys: tuple[str, str], now: float
+) -> tuple[list[str], list[str]]:
+    """Mirror ``completion_cache._fresh_lists``: both lists inside *ttl*, else two empty lists."""
+    if not isinstance(entry, dict):
+        return [], []
+    observed_at = entry.get("observed_at")
+    if not isinstance(observed_at, (int, float)) or now - observed_at > ttl:
+        return [], []
+    first, second = entry.get(keys[0]), entry.get(keys[1])
+    if not isinstance(first, list) or not isinstance(second, list):
+        return [], []
+    return [str(v) for v in first], [str(v) for v in second]
+
+
+def _observed_hosts(observed: Any) -> dict[str, Any]:
+    """Mirror ``completion_cache._load_docker_observed_hosts`` on the already-read namespace."""
+    if not isinstance(observed, dict) or observed.get("schema_version") != DOCKER_OBSERVED_SCHEMA:
+        return {}
+    hosts = observed.get("hosts")
+    return hosts if isinstance(hosts, dict) else {}
+
+
+def _container_candidates(
+    names: dict[str, Any], observed: Any, on: str | None, now: float
+) -> list[str]:
+    """Mirror ``otto.cli.docker._container_candidates``: host ids, then observed names, then ids.
+
+    Change both or neither.
+    """
+    hosts = _observed_hosts(observed)
+
+    def _host_containers(host_id: str) -> tuple[list[str], list[str]]:
+        entry = hosts.get(host_id)
+        sub = entry.get("containers") if isinstance(entry, dict) else None
+        return _fresh_sub_entry(sub, DOCKER_OBSERVED_CONTAINERS_TTL_SECONDS, ("names", "ids"), now)
+
+    if on is not None:
+        found, ids = _host_containers(on)
+        return [*found, *ids]
+    capable = {str(h) for h in names.get("docker_hosts", [])}
+    host_ids = sorted(
+        str(h)
+        for h in names.get("hosts", [])
+        if "." in str(h) and str(h).split(".", 1)[0] in capable
+    )
+    found_all: list[str] = []
+    ids_all: list[str] = []
+    for host_id in sorted(hosts):
+        found, ids = _host_containers(host_id)
+        found_all.extend(found)
+        ids_all.extend(ids)
+    return list(dict.fromkeys([*host_ids, *found_all, *ids_all]))
+
+
+def _observed_values(
+    source: dict[str, Any], payloads: Payloads, res: "Resolution | None", now: float
+) -> list[str]:
+    """Answer an ``observed`` site from the namespace alone (never a handover)."""
+    on = res.option_values.get(source.get("by_option", "")) if res is not None else None
+    if source["key"] == "containers":
+        return _container_candidates(payloads.names, payloads.observed, on, now)
+    if on is None:
+        return []
+    entry = _observed_hosts(payloads.observed).get(on)
+    sub = entry.get("images") if isinstance(entry, dict) else None
+    refs, _ids = _fresh_sub_entry(sub, DOCKER_OBSERVED_IMAGES_TTL_SECONDS, ("refs", "ids"), now)
+    return refs
+
+
 def _tests(payloads: Payloads) -> TestNames:
     if payloads.tests is None:
         raise Handover("no tables read for a tests site")
     return payloads.tests
+
+
+def _static_values(source: dict[str, Any], frag: str) -> list[str]:
+    """Return a ``static`` site's declared values the fragment prefixes."""
+    if source.get("match_case"):
+        # Answer in the fragment's case (lower-case fragment -> lower-case
+        # names), then Typer's own prefix filter, which drops a mixed-case
+        # fragment's upper-case answer: the completer's exact contract.
+        low = frag.lower()
+        hits = [v for v in source["values"] if v.lower().startswith(low)]
+        answered = [v.lower() for v in hits] if frag.islower() else hits
+        return [v for v in answered if v.startswith(frag)]
+    if source.get("case_sensitive", True):
+        return [v for v in source["values"] if v.startswith(frag)]
+    low = frag.lower()
+    return [v for v in source["values"] if v.lower().startswith(low)]
 
 
 def _source_values(
@@ -505,6 +627,7 @@ def _source_values(
     labs: list[str],
     payloads: Payloads,
     res: "Resolution | None" = None,
+    now: float | None = None,
 ) -> list[str]:
     """Produce a parameter's candidates; each kind filters by the fragment as a prefix."""
     source = param["source"]
@@ -516,18 +639,7 @@ def _source_values(
     if kind == "echo":
         return [frag]
     if kind == "static":
-        if source.get("match_case"):
-            # Answer in the fragment's case (lower-case fragment -> lower-case
-            # names), then Typer's own prefix filter, which drops a mixed-case
-            # fragment's upper-case answer: the completer's exact contract.
-            low = frag.lower()
-            hits = [v for v in source["values"] if v.lower().startswith(low)]
-            answered = [v.lower() for v in hits] if frag.islower() else hits
-            return [v for v in answered if v.startswith(frag)]
-        if source.get("case_sensitive", True):
-            return [v for v in source["values"] if v.startswith(frag)]
-        low = frag.lower()
-        return [v for v in source["values"] if v.lower().startswith(low)]
+        return _static_values(source, frag)
     if kind == "tests":
         names = _tests(payloads).names
         sep = source.get("sep")
@@ -541,11 +653,19 @@ def _source_values(
         if sep and source.get("live_past_sep") and sep in frag:
             raise Handover("list fragment past its first separator")
         values = _payload_values(
-            source, payloads.names, labs, res.host_id if res else None, res.term if res else None
+            source,
+            payloads.names,
+            labs,
+            res.host_id if res else None,
+            res.term if res else None,
+            res,
         )
         if sep:
             return complete_separated_list(values, frag, sep)
         return [v for v in values if v.startswith(frag)]
+    if kind == "observed":
+        stamp = time.time() if now is None else now
+        return [v for v in _observed_values(source, payloads, res, stamp) if v.startswith(frag)]
     raise Handover(f"unknown source kind {kind!r}")
 
 
@@ -594,13 +714,18 @@ def _target(res: Resolution, frag: str) -> tuple[str, dict[str, Any] | None, str
 
 
 def complete(
-    tree: dict[str, Any], res: Resolution, frag: str, environ: dict[str, str], payloads: Payloads
+    tree: dict[str, Any],
+    res: Resolution,
+    frag: str,
+    environ: dict[str, str],
+    payloads: Payloads,
+    now: float | None = None,
 ) -> list[str]:
     """Compute the candidates for *frag* after the walk, in Typer's order."""
     labs = selected_labs(res.root_lab_values, environ)
     kind, param, frag = _target(res, frag)
     if kind == "param" and param is not None:
-        return _source_values(param, frag, labs, payloads, res=res)
+        return _source_values(param, frag, labs, payloads, res=res, now=now)
     # TyperGroup.shell_complete: visible subcommands by prefix, then Command.shell_complete's
     # option names for a non-alphanumeric fragment (given non-multiple options excluded).
     view = _view(tree, res.node, res, payloads.names.get("host_classes_by_id", {}))
@@ -936,7 +1061,8 @@ def _answer_items(environ: dict[str, str], now: float) -> tuple[list[str], str |
     cache_mtime_ns = os.stat(cache_path).st_mtime_ns  # see validate_keys for the race
     _check_names(payload, os.path.dirname(cache_path), cache_mtime_ns, now)
     tests = table_view(cache_path, data, now) if site == "tests" else None
-    items = complete(payload["tree"], res, frag, environ, Payloads(names, tests))
+    observed = data.get(DOCKER_OBSERVED_KEY)
+    items = complete(payload["tree"], res, frag, environ, Payloads(names, tests, observed), now=now)
     refresh = os.path.dirname(cache_path) if tests is not None and tests.check_due else None
     return items, refresh
 

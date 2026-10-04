@@ -6,14 +6,18 @@ with the docker verbs, and compares. The verbs' output parsers are pinned
 hostless in tests/unit/docker/test_honesty_parsers.py.
 """
 
+import json
 import uuid
 
 import pytest
 
 from ._cli import _REPO1_USE_CASE, _WIDE, _run_otto
 from ._honesty import (
+    DAEMON_IMAGE_PAIRS_COMMAND,
+    DAEMON_PS_PAIRS_COMMAND,
     MARK,
     parse_compose_ps_names,
+    parse_daemon_pairs,
     parse_daemon_rows,
     parse_images_rows,
     parse_ps_ids,
@@ -304,3 +308,57 @@ def test_logs_with_on_of_an_unknown_name_is_dockers_error(docker_host, tmp_path)
     logs = _run_otto("docker", "logs", "no-such-ctr", "--on", docker_host, xdir=tmp_path, env=_WIDE)
     assert logs.returncode != 0, logs.stdout + logs.stderr
     assert "No such container" in logs.stdout + logs.stderr, logs.stdout + logs.stderr
+
+
+def _daemon_pairs(host: str, command: str, xdir) -> "list[list[str]]":
+    """``[name_or_ref, id]`` per marked row, in the daemon's order."""
+    out = _run_otto("host", host, "exec", command, xdir=xdir, env=_WIDE)
+    assert out.returncode == 0, out.stderr
+    return parse_daemon_pairs(out.stdout + out.stderr)
+
+
+def _observed_entry(xdir, host: str, kind: str) -> dict:
+    """The sub-entry the subprocess wrote; its OTTO_HOME is ``xdir / "otto-home"``."""
+    (cache,) = list((xdir / "otto-home").rglob("completion_cache.json"))
+    return json.loads(cache.read_text())["__docker_observed__"]["hosts"][host][kind]
+
+
+def test_ps_records_exactly_the_containers_the_daemon_lists(teardown_after, docker_host, tmp_path):
+    """After `otto docker ps`, the host's containers entry is the daemon's own list."""
+    _up_repo1(docker_host, teardown_after, tmp_path)
+    ps = _run_otto("docker", "ps", "-a", "--on", docker_host, xdir=tmp_path, env=_WIDE)
+    assert ps.returncode == 0, ps.stdout + ps.stderr
+    pairs = _daemon_pairs(docker_host, DAEMON_PS_PAIRS_COMMAND, tmp_path)
+    assert pairs, "the stack just came up; the daemon lists at least one container"
+    entry = _observed_entry(tmp_path, docker_host, "containers")
+    # In order: docker sorts containers by nanosecond `Created`, so two calls agree
+    # (images sort by whole seconds and do not; see the images test).
+    assert entry["names"] == [p[0] for p in pairs][:200]
+    assert entry["ids"] == [p[1] for p in pairs][:200]
+
+
+def test_images_records_the_daemons_references_minus_dangling(
+    teardown_after, docker_host, tmp_path
+):
+    """After `otto docker images`, the images entry is the daemon's list minus dangling."""
+    # `compose up --build` leaves repo1's images on the daemon, so the list is never empty.
+    _up_repo1(docker_host, teardown_after, tmp_path)
+    images = _run_otto("docker", "images", "--on", docker_host, xdir=tmp_path, env=_WIDE)
+    assert images.returncode == 0, images.stdout + images.stderr
+    pairs = [
+        p
+        for p in _daemon_pairs(docker_host, DAEMON_IMAGE_PAIRS_COMMAND, tmp_path)
+        if p[0] != "<none>:<none>"
+    ]
+    assert pairs, "the stack just built its images; the daemon lists at least one"
+    entry = _observed_entry(tmp_path, docker_host, "images")
+    recorded = list(zip(entry["refs"], entry["ids"], strict=True))
+    held = [(p[0], p[1]) for p in pairs]
+    # Unlike containers (nanosecond `Created`), docker sorts images by whole-second `Created`
+    # with an unstable sort, so two calls may order same-second images differently: compare
+    # as sorted lists, not in order. At the cap the 200 recorded are only a subset of the list.
+    if len(pairs) < 200:
+        assert sorted(recorded) == sorted(held)
+    else:
+        assert len(recorded) == 200
+        assert set(recorded) <= set(held)

@@ -45,6 +45,20 @@ init = ["shimsut_init"]
 [[lab.sources]]
 backend = "json"
 paths = ["lab"]
+
+[[docker.images]]
+name = "api"
+dockerfile = "docker/Dockerfile"
+context = "docker"
+
+[[docker.composes]]
+name = "core"
+path = "docker/compose.yml"
+services = ["api", "db"]
+
+[[docker.use_cases]]
+name = "integration"
+composes = ["core"]
 """
 
 INIT = '''
@@ -148,6 +162,8 @@ def make_shim_repo(root: Path) -> Path:
             "tests/test_shim_suite.py": SUITE,
             "tests/sub/test_nested.py": NESTED,
             "pyproject.toml": PYPROJECT,
+            "docker/Dockerfile": "FROM scratch\n",
+            "docker/compose.yml": "services: {}\n",
         },
     )
     write_lab_json(repo / "lab" / "lab.json", HOSTS, links=LINKS)

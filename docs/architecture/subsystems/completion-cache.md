@@ -75,7 +75,8 @@ needs:
  "sections": {"names": {"fingerprint", "generated_at", "tainted", "payload"},
               "shim":  {...}},
  "__collected_tests__": {...},
- "__dynamic_tunnels__": {...}}
+ "__dynamic_tunnels__": {...},
+ "__docker_observed__": {...}}
 ```
 
 The sections are registered in `otto.config.cache_sections.SECTIONS`. A
@@ -85,7 +86,7 @@ from a test file.
 **`names`** holds everything whose source is bounded by the files that can
 register something. Its payload keys are `instructions`, `test_options`,
 `hosts`, `hosts_by_lab`, `host_drops`, `docker_hosts`, `docker_use_cases`,
-`term_backends`, `transfer_backends`, `usernames`, `commands`, `labs`,
+`docker_images`, `docker_services_by_use_case`, `repos`, `term_backends`, `transfer_backends`, `usernames`, `commands`, `labs`,
 `host_classes_by_id`, `projects`, `links` and `logins_by_host`.
 
 - `test_options` is the `test` verb's merged flags, the options classes
@@ -199,8 +200,8 @@ trade. How stat-based validation behaves when several machines share one
 
 ## Reserved namespaces
 
-Two top-level keys sit beside `"sections"`. A rebuild writes neither, and
-each has writers of its own:
+Three top-level keys sit beside `"sections"`. A rebuild writes none of them,
+and each has writers of its own:
 
 - **`__collected_tests__`** holds each repo's table in the test-names
   cache, keyed by its SUT directory. Only a pytest collection writes it: an
@@ -217,10 +218,25 @@ each has writers of its own:
   the live process/argv state, never from a test, so a wider digest would
   cost a command that never reads a test file a stat per test file. The
   short TTL does the rest of the freshness work.
+- **`__docker_observed__`** holds what each docker host's daemon last said,
+  for the docker completers (container names and ids, image references).
+  Its own `schema_version` (1) sits beside a `hosts` map; each host has up to
+  two independently stamped sub-entries, `containers` (`names`, `ids`) and
+  `images` (`refs`, `ids`), each with an `observed_at`. Containers expire
+  after 15 minutes and images after 24 hours, because containers come and go
+  and an image reference is still worth offering a day later; each list is
+  capped at 200 entries so a warm TAB stays one file read. The writers are
+  the verbs that ask a daemon, and each records one kind: `ps`, `compose ps`,
+  `compose up` and `compose down` record containers (15 min); `images`,
+  `build` and `compose build` record images (a day). Each replaces
+  its host's sub-entry whole, and an answered but empty probe is recorded as
+  empty, so the hint vanishes after a `compose down`; a probe that failed, was
+  declined, or answered with no row otto could read records nothing. A TAB never writes or deletes: an expired
+  sub-entry is simply absent from what it reads.
 
-`write_sections` carries both namespaces across every rewrite, including a
+`write_sections` carries all three namespaces across every rewrite, including a
 rewrite that drops sections from an older schema. They come from work a
-rebuild must never do (a pytest collection, a scan of the lab for tunnels),
+rebuild must never do (a pytest collection, a scan of the lab for tunnels, a daemon's answer),
 so dropping them would make the next test-name TAB pay for a collection
 again.
 
@@ -428,6 +444,8 @@ digraph cache_paths {
 | the collect child | each repo's table | never a section; seeds a cold table, collects what moved in a warm one, writes the tables and touches the `tests` marker |
 | any other command | nothing | nothing |
 | `otto tunnel list`/`remove` | nothing | never; writes `__dynamic_tunnels__` only (keyed by the narrow tunnel-scope digest, which reads no test file) |
+| a docker verb that asks a daemon (`ps`, `images`, `build`, `compose ps`/`build`/`up`/`down`) | nothing | never a section; writes the host's `__docker_observed__` sub-entries only |
+| a docker TAB (`CONTAINER`, `--tag`) | `names` for host ids; `__docker_observed__` for names and references | reads only; never contacts a host, never writes or deletes |
 
 **A stale TAB repairs the cache.** When the shim hands a TAB over, it says
 why. `Handover.stale` is true when the cache itself is at fault: no cache

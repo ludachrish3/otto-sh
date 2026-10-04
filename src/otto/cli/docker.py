@@ -36,6 +36,7 @@ would put the compose and build machinery and the whole Unix host stack on the
 ``otto docker --help`` path, which ``tests/unit/import_budget`` gates.
 """
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,11 +52,14 @@ from .invoke import fail, print_error
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 
+    from ..config.completion_cache import ObservedDockerState
     from ..config.repo import DockerUseCase
     from ..docker.deployment import UseCaseStack
     from ..docker.observe import LogsTarget, ObserveReport
     from ..docker.reports import BuildReport, HostReport
     from ..docker.resolve import Displacement
+
+logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
@@ -146,6 +150,165 @@ def _use_case_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
         names = collect_docker_use_case_names(get_repos())
 
     return sorted(n for n in names if n.startswith(incomplete))
+
+
+def _names_or(key: str, collect: "Callable[[], Any]") -> Any:
+    """Return the cached ``names`` entry for *key*, else the collector's live answer (cold run)."""
+    from ..config import get_completion_names
+
+    cached = get_completion_names()
+    if cached is not None and key in cached:
+        return cached[key]
+    return collect()
+
+
+@completion_source(kind="payload", key="docker_images", sort=True)
+def _image_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
+    """Shell-completion source for ``IMAGE``: every declared ``[[docker.images]]`` name."""
+    from ..config import get_repos
+    from ..config.completion_cache import collect_docker_image_names
+
+    try:
+        names = _names_or("docker_images", lambda: collect_docker_image_names(get_repos()))
+        return sorted(n for n in names if n.startswith(incomplete))
+    except Exception:  # noqa: BLE001 — completion never crashes the shell
+        return []
+
+
+@completion_source(
+    kind="payload", key="docker_services_by_use_case", by_positional="use_case", sort=True
+)
+def _service_completer(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Shell-completion source for ``SERVICE``: the services of the ``USE_CASE`` on the line.
+
+    Nothing is offered until a use-case is on the line (the services of an
+    unnamed use-case would be a guess).
+    """
+    from ..config import get_repos
+    from ..config.completion_cache import collect_docker_services_by_use_case
+
+    try:
+        use_case = (
+            ctx.params.get("use_case") if isinstance(getattr(ctx, "params", None), dict) else None
+        )
+        if not isinstance(use_case, str) or not use_case:
+            return []
+        by_use_case = _names_or(
+            "docker_services_by_use_case",
+            lambda: collect_docker_services_by_use_case(get_repos()),
+        )
+        return sorted(s for s in by_use_case.get(use_case, []) if s.startswith(incomplete))
+    except Exception:  # noqa: BLE001 — completion never crashes the shell
+        return []
+
+
+@completion_source(kind="payload", key="repos", sort=True)
+def _repo_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
+    """Shell-completion source for ``--repo``: every active repo's name."""
+    from ..config import get_repos
+    from ..config.completion_cache import collect_repo_names
+
+    try:
+        names = _names_or("repos", lambda: collect_repo_names(get_repos()))
+        return sorted(n for n in names if n.startswith(incomplete))
+    except Exception:  # noqa: BLE001 — completion never crashes the shell
+        return []
+
+
+def _container_candidates(
+    hosts: "list[str]",
+    docker_hosts: "list[str]",
+    observed_by_host: "dict[str, ObservedDockerState]",
+    on: "str | None",
+) -> list[str]:
+    """``CONTAINER``'s candidates, in order: container host ids, observed names, observed ids.
+
+    A host id is otto's own name and is right whatever the daemon holds; an
+    observed name is a hint; an id is a hint a person rarely types. With
+    ``--on``, ``CONTAINER`` is a docker name on that host (a host id would be
+    handed to docker verbatim and fail), so only that host's observed names
+    and ids are offered. A container host id is a dotted id whose first
+    segment is a docker-capable host. Mirrored by ``otto._shim_complete``;
+    change both or neither.
+    """
+    if on is not None:
+        state = observed_by_host.get(on)
+        return [] if state is None else [*state.container_names, *state.container_ids]
+    capable = set(docker_hosts)
+    ids = sorted(h for h in hosts if "." in h and h.split(".", 1)[0] in capable)
+    names: list[str] = []
+    cids: list[str] = []
+    for host_id in sorted(observed_by_host):
+        names.extend(observed_by_host[host_id].container_names)
+        cids.extend(observed_by_host[host_id].container_ids)
+    return list(dict.fromkeys([*ids, *names, *cids]))
+
+
+def _discovered_repos() -> "list[Any]":
+    """Return the active repos as discovery found them: settings and lab data, no init code.
+
+    The observed-state readers need the repos only to reach the cache file, so
+    a TAB goes through ``otto.bootstrap.discover()`` — NEVER ``get_repos()``,
+    which runs bootstrap and with it the user's init code inside a TAB.
+    """
+    from .. import bootstrap
+
+    return bootstrap.discover().repos
+
+
+def _observed_by_host() -> "dict[str, ObservedDockerState]":
+    """Every host's last-observed docker state, from the cache alone (a TAB never asks a host)."""
+    from ..config.completion_cache import read_docker_observed, read_docker_observed_hosts
+
+    repos = _discovered_repos()
+    return {h: read_docker_observed(repos, h) for h in read_docker_observed_hosts(repos)}
+
+
+@completion_source(kind="observed", key="containers", by_option="on")
+def _container_completer(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Shell-completion source for ``CONTAINER``: see :func:`_container_candidates`."""
+    from ..config import get_repos
+    from ..config.completion_cache import (
+        collect_docker_capable_host_ids,
+        collect_host_ids,
+        read_docker_observed,
+    )
+
+    try:
+        on = ctx.params.get("on") if isinstance(getattr(ctx, "params", None), dict) else None
+        if isinstance(on, str):
+            # Host ids are never offered under --on, and only that host's state is
+            # read: skip resolving the ids (a lab scan on a cold cache) and the rest.
+            candidates = _container_candidates(
+                [], [], {on: read_docker_observed(_discovered_repos(), on)}, on
+            )
+        else:
+            hosts = _names_or("hosts", lambda: collect_host_ids(get_repos()))
+            docker_hosts = _names_or(
+                "docker_hosts", lambda: collect_docker_capable_host_ids(get_repos())
+            )
+            candidates = _container_candidates(hosts, docker_hosts, _observed_by_host(), None)
+        return [c for c in candidates if c.startswith(incomplete)]
+    except Exception:  # noqa: BLE001 — completion never crashes the shell
+        return []
+
+
+@completion_source(kind="observed", key="images", by_option="on")
+def _tag_completer(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Shell-completion source for ``--tag``: the references the ``--on`` host's daemon last listed.
+
+    Nothing without ``--on``: an image reference is a per-daemon fact.
+    """
+    from ..config.completion_cache import read_docker_observed
+
+    try:
+        on = ctx.params.get("on") if isinstance(getattr(ctx, "params", None), dict) else None
+        if not isinstance(on, str):
+            return []
+        state = read_docker_observed(_discovered_repos(), on)
+        return [r for r in state.image_refs if r.startswith(incomplete)]
+    except Exception:  # noqa: BLE001 — completion never crashes the shell
+        return []
 
 
 def _default_use_case(use_case: str | None) -> str:
@@ -355,9 +518,69 @@ def _render_host_report(report: "HostReport", *, done: str) -> None:
         raise typer.Exit(1)
 
 
+def _build_hosts(report: "BuildReport") -> "list[str]":
+    """Return the hosts a build report names, in build order, each once."""
+    return list(dict.fromkeys(entry.host for entry in report.repos))
+
+
+async def _record_observed(
+    host_ids: "list[str]", *, images: bool = False, containers: bool = False
+) -> None:
+    """Record what the daemon answered on each host, for the next TAB; best-effort.
+
+    Runs after the verb's own work, on the session it already holds open: the
+    daemon is asked once more in a --format shape (:func:`observed_images`,
+    :func:`observed_containers`) and the answer replaces that host's
+    sub-entry, an empty answer included (the last container was removed). Hosts
+    are asked concurrently. The cache is a completion concern, so the leaf records, the
+    way ``otto tunnel`` records its ids; the library functions a suite calls
+    never write it. A dry run asked the daemon nothing and records nothing.
+    Any failure is one DEBUG line: a hint that could not be refreshed never
+    changes a verb's output or exit.
+    """
+    import asyncio
+
+    from ..host.host import is_dry_run
+
+    if is_dry_run():
+        return
+    await asyncio.gather(
+        *(_record_host(host_id, images=images, containers=containers) for host_id in host_ids)
+    )
+
+
+async def _record_host(host_id: str, *, images: bool, containers: bool) -> None:
+    """Ask one host's daemon and record the answer; swallow any failure.
+
+    The library probes let transport errors and a non-docker host id propagate
+    by design, and the cache write can fail on its own; this is the one place
+    that catches them all, so one host's failure never stops the next host's
+    record nor changes the verb.
+    """
+    from ..config.bootstrapped import get_repos
+    from ..config.completion_cache import record_docker_containers, record_docker_images
+    from ..docker.observe import observed_containers, observed_images
+
+    try:
+        if images:
+            seen = await observed_images(host_id)
+            if seen.answered:
+                record_docker_images(get_repos(), host_id, refs=seen.refs, ids=seen.ids)
+        if containers:
+            found = await observed_containers(host_id)
+            if found.answered:
+                record_docker_containers(get_repos(), host_id, names=found.names, ids=found.ids)
+    except Exception as e:  # noqa: BLE001 — a completion hint never fails a verb
+        logger.debug(r"\[docker] observed state of %s not recorded: %r", host_id, e)
+
+
 async def _build(
     image: Annotated[
-        list[str] | None, typer.Argument(help="Declared image names to build (default: all).")
+        list[str] | None,
+        typer.Argument(
+            help="Declared image names to build (default: all).",
+            autocompletion=_image_completer,
+        ),
     ] = None,
     on: Annotated[
         str | None,
@@ -368,12 +591,20 @@ async def _build(
         ),
     ] = None,
     repo: Annotated[
-        str | None, typer.Option("--repo", help="Restrict to a single repo by name.")
+        str | None,
+        typer.Option(
+            "--repo",
+            help="Restrict to a single repo by name.",
+            autocompletion=_repo_completer,
+        ),
     ] = None,
     tag: Annotated[
         list[str] | None,
         typer.Option(
-            "--tag", "-t", help="Image reference to tag, as `docker build -t`. Repeatable."
+            "--tag",
+            "-t",
+            help="Image reference to tag, as `docker build -t`. Repeatable.",
+            autocompletion=_tag_completer,
         ),
     ] = None,
     no_cache: Annotated[
@@ -413,6 +644,7 @@ async def _build(
         )
     )
     if not isinstance(report, _Declined):
+        await _record_observed(_build_hosts(report), images=True)
         _render_build_report(report)
 
 
@@ -427,7 +659,8 @@ async def _compose_build(
     image: Annotated[
         list[str] | None,
         typer.Argument(
-            help="Declared image names to build, over the use-case's winners (default: all)."
+            help="Declared image names to build, over the use-case's winners (default: all).",
+            autocompletion=_image_completer,
         ),
     ] = None,
     on: Annotated[
@@ -476,6 +709,7 @@ async def _compose_build(
         )
     )
     if not isinstance(report, _Declined):
+        await _record_observed(_build_hosts(report), images=True)
         _render_build_report(report)
 
 
@@ -489,7 +723,10 @@ async def _compose_up(
     ] = None,
     service: Annotated[
         list[str] | None,
-        typer.Argument(help="Restrict to these services (requires an explicit use-case)."),
+        typer.Argument(
+            help="Restrict to these services (requires an explicit use-case).",
+            autocompletion=_service_completer,
+        ),
     ] = None,
     on: Annotated[
         str | None,
@@ -570,6 +807,7 @@ async def _compose_up(
         )
     )
     if not isinstance(stack, _Declined):
+        await _record_observed(list(stack.by_host), containers=True)
         _print_stack_report(stack)
 
 
@@ -583,7 +821,10 @@ async def _compose_down(
     ] = None,
     service: Annotated[
         list[str] | None,
-        typer.Argument(help="Tear down only these services (requires an explicit use-case)."),
+        typer.Argument(
+            help="Tear down only these services (requires an explicit use-case).",
+            autocompletion=_service_completer,
+        ),
     ] = None,
     on: Annotated[
         str | None,
@@ -612,6 +853,9 @@ async def _compose_down(
     report = await _run_docker(teardown(name, services=service or None, on=on, provide=provide_map))
     if isinstance(report, _Declined):
         return
+    # A host whose teardown failed (unreachable, most often) is not asked again.
+    failed = report.failed
+    await _record_observed([h for h in report.hosts if h not in failed], containers=True)
     scope = f" ({', '.join(service)})" if service else ""
     _render_host_report(report, done=f"{name}{scope} torn down")
 
@@ -765,6 +1009,17 @@ def _render_observe(report: "ObserveReport", *, header: bool) -> None:
         raise typer.Exit(code)
 
 
+def _answered_hosts(report: "ObserveReport") -> "list[str]":
+    """Return the hosts whose command succeeded: one the verb could not ask is not asked again.
+
+    The observe leaves render first and record in a ``finally``, so docker's
+    lines are on screen before the probe runs and a failed host's exit still
+    records the hosts that answered; leaving the failed host out spares the
+    user its connect timeout a second time.
+    """
+    return [h.host_id for h in report.hosts if h.result.is_ok]
+
+
 async def _ps(
     all_: Annotated[
         bool,
@@ -785,7 +1040,10 @@ async def _ps(
     report = await _run_docker(list_containers(on=on, all=all_))
     if isinstance(report, _Declined):
         return
-    _render_observe(report, header=True)
+    try:
+        _render_observe(report, header=True)
+    finally:
+        await _record_observed(_answered_hosts(report), containers=True)
 
 
 async def _images(
@@ -804,7 +1062,10 @@ async def _images(
     report = await _run_docker(list_images(on=on))
     if isinstance(report, _Declined):
         return
-    _render_observe(report, header=True)
+    try:
+        _render_observe(report, header=True)
+    finally:
+        await _record_observed(_answered_hosts(report), images=True)
 
 
 async def _follow(resolve: "Coroutine[Any, Any, list[LogsTarget]]") -> None:
@@ -831,7 +1092,8 @@ async def _logs(
             help=(
                 "A container host id (test3.integration.web), "
                 "or with --on a docker container name or id."
-            )
+            ),
+            autocompletion=_container_completer,
         ),
     ],
     tail: Annotated[
@@ -920,7 +1182,10 @@ async def _compose_ps(
     report = await _run_docker(compose_ps(name, all=all_, on=on, provide=_parse_provide(provide)))
     if isinstance(report, _Declined):
         return
-    _render_observe(report, header=True)
+    try:
+        _render_observe(report, header=True)
+    finally:
+        await _record_observed(_answered_hosts(report), containers=True)
 
 
 async def _compose_logs(
@@ -933,7 +1198,10 @@ async def _compose_logs(
     ] = None,
     service: Annotated[
         list[str] | None,
-        typer.Argument(help="Only these services' logs (requires an explicit use-case)."),
+        typer.Argument(
+            help="Only these services' logs (requires an explicit use-case).",
+            autocompletion=_service_completer,
+        ),
     ] = None,
     tail: Annotated[
         str | None,

@@ -313,3 +313,51 @@ def test_info_reports_the_collect_child(tmp_path, monkeypatch):
         r"none starts for another \d+s",
         out,
     ), out
+
+
+def test_info_reports_what_the_docker_cache_still_vouches_for(tmp_path, monkeypatch):
+    from otto.bootstrap import discover
+    from otto.cli.cache import cache_app
+
+    _workspace(tmp_path, monkeypatch, references=["dut-1"])
+    _seed_cache()
+    repos = discover().repos
+    cc.record_docker_images(repos, "test3", refs=["a:1"], ids=["i"])
+    cc.record_docker_containers(repos, "alt2", names=["c"], ids=["x"])
+    result = runner.invoke(cache_app, ["info"])
+    assert result.exit_code == 0, result.output
+    assert "  docker observed: images on test3; containers on alt2" in result.output
+
+
+def test_info_says_nothing_observed_on_a_cold_docker_cache(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+
+    _workspace(tmp_path, monkeypatch, references=["dut-1"])
+    _seed_cache()
+    result = runner.invoke(cache_app, ["info"])
+    assert result.exit_code == 0, result.output
+    assert "  docker observed: nothing observed" in result.output
+
+
+def test_info_drops_an_expired_sub_entry_and_lists_hosts_sorted(tmp_path, monkeypatch):
+    """Containers last 15 minutes and images a day: sixteen minutes on, only the images stand."""
+    from otto.bootstrap import discover
+    from otto.cli.cache import cache_app
+
+    _workspace(tmp_path, monkeypatch, references=["dut-1"])
+    _seed_cache()
+    repos = discover().repos
+    cc.record_docker_images(repos, "zulu", refs=["a:1"], ids=["i"])
+    cc.record_docker_images(repos, "alpha", refs=["b:1"], ids=["j"])
+    cc.record_docker_containers(repos, "zulu", names=["c"], ids=["x"])
+    cc.record_docker_containers(repos, "mike", names=["d"], ids=["y"])
+    before = runner.invoke(cache_app, ["info"]).output
+    assert "  docker observed: images on alpha, zulu; containers on mike, zulu" in before
+
+    later = cc.time.time() + 16 * 60
+    monkeypatch.setattr("otto.config.completion_cache.time.time", lambda: later)
+    result = runner.invoke(cache_app, ["info"])
+
+    assert result.exit_code == 0, result.output
+    assert "  docker observed: images on alpha, zulu\n" in result.output
+    assert "mike" not in result.output

@@ -69,6 +69,7 @@ this workspace: e5f6a7b8-repo3
   shim: served (validated 12s ago)
   test names: served (42 names; checked 95s ago, the next check is due in 505s)
   collect child: idle
+  docker observed: images on test3; containers on test3
   inventory: json:/home/me/.otto/inventory.json
   lab files (repo3/local): /home/me/repo3/lab/lab.json, /home/me/repo3/hosts.json
   hosts offered: 3 — dut1 dut2 local
@@ -117,6 +118,10 @@ recorded. A background collection has no terminal to print to, so this line
 is where its failure shows. How the test-names cache is checked and
 refreshed is on
 [Tab-completing names](../test/selection.md#tab-completing-names).
+
+`docker observed` lists the docker hosts whose last-seen images or containers
+the cache still vouches for, or `nothing observed`; what records them and
+for how long is on [docker's completion section](../docker/index.md#completion).
 
 The two `.ok` marker files beside the cache record the last check of each
 kind (the one-minute window of the `shim` line, and the last check of the

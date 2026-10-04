@@ -173,3 +173,20 @@ def test_lab_filter_drops_container_for_docker_capable_host_outside_lab(tmp_path
 
     # test1 (and thus its container) belongs to unix, not unix_alt.
     assert collect_host_ids([repo], lab_names=["unix_alt"]) == ["alt2", "local"]
+
+
+def test_by_lab_buckets_hold_the_container_ids_the_lab_filter_synthesizes(tmp_path: Path) -> None:
+    """The warm lab-scoped answer (the buckets) equals the live one (``lab_names=``).
+
+    A bucket that held only the hosts themselves made a warm ``otto -l unix host <TAB>``
+    drop ``test1.myrepo.api`` while the cold path offered it.
+    """
+    compose = SimpleNamespace(services=("api",))
+    repo = _repo_with_docker(tmp_path, [_TEST1_DOCKER, _ALT2], compose)
+
+    by_lab = collect_host_ids_by_lab([repo])
+
+    assert by_lab["unix"] == ["test1", "test1.myrepo.api"]
+    assert by_lab["unix_alt"] == ["alt2"]
+    for lab, ids in by_lab.items():
+        assert sorted({*ids, "local"}) == collect_host_ids([repo], lab_names=[lab])

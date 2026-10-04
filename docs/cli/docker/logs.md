@@ -24,6 +24,9 @@ status (1 for that one).
 | `-f`, `--follow` | Follow the log live; Ctrl-C ends it. Needs an SSH parent (a telnet-reached host is refused, exit 2) |
 | `--on HOST` | The docker-capable host `CONTAINER` is a docker name or id on |
 
+TAB offers container host ids, then the container names and ids a verb saw in
+the last 15 minutes (with `--on`, only that host's names and ids — no host ids).
+
 Nothing is added to docker's output: one container on one host needs no
 `== <host-id> ==` header, so the lines are docker's alone. A container host id
 that names no container on its parent (the stack was never brought up, or was

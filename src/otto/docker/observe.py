@@ -176,6 +176,101 @@ async def list_images(on: "str | None" = None) -> ObserveReport:
     return await run_on(docker_parents(get_lab(), on), "docker images", asked="list_images")
 
 
+IMAGES_PROBE = r"docker images --format '{{.Repository}}:{{.Tag}}\t{{.ID}}'"
+"""The images question in a shape made for a program, one ``ref<TAB>id`` per line.
+
+The tab is docker's own two-character ``\\t`` escape, never a literal tab: a
+telnet, proxied or console parent types the command into a PTY shell whose
+line editor would take a literal tab for completion and drop it.
+"""
+CONTAINERS_PROBE = r"docker ps -a --format '{{.Names}}\t{{.ID}}'"
+"""The containers question, every container (a stopped one's logs are still docker's to print)."""
+
+
+@dataclass(frozen=True)
+class ObservedImages:
+    """Image references and ids a daemon listed, in its order.
+
+    *answered* separates "the daemon said there are none" (``True``, empty
+    lists: a fact) from "the probe failed or was declined, or its answer had no
+    row otto could read" (``False``: no fact).
+    """
+
+    refs: list[str]
+    ids: list[str]
+    answered: bool
+
+
+@dataclass(frozen=True)
+class ObservedContainers:
+    """Container names and ids a daemon listed, in its order.
+
+    *answered* separates "the daemon said there are none" (``True``, empty
+    lists: a fact) from "the probe failed or was declined, or its answer had no
+    row otto could read" (``False``: no fact).
+    """
+
+    names: list[str]
+    ids: list[str]
+    answered: bool
+
+
+def _tab_pairs(text: str) -> "tuple[list[str], list[str]]":
+    """Split ``--format`` lines into their two columns; a line without a tab is skipped."""
+    firsts: "list[str]" = []
+    seconds: "list[str]" = []
+    for line in text.splitlines():
+        first, tab, second = line.strip().partition("\t")
+        if not tab or not first or not second:
+            continue
+        firsts.append(first)
+        seconds.append(second)
+    return firsts, seconds
+
+
+def _answered(text: "str | None", parsed: "list[str]") -> bool:
+    """Whether a probe's answer is a fact: empty (nothing there), or with a row otto read.
+
+    A non-empty answer that parses to no row (a PTY expanding the tab to
+    spaces, a ``--format`` regression) is "could not read it", never "none":
+    recording it would replace good hints with empty ones for a whole TTL.
+    """
+    return text is not None and (not text.strip() or bool(parsed))
+
+
+async def _probe(host_id: str, command: str) -> "str | None":
+    """Run a probe quietly on *host_id*; ``None`` when the daemon did not answer.
+
+    Transport and refusal errors propagate; the caller decides whether to swallow them.
+    """
+    from ..config.fleet import get_lab
+
+    parent = docker_parent(get_lab(), host_id)
+    result = await parent.exec(command, log=LogMode.QUIET)
+    return result.value if result.status.is_ok and isinstance(result.value, str) else None
+
+
+async def observed_images(host_id: str) -> ObservedImages:
+    """Ask *host_id*'s daemon for its images once more, in a shape made for a program.
+
+    A completion hint, never a fact a verb reports: a failed or declined
+    probe is ``answered=False``, an empty answer is ``answered=True`` with
+    empty lists, an answer with no readable row is ``answered=False``, and
+    ``<none>:<none>`` (a dangling layer) is dropped because nobody types it.
+    """
+    text = await _probe(host_id, IMAGES_PROBE)
+    refs, ids = _tab_pairs(text or "")
+    kept = [(r, i) for r, i in zip(refs, ids, strict=True) if r != "<none>:<none>"]
+    return ObservedImages([r for r, _ in kept], [i for _, i in kept], _answered(text, refs))
+
+
+async def observed_containers(host_id: str) -> ObservedContainers:
+    """Ask *host_id*'s daemon for every container once more, in a shape made for a program."""
+    text = await _probe(host_id, CONTAINERS_PROBE)
+    names, ids = _tab_pairs(text or "")
+    return ObservedContainers(names, ids, _answered(text, names))
+
+
 def logs_flags(*, tail: "str | None", since: "str | None", timestamps: bool) -> str:
     """Docker's own log flags, in docker's spelling, as a suffix (leading space) or ``""``."""
     parts: "list[str]" = []

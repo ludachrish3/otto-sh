@@ -18,6 +18,14 @@ DAEMON_LIST_COMMAND = (
 )
 """The daemon query, through ``otto host <id> exec``, which shares no code with the docker verbs."""
 
+DAEMON_PS_PAIRS_COMMAND = f"docker ps -a --format '{MARK} {{{{.Names}}}} {{{{.ID}}}}'"
+"""Every container's name and id, in the daemon's own order, marked like the rows above."""
+
+DAEMON_IMAGE_PAIRS_COMMAND = (
+    f"docker images --format '{MARK} {{{{.Repository}}}}:{{{{.Tag}}}} {{{{.ID}}}}'"
+)
+"""Every image's reference and id, in the daemon's own order."""
+
 _BUILT = re.compile(
     r"(?P<image>\S+): built (?P<refs>\S+(?:, \S+)*)\s+(?P<id>[0-9a-f]{12})\s+\((?P<host>[^)]+)\)"
 )
@@ -69,6 +77,22 @@ def parse_daemon_rows(text: str) -> "dict[str, str]":
         if len(fields) >= 2 and _SHORT_ID.fullmatch(fields[1]):
             rows[fields[0]] = fields[1]
     return rows
+
+
+def parse_daemon_pairs(text: str) -> "list[list[str]]":
+    """Return ``[name_or_ref, id]`` per row the pairs commands printed in *text*, in order.
+
+    Unlike :func:`parse_daemon_rows` this keeps the daemon's ORDER and any
+    repeated key, because the cache the differential compares it to is a list.
+    The echo of the command itself carries the mark too; its unexpanded
+    ``{{.Names}}`` template starts with ``{{`` and is not a row.
+    """
+    pairs: "list[list[str]]" = []
+    for line in text.splitlines():
+        _, sep, rest = line.partition(f"{MARK} ")
+        if sep and len(rest.split()) == 2 and not rest.startswith("{{"):
+            pairs.append(rest.split())
+    return pairs
 
 
 def project_image_ids_command(compose_project: str) -> str:

@@ -26,11 +26,14 @@ from otto.result import CommandResult
 from otto.utils import Status
 from tests.e2e.docker._cli import _WIDE
 from tests.e2e.docker._honesty import (
+    DAEMON_IMAGE_PAIRS_COMMAND,
     DAEMON_LIST_COMMAND,
+    DAEMON_PS_PAIRS_COMMAND,
     MARK,
     names_a_missing_image,
     parse_built_line,
     parse_compose_ps_names,
+    parse_daemon_pairs,
     parse_daemon_rows,
     parse_images_rows,
     parse_project_image_ids,
@@ -127,6 +130,38 @@ def test_the_relay_logs_at_info_so_no_debug_level_is_needed(console, capsys):
     BaseHost._log_output(SimpleNamespace(name="test3"), f"{MARK} a:b 0123456789ab")  # ty: ignore[invalid-argument-type] — a name-only stand-in is all the logger reads
     assert logging.getLogger().getEffectiveLevel() <= logging.INFO
     assert parse_daemon_rows(capsys.readouterr().out) == {"a:b": "0123456789ab"}
+
+
+def test_parse_daemon_pairs_keeps_the_daemons_order_and_skips_the_echo(console, capsys):
+    host = SimpleNamespace(name="test3")
+    rows = [("web-1", "cbd8571d4b6e"), ("db-1", "0123456789ab"), ("web-0", "aaaaaaaaaaaa")]
+    BaseHost._log_command(host, DAEMON_PS_PAIRS_COMMAND)  # ty: ignore[invalid-argument-type] — a name-only stand-in is all the logger reads
+    stray = [
+        f"{MARK} too many fields here",  # marked, but not a two-field row
+        f"{MARK} lonely",  # marked, one field
+        "unmarked two",  # two fields, no mark: not the daemon query's row
+    ]
+    BaseHost._log_output(host, "\n".join([*stray, *(f"{MARK} {name} {cid}" for name, cid in rows)]))  # ty: ignore[invalid-argument-type] — as above
+    out = capsys.readouterr().out
+
+    assert "{{.Names}}" in out, (
+        "the echo is in the text, which is why the parser must tell it apart"
+    )
+    assert parse_daemon_pairs(out) == [[name, cid] for name, cid in rows]
+
+
+def test_parse_daemon_pairs_reads_the_images_command_and_keeps_a_repeated_id(console, capsys):
+    host = SimpleNamespace(name="test3")
+    BaseHost._log_command(host, DAEMON_IMAGE_PAIRS_COMMAND)  # ty: ignore[invalid-argument-type] — a name-only stand-in is all the logger reads
+    BaseHost._log_output(
+        host,  # ty: ignore[invalid-argument-type] — as above
+        f"{MARK} a:1 cbd8571d4b6e\n{MARK} a:2 cbd8571d4b6e\n{MARK} <none>:<none> 0123456789ab",
+    )
+    assert parse_daemon_pairs(capsys.readouterr().out) == [
+        ["a:1", "cbd8571d4b6e"],
+        ["a:2", "cbd8571d4b6e"],
+        ["<none>:<none>", "0123456789ab"],
+    ]
 
 
 _FULL_ID = "cbd8571d4b6e" + "0123456789abcdef" * 3 + "0123"

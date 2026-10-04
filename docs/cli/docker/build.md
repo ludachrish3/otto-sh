@@ -47,6 +47,9 @@ home for them; {doc}`compose/build` links here.
 | `--build-arg KEY=VALUE` | As `docker build`'s `--build-arg`. Repeatable; added to the entry's declared `build_args`, and a repeated key wins over the declaration |
 | `--target STAGE` | As `docker build`'s `--target`; replaces the entry's declared `target` |
 
+`--tag <TAB>` offers the references the `--on` host's daemon listed in the last
+day.
+
 A flag docker does not have is not here, and a flag otto once had that
 docker does not is gone; the parser rejects it like any unknown flag.
 

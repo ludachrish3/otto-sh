@@ -41,6 +41,20 @@ A curated verb exists only where otto adds something docker cannot do from the h
 otto host test3 exec "docker ps --format '{{.ID}} {{.Names}}'"
 ```
 
+## Completion
+
+TAB always offers the names a repo declares: the images in `[[docker.images]]`,
+the services of the use-case already on the line, the repo names, and the
+lab's container host ids. It adds what a docker daemon last said, once a verb
+has asked it: `ps`, `compose ps`, `compose up` and `compose down` record that
+host's containers, `images`, `build` and `compose build` its images, and only for the
+host it asked. Those names are offered at `logs CONTAINER` ({doc}`logs`) and
+`build --tag` with `--on` ({doc}`build`). A TAB never contacts a host; it reads
+what the last verb recorded. `otto cache info` ({doc}`../cache/index`) shows
+which hosts still have something vouched for, and
+{doc}`../../architecture/subsystems/completion-cache` is the home for which
+verb records what, for how long, and how the record is kept.
+
 ## Synopsis
 
 ```text

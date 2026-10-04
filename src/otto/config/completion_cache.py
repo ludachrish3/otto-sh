@@ -56,6 +56,9 @@ it was generated, and a taint flag::
                     "host_drops": [{"repo": "sut", "where": "...", "reason": "..."}],
                     "docker_hosts": ["test1", ...],
                     "docker_use_cases": ["integration", ...],
+                    "docker_images": ["api", ...],
+                    "docker_services_by_use_case": {"integration": ["api", "db"], ...},
+                    "repos": ["sut", ...],
                     "term_backends": ["ssh", "telnet", ...],
                     "transfer_backends": [
                         {"name": "scp", "host_families": ["unix"]}, ...
@@ -228,7 +231,9 @@ CACHE_FILENAME = "completion_cache.json"
 #      name blob no writer updates any more.
 # v24: the root group gains ``--list-products`` / ``--list-tools``; a warm cache
 #      learns them on the next rebuild.
-SCHEMA_VERSION = 24
+# v25: the names payload gains docker_images, docker_services_by_use_case and
+#      repos (#570).
+SCHEMA_VERSION = 25
 
 # A conftest holds no test of its own, but pytest loads it before collecting
 # anything under its directory, so the per-file tables watch every one.
@@ -925,6 +930,7 @@ def read_cache(
 
     On success returns one flat dict with ``instructions``, ``test_options``,
     ``hosts``, ``hosts_by_lab``, ``docker_hosts``, ``docker_use_cases``,
+    ``docker_images``, ``docker_services_by_use_case``, ``repos``,
     ``term_backends``, ``transfer_backends``, ``usernames``, ``commands``,
     ``labs``, ``host_classes_by_id``, ``projects``, ``links`` and
     ``logins_by_host`` keys. ``instructions`` and ``hosts`` are required; the
@@ -945,6 +951,9 @@ def read_cache(
     hosts_by_lab = merged.get("hosts_by_lab", {})
     docker_hosts = merged.get("docker_hosts", [])
     docker_use_cases = merged.get("docker_use_cases", [])
+    docker_images = merged.get("docker_images", [])
+    docker_services_by_use_case = merged.get("docker_services_by_use_case", {})
+    repo_names = merged.get("repos", [])
     term_backends = merged.get("term_backends", [])
     transfer_backends = merged.get("transfer_backends", [])
     usernames = merged.get("usernames", [])
@@ -962,6 +971,9 @@ def read_cache(
         or not isinstance(hosts_by_lab, dict)
         or not isinstance(docker_hosts, list)
         or not isinstance(docker_use_cases, list)
+        or not isinstance(docker_images, list)
+        or not isinstance(docker_services_by_use_case, dict)
+        or not isinstance(repo_names, list)
         or not isinstance(term_backends, list)
         or not isinstance(transfer_backends, list)
         or not isinstance(usernames, list)
@@ -982,6 +994,9 @@ def read_cache(
         "host_drops": host_drops,
         "docker_hosts": docker_hosts,
         "docker_use_cases": docker_use_cases,
+        "docker_images": docker_images,
+        "docker_services_by_use_case": docker_services_by_use_case,
+        "repos": repo_names,
         "term_backends": term_backends,
         "transfer_backends": transfer_backends,
         "usernames": usernames,
@@ -1054,6 +1069,9 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     test_options: list[dict[str, Any]] | None = None,
     docker_hosts: list[str] | None = None,
     docker_use_cases: list[str] | None = None,
+    docker_images: list[str] | None = None,
+    docker_services_by_use_case: dict[str, list[str]] | None = None,
+    repos_names: list[str] | None = None,
     term_backends: list[str] | None = None,
     transfer_backends: list[dict[str, Any]] | None = None,
     usernames: list[str] | None = None,
@@ -1113,6 +1131,9 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
             "host_drops": host_drops or [],
             "docker_hosts": docker_hosts or [],
             "docker_use_cases": docker_use_cases or [],
+            "docker_images": docker_images or [],
+            "docker_services_by_use_case": docker_services_by_use_case or {},
+            "repos": repos_names or [],
             "term_backends": term_backends or [],
             "transfer_backends": transfer_backends or [],
             "usernames": usernames or [],
@@ -1804,6 +1825,99 @@ def collect_docker_use_case_names(repos: list["Repo"]) -> list[str]:
     return sorted({uc.name for repo in repos for uc in repo.docker_settings.use_cases})
 
 
+def collect_docker_image_names(repos: list["Repo"]) -> list[str]:
+    """Every ``[[docker.images]]`` name the active repos declare, sorted, each once.
+
+    The completion source for ``build IMAGE…`` / ``compose build USE_CASE IMAGE…``.
+    Parsed settings only — no lab, no bootstrap — like the use-case names.
+    """
+    return sorted({image.name for repo in repos for image in repo.docker_settings.images})
+
+
+def collect_docker_services_by_use_case(repos: list["Repo"]) -> dict[str, list[str]]:
+    """Each declared use-case to the sorted union of services its composes declare.
+
+    The completion source for ``SERVICE…`` once a ``USE_CASE`` is on the line.
+    A use-case shared by several repos is one use-case (parent spec §3.1),
+    so its services are the union across them. A fragment naming a compose
+    handle its repo does not declare never reaches here — settings parsing
+    refuses it (``DockerSettingsSpec``) — so the ``None`` branch below is
+    purely defensive.
+    """
+    services: dict[str, set[str]] = {}
+    for repo in repos:
+        docker = repo.docker_settings
+        by_handle = {c.name: c for c in docker.composes if c.name}
+        for use_case in docker.use_cases:
+            bucket = services.setdefault(use_case.name, set())
+            for handle in use_case.composes:
+                compose = by_handle.get(handle)
+                if compose is not None:
+                    bucket.update(compose.services)
+    return {name: sorted(found) for name, found in sorted(services.items())}
+
+
+def collect_repo_names(repos: list["Repo"]) -> list[str]:
+    """Every active repo's name, sorted: the completion source for ``--repo``."""
+    return sorted(repo.name for repo in repos)
+
+
+def _declared_container_ids(repo: "Repo", parents: list[str]) -> list[str]:
+    """Return the container host ids *repo*'s ``[docker]`` settings declare under each of *parents*.
+
+    Shared by :func:`collect_host_ids` and :func:`collect_host_ids_by_lab`, so the
+    warm lab-scoped answer and the live one cannot drift.
+    """
+    docker = getattr(repo, "docker_settings", None)
+    if docker is None or not docker.composes:
+        return []
+    # Mirror `register_declared_container_hosts`' branch, id shape for id
+    # shape: a repo declaring `[[docker.use_cases]]` registers
+    # `<parent>.<usecase>.<service>` placeholders (spec §9) and takes the
+    # use-case branch INSTEAD OF the legacy composes walk, never both.
+    # Synthesizing `<parent>.<repo>.<service>` here regardless made
+    # completion offer an id nothing registers whenever a use-case is not
+    # named after its repo — the exact id the user needs never completes,
+    # while `--list-hosts` shows it. (The sample repos name their
+    # use-cases after themselves, which is why the divergence hid.)
+    #
+    # The PLACEMENT half is deliberately not mirrored: this function has
+    # no Lab, so it stays pessimistic-but-stable (every docker-capable
+    # host in the repo's labs) exactly as the legacy walk does,
+    # while the placeholder walk resolves one host per fragment.
+    middles_for: "dict[str, set[str]]" = {}  # service -> id middle segments
+    # getattr, like `docker_settings` above: this is the completion fast
+    # path, which must not crash on a settings object that predates the
+    # field (or on a test double that never grew it).
+    use_cases = getattr(docker, "use_cases", ()) or ()
+    if use_cases:
+        by_handle = {c.name: c for c in docker.composes if c.name}
+        for uc in use_cases:
+            for handle in uc.composes:
+                compose = by_handle.get(handle)
+                # An unresolvable handle is settings the schema would
+                # reject; completion never crashes on bad data, it just
+                # offers nothing for it.
+                if compose is None:
+                    continue
+                for service in compose.services:
+                    middles_for.setdefault(service, set()).add(uc.name)
+    else:
+        for compose in docker.composes:
+            for service in compose.services:
+                middles_for.setdefault(service, set()).add(repo.name)
+
+    # No per-compose placement any more (spec §14): enumerate every
+    # docker-capable host in this repo's labs (pessimistic but stable;
+    # the actual bring-up picks one via the use-case machinery).
+    return [
+        f"{parent}.{middle}.{service}".lower()
+        for parent in parents
+        for service, middles in middles_for.items()
+        for middle in middles
+    ]
+
+
 def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) -> list[str]:
     """Enumerate every host ID reachable via the configured lab search paths.
 
@@ -1849,52 +1963,7 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
             if summary.docker_capable:
                 docker_capable_ids.append(summary.id)
 
-        docker = getattr(repo, "docker_settings", None)
-        if docker is None or not docker.composes:
-            continue
-        # Mirror `register_declared_container_hosts`' branch, id shape for id
-        # shape: a repo declaring `[[docker.use_cases]]` registers
-        # `<parent>.<usecase>.<service>` placeholders (spec §9) and takes the
-        # use-case branch INSTEAD OF the legacy composes walk, never both.
-        # Synthesizing `<parent>.<repo>.<service>` here regardless made
-        # completion offer an id nothing registers whenever a use-case is not
-        # named after its repo — the exact id the user needs never completes,
-        # while `--list-hosts` shows it. (The sample repos name their
-        # use-cases after themselves, which is why the divergence hid.)
-        #
-        # The PLACEMENT half is deliberately not mirrored: this function has
-        # no Lab, so it stays pessimistic-but-stable (every docker-capable
-        # host in the repo's labs) exactly as the legacy walk below does,
-        # while the placeholder walk resolves one host per fragment.
-        middles_for: "dict[str, set[str]]" = {}  # service -> id middle segments
-        # getattr, like `docker_settings` above: this is the completion fast
-        # path, which must not crash on a settings object that predates the
-        # field (or on a test double that never grew it).
-        use_cases = getattr(docker, "use_cases", ()) or ()
-        if use_cases:
-            by_handle = {c.name: c for c in docker.composes if c.name}
-            for uc in use_cases:
-                for handle in uc.composes:
-                    compose = by_handle.get(handle)
-                    # An unresolvable handle is settings the schema would
-                    # reject; completion never crashes on bad data, it just
-                    # offers nothing for it.
-                    if compose is None:
-                        continue
-                    for service in compose.services:
-                        middles_for.setdefault(service, set()).add(uc.name)
-        else:
-            for compose in docker.composes:
-                for service in compose.services:
-                    middles_for.setdefault(service, set()).add(repo.name)
-
-        # No per-compose placement any more (spec §14): enumerate every
-        # docker-capable host in this repo's labs (pessimistic but stable;
-        # the actual bring-up picks one via the use-case machinery).
-        for parent in docker_capable_ids:
-            for service, middles in middles_for.items():
-                for middle in middles:
-                    ids.add(f"{parent}.{middle}.{service}".lower())
+        ids.update(_declared_container_ids(repo, docker_capable_ids))
 
     return sorted(ids)
 
@@ -2030,9 +2099,11 @@ def collect_lab_names(repos: list["Repo"]) -> list[str]:
 
 
 def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
-    """Map each lab name to the host IDs that belong to it (pure membership).
+    """Map each lab name to its host IDs and declared container ids.
 
-    Powers lab-scoped ``otto host <TAB>`` completion from the fast cache path:
+    Membership plus the container ids under the lab's docker-capable hosts —
+    exactly what the live path offers. Powers lab-scoped ``otto host <TAB>``
+    completion from the fast cache path:
     the completer unions the buckets for the selected lab(s) and adds the
     always-present built-in hosts. The buckets therefore deliberately EXCLUDE
     built-ins — the "``local`` is in every lab" policy lives in the completer,
@@ -2051,16 +2122,23 @@ def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
     builtins = set(builtin_host_ids())
     # Seed every known lab so one whose hosts all fail to enumerate still gets
     # an (empty) bucket, keeping this shape identical to the per-lab form.
-    by_lab: dict[str, dict[str, "HostSummary"]] = {lab: {} for lab in collect_lab_names(repos)}
+    by_lab: dict[str, set[str]] = {lab: set() for lab in collect_lab_names(repos)}
     resolution = resolve_process_inventory(repos)
     for repo in repos:
+        parents_by_lab: dict[str, list[str]] = {}
         for summary in repo_host_summaries(repo, resolution):
             if summary.id in builtins:
                 continue
             for lab in summary.labs:
-                by_lab.setdefault(lab, {})[summary.id] = summary
+                by_lab.setdefault(lab, set()).add(summary.id)
+                if summary.docker_capable:
+                    parents_by_lab.setdefault(lab, []).append(summary.id)
+        # The declared container ids belong to the labs of their docker-capable parent,
+        # exactly as `collect_host_ids(lab_names=...)` scopes them.
+        for lab, parents in parents_by_lab.items():
+            by_lab[lab].update(_declared_container_ids(repo, parents))
 
-    return {lab: sorted(summaries) for lab, summaries in by_lab.items()}
+    return {lab: sorted(ids) for lab, ids in by_lab.items()}
 
 
 def collect_host_classes_by_id(repos: list["Repo"]) -> dict[str, str]:
@@ -2507,6 +2585,165 @@ def read_tunnel_ids(repos: list["Repo"]) -> list[str] | None:
         return None
     ids = entry.get("ids")
     return ids if isinstance(ids, list) else None
+
+
+# ---------------------------------------------------------------------------
+# What the daemon last said: `__docker_observed__`, for the docker completers
+# ---------------------------------------------------------------------------
+#
+# Beside DYNAMIC_TUNNELS_KEY, by the same pattern: a reserved top-level key,
+# never inside a fingerprint entry, because docker state is the daemon's and
+# changes with no file otto tracks. Two independently stamped sub-entries
+# per host — a verb that asked about images knows nothing about containers —
+# each judged against its own TTL: containers come and go, so 15 minutes; an
+# image reference is a hint still worth offering a day later. A TAB reads
+# this and writes nothing; an expired sub-entry is absent from the read,
+# never deleted here.
+DOCKER_OBSERVED_KEY = "__docker_observed__"
+DOCKER_OBSERVED_SCHEMA_VERSION = 1
+DOCKER_OBSERVED_CONTAINERS_TTL_SECONDS = 15 * 60
+DOCKER_OBSERVED_IMAGES_TTL_SECONDS = 24 * 60 * 60
+DOCKER_OBSERVED_CAP = 200
+"""At most this many references and this many containers per host: a warm TAB
+stays one file read, O(1) in what a daemon holds."""
+
+
+@dataclass(frozen=True)
+class ObservedDockerState:
+    """What the cache still vouches for on one host; every list empty when it is cold."""
+
+    image_refs: list[str]
+    image_ids: list[str]
+    container_names: list[str]
+    container_ids: list[str]
+
+
+_EMPTY_OBSERVED = ObservedDockerState([], [], [], [])
+
+
+def _record_docker_sub_entry(
+    repos: list["Repo"], host_id: str, kind: str, payload: dict[str, list[str]]
+) -> None:
+    """Replace *host_id*'s *kind* sub-entry (``"images"`` / ``"containers"``) whole."""
+    if not repos or _fingerprint_is_ephemeral(repos):
+        return
+    cache_path = _cache_path()
+    if cache_path is None:
+        return
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict[str, Any] = {}
+    if cache_path.is_file():
+        try:
+            loaded = json.loads(cache_path.read_text())
+            if isinstance(loaded, dict):
+                existing = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+    namespace = existing.get(DOCKER_OBSERVED_KEY)
+    hosts = namespace.get("hosts") if isinstance(namespace, dict) else None
+    if (
+        not isinstance(namespace, dict)
+        or namespace.get("schema_version") != DOCKER_OBSERVED_SCHEMA_VERSION
+        or not isinstance(hosts, dict)
+    ):
+        hosts = {}
+        namespace = {"schema_version": DOCKER_OBSERVED_SCHEMA_VERSION, "hosts": hosts}
+    host_entry = hosts.get(host_id)
+    if not isinstance(host_entry, dict):
+        host_entry = {}
+    host_entry[kind] = {
+        "observed_at": int(time.time()),
+        **{key: list(values)[:DOCKER_OBSERVED_CAP] for key, values in payload.items()},
+    }
+    hosts[host_id] = host_entry
+    existing[DOCKER_OBSERVED_KEY] = namespace
+    _atomic_write_json(cache_path, existing)
+
+
+def record_docker_images(
+    repos: list["Repo"], host_id: str, *, refs: list[str], ids: list[str]
+) -> None:
+    """Record the image references and ids a verb just saw on *host_id*."""
+    _record_docker_sub_entry(repos, host_id, "images", {"refs": refs, "ids": ids})
+
+
+def record_docker_containers(
+    repos: list["Repo"], host_id: str, *, names: list[str], ids: list[str]
+) -> None:
+    """Record the container names and ids a verb just saw on *host_id*."""
+    _record_docker_sub_entry(repos, host_id, "containers", {"names": names, "ids": ids})
+
+
+def _load_docker_observed_hosts(repos: list["Repo"]) -> dict[str, Any]:
+    """Return the ``hosts`` map of a well-formed namespace, else ``{}``; never raises."""
+    if not repos:
+        return {}
+    cache_path = _cache_path()
+    if cache_path is None or not cache_path.is_file():
+        return {}
+    try:
+        data = json.loads(cache_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    namespace = data.get(DOCKER_OBSERVED_KEY) if isinstance(data, dict) else None
+    if (
+        not isinstance(namespace, dict)
+        or namespace.get("schema_version") != DOCKER_OBSERVED_SCHEMA_VERSION
+    ):
+        return {}
+    hosts = namespace.get("hosts")
+    return hosts if isinstance(hosts, dict) else {}
+
+
+def _fresh_lists(
+    entry: Any, ttl: int, keys: tuple[str, str], now: float
+) -> tuple[list[str], list[str]]:
+    """Both lists of a sub-entry inside *ttl*, else two empty lists."""
+    if not isinstance(entry, dict):
+        return [], []
+    observed_at = entry.get("observed_at")
+    if not isinstance(observed_at, (int, float)) or now - observed_at > ttl:
+        return [], []
+    first, second = entry.get(keys[0]), entry.get(keys[1])
+    if not isinstance(first, list) or not isinstance(second, list):
+        return [], []
+    return [str(v) for v in first], [str(v) for v in second]
+
+
+def _observed_state(host_entry: Any, now: float) -> ObservedDockerState:
+    if not isinstance(host_entry, dict):
+        return _EMPTY_OBSERVED
+    refs, image_ids = _fresh_lists(
+        host_entry.get("images"), DOCKER_OBSERVED_IMAGES_TTL_SECONDS, ("refs", "ids"), now
+    )
+    names, container_ids = _fresh_lists(
+        host_entry.get("containers"),
+        DOCKER_OBSERVED_CONTAINERS_TTL_SECONDS,
+        ("names", "ids"),
+        now,
+    )
+    return ObservedDockerState(refs, image_ids, names, container_ids)
+
+
+def read_docker_observed(
+    repos: list["Repo"], host_id: str, *, now: float | None = None
+) -> ObservedDockerState:
+    """Return what the cache still vouches for on *host_id*, each sub-entry inside its own TTL.
+
+    Empty lists for a cold host, an expired sub-entry, a malformed entry or
+    another schema — a TAB path, so it never raises and never writes.
+    """
+    hosts = _load_docker_observed_hosts(repos)
+    return _observed_state(hosts.get(host_id), time.time() if now is None else now)
+
+
+def read_docker_observed_hosts(repos: list["Repo"], *, now: float | None = None) -> list[str]:
+    """Sorted host ids with at least one NON-EMPTY sub-entry still inside its TTL."""
+    hosts = _load_docker_observed_hosts(repos)
+    stamp = time.time() if now is None else now
+    return sorted(
+        h for h, entry in hosts.items() if _observed_state(entry, stamp) != _EMPTY_OBSERVED
+    )
 
 
 # --- `otto cache info`: the outlet's read side -------------------------------

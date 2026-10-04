@@ -81,7 +81,7 @@ def test_write_and_read_round_trip_and_no_password_is_written(tmp_path, monkeypa
     raw = cc._cache_path().read_text()
     assert "hunter2" not in raw
     assert "toor" not in raw
-    assert json.loads(raw)["schema"] == cc.SCHEMA_VERSION == 24
+    assert json.loads(raw)["schema"] == cc.SCHEMA_VERSION == 25
 
 
 def test_read_cache_rejects_a_malformed_login_map(tmp_path, monkeypatch):

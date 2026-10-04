@@ -876,6 +876,9 @@ DELEGATED_NAMES_KEYS: frozenset[str] = frozenset(
         "host_drops",
         "docker_hosts",
         "docker_use_cases",
+        "docker_images",
+        "docker_services_by_use_case",
+        "repos",
         "term_backends",
         "transfer_backends",
         "usernames",
@@ -899,7 +902,10 @@ broad ``except`` and hands over — their Typer-side completers
 (``_project_completer`` and the link-id completer) stay live, spec §5 lists
 no change to them. ``logins_by_host`` is read by
 ``otto.cli.completers.host_user_completer``, which scopes a host verb's
-``--user`` menu to the typed host's logins. Test names are in no section:
+``--user`` menu to the typed host's logins. ``docker_images``,
+``docker_services_by_use_case`` and ``repos`` are the declared names the docker
+verbs complete from (images, the services of a typed use-case, ``--repo``).
+Test names are in no section:
 they live in the per-file test tables (``otto.config.collected_tests``).
 
 ``tests/unit/config/test_cache_sections.py`` pins that
@@ -1126,6 +1132,8 @@ def entry(cache_stale: bool = False) -> None:
                         collect_cli_commands,
                         collect_current_commands,
                         collect_docker_capable_host_ids,
+                        collect_docker_image_names,
+                        collect_docker_services_by_use_case,
                         collect_docker_use_case_names,
                         collect_host_classes_by_id,
                         collect_host_drops,
@@ -1135,6 +1143,7 @@ def entry(cache_stale: bool = False) -> None:
                         collect_links,
                         collect_logins_by_host,
                         collect_project_names,
+                        collect_repo_names,
                         collect_reservation_usernames,
                         collect_test_verb_options,
                         write_cache,
@@ -1151,6 +1160,11 @@ def entry(cache_stale: bool = False) -> None:
                             test_options=collect_test_verb_options(),
                             docker_hosts=collect_docker_capable_host_ids(result.repos),
                             docker_use_cases=collect_docker_use_case_names(result.repos),
+                            docker_images=collect_docker_image_names(result.repos),
+                            docker_services_by_use_case=collect_docker_services_by_use_case(
+                                result.repos
+                            ),
+                            repos_names=collect_repo_names(result.repos),
                             term_backends=backends["term_backends"],
                             transfer_backends=backends["transfer_backends"],
                             usernames=collect_reservation_usernames(result.repos),

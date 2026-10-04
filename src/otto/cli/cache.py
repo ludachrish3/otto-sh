@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 
     from ..config.cache_maintenance import MaintenanceReport
     from ..config.completion_cache import CollectChildState, InventoryDescription, SectionStatus
+    from ..config.repo import Repo
 
 cache_app = typer.Typer(
     name="cache",
@@ -234,6 +235,21 @@ def _section_state_text(status: "SectionStatus", inventory: "InventoryDescriptio
     return text
 
 
+def _docker_observed_text(repos: "list[Repo]") -> str:
+    """Word the `docker observed` line: hosts whose last-seen docker names are still vouched for."""
+    from ..config.completion_cache import read_docker_observed, read_docker_observed_hosts
+
+    observed = {h: read_docker_observed(repos, h) for h in read_docker_observed_hosts(repos)}
+    with_images = [h for h, s in observed.items() if s.image_refs]
+    with_containers = [h for h, s in observed.items() if s.container_names]
+    parts = []
+    if with_images:
+        parts.append(f"images on {', '.join(with_images)}")
+    if with_containers:
+        parts.append(f"containers on {', '.join(with_containers)}")
+    return "; ".join(parts) if parts else "nothing observed"
+
+
 def _collect_child_text(state: "CollectChildState") -> str:
     """Word the `collect child` line: whether one runs, and whether one may start."""
     if state.lock_age is None:
@@ -310,6 +326,7 @@ def _print_this_workspace() -> None:
     )
     typer.echo(f"  test names: {tests_text}")
     typer.echo(f"  collect child: {_collect_child_text(collect_child_state())}")
+    typer.echo(f"  docker observed: {_docker_observed_text(repos)}")
     typer.echo(f"  inventory: {inventory.text}")
     for repo in repos:
         for source in repo.lab_sources:

@@ -83,6 +83,9 @@ def _write_cache_like_entry(repos) -> None:
         cc.collect_host_ids(repos),
         docker_hosts=cc.collect_docker_capable_host_ids(repos),
         docker_use_cases=cc.collect_docker_use_case_names(repos),
+        docker_images=cc.collect_docker_image_names(repos),
+        docker_services_by_use_case=cc.collect_docker_services_by_use_case(repos),
+        repos_names=cc.collect_repo_names(repos),
         term_backends=backends["term_backends"],
         transfer_backends=backends["transfer_backends"],
         usernames=cc.collect_reservation_usernames(repos),
@@ -96,6 +99,20 @@ def _write_cache_like_entry(repos) -> None:
         logins_by_host=cc.collect_logins_by_host(repos),
         shim=build_shim_payload(repos),
     )
+
+
+def _seed_observed(repos) -> None:
+    """One fresh and one expired sub-entry per kind, so the TTL rows compare on both sides."""
+    cc.record_docker_images(repos, "dut1", refs=["api:latest", "api:1.2"], ids=["sha-a", "sha-b"])
+    cc.record_docker_containers(repos, "dut1", names=["east-integration-x-api-1"], ids=["3f9a3f9a"])
+    path = cc._cache_path()
+    raw = json.loads(path.read_text())
+    hosts = raw[cc.DOCKER_OBSERVED_KEY]["hosts"]
+    hosts["dut2"] = {
+        "images": {"observed_at": time.time() - 25 * 3600, "refs": ["stale:1"], "ids": ["old"]},
+        "containers": {"observed_at": time.time() - 16 * 60, "names": ["stale-1"], "ids": ["dead"]},
+    }
+    path.write_text(json.dumps(raw))
 
 
 def _seed_matching_tables(repos) -> None:
@@ -180,6 +197,7 @@ def world(tmp_path, monkeypatch):
         assert not result.errors, result.errors
         repos = result.repos
         _write_cache_like_entry(repos)
+        _seed_observed(repos)
         _seed_matching_tables(repos)
 
         def _no_child():
@@ -420,6 +438,25 @@ HAND_WRITTEN = [
     ("otto host box get --user ", 5),
     ("otto host ghost exec --user ", 5),
     ("otto -l west host dut1 exec --user ", 7),
+    ("otto docker build ", 3),
+    ("otto docker build a", 3),
+    ("otto docker build --repo ", 4),
+    ("otto docker build --on dut1 --tag ", 6),
+    ("otto docker build --on dut1 --tag api:", 6),
+    ("otto docker build --on dut2 --tag ", 6),
+    ("otto docker build --tag ", 4),
+    ("otto docker compose build integration ", 5),
+    ("otto docker compose up integration ", 5),
+    ("otto docker compose up integration d", 5),
+    ("otto docker compose up ", 4),
+    ("otto docker compose down integration ", 5),
+    ("otto docker compose logs integration ", 5),
+    ("otto docker logs ", 3),
+    ("otto docker logs east", 3),
+    ("otto docker logs dut1", 3),
+    ("otto docker logs --on dut1 ", 5),
+    ("otto docker logs --on dut2 ", 5),
+    ("otto docker logs 3f", 3),
 ]
 ENVS = [{}, {"OTTO_LAB": "east"}, {"OTTO_LAB": "west east"}, {"OTTO_LAB": ""}]
 
@@ -730,3 +767,35 @@ def test_every_pytest_config_name_sends_the_table_back_to_a_whole_tree(world, na
     assert out.items is None, name
     assert out.reason == f"test-names cache env moved: {path}", out.reason
     assert out.stale is True
+
+
+@pytest.mark.parametrize(
+    ("line", "cword", "expected"),
+    [
+        ("otto docker logs --on dut1 ", 5, ["east-integration-x-api-1", "3f9a3f9a"]),
+        ("otto docker logs --on dut2 ", 5, []),  # dut2's containers entry is past its 15 min TTL
+        ("otto docker build --on dut1 --tag ", 6, ["api:latest", "api:1.2"]),
+        ("otto docker build --on dut2 --tag ", 6, []),  # dut2's images entry is past its 24 h TTL
+        ("otto docker compose up integration ", 5, ["api", "db"]),
+        ("otto docker compose up ", 4, ["integration"]),  # the use-case site, not the services
+        # No --on: container host ids first, then dut1's fresh names and ids; dut2's
+        # expired containers entry contributes nothing.
+        (
+            "otto docker logs ",
+            3,
+            ["dut1.integration.api", "dut1.integration.db", "east-integration-x-api-1", "3f9a3f9a"],
+        ),
+        ("otto docker logs dut1", 3, ["dut1.integration.api", "dut1.integration.db"]),
+        ("otto docker build ", 3, ["api"]),
+        ("otto docker build --repo ", 4, ["shimsut"]),
+    ],
+)
+def test_the_docker_sites_are_answered_with_the_seeded_values(
+    world, monkeypatch, line, cword, expected
+):
+    """Pins the docker differential lines as non-vacuous: answered, and holding the seed."""
+    _repo, cli = world
+    got, reason = _shim(line, cword, {})
+    assert got is not None, reason
+    assert got.split("\n") == expected if expected else got == ""
+    assert got == _typer(cli, line, cword, {}, monkeypatch)
