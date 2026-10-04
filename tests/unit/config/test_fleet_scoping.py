@@ -34,8 +34,8 @@ def scoped_context(monkeypatch):
     the same one — see that function for why installation is not undone.
     """
 
-    def _install(lab, repos):
-        return install_scoped_context(monkeypatch, lab, repos)
+    def _install(lab, repos, *, exclude_projects=()):
+        return install_scoped_context(monkeypatch, lab, repos, exclude_projects=exclude_projects)
 
     return _install
 
@@ -365,6 +365,150 @@ def test_an_unresolvable_repo_set_leaves_every_owner_walkable(monkeypatch):
     ctx = OttoContext(lab=_lab(("h1", "a"), ("h2", "a")))
 
     assert sorted(h.id for h in ctx.all_hosts(_scope_owner="anything")) == ["h1", "h2"]
+
+
+# ── -E takes a project's hosts out of play ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_an_excluded_project_takes_its_hosts_out_of_the_fleet(tmp_path, scoped_context):
+    """``-E r2`` drops the hosts only ``r2`` declared, from walks and the in-play set alike."""
+    lab = _lab(("h1", "a"), ("h2", "a"))
+    repos = [
+        _repo(tmp_path, "r1", labs=["a"], hosts=["h1"]),
+        _repo(tmp_path, "r2", labs=["a"], hosts=["h2"]),
+    ]
+    ctx = scoped_context(lab, repos, exclude_projects=["r2"])
+
+    assert await _contacted(ctx) == ["h1"]
+    assert ctx.admissible_ids(require_nonempty=False) == {"h1"}
+
+
+@pytest.mark.asyncio
+async def test_a_host_an_active_project_also_declares_stays_in_play(tmp_path, scoped_context):
+    """Exclusion removes ``r2``'s CLAIM, not the host: ``r1`` still wants ``h2``.
+
+    Does not pin the narrowing itself; it guards against OVER-narrowing, i.e.
+    an implementation that drops every host an excluded repo names.
+    """
+    lab = _lab(("h1", "a"), ("h2", "a"))
+    repos = [
+        _repo(tmp_path, "r1", labs=["a"], hosts=["h1", "h2"]),
+        _repo(tmp_path, "r2", labs=["a"], hosts=["h2"]),
+    ]
+    ctx = scoped_context(lab, repos, exclude_projects=["r2"])
+
+    assert sorted(await _contacted(ctx)) == ["h1", "h2"]
+
+
+def test_the_exclusion_matches_the_way_active_does(tmp_path, scoped_context):
+    """``-E My_Repo`` excludes ``my-repo``: compared normalized, as ``active`` does."""
+    lab = _lab(("h1", "a"), ("h2", "a"))
+    repos = [
+        _repo(tmp_path, "r1", labs=["a"], hosts=["h1"]),
+        _repo(tmp_path, "my-repo", labs=["a"], hosts=["h2"]),
+    ]
+    ctx = scoped_context(lab, repos, exclude_projects=["My_Repo"])
+
+    assert ctx.admissible_ids(require_nonempty=False) == {"h1"}
+
+
+def test_excluding_every_declaring_project_leaves_nothing_in_play(tmp_path, scoped_context):
+    """Never the whole-lab fallback: that is for "nothing declared", not "all switched off".
+
+    Falling back here would WIDEN the run — every host in the lab, and every
+    resource on them, demanded because the user asked for less.
+    """
+    lab = _lab(("h1", "a"), ("h2", "a"))
+    repos = [_repo(tmp_path, "r1", labs=["a"], hosts=["h1"]), _repo(tmp_path, "r2")]
+    ctx = scoped_context(lab, repos, exclude_projects=["r1"])
+
+    assert ctx.admissible_ids(require_nonempty=False) == set()
+
+
+def test_a_walk_emptied_by_exclusion_names_the_switch(tmp_path, scoped_context):
+    """The refusal blames ``-E``, not the declarations — widening patterns is the wrong fix."""
+    lab = _lab(("h1", "a"))
+    repo = _repo(tmp_path, "r1", labs=["a"], hosts=["h1"])
+    ctx = scoped_context(lab, [repo], exclude_projects=["r1"])
+
+    with pytest.raises(ProjectScopeError) as excinfo:
+        list(ctx.all_hosts())
+    message = " ".join(str(excinfo.value).split())
+    assert "--exclude-projects" in message
+    assert "r1" in message
+    assert "host_patterns" not in message
+
+
+def test_a_lab_inactive_declarer_does_not_take_the_blame_for_an_exclusion(tmp_path, scoped_context):
+    """``r2`` applies to another lab and admits nothing here; ``-E r1`` emptied the walk.
+
+    The refusal names the switch and ``r1``. Naming ``r2``'s declaration would
+    send the reader to edit a settings.toml that is not the cause.
+    """
+    lab = _lab(("h1", "a"))
+    repos = [
+        _repo(tmp_path, "r1", labs=["a"], hosts=["h1"]),
+        _repo(tmp_path, "r2", labs=["some-other-lab"], hosts=[".*"]),
+    ]
+    ctx = scoped_context(lab, repos, exclude_projects=["r1"])
+
+    with pytest.raises(ProjectScopeError) as excinfo:
+        list(ctx.all_hosts())
+    message = " ".join(str(excinfo.value).split())
+    assert "--exclude-projects" in message
+    assert "switched off: r1" in message
+    assert "r2" not in message
+
+
+def test_an_exclusion_that_emptied_nothing_leaves_the_declarations_to_blame(
+    tmp_path, scoped_context
+):
+    """``-E r2`` of a repo that admitted no host did not empty the walk: ``r1``'s patterns did.
+
+    The fleet-shaped message lists only the repos still contributing.
+    """
+    lab = _lab(("h1", "a"))
+    repos = [
+        _repo(tmp_path, "r1", labs=["a"], hosts=["nothing-here"]),
+        _repo(tmp_path, "r2", labs=["a"], hosts=["nothing-either"]),
+    ]
+    ctx = scoped_context(lab, repos, exclude_projects=["r2"])
+
+    with pytest.raises(ProjectScopeError) as excinfo:
+        list(ctx.all_hosts())
+    message = " ".join(str(excinfo.value).split())
+    assert "--exclude-projects" not in message
+    assert "r1 (lab_patterns" in message
+    assert "r2 (lab_patterns" not in message
+
+
+def test_an_undeclared_owners_empty_lab_is_not_blamed_on_the_switch(tmp_path, scoped_context):
+    """An undeclared owner walks the whole lab; an empty one says the LAB is empty, -E or not."""
+    lab = _lab(component_names=["a"])
+    repos = [_repo(tmp_path, "r1", labs=["a"], hosts=[".*"]), _repo(tmp_path, "r2")]
+    ctx = scoped_context(lab, repos, exclude_projects=["r1"])
+
+    with pytest.raises(ProjectScopeError) as excinfo:
+        list(ctx.all_hosts(_scope_owner="r2"))
+    assert "--exclude-projects" not in " ".join(str(excinfo.value).split())
+
+
+@pytest.mark.asyncio
+async def test_an_owner_bound_walk_ignores_the_switch(tmp_path, scoped_context):
+    """A walk bound to ``r2`` is ``r2``'s own: ``-E`` narrows the union, not a repo's view.
+
+    A switched-off repo is never walked in practice, but the owner view must not
+    be silently emptied by a switch that is about the run's shared fleet.
+    """
+    lab = _lab(("h1", "a"), ("h2", "a"))
+    repos = [
+        _repo(tmp_path, "r1", labs=["a"], hosts=["h1"]),
+        _repo(tmp_path, "r2", labs=["a"], hosts=["h2"]),
+    ]
+    ctx = scoped_context(lab, repos, exclude_projects=["r2"])
+
+    assert await _contacted(ctx, _scope_owner="r2") == ["h2"]
 
 
 # ── live re-evaluation, not the resolver's snapshot ───────────────────────────

@@ -585,6 +585,21 @@ def switched_off(repo_name: str, ctx: "OttoContext") -> bool:
     return normalize_name(repo_name) in _switched(ctx.exclude_projects)
 
 
+def _not_switched_off(
+    scopes: "list[ProjectScope]", exclude_projects: "tuple[str, ...]"
+) -> "list[ProjectScope]":
+    """Drop the verdicts of repos ``--exclude-projects`` switched off, in order.
+
+    The fleet-side twin of :func:`switched_off`: it compares through the same
+    ``_switched`` normalization, so the fleet and the activation verdict cannot
+    disagree about which repo ``-E My_Repo`` named.
+    """
+    from ..models.dependencies import normalize_name
+
+    switched = _switched(exclude_projects)
+    return [scope for scope in scopes if normalize_name(scope.repo_name) not in switched]
+
+
 def inactive_before_lab(
     scope: "ProjectScopeConfig | None", lab_selection: "list[str] | None"
 ) -> bool:
@@ -682,6 +697,8 @@ def scoped_ids(
     hosts: "dict[str, Host]",
     scopes: "dict[str, ProjectScope]",
     owner: "str | None",
+    *,
+    exclude_projects: "tuple[str, ...]" = (),
 ) -> "set[str]":
     """Return the host ids a fleet walk may iterate — evaluated LIVE, not read off a snapshot.
 
@@ -708,7 +725,12 @@ def scoped_ids(
       Raises.
     * *owner* **is None** — the union across the DECLARED repos (D7), which is
       the fleet that host-global operations (cleanup, toolchain, debug logs)
-      walk.
+      walk, and the hosts in play the reservation gate requires. A repo
+      switched off with ``--exclude-projects`` contributes nothing to it: its
+      hosts leave play unless an active repo also declares them. Excluding
+      every declaring repo leaves NOTHING in play — the whole-lab fallback
+      above is for "nothing declared", and answering a request for less with
+      the whole lab would be the widening this design refuses.
 
     The built-in ``local`` host and container hosts are NOT filtered here.
     Scoping answers "may this walk reach that host at all"; ``include_local``
@@ -725,6 +747,10 @@ def scoped_ids(
             the union. The repo-scoped context view (spec §7,
             ``ctx.for_repo(repo)``) is what supplies a name; a plain context
             always passes ``None``.
+        exclude_projects: The run's ``--exclude-projects`` names, as typed;
+            compared normalized, the way :func:`active` compares them. Read by
+            the union only: an owner-bound walk is that repo's own, and a
+            switched-off repo is never walked.
 
     Returns:
         The admissible ids, as a set.
@@ -783,6 +809,8 @@ def scoped_ids(
         if not owned.declared:
             return set(hosts)
         declared = [owned]
+    else:
+        declared = _not_switched_off(declared, exclude_projects)
     return {
         host_id
         for host_id, host in hosts.items()
@@ -821,10 +849,26 @@ and can name one file, while this one fires when the union came out empty and
 any of the contributing declarations could be the reason."""
 
 
+_EXCLUDED_FLEET = """\
+no host is in play: every project whose [project] declaration admits a host in
+the loaded labs was switched off for this run (--exclude-projects), so every
+fleet walk would be empty.
+
+    switched off: {repos}
+
+Drop --exclude-projects for a project whose hosts this run should reach.\
+"""
+"""The union came out empty because of ``-E``, not because of a declaration —
+:data:`_EMPTY_FLEET`'s "widen your patterns" would send the reader to edit a
+file that is not the cause."""
+
+
 def require_nonempty_fleet(
     scopes: "dict[str, ProjectScope]",
     admissible: "set[str]",
     owner: "str | None" = None,
+    *,
+    exclude_projects: "tuple[str, ...]" = (),
 ) -> None:
     """Refuse a fleet walk whose base set is empty while some repo declared one (§10 row 5).
 
@@ -852,6 +896,11 @@ def require_nonempty_fleet(
             through to the fleet-shaped message deliberately: its base set was
             the whole lab, so an empty one says the LAB is empty and says
             nothing about that repo's declaration.
+        exclude_projects: The same names :func:`scoped_ids` was given, read
+            for the plain-context union only. A union emptied by ``-E`` — some
+            switched-off repo would have put a host in play — gets a message
+            naming the switch, not a declaration that cannot work; otherwise
+            the fleet-shaped message lists the repos still contributing.
 
     Returns:
         None — always, when there is nothing to refuse.
@@ -873,13 +922,33 @@ def require_nonempty_fleet(
         owned = scopes.get(owner)
         if owned is not None and owned.declared:
             raise ProjectScopeError(owned.sut_dir, _unusable_scope_message(owned))
+    # Only the plain-context union reads the switch, as in :func:`scoped_ids`:
+    # an UNDECLARED owner fell through to here because its base set was the
+    # whole lab, so its empty walk says the lab is empty, whatever -E said.
+    contributing = declared
+    if owner is None:
+        contributing = _not_switched_off(declared, exclude_projects)
+        kept = {id(scope) for scope in contributing}
+        switched = [scope for scope in declared if id(scope) not in kept]
+        # The switch is the cause exactly when a switched-off repo would have
+        # put a host in play: with it, the union could not have been empty.
+        # A lab-inactive declarer left behind is not the cause and must not be
+        # named as one — that would send the reader to edit its settings.toml.
+        if any(scope.universe for scope in switched):
+            raise ProjectScopeError(
+                "",  # the cause is a switch on this command line, not a settings.toml
+                _EXCLUDED_FLEET.format(repos=", ".join(scope.repo_name for scope in switched)),
+            )
+        # Switched-off repos that admitted nothing anyway did not empty it;
+        # the declarations did, so name them all when none is left standing.
+        contributing = contributing or declared
     raise ProjectScopeError(
-        declared[0].sut_dir,
+        contributing[0].sut_dir,
         _EMPTY_FLEET.format(
-            loaded=", ".join(declared[0].loaded_labs) or "(none)",
+            loaded=", ".join(contributing[0].loaded_labs) or "(none)",
             repos=", ".join(
                 f"{scope.repo_name} (lab_patterns: {', '.join(scope.lab_patterns) or '(none)'})"
-                for scope in declared
+                for scope in contributing
             ),
         ),
     )

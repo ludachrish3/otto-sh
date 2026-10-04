@@ -11,7 +11,7 @@ import asyncio
 import contextlib
 import posixpath
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -116,6 +116,8 @@ class _ChainParams:
     term: "str | None"
     labs: "list[str]"
     holder: "str | None"
+    exclude_projects: "list[str]" = field(default_factory=list)
+    """The ``-E`` names, so the gate's hosts in play match the run's."""
 
 
 def _collect_chain_params(ctx: "typer.Context") -> _ChainParams:
@@ -137,17 +139,28 @@ def _collect_chain_params(ctx: "typer.Context") -> _ChainParams:
             break
         params = getattr(node, "params", None)
         if isinstance(params, dict):
-            for key in ("host_id", "hop", "term", "labs", "holder"):
+            for key in ("host_id", "hop", "term", "labs", "holder", "exclude_projects"):
                 if key not in found and key in params:
                     found[key] = params[key]
         node = getattr(node, "parent", None)
     labs = found.get("labs")
+    excluded = found.get("exclude_projects")
     return _ChainParams(
         host_id=found.get("host_id") or "",
         hop=found.get("hop") or "",
         term=found.get("term") or None,
         labs=[x for x in labs if isinstance(x, str)] if isinstance(labs, list) else [],
         holder=found.get("holder") or None,
+        # Split here as well as in the option's callback: a value read off the
+        # chain mid-TAB may not have been through it, and an unsplit "a,b"
+        # would switch off nothing.
+        exclude_projects=[
+            part.strip()
+            for value in (excluded if isinstance(excluded, list) else [])
+            if isinstance(value, str)
+            for part in value.split(",")
+            if part.strip()
+        ],
     )
 
 
@@ -410,7 +423,7 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     from ..session import build_lab
 
     lab = build_lab(get_repos(), chain.labs)
-    ctx = OttoContext(lab=lab)
+    ctx = OttoContext(lab=lab, exclude_projects=tuple(chain.exclude_projects))
     token = set_context(ctx)
     try:
         named = [lab.hosts.get(h) for h in (chain.host_id, chain.hop) if h]

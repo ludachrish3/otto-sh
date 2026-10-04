@@ -364,8 +364,11 @@ class OttoContext:
     """Repo names forced INACTIVE this invocation (``-E``), PEP-503-normalized ON READ.
 
     Same write/read contract as :attr:`include_projects`. Read by
-    :func:`otto.config.scope.active` for the verdict and by
-    :func:`otto.config.scope.switched_off` for attribution.
+    :func:`otto.config.scope.active` for the verdict, by
+    :func:`otto.config.scope.switched_off` for attribution, and on the fleet
+    side by :meth:`otto.context.OttoContext.admissible_ids` (through
+    :func:`otto.config.scope.scoped_ids`), which leaves a switched-off repo's
+    hosts out of play.
     """
 
     verb: "str | None" = field(default=None, init=False)
@@ -706,7 +709,7 @@ class OttoContext:
         surface that first reports a broken composition root, which the CLI
         entry already does with a message built for it.
         """
-        from .config.scope import resolve_scopes
+        from .config.scope import _not_switched_off, resolve_scopes
         from .host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 
         if self.lab.name == LIBRARY_LAB_NAME:
@@ -733,7 +736,10 @@ class OttoContext:
             # Once per context, and only when something actually narrowed: the
             # fallback is not news, and a line printed on every run is a line
             # nobody reads on the run that mattered.
-            union = frozenset().union(*(scope.universe for scope in declared))
+            # A repo switched off with -E puts no host in play, so its
+            # universe is not counted (``scoped_ids`` drops it the same way).
+            active = _not_switched_off(declared, self.exclude_projects)
+            union = frozenset().union(*(scope.universe for scope in active))
             excluded = sum(1 for scope in scopes.values() if scope.excluded)
             logger.info(
                 f"fleet of interest: {len(union)} of {len(self.lab.hosts)} lab hosts "
@@ -751,7 +757,8 @@ class OttoContext:
 
         Public since spec 2026-08-28 three-level-reservations §5: the
         reservation gate reads the same set every fleet walk starts from — one
-        definition, two readers.
+        definition, two readers. A repo in :attr:`exclude_projects` contributes
+        no host to it, so ``-E`` narrows both readers at once.
 
         ``require_nonempty=False`` is the RESERVATION readers' spelling —
         :meth:`otto.reservations.check.ReservationGate.evaluate` (through
@@ -787,9 +794,13 @@ class OttoContext:
         """
         from .config.scope import require_nonempty_fleet, scoped_ids
 
-        admissible = scoped_ids(self.lab.hosts, self.scopes, owner)
+        admissible = scoped_ids(
+            self.lab.hosts, self.scopes, owner, exclude_projects=self.exclude_projects
+        )
         if require_nonempty:
-            require_nonempty_fleet(self.scopes, admissible, owner)
+            require_nonempty_fleet(
+                self.scopes, admissible, owner, exclude_projects=self.exclude_projects
+            )
         return admissible
 
     def _admissible_ids(self, owner: "str | None") -> "set[str]":

@@ -110,7 +110,9 @@ unrelated to a host id — otto never derives one from the other.)
 
 The required set is computed over the **hosts in play** — every host the run's
 project(s) declare an interest in via `[project] host_patterns`
-({ref}`project-scope`), or the whole lab when no repo declares one.  The lab
+({ref}`project-scope`), or the whole lab when no repo declares one.  A project
+you switch off with `-E` contributes none of its hosts
+({ref}`projects-excluded-hosts-leave-play`).  The lab
 level always counts; each host in play adds its element's identifiers and its
 own.
 
@@ -137,7 +139,8 @@ the command does not run.
 
 `--hosts` on `otto monitor` / `otto tunnel` narrows that verb's walk inside a
 run the gate has already admitted; it does not narrow the gate.  To reserve
-fewer slots, narrow `[project] host_patterns` in the project that runs them.
+fewer slots, narrow `[project] host_patterns` in the project that runs them, or
+switch off for one run a project whose hosts you do not need (`-E`).
 
 ### Two labs over one element
 

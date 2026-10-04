@@ -104,9 +104,12 @@ def test_present_home_directory_keeps_tilde():
 ####################
 
 
-def _ctx(host_id="dut1", labs=("unix",), holder=None):
+def _ctx(host_id="dut1", labs=("unix",), holder=None, exclude_projects=None):
     """A mock Click context chain: leaf command -> `otto host` group -> root."""
-    root = SimpleNamespace(params={"labs": list(labs), "holder": holder}, parent=None)
+    root = SimpleNamespace(
+        params={"labs": list(labs), "holder": holder, "exclude_projects": exclude_projects},
+        parent=None,
+    )
     group = SimpleNamespace(params={"host_id": host_id, "hop": "", "term": None}, parent=root)
     return SimpleNamespace(params={}, parent=group)
 
@@ -130,6 +133,12 @@ def test_chain_walk_takes_each_key_from_the_innermost_context_that_has_it():
     assert chain.host_id == "dut2"
     assert chain.labs == ["unix"]
     assert chain.holder == "carol"
+
+
+def test_chain_walk_takes_the_excluded_projects_split_on_commas():
+    """``-E r2,r3 -E r4`` reaches the gate as three names, even if no callback split them."""
+    chain = rc._collect_chain_params(_ctx(exclude_projects=["r2, r3", "r4"]))
+    assert chain.exclude_projects == ["r2", "r3", "r4"]
 
 
 def test_chain_walk_survives_a_self_referential_mock():
@@ -250,8 +259,15 @@ def test_any_exception_yields_empty(monkeypatch):
 ####################
 
 
-def _chain(holder="carol", labs=("unix",), host_id="dut1"):
-    return rc._ChainParams(host_id=host_id, hop="", term=None, labs=list(labs), holder=holder)
+def _chain(holder="carol", labs=("unix",), host_id="dut1", exclude_projects=()):
+    return rc._ChainParams(
+        host_id=host_id,
+        hop="",
+        term=None,
+        labs=list(labs),
+        holder=holder,
+        exclude_projects=list(exclude_projects),
+    )
 
 
 @pytest.fixture
@@ -459,6 +475,31 @@ def test_required_for_is_scoped_to_the_fleet_of_interest(monkeypatch, tmp_path):
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",))) == {"slot-1"}
+
+
+def test_required_for_drops_the_hosts_of_an_excluded_project(monkeypatch, tmp_path):
+    """A TAB under ``-E r2`` demands what the run would: ``r2``'s host is out of play.
+
+    Without the switch the same chain demands both slots, so the narrowing is
+    the switch's doing.
+    """
+    from tests._fixtures.fleet import _lab as fleet_lab
+    from tests._fixtures.fleet import _repo
+
+    lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
+    lab.hosts["slot1"].resources = frozenset({"slot-1"})
+    lab.hosts["slot2"].resources = frozenset({"slot-2"})
+    repos = [
+        _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"]),
+        _repo(tmp_path, "r2", labs=["rig"], hosts=["slot2"]),
+    ]
+    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
+    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: repos)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
+
+    assert rc._required_for(_chain(labs=("rig",), host_id="")) == {"slot-1", "slot-2"}
+    excluded = _chain(labs=("rig",), host_id="", exclude_projects=["r2"])
+    assert rc._required_for(excluded) == {"slot-1"}
 
 
 def test_required_for_adds_the_targeted_host_when_it_is_outside_the_fleet(monkeypatch, tmp_path):

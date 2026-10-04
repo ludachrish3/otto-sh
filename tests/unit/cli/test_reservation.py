@@ -306,6 +306,37 @@ def test_check_table_covers_only_the_hosts_in_play(capsys, monkeypatch, tmp_path
     assert "OK — all required resources are reserved" in out
 
 
+def test_check_drops_the_hosts_of_an_excluded_project(capsys, monkeypatch, tmp_path):
+    """``-E r2`` takes ``chassis2`` out of play, so its unheld ``slot-2`` is not required."""
+    monkeypatch.setenv("COLUMNS", "300")
+
+    identity = ResolvedIdentity(username="alice", source="$USER")
+    res = ReservationGate(backend=_HoldsSlot1(), identity=identity, skip_check=False)
+    ctx = _make_ctx({"otto_reservation": res})
+
+    lab = _rig_lab(
+        _slot_host("test1", "chassis1", "slot-1"),
+        _slot_host("test2", "chassis2", "slot-2"),
+    )
+    install_scoped_context(
+        monkeypatch,
+        lab,
+        [
+            _repo(tmp_path, "r1", labs=["rig"], hosts=["chassis1"]),
+            _repo(tmp_path, "r2", labs=["rig"], hosts=["chassis2"]),
+        ],
+        exclude_projects=["r2"],
+    )
+
+    check(ctx)  # must not raise: slot-2 is unheld, but only the excluded r2 wants chassis2
+
+    out = capsys.readouterr().out
+    assert _table_row(out, "slot-1", "host", "chassis1")
+    assert "slot-2" not in out
+    assert "(1 host(s) in play)" in _flat(out)
+    assert "OK — all required resources are reserved" in out
+
+
 def test_check_under_an_empty_declared_fleet_reports_zero_hosts_in_play(
     capsys, monkeypatch, tmp_path
 ):

@@ -80,8 +80,10 @@ def add_builtin_local(lab, *, resources=frozenset()):
     return lab
 
 
-def install_scoped_context(monkeypatch, lab, repos):
+def install_scoped_context(monkeypatch, lab, repos, *, exclude_projects=()):
     """Build and install an ``OttoContext`` whose scopes resolve over *repos*.
+
+    *exclude_projects* is the run's ``-E`` list, as the CLI would set it.
 
     ``OttoContext.scopes`` reads ``otto.config.get_ordered_repos`` lazily, so
     patching that one seam is what lets a unit test declare a fleet of interest
@@ -95,6 +97,6 @@ def install_scoped_context(monkeypatch, lab, repos):
     Context object and ``ContextVar.reset`` raises.
     """
     monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: list(repos))
-    ctx = OttoContext(lab=lab)
+    ctx = OttoContext(lab=lab, exclude_projects=tuple(exclude_projects))
     set_context(ctx)
     return ctx

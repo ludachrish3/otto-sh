@@ -69,7 +69,7 @@ another repo's `init` module.
 
 ## What enforcement looks like
 
-Activation shows up at exactly three surfaces, and each says which axis
+Activation shows up at exactly four surfaces, and each says which axis
 decided.
 
 ### Fleet walks skip the repo, out loud
@@ -91,6 +91,34 @@ $ otto --lab bench run status
 radio-fw  not applicable (labs: bench)
 lab is uninstalled
 ```
+
+(projects-excluded-hosts-leave-play)=
+### Its hosts leave play
+
+The hosts a switched-off repo declares in `[project] host_patterns` are no
+longer in play for the run. No host-wide walk reaches them (cleanup,
+toolchain, debug logs, `otto monitor`, coverage collection), and the
+reservation gate, including its shell-completion check, no longer requires
+their resources, so `-E fleet-tools` is also how you run without holding the
+fleet-tools rig. A host that an active repo also declares stays in play.
+
+Switching off *every* repo that declares a fleet leaves no host in play. It
+never falls back to the whole lab, which is reserved for runs where no repo
+declares `[project]` at all. A host-wide walk then refuses, naming the switch
+rather than your `host_patterns`:
+
+```text
+no host is in play: every project whose [project] declaration admits a host in
+the loaded labs was switched off for this run (--exclude-projects), so every
+fleet walk would be empty.
+
+    switched off: fleet-tools
+
+Drop --exclude-projects for a project whose hosts this run should reach.
+```
+
+The reservation gate is not a walk, so it does not refuse: with no host in
+play, it requires only the lab's own resources.
 
 ### Instruction dispatch refuses, and tells you how to undo it
 

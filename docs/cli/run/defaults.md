@@ -207,7 +207,7 @@ goes through**, never by an argument the call site has to remember:
 | Walk goes through | Base set |
 | ----------------- | -------- |
 | `self.ctx` inside a `ProjectActions` (the repo's view) | that repo's universe |
-| the plain context (`otto.context.get_context()`, host-global steps) | the **union** of every declaring repo's universe |
+| the plain context (`otto.context.get_context()`, host-global steps) | the **union** of every declaring repo's universe, less the repos switched off with `-E` ({ref}`projects-excluded-hosts-leave-play`) |
 | either, when **no** repo in the run declared `[project]` | the whole loaded lab |
 
 So a run in which no repo declares `[project]` is not scoped at all. The
@@ -294,9 +294,12 @@ The consequence depends on **whose** declaration it is:
   ```
 
 - **Every repo's declaration excluding every host** fails the fleet walk itself
-  with the same class of error, naming the loaded labs and each declaring repo.
+  with the same class of error, naming the loaded labs and each declaring repo
+  still contributing.
   Under the whole-lab fallback the same emptiness stays silent: an empty walk
   over an undeclared fleet means the *lab* itself is empty.
+  When `-E` is what emptied it, the error names the switch instead
+  ({ref}`projects-excluded-hosts-leave-play`).
 
 `otto run status --full` prints the resolved answer for every repo — the labs
 it applies to, and the hosts it targets:

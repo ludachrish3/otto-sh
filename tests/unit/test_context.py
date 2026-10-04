@@ -1269,22 +1269,23 @@ def _lab_whose_test1_needs_slot():
 
 
 @pytest.mark.asyncio
-async def test_exclude_projects_does_not_narrow_the_reservation_requirement(tmp_path, monkeypatch):
-    """``exclude_projects`` does not narrow the hosts in play, as the CLI's ``-E`` does not,
-    so the reservation requirement is unchanged; a declared scope that claims no host does."""
+async def test_exclude_projects_narrows_the_reservation_requirement(tmp_path, monkeypatch):
+    """An excluded project's hosts leave play, so their resources leave the requirement.
+
+    Without the exclusion the same run refuses on ``slot``, so the pass below is
+    the switch's doing and not a requirement that was never there.
+    """
     import otto
     from otto.reservations import MissingReservationError
 
     _as_user(monkeypatch, "alice")
     res = _reservations_repo(tmp_path, {"bob": ["slot"]})
-
     _install_result(monkeypatch, repos=[res, _owner_of_test1("test1")])
+
     with pytest.raises(MissingReservationError) as exc:
-        async with otto.open_context(lab=_lab_whose_test1_needs_slot(), exclude_projects=["owner"]):
+        async with otto.open_context(lab=_lab_whose_test1_needs_slot()):
             pass
     assert [m.resource for m in exc.value.report.missing] == ["slot"]
 
-    # Control: the scope path is live. Owner's patterns claim no host, so `slot` drops out.
-    _install_result(monkeypatch, repos=[res, _owner_of_test1("nomatch")])
-    async with otto.open_context(lab=_lab_whose_test1_needs_slot()):
+    async with otto.open_context(lab=_lab_whose_test1_needs_slot(), exclude_projects=["owner"]):
         pass
