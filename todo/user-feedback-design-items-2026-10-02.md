@@ -12,7 +12,9 @@ Where things stand (2026-10-04): §1 docker is done except #571 (docs) and
 the undecided 1.4 / 1.7; §2 products is done; §4.1 is done, 4.2 / 4.3 are
 undecided; §3 docs restructure is the open design, gated on the naive-reader
 walk. Each section's own status block is the record; GitHub issues carry the
-pieces that have one (#571, #553, #495, #550, #364, #365).
+pieces that have one: #571 and #553 (docker), #594 (§3 docs restructure),
+#595 (1.4), #596 (1.7 / 4.3), #597 (4.2), #598 (one-parent leftovers),
+#495, #550, #364, #365 (1.6).
 
 A finding that cuts across all of it: three things the user asked for
 **already existed in 0.16.1** and were not found — data-only products
@@ -61,10 +63,10 @@ Open:
   `ps` is parse/call/render, refusals name `--parent`) — close it once the
   commits are pushed.
 - 1.6's remaining issues: #495, #550, #364, #365 (all still open).
-- 1.4 user-defined docker verbs: undecided; today user verbs stay top-level
-  (`@cli_command`), there is no `register_docker_verb` seam.
-- 1.7 netem on a container: undecided (same decision as 4.3).
-- One-parent review leftovers, none load-bearing: duplicate placeholder ids
+- 1.4 user-defined docker verbs: undecided (#595); today user verbs stay
+  top-level (`@cli_command`), there is no `register_docker_verb` seam.
+- 1.7 netem on a container: undecided (#596; same decision as 4.3).
+- One-parent review leftovers (#598), none load-bearing: duplicate placeholder ids
   keep the first declaration silently; `_summaries_by_lab` keeps the first
   summary for a host two lab sources rank differently (the merged `Lab`
   keeps the later one — the premise behind "every selected lab agrees" on
@@ -153,7 +155,7 @@ Decisions:
 4. Output: relayed docker output is printed as docker printed it; otto adds a
    host column or header only when fanning out.
 
-### 1.4 User-defined docker verbs
+### 1.4 User-defined docker verbs (#595)
 
 Question from the feedback: can `@cli_exposed` add to first-party commands?
 No. It marks host-class methods and is read only by the `otto host` group
@@ -181,7 +183,7 @@ is not done until it has one.
 - #550: compose staging in shared `/tmp` leaks `otto.env`.
 - #364 and #365: the `docker_image` product kind.
 
-### 1.7 Netem on a container (feature request, lower priority)
+### 1.7 Netem on a container (feature request, lower priority; #596)
 
 Impairment is link-scoped only (`src/otto/link/manage.py`); there is no
 `host.impair()`. The netem impairer serves the `unix` family only, and
@@ -251,6 +253,8 @@ subcommand is open.
 ---
 
 ## 3. Docs structure and findability (P1)
+
+Tracked as #594 (the walk below is its spec and its acceptance test).
 
 ### 3.1 The naive-reader walk (first run done, 2026-10-02)
 
@@ -355,12 +359,12 @@ regex. Decide: keep and explain it where ids are first shown, or pick a
 different unambiguous delimiter. Separately, container host ids are not
 slugged at all (1.1).
 
-### 4.2 Fuzzy tab completion
+### 4.2 Fuzzy tab completion (#597)
 
 Every completion source filters by prefix, in the shim and in Typer. Needs a
 definition (substring? subsequence? which shells?) and a check that it stays
 O(1) on a warm TAB before it is worth a design.
 
-### 4.3 Netem directly on a host
+### 4.3 Netem directly on a host (#596)
 
 See 1.7; same decision, not docker-specific.
