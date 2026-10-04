@@ -8,6 +8,12 @@ holds only the items that need a decision before anyone writes code.
 Priority order: docker (an interested user is waiting) → data-driven project
 setup → docs structure → the small standalone decisions.
 
+Where things stand (2026-10-04): §1 docker is done except #571 (docs) and
+the undecided 1.4 / 1.7; §2 products is done; §4.1 is done, 4.2 / 4.3 are
+undecided; §3 docs restructure is the open design, gated on the naive-reader
+walk. Each section's own status block is the record; GitHub issues carry the
+pieces that have one (#571, #553, #495, #550, #364, #365).
+
 A finding that cuts across all of it: three things the user asked for
 **already existed in 0.16.1** and were not found — data-only products
 (`[[products]]`), multi-file lab data (glob entries in `paths`), and `-I`/`-E`
@@ -22,12 +28,48 @@ Principle (Chris, 2026-10-02): the docker layer stays as thin and as honest
 as possible. Anything otto relays about a docker host must be tested against
 what that host's daemon actually reports.
 
-Status (2026-10-03): the spec is
-`docs/superpowers/specs/2026-10-02-docker-thin-honest-design.md`. Landed:
-the honest build (1.1, 1.2, 1.5's first differentials — `ddf16d6f`) and
-`compose up` as `docker compose up` with `--build` / `--force-recreate` /
-`--pull`, `--no-build` deleted (#568 — `1e311a94`). Open as issues: #569
-curated verbs (1.3/1.4), #570 completion, #571 docs.
+Status (2026-10-04): the spec is
+`docs/superpowers/specs/2026-10-02-docker-thin-honest-design.md`. Landed on
+local main (Chris pushes):
+
+- ✅ 1.1 + 1.2 + 1.5's first differentials — the honest build (`ddf16d6f`).
+- ✅ `compose up` is `docker compose up`; `--build` / `--force-recreate` /
+  `--pull` pass through, `--no-build` deleted (#568 — `1e311a94`).
+- ✅ 1.3 curated verbs `logs`, `compose logs`, `compose ps`, `images`, `ps`,
+  each printing what docker printed, each with a daemon differential
+  (#569 — `73fcd18a`). The spec's answer to 1.3 decision 1 is (A), not (C):
+  no generic passthrough verb — `otto host <HOST> exec "docker …"` already
+  is the passthrough and is documented as such under #571.
+- ✅ Completion from declared names plus an observed-daemon cache; a TAB
+  never contacts a host (#570 — `5096bb78`).
+- ✅ **One parent** (not in the feedback; it fell out of #570's `logs <TAB>`
+  ambiguity, Chris 2026-10-04): every docker verb takes `--parent HOST`
+  (`--on` is gone); the default is the lab's only docker-capable host or the
+  strictly highest `docker_priority`, a tie refuses; `role`, `placement`,
+  host `roles` and `${otto:role.*}` are removed and refused by name;
+  completion schema 26 (`50e5f464`; spec
+  `docs/superpowers/specs/2026-10-04-docker-one-parent-design.md`). Its two
+  deferred refusals landed as `f57075a5` (`docker_priority` is a strict
+  integer; the key alone needs `docker_capable`).
+
+Open:
+
+- #571 docs: the first-deploy section and the passthrough note on the index
+  page; `otto init` scaffold comments; acceptance = the naive-reader walk on
+  the docker pages.
+- #553 is resolved by #569 + `50e5f464` (`docker_parents` in the library,
+  `ps` is parse/call/render, refusals name `--parent`) — close it once the
+  commits are pushed.
+- 1.6's remaining issues: #495, #550, #364, #365 (all still open).
+- 1.4 user-defined docker verbs: undecided; today user verbs stay top-level
+  (`@cli_command`), there is no `register_docker_verb` seam.
+- 1.7 netem on a container: undecided (same decision as 4.3).
+- One-parent review leftovers, none load-bearing: duplicate placeholder ids
+  keep the first declaration silently; `_summaries_by_lab` keeps the first
+  summary for a host two lab sources rank differently (the merged `Lab`
+  keeps the later one — the premise behind "every selected lab agrees" on
+  TAB); `tests/unit/cli/test_docker_observe_render.py` still renders one
+  row in the old dotted container-id shape.
 
 ### 1.1 Identifiers otto prints that docker does not know
 
