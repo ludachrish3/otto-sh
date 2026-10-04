@@ -12,7 +12,7 @@ from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Annotated, Any, ClassVar
 
-from pydantic import BeforeValidator, Field, field_validator, model_validator
+from pydantic import BeforeValidator, Field, StrictInt, field_validator, model_validator
 from typing_extensions import override
 
 from ..host.binary_loader import build_binary_loader
@@ -786,11 +786,12 @@ class UnixHostSpec(HostSpec):
     impairer: str | None = None  # optional active pin; resolved at to_host
     docker_capable: bool = False
     shell_history: bool = False
-    docker_priority: int = 0
+    docker_priority: StrictInt = 0
     """Which docker-capable host a use-case deploys on when ``--parent`` is
     omitted and the lab selection has several. Highest wins; a tie at the top
-    refuses. Meaningful only with ``docker_capable``. Intent about how THIS LAB
-    uses the host, never an inventory fact."""
+    refuses. Strictly an integer (JSON ``true`` is not a rank of 1), and only
+    on a ``docker_capable`` host. Intent about how THIS LAB uses the host,
+    never an inventory fact."""
     ssh_options: SshOptionsSpec = SshOptionsSpec()
     sftp_options: SftpOptionsSpec = SftpOptionsSpec()
     scp_options: ScpOptionsSpec = ScpOptionsSpec()
@@ -817,7 +818,9 @@ class UnixHostSpec(HostSpec):
 
     @model_validator(mode="after")
     def _priority_needs_docker_capable(self) -> "UnixHostSpec":
-        if self.docker_priority != 0 and not self.docker_capable:
+        # The key is the mistake, whatever its value: ranking a host that can
+        # never be a parent is a lab.json error worth naming at load.
+        if "docker_priority" in self.model_fields_set and not self.docker_capable:
             raise ValueError(
                 f"docker_priority on {self.name or self.ip!r}, which is not docker_capable — "
                 f"only a docker-capable host can be ranked as a parent"
