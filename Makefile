@@ -1354,7 +1354,9 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 
 # lint-arch enforces the architecture rules ruff cannot express: tach.toml is
 # the module-dependency ratchet baseline (its comments explain every DEBT
-# edge and forbid `tach sync` as a "fix"); .ast-grep/rules/ hold the
+# edge and forbid `tach sync` as a "fix"). `--exact` also refuses a declared
+# edge no import uses, so the file is the import graph, not a superset of it;
+# .ast-grep/rules/ hold the
 # scope-sensitive pattern rules. Policy background:
 # todo/churn-and-design-review-2026-08-03.md §5.
 #
@@ -1374,7 +1376,7 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 # `--group lint`: a group sync reshapes the venv the import-budget tests count.
 lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts) + ast-grep (pattern rules) + the lazy-export import rules + check-breaking (public-API golden marking)
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
-	@uv run --group lint tach check
+	@uv run --group lint tach check --exact
 	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
 	@uv run --group lint ast-grep scan src/otto web/src tests
 	@$(SAY) "ast-grep: rule tests (.ast-grep/rule-tests/)"

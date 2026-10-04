@@ -49,8 +49,11 @@ and is not, which is the failure mode this whole page exists against.
 is listed with a `DEBT:` comment explaining it, and the list may only
 shrink. `tach sync` is forbidden as a fix — it rewrites the file and strips
 every comment, converting a documented debt list into a blessed one.
-{doc}`modules` draws the declared graph, redrawn from `tach.toml` on every
-docs build.
+The gate runs `tach check --exact`, so the file cannot drift the other way
+either: a declared edge that no import uses fails, and leaves `tach.toml`
+with its last import. What the file declares is the import graph, not a
+superset of it. {doc}`modules` draws that graph, redrawn from `tach.toml`
+on every docs build.
 
 ### The ast-grep rules
 

@@ -5,6 +5,9 @@
 # a pointer to the finding in todo/churn-and-design-review-2026-08-03.md.
 # The contract is: no NEW cross-module edge may appear without editing this
 # file in the same PR; DEBT edges are removed here as their fixes land.
+# lint-arch runs `tach check --exact`, so the reverse holds too: an edge no
+# import uses fails the gate, and comes out of this file with its last import.
+# (tach does not count an `if TYPE_CHECKING:` import as an edge.)
 #
 # Maintain BY HAND. `tach sync` REWRITES this file and strips every comment —
 # never run it to "fix" a check failure; add or (preferably) question the edge.
@@ -178,7 +181,7 @@ path = "otto.cli"
 # retires; tach's ratchet just never carried it (the edge is function-scope,
 # added when project instructions started registering data instead of a
 # make_app factory, and this file was not updated alongside).
-depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.labs", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live", "otto.init", "otto.session"]
+depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live", "otto.init", "otto.session"]
 
 [[modules]]
 path = "otto.config"
@@ -187,13 +190,7 @@ depends_on = [
     # user module that DECLINED to load from one that broke. otto.errors is a
     # zero-import leaf, so this cannot invert layering or create a cycle.
     "otto.errors",
-    "otto.utils",
     "otto.models",
-    # DEBT: repo.py git-description properties trigger run_command from a
-    # property getter (cross-cutting review Q8); reconsider with the repo.py
-    # split (Tier 2.5).
-    "otto.lifecycle",
-    "otto.result",
     "otto.context",
     "otto.instructions",
     # DEBT: the last core->cli backward edge — completion_cache.py imports
@@ -221,7 +218,6 @@ depends_on = [
     # it enumerates through LabRepository now — leaving only the
     # import-light builtin_hosts and the term/transfer registries.
     "otto.host",
-    "otto.logger",
     "otto.link",
     "otto.reservations",
     "otto.bootstrap",
@@ -239,21 +235,10 @@ path = "otto.context"
 # NOTE: context<->config and context<->host are known cycles held apart by
 # lazy imports (context.py:178-184). Dropping `timeout` from run_on_all_hosts
 # (Tier 1.7) removes the host edge's worst justification.
-#
-# otto.inventory: `open_context` resolves the process inventory and hands it
-# to `load_lab`, exactly as `cli/invoke.py` does for the CLI — spec 2026-08-28
-# host-inventory §6 names this module among the callers that must (a library
-# user with a referenced entry otherwise gets "no inventory is configured"
-# against a settings file they filled in correctly). Function-scope, like
-# every other otto.inventory edge, because otto.inventory pulls ~77 otto
-# modules and this file sits on the budgeted surfaces; tach counts it either
-# way. otto.inventory already sits inside the same strongly connected
-# component (see otto.config's note above), so this adds no new cycle.
 depends_on = [
     "otto.config",
     "otto.host",
     "otto.bootstrap",
-    "otto.inventory",
     # ctx.options resolves the per-verb options registry at call time, and
     # OptionsNotAvailableError now lives there too (otto.params already roots
     # its own OptionsRegistrationError/OptionsCollisionError at OttoError).
@@ -333,7 +318,7 @@ path = "otto.examples"
 # otto.inventory: the reference LabRepository resolves each record through
 # `resolve_host_entry` — the sample IS the documentation of how a backend
 # honours `inventory=` (spec 2026-08-28 host-inventory §6).
-depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "otto.config", "otto.context", "otto.inventory"]
+depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "otto.config", "otto.inventory"]
 
 [[modules]]
 path = "otto.filesystem"
@@ -369,7 +354,6 @@ depends_on = [
     "otto.docker",
     "otto.logger",
     "otto.host",
-    "otto.context",
     "otto.models",
 ]
 
@@ -540,7 +524,7 @@ path = "otto.monitor.live"
 # The lab-aware layer above the monitor engine: it reads the active lab, the
 # repos, the driving repo's scope and full-lab tunnel discovery, and hands them
 # to the engine, which keeps its injected-dependencies rule (see otto.monitor).
-depends_on = ["otto.monitor", "otto.config", "otto.context", "otto.tunnel", "otto.utils", "otto.host"]
+depends_on = ["otto.monitor", "otto.config", "otto.context", "otto.tunnel", "otto.utils"]
 
 [[modules]]
 path = "otto.params"
@@ -655,7 +639,7 @@ path = "otto.suite"
 # "installed" means.
 #
 # No loop: otto.project no longer imports otto.cli (thin-CLI item 1).
-depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.result", "otto.project", "otto.monitor.live", "otto.utils"]
+depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.monitor.live", "otto.utils"]
 
 [[modules]]
 path = "otto.testing"

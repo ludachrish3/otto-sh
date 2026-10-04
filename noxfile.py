@@ -644,7 +644,7 @@ def lint(session: nox.Session) -> None:
     """
     session.run("ruff", "check", ".")
     session.run("ruff", "format", "--check", ".")
-    session.run("tach", "check")
+    session.run("tach", "check", "--exact")
     session.run("ast-grep", "scan", "src/otto", "web/src", "tests")
     session.run("ast-grep", "test", "--skip-snapshot-tests")
 
