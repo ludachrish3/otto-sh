@@ -85,7 +85,11 @@ async def test_a_dry_run_records_nothing_and_asks_nothing(recorders, probes):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "error",
-    [ConnectionError("gone"), OSError("gone"), DockerVerbError("not a docker host", field="host")],
+    [
+        ConnectionError("gone"),
+        OSError("gone"),
+        DockerVerbError("not a docker host", field="parent"),
+    ],
     ids=["connection", "os", "docker-verb"],
 )
 async def test_a_probe_that_raises_is_swallowed(recorders, probes, error):
@@ -300,7 +304,7 @@ def test_build_records_images_for_the_hosts_the_report_names_even_when_one_faile
         patch.object(docker_cli, "_record_observed", AsyncMock()) as record,
     ):
         result = DispatchRunner().invoke(
-            docker_cli.docker_app, ["build", "--on", "test3"], spec_name="docker"
+            docker_cli.docker_app, ["build", "--parent", "test3"], spec_name="docker"
         )
     assert result.exit_code == 1  # the failed image still exits 1
     record.assert_awaited_once_with(["test3", "alt2"], images=True)  # in order, each host once

@@ -233,7 +233,11 @@ CACHE_FILENAME = "completion_cache.json"
 #      learns them on the next rebuild.
 # v25: the names payload gains docker_images, docker_services_by_use_case and
 #      repos (#570).
-SCHEMA_VERSION = 25
+# v26: the names payload gains docker_default_parent_by_lab — the parent each
+#      lab's docker verbs default to, by the one rule — and the container ids
+#      are synthesized under that parent only, not under every docker-capable
+#      host. A v25 entry offers ids the lab no longer registers.
+SCHEMA_VERSION = 26
 
 # A conftest holds no test of its own, but pytest loads it before collecting
 # anything under its directory, so the per-file tables watch every one.
@@ -932,9 +936,10 @@ def read_cache(
     ``hosts``, ``hosts_by_lab``, ``docker_hosts``, ``docker_use_cases``,
     ``docker_images``, ``docker_services_by_use_case``, ``repos``,
     ``term_backends``, ``transfer_backends``, ``usernames``, ``commands``,
-    ``labs``, ``host_classes_by_id``, ``projects``, ``links`` and
-    ``logins_by_host`` keys. ``instructions`` and ``hosts`` are required; the
-    rest default to empty when a payload omits them.
+    ``labs``, ``host_classes_by_id``, ``projects``, ``links``,
+    ``logins_by_host`` and ``docker_default_parent_by_lab`` keys.
+    ``instructions`` and ``hosts`` are required; the rest default to empty
+    when a payload omits them.
 
     *digests*, when given, collects the per-section digests computed here
     for reuse by a subsequent :func:`write_cache` — see
@@ -964,6 +969,7 @@ def read_cache(
     projects = merged.get("projects", [])
     links = merged.get("links", [])
     logins_by_host = merged.get("logins_by_host", {})
+    docker_default_parent_by_lab = merged.get("docker_default_parent_by_lab", {})
     if (
         not isinstance(instructions, list)
         or not isinstance(test_options, list)
@@ -984,6 +990,7 @@ def read_cache(
         or not isinstance(projects, list)
         or not isinstance(links, list)
         or not isinstance(logins_by_host, dict)
+        or not isinstance(docker_default_parent_by_lab, dict)
     ):
         return None
     return {
@@ -1006,6 +1013,7 @@ def read_cache(
         "projects": projects,
         "links": links,
         "logins_by_host": logins_by_host,
+        "docker_default_parent_by_lab": docker_default_parent_by_lab,
     }
 
 
@@ -1083,6 +1091,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     projects: list[str] | None = None,
     links: list[dict[str, Any]] | None = None,
     logins_by_host: dict[str, list[dict[str, Any]]] | None = None,
+    docker_default_parent_by_lab: dict[str, str] | None = None,
     shim: dict[str, Any] | None = None,
     digests: dict[str, str] | None = None,
     tainted: bool = False,
@@ -1143,6 +1152,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
             "projects": projects or [],
             "links": links or [],
             "logins_by_host": logins_by_host or {},
+            "docker_default_parent_by_lab": docker_default_parent_by_lab or {},
         },
     }
     if shim is not None:
@@ -1737,7 +1747,7 @@ def _repo_enumeration(repo: "Repo", resolution: InventoryResolution) -> RepoEnum
 #: collectors enumerate the same repo on one cache-write pass; without this a
 #: stalled backend cost three deadlines and — worse — could time out for one
 #: collector and not another, writing a cache where `otto host <TAB>` is full
-#: and `otto docker --on <TAB>` is empty. Process-lifetime only, like the cache
+#: and `otto docker --parent <TAB>` is empty. Process-lifetime only, like the cache
 #: itself; nothing invalidates it because nothing lives long enough to need to.
 _SUMMARY_MEMO: dict[str, RepoEnumeration] = {}
 
@@ -1791,7 +1801,7 @@ def collect_host_drops(repos: list["Repo"]) -> list[dict[str, str]]:
 def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
     """Enumerate host IDs that can host containers (``docker_capable``).
 
-    Used as the completion source for ``otto docker --on <TAB>`` and any
+    Used as the completion source for ``otto docker --parent <TAB>`` and any
     other surface that should be limited to docker-capable parents.
     Mirrors :func:`collect_host_ids` (no :func:`otto.bootstrap.bootstrap` call
     needed; safe in the completion fast path).
@@ -1881,10 +1891,10 @@ def _declared_container_ids(repo: "Repo", parents: list[str]) -> list[str]:
     # while `--list-hosts` shows it. (The sample repos name their
     # use-cases after themselves, which is why the divergence hid.)
     #
-    # The PLACEMENT half is deliberately not mirrored: this function has
-    # no Lab, so it stays pessimistic-but-stable (every docker-capable
-    # host in the repo's labs) exactly as the legacy walk does,
-    # while the placeholder walk resolves one host per fragment.
+    # *parents* is the lab's default parent by the one rule (at most one), and
+    # `register_declared_container_hosts` registers its use-case AND legacy
+    # placeholders under that same one parent, so these are exactly the ids it
+    # registers: a lab the rule refuses passes none and gets none.
     middles_for: "dict[str, set[str]]" = {}  # service -> id middle segments
     # getattr, like `docker_settings` above: this is the completion fast
     # path, which must not crash on a settings object that predates the
@@ -1907,15 +1917,61 @@ def _declared_container_ids(repo: "Repo", parents: list[str]) -> list[str]:
             for service in compose.services:
                 middles_for.setdefault(service, set()).add(repo.name)
 
-    # No per-compose placement any more (spec §14): enumerate every
-    # docker-capable host in this repo's labs (pessimistic but stable;
-    # the actual bring-up picks one via the use-case machinery).
     return [
         f"{parent}.{middle}.{service}".lower()
         for parent in parents
         for service, middles in middles_for.items()
         for middle in middles
     ]
+
+
+def default_parent_from_summaries(summaries: "list[HostSummary]") -> "str | None":
+    """Return the parent a lab defaults to, by the one rule, from summaries alone.
+
+    Mirrors :func:`otto.docker.observe.default_docker_parent` outcome for
+    outcome: one capable host -> it; several -> the strictly highest
+    ``docker_priority``; a tie at the top or no capable host -> ``None`` (the
+    verb would refuse; the cache carries nothing). Change both or neither.
+    """
+    capable = [s for s in summaries if s.docker_capable]
+    if not capable:
+        return None
+    if len(capable) == 1:
+        return capable[0].id
+    top = max(s.docker_priority for s in capable)
+    ranked = [s.id for s in capable if s.docker_priority == top]
+    return ranked[0] if len(ranked) == 1 else None
+
+
+def _summaries_by_lab(
+    repos: list["Repo"], resolution: InventoryResolution
+) -> "dict[str, list[HostSummary]]":
+    """Every enumerable host summary grouped by lab, a host once however many repos list it."""
+    by_lab: dict[str, list[HostSummary]] = {}
+    seen: set[str] = set()
+    for repo in repos:
+        for summary in repo_host_summaries(repo, resolution):
+            if summary.id in seen:
+                continue
+            seen.add(summary.id)
+            for lab in summary.labs:
+                by_lab.setdefault(lab, []).append(summary)
+    return by_lab
+
+
+def _default_parents_by_lab(repos: list["Repo"], resolution: InventoryResolution) -> dict[str, str]:
+    """Each lab to its default docker parent; a lab the rule refuses is absent."""
+    out: dict[str, str] = {}
+    for lab, summaries in sorted(_summaries_by_lab(repos, resolution).items()):
+        parent = default_parent_from_summaries(summaries)
+        if parent is not None:
+            out[lab] = parent
+    return out
+
+
+def collect_docker_default_parent_by_lab(repos: list["Repo"]) -> dict[str, str]:
+    """Each lab to the parent the docker verbs default to; a lab the rule refuses is absent."""
+    return _default_parents_by_lab(repos, resolve_process_inventory(repos))
 
 
 def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) -> list[str]:
@@ -1927,12 +1983,13 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     ``get_host`` will look up at runtime. Also
     synthesizes container host IDs of the form ``<parent>.<project>.<service>``
     from each repo's ``[docker]`` settings so declared container hosts
-    are tab-completable before they're actually brought up.
+    are tab-completable before they're actually brought up — under each lab's
+    default docker parent only, so a lab the rule refuses offers none.
 
     When *lab_names* is given, only hosts whose ``labs`` array names one of
     those labs are enumerated — the completion source for ``otto host <TAB>``
     once a lab is selected via ``-l``/``--lab``/``OTTO_LAB``. Container IDs are
-    scoped the same way (only docker-capable parents in the selected lab).
+    scoped the same way (only the selected lab's default docker parent).
     The built-in hosts are always seeded regardless of the filter, mirroring
     ``load_lab`` injecting ``local`` into every lab.
 
@@ -1952,18 +2009,25 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     ids: set[str] = set(builtin_host_ids())
     resolution = resolve_process_inventory(repos)
     for repo in repos:
-        # Docker-capable ids scoped to THIS repo, so the container ids
-        # synthesized below pair each repo's composes with its own parents.
-        docker_capable_ids: list[str] = []
         for summary in repo_host_summaries(repo, resolution):
             # Lab filter: keep only hosts tagged with a requested lab.
             if wanted is not None and wanted.isdisjoint(summary.labs):
                 continue
             ids.add(summary.id)
-            if summary.docker_capable:
-                docker_capable_ids.append(summary.id)
 
-        ids.update(_declared_container_ids(repo, docker_capable_ids))
+    # Container ids sit under each in-scope lab's default parent only: the
+    # lab's hosts are pooled across repos, as the lab itself is, and the one
+    # rule picks (or refuses) its parent.
+    parents = sorted(
+        {
+            parent
+            for lab, parent in _default_parents_by_lab(repos, resolution).items()
+            if wanted is None or lab in wanted
+        }
+    )
+    if parents:
+        for repo in repos:
+            ids.update(_declared_container_ids(repo, parents))
 
     return sorted(ids)
 
@@ -2101,7 +2165,7 @@ def collect_lab_names(repos: list["Repo"]) -> list[str]:
 def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
     """Map each lab name to its host IDs and declared container ids.
 
-    Membership plus the container ids under the lab's docker-capable hosts —
+    Membership plus the container ids under the lab's default docker parent —
     exactly what the live path offers. Powers lab-scoped ``otto host <TAB>``
     completion from the fast cache path:
     the completer unions the buckets for the selected lab(s) and adds the
@@ -2125,18 +2189,16 @@ def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
     by_lab: dict[str, set[str]] = {lab: set() for lab in collect_lab_names(repos)}
     resolution = resolve_process_inventory(repos)
     for repo in repos:
-        parents_by_lab: dict[str, list[str]] = {}
         for summary in repo_host_summaries(repo, resolution):
             if summary.id in builtins:
                 continue
             for lab in summary.labs:
                 by_lab.setdefault(lab, set()).add(summary.id)
-                if summary.docker_capable:
-                    parents_by_lab.setdefault(lab, []).append(summary.id)
-        # The declared container ids belong to the labs of their docker-capable parent,
-        # exactly as `collect_host_ids(lab_names=...)` scopes them.
-        for lab, parents in parents_by_lab.items():
-            by_lab[lab].update(_declared_container_ids(repo, parents))
+    # The declared container ids belong to the lab whose default parent they sit
+    # under, exactly as `collect_host_ids(lab_names=...)` scopes them.
+    for lab, parent in _default_parents_by_lab(repos, resolution).items():
+        for repo in repos:
+            by_lab.setdefault(lab, set()).update(_declared_container_ids(repo, [parent]))
 
     return {lab: sorted(ids) for lab, ids in by_lab.items()}
 

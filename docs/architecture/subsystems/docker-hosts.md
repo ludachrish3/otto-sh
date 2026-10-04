@@ -50,18 +50,27 @@ hopped and direct parents identically.
 A deployment is a **use-case**, not a repo: every active repo contributes
 *fragments* under the same use-case name, and the deploy pipeline resolves
 them before touching anything. Three pure phases, in order — selection (which
-fragments take part, after the provider competition), placement (which lab
-host each one lands on), and env assembly (the three channels merged into one
+fragments take part, after the provider competition), the parent (the one lab
+host the stack lands on), and env assembly (the three channels merged into one
 mapping). Purity is the design constraint, not an accident: it is what lets
 `otto docker use-cases` render an inventory without contacting a device, and
 what lets `--dry-run` print the *exact* compose command rather than a
-description of one. Placement has one owner: `deployment.resolve_use_case`, shared
-by `compose build`, `compose up`, `compose down`, `compose ps` and `compose logs`.
+description of one.
 
-Resolution refuses rather than guesses. An ambiguous role, a provider tie, a
-pin naming a host this lab does not have — each is a configuration error
-naming the candidates and the knobs, raised before a single file is staged.
-{doc}`../../cli/docker/use-cases` documents the rules for users; the
+The parent has one owner, `observe.default_docker_parent`, and the rule is
+stated once, for users, under "Which host" on {doc}`../../cli/docker/index`.
+Two properties of it matter here. It reads the lab and nothing else, so no
+fragment, repo scope or file order can move it. And every verb calls it (the
+CLI never computes a default), so `deployment.resolve_use_case`, shared by
+`compose build`, `compose up`, `compose down`, `compose ps` and `compose logs`,
+sees the same host the container-id placeholders below were minted under.
+
+Resolution refuses rather than guesses, before a single file is staged, and
+names the candidates and the knobs. A provider tie is a configuration refusal
+(exit 1); a tie for the parent, or a `--parent` naming a host this lab does not
+have, is a parent refusal (exit 2).
+The "Errors" section of {doc}`../../cli/docker/use-cases` documents the split
+for users; the
 design rationale is in the docker use-cases design spec
 (`docs/superpowers/specs/2026-08-30-docker-use-cases-design.md`, §4-§6).
 
@@ -126,13 +135,10 @@ per-repo path — the `compose_up`/`composed` primitives, which stay public
 `otto-<repo>-<suffix>`, prefix included. That naming is frozen until the path
 is removed; it is not evidence the rule above is broken.
 
-Do **not** read that prefix as "this repo declares no use-cases". A repo with
-no `[[docker.use_cases]]` cannot reach the per-repo path without an explicit
-`on=`: `compose._repo_parent_host` has nothing to resolve and raises. In practice an
-`otto-<repo>-<suffix>` project belongs to a repo that *does* declare
-fragments and was reached through a primitive rather than through
-`deploy` — so the fragment a maintainer would go hunting for is already
-there.
+Do **not** read that prefix as telling you whether the repo declares
+use-cases: it says nothing about that. The per-repo path takes its parent from
+the same rule a use-case does (`compose._repo_parent_host`, with `parent=` as
+the override).
 
 ## Lifecycle and the lab
 
@@ -143,7 +149,10 @@ lab. This walks each repo's `[docker]` settings and registers
 `container_id = ""`. Two effects:
 
 1. `--list-hosts` and tab completion immediately show the declared
-   container ids — without needing to bring the stack up first. These are
+   container ids, under the lab's default parent — without needing to bring
+   the stack up first. A lab whose rule refuses (a tie at the top) registers
+   none, and the walk stays silent; `register_stack_hosts` registers under the
+   parent a stack actually came up on. These are
    two synthesizers, not one: `--list-hosts` reads the placeholders this
    walk registered, while completion runs off the cached id list
    `config/completion_cache.collect_host_ids` builds without a lab. They must

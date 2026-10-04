@@ -393,7 +393,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 f"auto-starting use-case {self.project!r}"
             )
             try:
-                stack = await deploy(self.project, build=False)
+                stack = await deploy(self.project, parent=self.parent.id, build=False)
             except CommandNotRunError:
                 # Same reasoning as the legacy branch's bare raise below:
                 # `deploy` declines a dry run by raising `CommandNotRunError`
@@ -408,14 +408,11 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     f"first."
                 ) from e
 
-            # `stack.by_host`, NOT the flattened `stack.hosts`: a use-case can
-            # span several parents, and two of them can legally declare the
-            # same service name (`_declared_services` warns on the collision,
-            # it does not refuse it). Reading the flattened map would hand
-            # THIS container -- bound to `self.parent` for every subsequent
-            # `docker exec` -- a container id that belongs to a DIFFERENT
-            # parent, which fails far from here with a bare "no such
-            # container" instead of this method's actionable refusal.
+            # `stack.by_host[self.parent.id]`: the deploy was pinned to this
+            # placeholder's own parent above, so that is the one entry that
+            # can hold this service. A missing container id gets this
+            # method's actionable refusal below rather than a bare "no such
+            # container" from a later `docker exec`.
             by_parent = stack.by_host.get(self.parent.id, {})
             host = by_parent.get(self.service)
             cid = host.container_id if host is not None else ""
@@ -441,14 +438,14 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running, and no "
                 f"repo named {self.project!r} is configured to auto-start it. "
-                f"Build its image first (`otto docker build --on {self.parent.id}`) and retry."
+                f"Build its image first (`otto docker build --parent {self.parent.id}`) and retry."
             )
 
         try:
             hosts = await compose_up(
                 repo,
                 lab,
-                on=self.parent.id,
+                parent=self.parent.id,
                 project_name=self.compose_project,
                 build=False,
             )
@@ -481,7 +478,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running, and "
                 f"auto-start failed: {e}. Build its image first "
-                f"(`otto docker build --on {self.parent.id}`) and retry."
+                f"(`otto docker build --parent {self.parent.id}`) and retry."
             ) from e
 
         host = hosts.get(self.service)
@@ -490,7 +487,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 f"Container {self.id!r} is declared but not running. "
                 f"Auto-start of stack {self.compose_project!r} did not produce "
                 f"a container for service {self.service!r}. Build its image first "
-                f"(`otto docker build --on {self.parent.id}`) and retry."
+                f"(`otto docker build --parent {self.parent.id}`) and retry."
             )
         return host.container_id
 

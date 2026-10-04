@@ -8,6 +8,7 @@ import io
 import itertools
 import json
 import os
+import sys
 import time
 import warnings
 
@@ -97,6 +98,7 @@ def _write_cache_like_entry(repos) -> None:
         projects=cc.collect_project_names(),
         links=cc.collect_links(repos),
         logins_by_host=cc.collect_logins_by_host(repos),
+        docker_default_parent_by_lab=cc.collect_docker_default_parent_by_lab(repos),
         shim=build_shim_payload(repos),
     )
 
@@ -169,14 +171,24 @@ def _seed_matching_tables(repos) -> None:
     assert ct.classify(repo, table).is_current
 
 
+_TYPER_DEFAULT_PARENTS: dict[str, str] | None = None
+"""The stored ``docker_default_parent_by_lab`` map, as the real collector wrote it — the ONE
+warm key Typer's TAB sees (see ``_typer``); ``None`` outside a ``world``."""
+
+
 @pytest.fixture
 def world(tmp_path, monkeypatch):
     """Bootstrapped repo + written cache + Typer's command tree, once per test.
 
-    The Typer side runs BOOTSTRAPPED and COLD (``set_completion_names(None)``):
-    spec §1 decision 7 makes bootstrapped Typer the equality target, and the
-    warm-stub path (``_OttoGroup._real`` attaching cached stubs) is explicitly
-    NOT it — a warm-side difference would be a stub defect, not a shim one.
+    The Typer side runs BOOTSTRAPPED and COLD (``set_completion_names(None)``),
+    plus ONE warm key on docker lines: ``docker_default_parent_by_lab``, the
+    stored fact a TAB reads without bootstrapping (see ``_typer``). Only that
+    key, because a fuller warm snapshot takes ``_OttoGroup._real``'s fast path,
+    which rebuilds ``test`` from the cached ``test_options`` and drops its live
+    options. Spec §1 decision 7 makes bootstrapped Typer the equality target,
+    and the warm-stub path (``_OttoGroup._real`` attaching cached stubs) is
+    explicitly NOT it — a warm-side difference would be a stub defect, not a
+    shim one.
     """
     repo = make_shim_repo(tmp_path)
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
@@ -206,6 +218,13 @@ def world(tmp_path, monkeypatch):
         monkeypatch.setattr(cc, "run_collect_child", _no_child)
         monkeypatch.setattr(cc, "spawn_collect_child", _no_child)
         bs.set_completion_names(None)
+        stored = cc.read_cache(repos)
+        assert stored is not None
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_TYPER_DEFAULT_PARENTS",
+            stored["docker_default_parent_by_lab"],
+        )
         import typer
         from typer._completion_classes import completion_init
 
@@ -215,6 +234,24 @@ def world(tmp_path, monkeypatch):
         yield repo, typer.main.get_command(app)
     finally:
         bs._reset()
+
+
+_ROOT_OPTIONS_WITH_A_VALUE = {"-l", "--lab", "--log-level"}
+"""Root options that consume the NEXT word as their value (``-l east docker ...``)."""
+
+
+def _subcommand_word(words: str) -> str | None:
+    """Return the first word that names a subcommand (not an option, not an option's value)."""
+    tokens = words.split()[1:]
+    skip = False
+    for token in tokens:
+        if skip:
+            skip = False
+        elif token in _ROOT_OPTIONS_WITH_A_VALUE:
+            skip = True
+        elif not token.startswith("-"):
+            return token
+    return None
 
 
 def _typer(cli, words: str, cword: int, env: dict[str, str], monkeypatch) -> str:
@@ -237,8 +274,20 @@ def _typer(cli, words: str, cword: int, env: dict[str, str], monkeypatch) -> str
     monkeypatch.setenv("COMP_WORDS", words)
     monkeypatch.setenv("COMP_CWORD", str(cword))
     completer = get_completion_class("bash")(cli, {}, "otto", "_OTTO_COMPLETE")
-    with contextlib.redirect_stdout(io.StringIO()):
-        return completer.complete()
+    # The default parent is a stored-cache fact (a TAB never bootstraps to rank hosts), so
+    # Typer reads it from the names snapshot — the one key made warm here, read from the
+    # cache the real collector wrote; every docker completer sees a miss on any other key
+    # and answers live. Only docker lines get it: a warm snapshot also turns ``otto test``'s
+    # option stubs from live to cached (the SUT's own options vanish), which is the warm-stub
+    # path this differential deliberately does not compare.
+    saved = bs.get_completion_names()
+    if _TYPER_DEFAULT_PARENTS is not None and _subcommand_word(words) == "docker":
+        bs.set_completion_names({"docker_default_parent_by_lab": _TYPER_DEFAULT_PARENTS})
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return completer.complete()
+    finally:
+        bs.set_completion_names(saved)
 
 
 def _shim(words: str, cword: int, env: dict[str, str]) -> tuple[str | None, str]:
@@ -385,8 +434,8 @@ HAND_WRITTEN = [
     ("otto link ", 2),
     ("otto -l west link ", 4),
     ("otto docker ", 2),
-    ("otto docker compose up --on ", 5),
-    ("otto -l west docker compose up --on ", 7),
+    ("otto docker compose up --parent ", 5),
+    ("otto -l west docker compose up --parent ", 7),
     ("otto -I ", 2),
     ("otto -I s", 2),
     ("otto --holder ", 2),
@@ -441,9 +490,9 @@ HAND_WRITTEN = [
     ("otto docker build ", 3),
     ("otto docker build a", 3),
     ("otto docker build --repo ", 4),
-    ("otto docker build --on dut1 --tag ", 6),
-    ("otto docker build --on dut1 --tag api:", 6),
-    ("otto docker build --on dut2 --tag ", 6),
+    ("otto docker build --parent dut1 --tag ", 6),
+    ("otto docker build --parent dut1 --tag api:", 6),
+    ("otto docker build --parent dut2 --tag ", 6),
     ("otto docker build --tag ", 4),
     ("otto docker compose build integration ", 5),
     ("otto docker compose up integration ", 5),
@@ -452,10 +501,8 @@ HAND_WRITTEN = [
     ("otto docker compose down integration ", 5),
     ("otto docker compose logs integration ", 5),
     ("otto docker logs ", 3),
-    ("otto docker logs east", 3),
-    ("otto docker logs dut1", 3),
-    ("otto docker logs --on dut1 ", 5),
-    ("otto docker logs --on dut2 ", 5),
+    ("otto docker logs --parent dut1 ", 5),
+    ("otto docker logs --parent dut2 ", 5),
     ("otto docker logs 3f", 3),
 ]
 ENVS = [{}, {"OTTO_LAB": "east"}, {"OTTO_LAB": "west east"}, {"OTTO_LAB": ""}]
@@ -769,23 +816,33 @@ def test_every_pytest_config_name_sends_the_table_back_to_a_whole_tree(world, na
     assert out.stale is True
 
 
+def test_the_real_collector_wrote_the_default_parents_the_pins_rely_on(world):
+    """east defaults to dut1 (priority 10); west ties dut2/dut3 so the rule leaves it absent."""
+    repo, _cli = world
+    from otto.config.repo import Repo
+
+    names = cc.read_cache([Repo(sut_dir=repo)])
+    assert names is not None
+    assert names["docker_default_parent_by_lab"] == {"east": "dut1"}
+
+
 @pytest.mark.parametrize(
     ("line", "cword", "expected"),
     [
-        ("otto docker logs --on dut1 ", 5, ["east-integration-x-api-1", "3f9a3f9a"]),
-        ("otto docker logs --on dut2 ", 5, []),  # dut2's containers entry is past its 15 min TTL
-        ("otto docker build --on dut1 --tag ", 6, ["api:latest", "api:1.2"]),
-        ("otto docker build --on dut2 --tag ", 6, []),  # dut2's images entry is past its 24 h TTL
+        ("otto docker logs --parent dut1 ", 5, ["east-integration-x-api-1", "3f9a3f9a"]),
+        # dut2's containers entry is past its 15 min TTL
+        ("otto docker logs --parent dut2 ", 5, []),
+        ("otto docker build --parent dut1 --tag ", 6, ["api:latest", "api:1.2"]),
+        # dut2's images entry is past its 24 h TTL
+        ("otto docker build --parent dut2 --tag ", 6, []),
         ("otto docker compose up integration ", 5, ["api", "db"]),
         ("otto docker compose up ", 4, ["integration"]),  # the use-case site, not the services
-        # No --on: container host ids first, then dut1's fresh names and ids; dut2's
-        # expired containers entry contributes nothing.
-        (
-            "otto docker logs ",
-            3,
-            ["dut1.integration.api", "dut1.integration.db", "east-integration-x-api-1", "3f9a3f9a"],
-        ),
-        ("otto docker logs dut1", 3, ["dut1.integration.api", "dut1.integration.db"]),
+        # No --parent: the default parent is dut1 (the strictly highest docker_priority in
+        # east, the map's only entry); the names then dut1's ids, nothing else.
+        ("otto docker logs ", 3, ["east-integration-x-api-1", "3f9a3f9a"]),
+        ("otto docker build --tag ", 4, ["api:latest", "api:1.2"]),
+        # west's dut2 and dut3 tie on docker_priority: the rule refuses, so TAB offers nothing.
+        ("otto -l west docker logs ", 5, []),
         ("otto docker build ", 3, ["api"]),
         ("otto docker build --repo ", 4, ["shimsut"]),
     ],

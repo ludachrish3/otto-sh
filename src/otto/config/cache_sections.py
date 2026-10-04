@@ -126,6 +126,7 @@ def _collect_names(repos: list[Repo]) -> dict[str, Any]:
         "projects": _cc.collect_project_names(),
         "links": _cc.collect_links(repos),
         "logins_by_host": _cc.collect_logins_by_host(repos),
+        "docker_default_parent_by_lab": _cc.collect_docker_default_parent_by_lab(repos),
     }
 
 

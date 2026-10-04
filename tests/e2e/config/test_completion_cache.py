@@ -98,7 +98,7 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     # Host IDs from tests/_fixtures/lab_data/tech1/lab.json — co-cached
     # alongside instructions so `otto host <TAB>` hits the fast path.
     assert {"test1", "test2", "test3"} <= set(payload["hosts"])
-    # docker-capable parents are cached separately so `otto docker --on <TAB>`
+    # docker-capable parents are cached separately so `otto docker --parent <TAB>`
     # only suggests hosts that can actually run containers. All three unix
     # VMs are docker-capable (test1/test2 gained docker for the e2e pool).
     assert payload["docker_hosts"] == ["test1", "test2", "test3"]

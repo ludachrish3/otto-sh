@@ -1,13 +1,14 @@
-"""THE PLACEMENT GUARD: for the same use-case, on and provide, compose_build builds on
-exactly the hosts deploy deploys to. It turns red the day either verb grows a placement
-rule of its own (issue #494 was that day, once).
+"""THE PARENT GUARD: for the same use-case, parent and provide, compose_build builds on
+exactly the host deploy deploys to. It turns red the day either verb grows a parent
+rule of its own (issue #494 was that day, once, for the placement rule this replaced).
 
 Verified red when written: temporarily changing compose_build's
-``deployment.resolve_use_case(use_case, on=on, provide=provide)`` call to
-``deployment.resolve_use_case(use_case, on=None, provide=provide)`` and re-running this file failed
-the ``collapse`` row (compose_build then built ``b`` on ``alt2`` instead of collapsing it onto
-``test3`` the way ``deploy`` did), confirming the differential actually depends on
-compose_build sharing deploy's placement rather than merely resembling it.
+``deployment.resolve_use_case(use_case, parent=parent, provide=provide)`` call to
+``deployment.resolve_use_case(use_case, parent=None, provide=provide)`` and re-running this
+file failed the ``named_over_rank`` and ``named_other_lab`` rows (compose_build then built
+on the ranked ``alt2`` while ``deploy`` deployed on the named host), confirming the
+differential depends on compose_build sharing deploy's parent rather than merely
+resembling it.
 """
 
 from unittest.mock import AsyncMock, patch
@@ -29,49 +30,41 @@ def _sub(tmp, name):
     return path
 
 
+def _ranked(host_id, ip, priority):
+    host = _host(host_id, ip)
+    host.docker_priority = priority
+    return host
+
+
 def _alt3_host():
     """A host stamped from a lab OTHER than the active ``unix`` lab.
 
-    Carries the #494 shape: a placement pin lab-qualified as
-    ``unix_alt:alt3`` must resolve against this host's own
-    ``source_lab``, not the active lab's name — the old CLI stripped the
-    lab qualifier down to the bare host id before it ever reached
-    resolution.
+    Carries the #494 shape: a parent named from another lab of the session
+    must resolve to that host as-is, its own ``source_lab`` intact.
     """
-    host = _host("alt3", "10.10.200.23", roles=("edge",))
+    host = _host("alt3", "10.10.200.23")
     host.source_lab = "unix_alt"
     return host
 
 
+def _two_repos(tmp):
+    return [
+        _repo("a", _frag(), composes=[_compose_file(tmp, "core")], images=("api",)),
+        _repo("b", _frag(), composes=[_compose_file(_sub(tmp, "b"), "core")], images=("db",)),
+    ]
+
+
 LAYOUTS = {
-    "pinned": lambda tmp: (
-        [
-            _repo(
-                "a",
-                _frag(placement={"edge": "test3"}, role="edge"),
-                composes=[_compose_file(tmp, "core")],
-                images=("api",),
-            )
-        ],
-        [
-            _wire(_host("test3", "10.10.200.13", roles=("edge",))),
-            _wire(_host("alt2", "10.10.200.22", roles=("data",))),
-        ],
+    "only_host": lambda tmp: (
+        _two_repos(tmp),
+        [_wire(_host("test3", "10.10.200.13"))],
         {},
     ),
-    "roles": lambda tmp: (
+    "ranked": lambda tmp: (
+        _two_repos(tmp),
         [
-            _repo("a", _frag(role="edge"), composes=[_compose_file(tmp, "core")], images=("api",)),
-            _repo(
-                "b",
-                _frag(role="data"),
-                composes=[_compose_file(_sub(tmp, "b"), "core")],
-                images=("db",),
-            ),
-        ],
-        [
-            _wire(_host("test3", "10.10.200.13", roles=("edge",))),
-            _wire(_host("alt2", "10.10.200.22", roles=("data",))),
+            _wire(_host("test3", "10.10.200.13")),
+            _wire(_ranked("alt2", "10.10.200.22", 10)),
         ],
         {},
     ),
@@ -79,66 +72,51 @@ LAYOUTS = {
         [
             _repo(
                 "real",
-                _frag(role="data", provides="db", priority=1),
+                _frag(provides="db", priority=1),
                 composes=[_compose_file(tmp, "core")],
                 images=("db",),
             ),
             _repo(
                 "mock",
-                _frag(role="data", provides="db", priority=0),
+                _frag(provides="db", priority=0),
                 composes=[_compose_file(_sub(tmp, "m"), "core")],
                 images=("mockdb",),
             ),
             _repo(
                 "app",
-                _frag(role="edge"),
+                _frag(),
                 composes=[_compose_file(_sub(tmp, "app"), "core")],
                 images=("api",),
             ),
         ],
         [
-            _wire(_host("test3", "10.10.200.13", roles=("edge",))),
-            _wire(_host("alt2", "10.10.200.22", roles=("data",))),
+            _wire(_host("test3", "10.10.200.13")),
+            _wire(_ranked("alt2", "10.10.200.22", 10)),
         ],
         {"provide": {"db": "mock"}},
     ),
-    "lab_qualified_pin": lambda tmp: (
+    "named_over_rank": lambda tmp: (
+        _two_repos(tmp),
         [
-            _repo(
-                "a",
-                _frag(placement={"edge": "unix_alt:alt3"}, role="edge"),
-                composes=[_compose_file(tmp, "core")],
-                images=("api",),
-            )
+            _wire(_host("test3", "10.10.200.13")),
+            _wire(_ranked("alt2", "10.10.200.22", 10)),
         ],
+        {"parent": "test3"},
+    ),
+    "named_other_lab": lambda tmp: (
+        _two_repos(tmp),
         [
             _wire(_alt3_host()),
-            _wire(_host("alt2", "10.10.200.22", roles=("data",))),
+            _wire(_ranked("alt2", "10.10.200.22", 10)),
         ],
-        {},
-    ),
-    "collapse": lambda tmp: (
-        [
-            _repo("a", _frag(role="edge"), composes=[_compose_file(tmp, "core")], images=("api",)),
-            _repo(
-                "b",
-                _frag(role="data"),
-                composes=[_compose_file(_sub(tmp, "b"), "core")],
-                images=("db",),
-            ),
-        ],
-        [
-            _wire(_host("test3", "10.10.200.13", roles=("edge",))),
-            _wire(_host("alt2", "10.10.200.22", roles=("data",))),
-        ],
-        {"on": "test3"},
+        {"parent": "alt3"},
     ),
 }
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("layout", sorted(LAYOUTS), ids=str)
-async def test_compose_build_and_deploy_place_identically(layout, tmp_path):
+async def test_compose_build_and_deploy_land_on_one_parent(layout, tmp_path):
     repos, hosts, kw = LAYOUTS[layout](tmp_path)
     lab = _lab(*hosts)
     built: list[tuple[str, str]] = []
@@ -164,6 +142,7 @@ async def test_compose_build_and_deploy_place_identically(layout, tmp_path):
     ):
         await deploy("integration", build=True, **kw)
     assert built, layout
+    assert len({host for _, host in built}) == 1, f"{layout}: one use-case, one parent: {built}"
     assert set(built) == deployed_on, (
         f"{layout}: compose_build {sorted(built)} vs deploy {sorted(deployed_on)}"
     )

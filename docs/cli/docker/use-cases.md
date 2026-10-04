@@ -7,9 +7,9 @@ does the library API that instructions and tests import.
 
 The unit a repo declares is not the whole use-case — it is a **fragment** of
 one. Every active repo contributes the fragments it declares under the name,
-otto decides which fragments take part, works out which lab host each lands
-on, assembles one env mapping, and runs **one** `docker compose up` per host
-over the merged file set.
+otto decides which fragments take part, assembles one env mapping, and runs
+**one** `docker compose up` on the parent over the merged file set. Which lab
+host the parent is, is {ref}`Which host <docker-which-host>`.
 
 ```toml
 # repo-a/.otto/settings.toml
@@ -27,7 +27,6 @@ services = ["api"]                    # the names in its services: block
 [[docker.use_cases]]
 name = "integration"                  # the use-case this fragment joins
 composes = ["core"]                   # handles from above
-role = "edge"                         # which lab host it wants (below)
 ```
 
 `otto docker compose up --build integration` builds the declared image and deploys
@@ -35,10 +34,9 @@ it (without `--build`, `up` builds nothing, so an image that is not already on t
 host is docker's pull error), and the container comes back as the lab host
 `<parent>.integration.api` — see [Container hosts](index.md#container-hosts).
 
-Only `name` and `composes` are required; `role` is shown because you need it
-as soon as the repo's scope holds more than one docker-capable host, which is
-the common case. Drop it when there is exactly one, and the fragment is three
-lines.
+Only `name` and `composes` are required. A fragment never names a host: the
+stack lands on one parent, chosen on the command line or by the lab
+({ref}`Which host <docker-which-host>`).
 
 {doc}`../../configuration/settings` is the schema reference for every key
 above; this page is about what they *mean*.
@@ -49,20 +47,21 @@ above; this page is about what they *mean*.
 nothing, and creates no output directory, so it prints the same under
 `--dry-run` (see {doc}`../dry-run`). Like every `otto docker` verb it
 needs a lab selected (`--lab` or `OTTO_LAB`); without one it exits 2 before
-listing anything. The host column is placement resolved against that lab:
+listing anything. The host column is the parent the rule picks in that lab
+({ref}`Which host <docker-which-host>`):
 
 ```console
 $ otto --lab unix docker use-cases integration
-                              use-case integration
-┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
-┃ fragment         ┃ role   ┃ provides         ┃ host  ┃ env keys  ┃ status    ┃
-┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
-│ repo1[core,edge] │ docker │ edge (priority   │ test3 │ EDGE_ADDR │           │
-│                  │        │ 10)              │       │           │           │
-│ repo2[core]      │ docker │ -                │ test3 │ -         │           │
-│ repo2[mock-edge] │ docker │ edge (priority   │ -     │ -         │ displaced │
-│                  │        │ 0)               │       │           │           │
-└──────────────────┴────────┴──────────────────┴───────┴───────────┴───────────┘
+                          use-case integration
+┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ fragment         ┃ provides         ┃ host  ┃ env keys  ┃ status    ┃
+┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
+│ repo1[core,edge] │ edge (priority   │ test3 │ EDGE_ADDR │           │
+│                  │ 10)              │       │           │           │
+│ repo2[core]      │ -                │ test3 │ -         │           │
+│ repo2[mock-edge] │ edge (priority   │ -     │ -         │ displaced │
+│                  │ 0)               │       │           │           │
+└──────────────────┴──────────────────┴───────┴───────────┴───────────┘
 docker: edge goes to repo1 (priority 10); repo2 (priority 0) stands down
 ```
 
@@ -73,9 +72,9 @@ use-case.
 Env **key names** are listed, never values — a value can be a secret pulled
 from your shell.
 
-The verb reports rather than raises: a use-case whose placement cannot be
-resolved prints its refusal in place of a host, the other use-cases are
-listed as usual, and the listing still exits 0.
+The verb reports rather than raises: a lab whose parent the rule cannot pick
+prints its refusal in place of the host on every use-case (the refusal is
+lab-wide), and the listing still exits 0.
 
 ## How templating works — the two-sided mechanism
 
@@ -111,14 +110,13 @@ Nothing here knows otto exists.
 [[docker.use_cases]]
 name = "integration"
 composes = ["core"]
-role = "edge"
-env = { EDGE_ADDR = "${otto:role.edge.addr}", LOG_LEVEL = "debug" }
+env = { EDGE_ADDR = "${otto:parent.addr}", LOG_LEVEL = "debug" }
 ```
 
-`${otto:role.edge.addr}` is a **fact reference**. Otto resolves it at deploy
-time — "the address of whichever lab host this use-case's `edge` role landed
-on" — and the resolved value is what enters the env mapping under the
-product's own name, `EDGE_ADDR`.
+`${otto:parent.addr}` is a **fact reference**. Otto resolves it at deploy
+time — "the address of the parent this stack is being deployed to" — and the
+resolved value is what enters the env mapping under the product's own name,
+`EDGE_ADDR`.
 
 The two halves meet at exactly one point: the *name* `EDGE_ADDR`. The product
 declares which variables it consumes; the settings file says where each
@@ -164,14 +162,12 @@ under the names the product chose. So:
 | --------- | ----------- |
 | `${otto:use_case}` | The use-case name being deployed |
 | `${otto:compose_project}` | The compose project name ({ref}`below <docker-use-case-naming>`) |
-| `${otto:role.<role>.addr}` | Address of the host that `<role>` resolved to |
-| `${otto:role.<role>.host_id}` | That host's lab id |
 | `${otto:host.<id>.addr}` | Address of a named **unix** lab host in scope — including one that runs no containers, such as a DUT |
-| `${otto:parent.addr}` | Address of the host this stack is being deployed to |
-| `${otto:parent.id}` | That host's lab id |
+| `${otto:parent.addr}` | Address of the parent this stack is being deployed to |
+| `${otto:parent.id}` | The parent's lab id |
 
-"In scope" is the same project-scoping clause placement uses, unioned across
-every repo taking part in the deployment. It is *not* narrowed to
+"In scope" is each participating repo's project scope (see {doc}`../projects`),
+unioned across every repo taking part in the deployment. It is *not* narrowed to
 docker-capable hosts, so a container can be told the address of the bench
 device it is supposed to drive. Two limits apply — the namespace
 covers **unix** lab hosts only, so a serial-attached or Zephyr target is not
@@ -179,7 +175,7 @@ addressable this way, and a host with no configured address is refused rather
 than fabricated.
 
 An unknown reference is a configuration refusal naming the known forms and the
-roles and hosts actually available — nothing is staged and nothing is started.
+hosts actually available — nothing is staged and nothing is started.
 Anything not matching `${otto:` is passed through untouched, so a product
 `${VAR}` string is safe to use as a literal value.
 
@@ -220,10 +216,8 @@ whatever your compose version.
 ## Provider competition: swapping a mock for the real thing
 
 The examples from here on are a different deployment from the templating
-walkthrough above — `repo1`/`repo2` with `role = "docker"`, rather than the
-walkthrough's `repo-a` with `role = "edge"`. Read each half on its own; a
-fragment stitched from both would ask for a role no participating fragment
-carries, and be refused.
+walkthrough above — `repo1` and `repo2`, rather than the walkthrough's
+`repo-a`. Read each half on its own.
 
 Two projects can offer the same thing. A repo that owns the real edge service
 and a repo that ships a mock of it both want to supply `edge` — and they must
@@ -236,7 +230,6 @@ A fragment may declare `provides` (a capability name) and `priority`:
 [[docker.use_cases]]
 name = "integration"
 composes = ["core", "edge"]
-role = "docker"
 provides = "edge"
 priority = 10
 
@@ -244,7 +237,6 @@ priority = 10
 [[docker.use_cases]]
 name = "integration"
 composes = ["mock-edge"]
-role = "docker"
 provides = "edge"
 priority = 0
 ```
@@ -298,44 +290,14 @@ repo2 splits its own `core` from its `mock-edge`.
 carry a lower priority than the fragment it displaced — as it does above. The
 displacement line names who won, at what priority, and who stood down.
 
-## Placement: which host a fragment lands on
+## Where the stack lands
 
-A fragment is the atomic unit of placement as well as participation. Services
-that must land on different hosts belong in different fragments.
-
-Each winning fragment resolves its own host, in this order:
-
-| Precedence | Knob | Where it lives | Scope |
-| ---------- | ---- | -------------- | ----- |
-| 1 | `--on HOST` | The invocation | Collapses **every** fragment of the deployment onto that host |
-| 2 | `placement = { edge = "test3" }` | The fragment, committed | That fragment; may be lab-qualified (`"unix:test3"`) |
-| 3 | `role = "edge"` | The fragment, committed | The one docker-capable host in the repo's scope tagged with that role |
-| 4 | *(no role)* | — | The repo's scope, if it holds exactly one docker-capable host |
-
-Roles are declared on hosts in lab data as `"roles": ["edge", "builder"]` —
-see {doc}`../../configuration/lab-config`. They are lab *intent* ("what this
-lab uses the machine for"), not machine facts.
-
-Role resolution happens **inside the owning repo's scoped universe** (see
-{doc}`../projects`), so two projects naming the same role in the same lab
-resolve identically, and cross-project collisions cannot happen through the
-lab at all — only through the provider competition above.
-
-Ambiguity is a configuration error, never an implicit winner: zero hosts
-carrying the role, or several, is a hard refusal listing the candidates and
-the knobs. Two committed pins refuse in their own words:
-
-- A pin naming a host the active lab does not have is refused with the lab's
-  available host ids. (A *lab-qualified* pin naming some other lab is not an
-  error — it is legitimate multi-lab config, and resolution falls through to
-  the role.)
-- A pin naming a host that is not a docker-capable unix host is refused as
-  such — otto will not deploy a container stack onto a host that cannot run
-  one.
-
-Fragments that resolve to different hosts split the use-case into one merged
-stack per host; addressing between them flows through env values, which is
-what `${otto:role.<role>.addr}` is for.
+Every fragment of a use-case lands on the one parent, so the deployment is one
+merged stack on one host. Which host that is — `--parent`, or the lab's
+`docker_priority` — is {ref}`Which host <docker-which-host>`. Services that
+must run on different hosts belong in different use-cases, each brought up with
+its own `--parent`; addressing between them flows through env values
+(`env`, `pass_env`, `--env`) on the second use-case, not through otto.
 
 (container-users)=
 ## Container users
@@ -399,7 +361,7 @@ from otto.docker import AdapterResult, register_compose_adapter
 def render(facts):
     rendered = my_product.deploy.render(  # product code: zero otto imports
         template_dir=...,
-        edge_addr=facts["roles"]["edge"]["addr"],
+        edge_addr=facts["parent"]["addr"],
     )
     return AdapterResult(files={"core": rendered}, env={"WORKER_TAG": "1.4"})
 ```
@@ -408,7 +370,7 @@ The registration line is the only otto touchpoint; everything beneath it is
 the product's own templating, with its own syntax, owned by the product.
 
 `facts` is plain JSON-able data — `use_case`, `compose_project`, `parent`,
-`roles`, `hosts`, `files` (the repo's winning compose files by handle), and
+`hosts`, `files` (the repo's winning compose files by handle), and
 `scratch_dir`, a private temp dir the adapter may write to.
 {class}`~otto.docker.adapter.AdapterResult` returns `files` (compose handle ->
 replacement text; omitted handles ship verbatim), `extra_files` (extra files
@@ -424,7 +386,7 @@ See {mod}`otto.docker.adapter` for the API.
 ## Deploying, narrowing, and tearing down
 
 ```console
-$ otto docker compose up --build integration        # build the declared images, then every service, every resolved host
+$ otto docker compose up --build integration        # build the declared images, then every service, on the parent
 $ otto docker compose up integration api db          # just these services (images already built)
 $ otto docker compose down integration api           # stop and remove just api
 $ otto docker compose down integration               # the whole deployment
@@ -439,7 +401,7 @@ standing. Registration and unregistration scope to the named services too.
 With no use-case named at all, `up` and `down` pick the only declared one.
 Zero or several is a hard error listing them — never a quiet no-op.
 `compose build` defaults the same way; bare {doc}`build` takes no use-case at
-all: it builds images on the one host `--on` names.
+all: it builds images on one parent.
 
 ### `up` is convergent
 
@@ -458,8 +420,8 @@ not a teardown plus a deploy.
 
 `otto --dry-run docker compose up <usecase>` prints the resolved plan and declines at
 the first device touch — see {doc}`../dry-run` for the contract. Because
-selection, placement, env assembly and the adapters are all pure, the preview
-includes the **exact** per-host compose command, not a description of one:
+selection, env assembly and the adapters are all pure, the preview
+includes the **exact** compose command on the parent, not a description of one:
 
 ```console
 $ otto --lab unix --dry-run docker compose up integration
@@ -508,11 +470,13 @@ async with deployed("integration", own=True) as stack:
 
 ## Errors
 
-Every resolution failure — unknown use-case, empty selection, an ambiguous or
-absent role, a provider tie, an unknown `${otto:...}` reference, an unknown
-`--provide` target, a service name nothing declares — is a **configuration
-refusal**: it names the candidates and the knobs, nothing is touched, and the
-CLI exits 1. An empty selection is never a silent exit 0.
+Every resolution failure — unknown use-case, empty selection, a provider tie,
+an unknown `${otto:...}` reference, an unknown `--provide` target, a service
+name nothing declares — is a **configuration refusal**: it names the
+candidates and the knobs, nothing is touched, and the CLI exits 1. An empty
+selection is never a silent exit 0. A parent the rule cannot choose is refused
+too, at exit 2 ({ref}`Which host <docker-which-host>`): a tie names the tied
+hosts, a lab with no docker-capable host says so.
 
 Failures *after* the first device touch are different: whatever the failed
 call brought up is torn down again before the error propagates.

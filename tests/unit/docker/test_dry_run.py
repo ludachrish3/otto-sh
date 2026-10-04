@@ -144,7 +144,7 @@ def _spied_parent() -> UnixHost:
 
 
 def _make_repo(tmp: Path) -> Repo:
-    """Every caller passes ``on=`` explicitly, so this repo needs no placement
+    """Every caller passes ``parent=`` explicitly, so this repo needs no placement
     of its own — [[docker.composes]] is a pure file inventory (spec §14)."""
     sut = make_sut_repo(
         tmp / "repo1",
@@ -184,11 +184,11 @@ def _call_build_images(repo: Repo, lab: Lab, parent: UnixHost) -> Any:
 
 
 def _call_compose_up(repo: Repo, lab: Lab, parent: UnixHost) -> Any:
-    return compose_up(repo, lab, on=parent.id)
+    return compose_up(repo, lab, parent=parent.id)
 
 
 def _call_compose_down(repo: Repo, lab: Lab, parent: UnixHost) -> Any:
-    return compose_down(repo, lab, on=parent.id)
+    return compose_down(repo, lab, parent=parent.id)
 
 
 def _call_stage_image_context(repo: Repo, lab: Lab, parent: UnixHost) -> Any:
@@ -262,7 +262,7 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
         entered = False
 
         with active_context(lab=lab, dry_run=True), pytest.raises(CommandNotRunError) as caught:
-            async with composed(repo, lab, on=parent.id, own=True):
+            async with composed(repo, lab, parent=parent.id, own=True):
                 entered = True
 
         assert entered is False, "a dry run entered the composed() body"
@@ -273,7 +273,7 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
 
         # POSITIVE CONTROL, same seam: the block IS entered, a container host
         # IS yielded, and the teardown IS compensated.
-        async with composed(repo, lab, on=parent.id, own=True) as hosts:
+        async with composed(repo, lab, parent=parent.id, own=True) as hosts:
             entered = True
             assert "api" in hosts, f"the control never registered a container: {hosts}"
         assert entered is True
@@ -465,7 +465,6 @@ class TestEveryPublicDockerExportIsAdjudicated:
             "compose_ps",
             "compose_logs",
             "container_logs",
-            "resolve_logs",
         }
     )
 
@@ -483,6 +482,9 @@ class TestEveryPublicDockerExportIsAdjudicated:
             "ObserveReport",
             "LogsTarget",
             "resolve_compose_logs",
+            "resolve_logs",
+            "default_docker_parent",
+            "docker_parent",
             "docker_parents",
             "BuildOptions",
             "BuildReport",
@@ -691,7 +693,7 @@ class TestTheDeployVerbsOwnTheirDryRunPreview:
     @pytest.mark.parametrize(
         ("argv", "seam"),
         [
-            (["build", "--on", "test3"], "otto.docker.build_verbs.build_on"),
+            (["build", "--parent", "test3"], "otto.docker.build_verbs.build_on"),
             (["compose", "build", "integration"], "otto.docker.build_verbs.compose_build"),
         ],
     )

@@ -15,7 +15,7 @@ Most tests lease one docker-capable host from {test1, test3} via the same
 fd-flock mechanism as the transfer-host pool, so they distribute across two
 daemons and never race on the same one. The ones that address a container id
 from a second otto process lease test3 specifically — see
-``_ROLE_DOCKER_HOST`` in ``_cli`` for why that is a placement fact, not a
+``_DEFAULT_PARENT`` in ``_cli`` for why that is the lab's default parent, not a
 preference.
 """
 
@@ -29,9 +29,9 @@ import pytest
 from tests.e2e._otto_subprocess import REPO1, assert_no_output_dir, assert_output_dir
 
 from ._cli import (
+    _DEFAULT_PARENT,
     _MERGED_USE_CASE,
     _REPO1_USE_CASE,
-    _ROLE_DOCKER_HOST,
     _WIDE,
     REPO2,
     _flat,
@@ -70,7 +70,7 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
         "compose",
         "up",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         xdir=tmp_path,
@@ -90,7 +90,7 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
         "compose",
         "down",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         xdir=tmp_path,
         compose_suffix=suffix,
@@ -102,21 +102,21 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
 
 
 def test_e2e_host_run_against_running_container(
-    teardown_role_host_after, role_docker_host, tmp_path
+    teardown_default_parent_after, default_parent_host, tmp_path
 ):
     """Once a stack is up, `otto host <id> run` must execute inside the container.
 
-    Leases :data:`_ROLE_DOCKER_HOST`: the id below is read by a SECOND otto
-    process, which knows only the placeholders placement minted for it.
+    Leases :data:`_DEFAULT_PARENT`: the id below is read by a SECOND otto
+    process, which knows only the placeholders the default parent minted for it.
     """
-    suffix = teardown_role_host_after
-    docker_host = role_docker_host
+    suffix = teardown_default_parent_after
+    docker_host = default_parent_host
     up = _run_otto(
         "docker",
         "compose",
         "up",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         xdir=tmp_path,
@@ -141,20 +141,20 @@ def test_e2e_host_run_against_running_container(
     assert_output_dir(tmp_path, "docker")
 
 
-def test_e2e_host_put_get_roundtrip(teardown_role_host_after, role_docker_host, tmp_path):
+def test_e2e_host_put_get_roundtrip(teardown_default_parent_after, default_parent_host, tmp_path):
     """Two-step put / get through `docker cp` and the parent's SSH.
 
-    On :data:`_ROLE_DOCKER_HOST` for ``test_e2e_host_run_against_running_container``'s
+    On :data:`_DEFAULT_PARENT` for ``test_e2e_host_run_against_running_container``'s
     reason: the container id is addressed from separate otto processes.
     """
-    suffix = teardown_role_host_after
-    docker_host = role_docker_host
+    suffix = teardown_default_parent_after
+    docker_host = default_parent_host
     up = _run_otto(
         "docker",
         "compose",
         "up",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         xdir=tmp_path,
@@ -228,7 +228,7 @@ def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
         "compose",
         "up",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         xdir=tmp_path,
@@ -241,7 +241,7 @@ def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
         "compose",
         "up",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         xdir=tmp_path,
         compose_suffix=suffix,
@@ -254,18 +254,18 @@ def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Multi-repo build (host-wide, ignores use-case pins)
+# Multi-repo build (host-wide, ignores use-cases)
 # ---------------------------------------------------------------------------
 
 
 def test_e2e_multi_repo_build_builds_every_loaded_repo_on_the_host(docker_host, tmp_path):
-    """`otto docker build --on HOST` builds every loaded repo's declared
-    images on that host, ignoring use-case pins.
+    """`otto docker build --parent HOST` builds every loaded repo's declared
+    images on that host, whatever use-cases they take part in.
     """
     result = _run_otto(
         "docker",
         "build",
-        "--on",
+        "--parent",
         docker_host,
         sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
@@ -285,8 +285,8 @@ def test_e2e_multi_repo_up_composes_only_the_named_use_case(teardown_after, dock
 
     A use-case is the unit of deployment now, so the narrowing is by NAME:
     only repo1 declares ``repo1``, so repo2 contributes no fragment and no
-    container. Checking only the ``alt3.…`` host id would miss a regression
-    where ``--on <host>`` wrongly pulled repo2's stack onto that host as
+    container. Checking only the leased host's id would miss a regression
+    where ``--parent <host>`` wrongly pulled repo2's stack onto that host as
     ``<host>.repo2.worker`` — the pre-b466020 bug that leaked an otto-repo2
     network every run until docker's address pool was exhausted.
     """
@@ -296,7 +296,7 @@ def test_e2e_multi_repo_up_composes_only_the_named_use_case(teardown_after, dock
         "compose",
         "up",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
@@ -324,19 +324,19 @@ def test_e2e_multi_repo_down_no_traceback(docker_host, tmp_path):
     """With both repos in SUT_DIRS, `otto docker compose down` must not raise a
     Python traceback for the unrelated lab.
 
-    Repo2 targets the unix_alt lab (alt3) which is not in the active
-    unix lab. The bug (pre-b466020) raised
+    The bug (pre-b466020) let repo2, whose host lives in another lab, take part
+    in the unix lab's teardown and raise
     ``ValueError("Docker host 'alt3' is not in lab 'unix'")``.
     Selecting by use-case name keeps repo2 out of ``down repo1`` entirely.
-    ``--on`` targets the specific leased host, which must be in the active
-    lab for placement to accept it.
+    ``--parent`` names the specific leased host, which must be in the active
+    lab for the explicit-parent check to accept it.
     """
     result = _run_otto(
         "docker",
         "compose",
         "down",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
@@ -358,42 +358,44 @@ def test_e2e_list_hosts_includes_declared_container(tmp_path):
     """Containers must appear in `--list-hosts` *before* any `up` so the user
     can tab-complete and prepare commands.
 
-    Placeholder registration walks USE-CASES now (spec §9), and each of
-    repo1's fragments declares ``role = "docker"`` — a role exactly one host
-    in the fixture lab carries. So the ids are exact rather than
-    "one of the docker-capable hosts", and BOTH of repo1's use-cases
-    contribute, which is what proves the walk is per-fragment.
+    Placeholder registration walks USE-CASES now (spec §9), and mints their ids
+    under the lab's default parent — the one host ``docker_priority`` ranks in
+    the fixture lab. So the ids are exact rather than "one of the
+    docker-capable hosts", and BOTH of repo1's use-cases contribute, which is
+    what proves the walk is per-fragment.
     """
     result = _run_otto("--list-hosts", "host", xdir=tmp_path)
     # The flag prints the host list and exits non-zero in some paths;
     # accept either rc as long as the declared container ids appear.
     output = result.stdout + result.stderr
     declared = [
-        f"{_ROLE_DOCKER_HOST}.{_REPO1_USE_CASE}.api",
-        f"{_ROLE_DOCKER_HOST}.{_MERGED_USE_CASE}.api",
-        f"{_ROLE_DOCKER_HOST}.{_MERGED_USE_CASE}.edge",
+        f"{_DEFAULT_PARENT}.{_REPO1_USE_CASE}.api",
+        f"{_DEFAULT_PARENT}.{_MERGED_USE_CASE}.api",
+        f"{_DEFAULT_PARENT}.{_MERGED_USE_CASE}.edge",
     ]
     missing = [h for h in declared if h not in output]
     assert not missing, f"expected {missing} in output:\n{output}"
 
 
 def test_e2e_run_against_unstarted_container_auto_starts(
-    teardown_role_host_after, role_docker_host, tmp_path
+    teardown_default_parent_after, default_parent_host, tmp_path
 ):
     """Accessing a declared container whose stack isn't running must
     auto-start the stack (feature de361cc) rather than erroring.
 
     The command then succeeds against the freshly-started container — no
     ``otto docker compose up`` step required of the caller.
-    ``teardown_role_host_after`` reaps the auto-started stack so it can't
+    ``teardown_default_parent_after`` reaps the auto-started stack so it can't
     leak. The image is built first, explicitly: starting a stack never builds.
-    The id is a PLACEHOLDER's, so this must run on the host placement minted it
-    for (:data:`_ROLE_DOCKER_HOST`).
+    The id is a PLACEHOLDER's, so this must run on the host the default parent
+    minted it for (:data:`_DEFAULT_PARENT`).
     """
-    suffix = teardown_role_host_after
-    docker_host = role_docker_host
+    suffix = teardown_default_parent_after
+    docker_host = default_parent_host
     # Auto-start builds nothing, so the image it composes must already be there.
-    built = _run_otto("docker", "build", "repo1-api", "--on", docker_host, xdir=tmp_path, env=_WIDE)
+    built = _run_otto(
+        "docker", "build", "repo1-api", "--parent", docker_host, xdir=tmp_path, env=_WIDE
+    )
     assert built.returncode == 0, built.stdout + built.stderr
     result = _run_otto(
         "host",
@@ -417,9 +419,9 @@ def test_e2e_run_against_unstarted_container_auto_starts(
 
 
 def test_e2e_up_unknown_host_clear_error(tmp_path):
-    """`otto docker compose up --on <unknown>` exits cleanly with a clear message."""
+    """`otto docker compose up --parent <unknown>` exits cleanly with a clear message."""
     result = _run_otto(
-        "docker", "compose", "up", _REPO1_USE_CASE, "--on", "no_such_host", xdir=tmp_path
+        "docker", "compose", "up", _REPO1_USE_CASE, "--parent", "no_such_host", xdir=tmp_path
     )
     output = result.stdout + result.stderr
     assert result.returncode != 0
@@ -458,17 +460,69 @@ def test_e2e_ps_lists_running_containers(teardown_after, docker_host, tmp_path):
         "compose",
         "up",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
-    ps = _run_otto("docker", "ps", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
+    ps = _run_otto("docker", "ps", "--parent", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert ps.returncode == 0, ps.stderr
     # The compose project is `<lab>-<usecase>-<suffix>` (spec §9) — no
     # `otto-` prefix any more: the deployment belongs to the product.
     assert f"unix-{_REPO1_USE_CASE}-{suffix}" in ps.stdout or "repo1-api" in ps.stdout, ps.stdout
+
+
+def test_e2e_default_parent_serves_up_ps_and_logs_with_no_flag(
+    teardown_default_parent_after, default_parent_host, tmp_path
+):
+    """With no `--parent` anywhere, the verbs agree on the lab's default parent.
+
+    The `unix` fixture lab has three docker-capable hosts and ranks test3 with
+    ``docker_priority``, so `up integration` lands there; `ps --parent` of that
+    host must show the project under its header (a flagless `ps` fans out over
+    every docker-capable host, daemons this test does not lease); and
+    `logs <name>` with no flag reads that container's log from the
+    same daemon (docker's own "No such container" would fail it on any other).
+    `--build` is the image build, unrelated to the host: `up` builds nothing
+    without it.
+    """
+    suffix = teardown_default_parent_after
+    project = f"unix-{_MERGED_USE_CASE}-{suffix}"
+    up = _run_otto(
+        "docker",
+        "compose",
+        "up",
+        _MERGED_USE_CASE,
+        "--build",
+        xdir=tmp_path,
+        compose_suffix=suffix,
+    )
+    assert up.returncode == 0, up.stdout + up.stderr
+    assert f"{default_parent_host}.{_MERGED_USE_CASE}.api" in up.stdout, up.stdout
+
+    ps = _run_otto(
+        "docker",
+        "ps",
+        "--parent",
+        default_parent_host,
+        xdir=tmp_path,
+        compose_suffix=suffix,
+        env=_WIDE,
+    )
+    assert ps.returncode == 0, ps.stdout + ps.stderr
+    blocks = {
+        block.split(" ==", 1)[0]: block for block in ps.stdout.split("== ")[1:] if " ==" in block
+    }
+    assert project in blocks[default_parent_host], (
+        f"the project is not under {default_parent_host}'s header:\n{ps.stdout}"
+    )
+
+    logs = _run_otto(
+        "docker", "logs", f"{project}-api-1", xdir=tmp_path, compose_suffix=suffix, env=_WIDE
+    )
+    assert logs.returncode == 0, logs.stdout + logs.stderr
+    assert "No such container" not in logs.stdout + logs.stderr, logs.stdout + logs.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +540,7 @@ _BOTH_REPOS = f"{REPO1}{os.pathsep}{REPO2}"
 def test_e2e_use_cases_reports_the_displacement(tmp_path):
     """`otto docker use-cases` is the inventory view (spec §10).
 
-    Read-only: it resolves selection and placement and reports them, contacts
+    Read-only: it resolves selection and the parent and reports them, contacts
     nothing, and creates no output dir. Both repos' fragments must appear,
     and the loser must be annotated as displaced — the whole point of the
     verb is that you can see who won a capability before deploying.
@@ -531,7 +585,7 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
         "compose",
         "up",
         _MERGED_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         sut_dirs=_BOTH_REPOS,
@@ -559,7 +613,7 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
         "compose",
         "down",
         _MERGED_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         sut_dirs=_BOTH_REPOS,
         xdir=tmp_path,
@@ -568,7 +622,7 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
     assert down.returncode == 0, down.stdout + down.stderr
     assert f"{docker_host}: {_MERGED_USE_CASE} torn down" in down.stdout, down.stdout
 
-    ps = _run_otto("docker", "ps", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
+    ps = _run_otto("docker", "ps", "--parent", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert ps.returncode == 0, ps.stderr
     assert f"unix-{_MERGED_USE_CASE}-{suffix}" not in ps.stdout, (
         f"the stack survived its teardown:\n{ps.stdout}"
@@ -592,7 +646,7 @@ def test_e2e_provide_flips_the_winner(teardown_after, docker_host, tmp_path):
         _MERGED_USE_CASE,
         "--provide",
         "edge=repo2",
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         sut_dirs=_BOTH_REPOS,
@@ -636,7 +690,7 @@ def test_e2e_dry_run_prints_the_plan_and_starts_nothing(docker_host, tmp_path):
         _MERGED_USE_CASE,
         "--env-file",
         str(env_file),
-        "--on",
+        "--parent",
         docker_host,
         sut_dirs=_BOTH_REPOS,
         xdir=tmp_path,
@@ -657,7 +711,7 @@ def test_e2e_dry_run_prints_the_plan_and_starts_nothing(docker_host, tmp_path):
         f"the caller's --env-file must have merged into the previewed command:\n{out}"
     )
 
-    ps = _run_otto("docker", "ps", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
+    ps = _run_otto("docker", "ps", "--parent", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert ps.returncode == 0, ps.stderr
     assert f"unix-{_MERGED_USE_CASE}-{suffix}" not in ps.stdout, (
         f"THE DRY RUN STARTED A STACK:\n{ps.stdout}"

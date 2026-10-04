@@ -10,6 +10,7 @@ from otto.models.settings import (
     DockerComposeSpec,
     DockerImageSpec,
     DockerSettingsSpec,
+    DockerUseCaseSpec,
     LabConfigSpec,
     OsProfileSpec,
     OttoEnvSettings,
@@ -1052,3 +1053,21 @@ def test_a_kind_entry_has_the_kind_as_its_label():
 
     spec = DeclaredEntrySpec.model_validate({"name": "fw", "kind": "shell"})
     assert spec.to_runtime(owner="a", base_dir=Path("/r"), seam="products").kind_label == "shell"
+
+
+def test_role_and_placement_are_refused_by_name():
+    for key, value in (("role", "edge"), ("placement", {"edge": "test3"})):
+        with pytest.raises(
+            ValidationError, match=f"{key} is gone: a use-case deploys on one parent"
+        ):
+            DockerUseCaseSpec.model_validate(
+                {"name": "integration", "composes": ["core"], key: value}
+            )
+
+
+def test_the_role_refusal_names_both_replacements():
+    with pytest.raises(ValidationError, match="role is gone") as e:
+        DockerUseCaseSpec.model_validate(
+            {"name": "integration", "composes": ["core"], "role": "edge"}
+        )
+    assert "name it with --parent or rank a host with docker_priority" in str(e.value)

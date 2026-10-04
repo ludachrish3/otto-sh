@@ -31,8 +31,6 @@ services = ["worker"]
 [[docker.use_cases]]
 name = "repo2"
 composes = ["core"]
-role = "docker"
-placement = { docker = "alt3" }
 
 # The displacement pair's loser (spec §4). Two fragments, on purpose:
 # the unconditional one always participates (repo2's `worker` is part of the
@@ -47,11 +45,9 @@ services = ["edge"]
 [[docker.use_cases]]
 name = "integration"
 composes = ["core"]
-role = "docker"
 
 [[docker.use_cases]]
 name = "integration"
 composes = ["mock-edge"]
-role = "docker"
 provides = "edge"
 priority = 0

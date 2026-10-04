@@ -4,26 +4,26 @@ otto docker — build images and deploy use-case stacks on lab hosts.
 Subcommands::
 
     otto docker use-cases       [USE_CASE]
-    otto docker build           [IMAGE...] --on H [--repo NAME] [-t REF] [--no-cache]
+    otto docker build           [IMAGE...] [--parent H] [--repo NAME] [-t REF] [--no-cache]
                                  [--pull] [--build-arg K=V] [--target STAGE]
-    otto docker compose build   [USE_CASE [IMAGE...]] [--on H] [--provide CAP=REPO]
+    otto docker compose build   [USE_CASE [IMAGE...]] [--parent H] [--provide CAP=REPO]
                                  [--no-cache] [--pull] [--build-arg K=V]
-    otto docker compose up      [USE_CASE [SERVICE...]] [--on H] [--build]
+    otto docker compose up      [USE_CASE [SERVICE...]] [--parent H] [--build]
                                  [--force-recreate] [--pull POLICY]
                                  [--provide CAP=REPO] [--env K=V] [--env-file FILE]
-    otto docker compose down    [USE_CASE [SERVICE...]] [--on H] [--provide CAP=REPO]
-    otto docker ps              [-a] [--on H]
-    otto docker images          [--on H]
-    otto docker logs            CONTAINER [--tail N] [--since T] [-t] [-f] [--on H]
-    otto docker compose ps      [USE_CASE] [-a] [--on H] [--provide CAP=REPO]
+    otto docker compose down    [USE_CASE [SERVICE...]] [--parent H] [--provide CAP=REPO]
+    otto docker ps              [-a] [--parent H]
+    otto docker images          [--parent H]
+    otto docker logs            CONTAINER [--tail N] [--since T] [-t] [-f] [--parent H]
+    otto docker compose ps      [USE_CASE] [-a] [--parent H] [--provide CAP=REPO]
     otto docker compose logs    [USE_CASE [SERVICE...]] [--tail N] [--since T] [-t] [-f]
-                                 [--on H] [--provide CAP=REPO]
+                                 [--parent H] [--provide CAP=REPO]
 
 ``compose build``/``compose up``/``compose down`` speak USE-CASES (spec §10): one named,
-cross-repo deployment resolved by the provider competition (§4) and placed by
-role (§5), not a per-repo loop over ``[[docker.composes]]``. ``build`` builds
+cross-repo deployment resolved by the provider competition (§4) onto one
+parent (§2), not a per-repo loop over ``[[docker.composes]]``. ``build`` builds
 images only: it stages a repo's declared images onto one lab host and knows
-nothing about a composition, so it takes ``--on`` (required), never a
+nothing about a composition, so it takes a host (``--parent``), never a
 use-case. ``ps``, ``images``, ``logs``, ``compose ps`` and ``compose logs`` print
 docker's output as docker printed it.
 
@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from ..docker.observe import LogsTarget, ObserveReport
     from ..docker.reports import BuildReport, HostReport
     from ..docker.resolve import Displacement
+    from ..host.unix_host import UnixHost
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ def docker_callback(ctx: typer.Context) -> None:
 
 @completion_source(kind="payload", key="docker_hosts", lab_scoped=True, intersect=True, sort=True)
 def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
-    """Shell-completion source for ``--on``.
+    """Shell-completion source for ``--parent``.
 
     Limits suggestions to docker-capable hosts so users don't tab into a parent that can't run
     containers. Lab-scoped like every other host-id completer (issue #138):
@@ -215,35 +216,6 @@ def _repo_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: 
         return []
 
 
-def _container_candidates(
-    hosts: "list[str]",
-    docker_hosts: "list[str]",
-    observed_by_host: "dict[str, ObservedDockerState]",
-    on: "str | None",
-) -> list[str]:
-    """``CONTAINER``'s candidates, in order: container host ids, observed names, observed ids.
-
-    A host id is otto's own name and is right whatever the daemon holds; an
-    observed name is a hint; an id is a hint a person rarely types. With
-    ``--on``, ``CONTAINER`` is a docker name on that host (a host id would be
-    handed to docker verbatim and fail), so only that host's observed names
-    and ids are offered. A container host id is a dotted id whose first
-    segment is a docker-capable host. Mirrored by ``otto._shim_complete``;
-    change both or neither.
-    """
-    if on is not None:
-        state = observed_by_host.get(on)
-        return [] if state is None else [*state.container_names, *state.container_ids]
-    capable = set(docker_hosts)
-    ids = sorted(h for h in hosts if "." in h and h.split(".", 1)[0] in capable)
-    names: list[str] = []
-    cids: list[str] = []
-    for host_id in sorted(observed_by_host):
-        names.extend(observed_by_host[host_id].container_names)
-        cids.extend(observed_by_host[host_id].container_ids)
-    return list(dict.fromkeys([*ids, *names, *cids]))
-
-
 def _discovered_repos() -> "list[Any]":
     """Return the active repos as discovery found them: settings and lab data, no init code.
 
@@ -256,56 +228,86 @@ def _discovered_repos() -> "list[Any]":
     return bootstrap.discover().repos
 
 
-def _observed_by_host() -> "dict[str, ObservedDockerState]":
-    """Every host's last-observed docker state, from the cache alone (a TAB never asks a host)."""
-    from ..config.completion_cache import read_docker_observed, read_docker_observed_hosts
+def _selected_labs_for_tab(ctx: typer.Context) -> list[str]:
+    """Return the lab selection a TAB sees (``-l``/``OTTO_LAB``) -- a seam the tests patch."""
+    from .completers import selected_lab_names
 
-    repos = _discovered_repos()
-    return {h: read_docker_observed(repos, h) for h in read_docker_observed_hosts(repos)}
+    return selected_lab_names(ctx)
 
 
-@completion_source(kind="observed", key="containers", by_option="on")
+def _default_parent_for_tab(ctx: typer.Context) -> "str | None":
+    """Return the parent the verb would default to, from the cache alone (never bootstrap).
+
+    The names cache carries ``docker_default_parent_by_lab``; the selected lab's
+    entry is the answer. With no lab selected, the map's only DISTINCT value is
+    the answer (two labs that default to the same host still answer it);
+    labs defaulting to different hosts are a question TAB does not guess at.
+    An absent entry (the rule refuses for that lab) is ``None``, and so is any
+    selection that includes one: the verb runs the rule over the labs merged,
+    which a refusing lab can turn into a refusal.
+
+    The bash shim mirrors this as ``otto._shim_complete._default_parent``; change both or neither.
+    """
+    from ..config import get_completion_names
+
+    cached = get_completion_names()
+    by_lab = cached.get("docker_default_parent_by_lab") if cached else None
+    if not isinstance(by_lab, dict):
+        return None
+    labs = _selected_labs_for_tab(ctx)
+    if labs:
+        parents = {by_lab.get(lab) for lab in labs}
+        only = parents.pop() if len(parents) == 1 else None
+        return only if isinstance(only, str) else None
+    values = {v for v in by_lab.values() if isinstance(v, str)}
+    return values.pop() if len(values) == 1 else None
+
+
+def _observed_for_tab(ctx: typer.Context) -> "ObservedDockerState | None":
+    """Return the parent's last-observed docker state: ``--parent`` on the line, else the default.
+
+    Cache only -- a TAB never asks a host and never bootstraps (the repos come
+    from discovery, which runs no init code).
+    """
+    from ..config.completion_cache import read_docker_observed
+
+    parent = ctx.params.get("parent") if isinstance(getattr(ctx, "params", None), dict) else None
+    if not isinstance(parent, str):
+        parent = _default_parent_for_tab(ctx)
+    if parent is None:
+        return None
+    return read_docker_observed(_discovered_repos(), parent)
+
+
+@completion_source(kind="observed", key="containers", by_option="parent")
 def _container_completer(ctx: typer.Context, incomplete: str) -> list[str]:
-    """Shell-completion source for ``CONTAINER``: see :func:`_container_candidates`."""
-    from ..config import get_repos
-    from ..config.completion_cache import (
-        collect_docker_capable_host_ids,
-        collect_host_ids,
-        read_docker_observed,
-    )
+    """Shell-completion source for ``CONTAINER``: the parent's observed names, then ids.
 
+    The parent is ``--parent`` when it is on the line, else the one the verb
+    would default to.
+    """
     try:
-        on = ctx.params.get("on") if isinstance(getattr(ctx, "params", None), dict) else None
-        if isinstance(on, str):
-            # Host ids are never offered under --on, and only that host's state is
-            # read: skip resolving the ids (a lab scan on a cold cache) and the rest.
-            candidates = _container_candidates(
-                [], [], {on: read_docker_observed(_discovered_repos(), on)}, on
-            )
-        else:
-            hosts = _names_or("hosts", lambda: collect_host_ids(get_repos()))
-            docker_hosts = _names_or(
-                "docker_hosts", lambda: collect_docker_capable_host_ids(get_repos())
-            )
-            candidates = _container_candidates(hosts, docker_hosts, _observed_by_host(), None)
-        return [c for c in candidates if c.startswith(incomplete)]
+        state = _observed_for_tab(ctx)
+        if state is None:
+            return []
+        return [
+            c for c in [*state.container_names, *state.container_ids] if c.startswith(incomplete)
+        ]
     except Exception:  # noqa: BLE001 — completion never crashes the shell
         return []
 
 
-@completion_source(kind="observed", key="images", by_option="on")
+@completion_source(kind="observed", key="images", by_option="parent")
 def _tag_completer(ctx: typer.Context, incomplete: str) -> list[str]:
-    """Shell-completion source for ``--tag``: the references the ``--on`` host's daemon last listed.
+    """Shell-completion source for ``--tag``: the references the parent's daemon last listed.
 
-    Nothing without ``--on``: an image reference is a per-daemon fact.
+    The parent is ``--parent`` when it is on the line, else the one the verb
+    would default to; an image reference is a per-daemon fact.
     """
-    from ..config.completion_cache import read_docker_observed
-
     try:
-        on = ctx.params.get("on") if isinstance(getattr(ctx, "params", None), dict) else None
-        if not isinstance(on, str):
+        state = _observed_for_tab(ctx)
+        if state is None:
             return []
-        state = read_docker_observed(_discovered_repos(), on)
         return [r for r in state.image_refs if r.startswith(incomplete)]
     except Exception:  # noqa: BLE001 — completion never crashes the shell
         return []
@@ -421,7 +423,7 @@ _DECLINED = _Declined()
 
 
 _DOCKER_FLAGS: "dict[str, str]" = {
-    "host": "--on",
+    "parent": "--parent",
     "repo": "--repo",
     "images": "IMAGE",
     "tag": "--tag",
@@ -444,8 +446,8 @@ async def _run_docker(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
       here rather than left to the boundary frame, which would print it as
       ``error:`` and exit 1 — turning a successful preview into a failure.
     * :class:`~otto.docker.resolve.UseCaseResolutionError` — a configuration
-      refusal (an ``--on`` naming no lab host, a provider tie, an unresolvable
-      role). The LIBRARY's phrase is what reaches the user, verbatim: this
+      refusal (an unknown use-case, a provider tie, a service nothing
+      declares). The LIBRARY's phrase is what reaches the user, verbatim: this
       layer keeps no second copy that could drift from it.
     * :class:`~otto.docker.observe.DockerVerbError` — a docker verb's
       input refusal, field-named. Spelled in this command's flags at this one
@@ -582,11 +584,14 @@ async def _build(
             autocompletion=_image_completer,
         ),
     ] = None,
-    on: Annotated[
+    parent: Annotated[
         str | None,
         typer.Option(
-            "--on",
-            help="The docker-capable lab host to build on. Required.",
+            "--parent",
+            help=(
+                "The docker-capable lab host (the parent) to build on; defaults to the lab's "
+                "only one, or its highest docker_priority. Not docker's -H."
+            ),
             autocompletion=_docker_host_completer,
         ),
     ] = None,
@@ -624,8 +629,8 @@ async def _build(
     """Build the selected repos' declared images on one lab host.
 
     Like `docker build`, this knows nothing about a composition: it needs a
-    host, not a use-case, so --on is required. To build the images a
-    deployment would use, on the hosts it would use, run
+    host, not a use-case, so it takes --parent (the lab's default parent when omitted).
+    To build the images a deployment would use, on the parent it would use, run
     `otto docker compose build`.
     """
     from ..docker.build_verbs import build_on
@@ -633,7 +638,7 @@ async def _build(
     build_args = _parse_pairs(build_arg, form="KEY=VALUE", flag="--build-arg KEY=VALUE")
     report = await _run_docker(
         build_on(
-            on,
+            parent,
             repo=repo,
             images=image,
             tags=tag,
@@ -663,11 +668,15 @@ async def _compose_build(
             autocompletion=_image_completer,
         ),
     ] = None,
-    on: Annotated[
+    parent: Annotated[
         str | None,
         typer.Option(
-            "--on",
-            help="Collapse every fragment onto this lab host, as `compose up` does.",
+            "--parent",
+            help=(
+                "The docker-capable lab host (the parent) to build on, as `compose up` "
+                "resolves it; defaults to the lab's only one, or its highest docker_priority. "
+                "Not docker's -H."
+            ),
             autocompletion=_docker_host_completer,
         ),
     ] = None,
@@ -688,9 +697,9 @@ async def _compose_build(
 ) -> None:
     """Build the images a deployment of a use-case would use, where it would use them.
 
-    The same provider competition and placement `otto docker compose up` runs,
+    The same provider competition and parent `otto docker compose up` uses,
     so the images that get built are the ones deployment would use, on the
-    hosts it would use.
+    host it would use.
     """
     from ..docker.build_verbs import compose_build
 
@@ -700,7 +709,7 @@ async def _compose_build(
     report = await _run_docker(
         compose_build(
             name,
-            on=on,
+            parent=parent,
             provide=provide_map,
             images=image,
             no_cache=no_cache,
@@ -728,11 +737,14 @@ async def _compose_up(
             autocompletion=_service_completer,
         ),
     ] = None,
-    on: Annotated[
+    parent: Annotated[
         str | None,
         typer.Option(
-            "--on",
-            help="Collapse every fragment onto this lab host.",
+            "--parent",
+            help=(
+                "The docker-capable lab host (the parent) every fragment deploys on; defaults "
+                "to the lab's only one, or its highest docker_priority. Not docker's -H."
+            ),
             autocompletion=_docker_host_completer,
         ),
     ] = None,
@@ -774,16 +786,16 @@ async def _compose_up(
         ),
     ] = None,
 ) -> None:
-    """Deploy a use-case: one merged compose stack per resolved host.
+    """Deploy a use-case: one merged compose stack on one parent.
 
-    The fragments that take part are chosen by the provider competition, placed
-    by --on, a committed pin, or their role, and handed the assembled env
-    mapping. Each participating repo's declared images are built first only
-    with --build; without it, `up` is docker's own, so a service whose image
+    The fragments that take part are chosen by the provider competition,
+    deployed on one parent (--parent, or the lab's default), and handed the
+    assembled env mapping. Each participating repo's declared images are
+    built first only with --build; without it, `up` is docker's own, so a service whose image
     is missing fails with docker's error. With no USE_CASE, the only declared
     one is deployed; naming SERVICEs narrows the deployment to them.
     """
-    # --on is deliberately NOT canonicalized here. `deploy` resolves it
+    # --parent is deliberately NOT canonicalized here. `deploy` resolves it
     # itself (it shares one pure prefix with `teardown`, so the two verbs
     # cannot disagree about where a deployment lives), and it owns the refusal
     # — so a host this lab does not have is named once, in one sentence,
@@ -797,7 +809,7 @@ async def _compose_up(
         deploy(
             name,
             services=service or None,
-            on=on,
+            parent=parent,
             provide=provide_map,
             env=env_map,
             env_files=env_file or None,
@@ -826,11 +838,14 @@ async def _compose_down(
             autocompletion=_service_completer,
         ),
     ] = None,
-    on: Annotated[
+    parent: Annotated[
         str | None,
         typer.Option(
-            "--on",
-            help="Collapse every fragment onto this lab host.",
+            "--parent",
+            help=(
+                "The docker-capable lab host (the parent) every fragment deploys on; defaults "
+                "to the lab's only one, or its highest docker_priority. Not docker's -H."
+            ),
             autocompletion=_docker_host_completer,
         ),
     ] = None,
@@ -841,7 +856,7 @@ async def _compose_down(
 ) -> None:
     """Tear a use-case's stacks down and unregister their container hosts.
 
-    --on and --provide are resolved exactly as `otto docker compose up` resolves them,
+    --parent and --provide are resolved exactly as `otto docker compose up` resolves them,
     so a teardown can never address a different project than the deployment it
     is undoing. Naming SERVICEs stops and removes just those, leaving the rest
     of the stack and its network standing.
@@ -850,7 +865,9 @@ async def _compose_down(
 
     provide_map = _parse_provide(provide)
     name = _default_use_case(use_case)
-    report = await _run_docker(teardown(name, services=service or None, on=on, provide=provide_map))
+    report = await _run_docker(
+        teardown(name, services=service or None, parent=parent, provide=provide_map)
+    )
     if isinstance(report, _Declined):
         return
     # A host whose teardown failed (unreachable, most often) is not asked again.
@@ -876,19 +893,20 @@ def _use_cases(
     generic dry-run stop to say so). Values are never printed,
     only the env KEY names. Name a USE_CASE to see just that one.
     """
-    # Selection (§4) and placement (§5) are pure, which is what lets this verb
-    # exist at all. A refusal from either is REPORTED, not raised: this is an
-    # inventory, and "one of your six use-cases cannot place its edge fragment"
-    # is exactly the answer the user came for — not a reason to hide the other
-    # five, and not a reason to exit 1.
+    # Selection (§4) and the parent rule (§2) are pure, which is what lets this
+    # verb exist at all. A refusal from either is REPORTED, not raised: this is
+    # an inventory, and "the rule cannot pick a parent here" is exactly the
+    # answer the user came for — not a reason to hide the use-cases, and not
+    # a reason to exit 1.
     from rich.table import Table
 
     from ..config.bootstrapped import get_repos
     from ..config.fleet import get_lab
+    from ..docker.observe import DockerVerbError, docker_parent
     from ..docker.resolve import (
         UseCaseResolutionError,
         declared_use_cases,
-        resolve_placement,
+        place,
         select_fragments,
     )
 
@@ -899,8 +917,8 @@ def _use_cases(
         return
 
     # A filter naming nothing is a USER error about the argument, not a state
-    # of the configuration — so it is loud (exit 1) even though a placement
-    # that cannot resolve is only reported. Phrased like `select_fragments`'
+    # of the configuration — so it is loud (exit 1) even though a parent the
+    # rule cannot pick is only reported. Phrased like `select_fragments`'
     # own refusal, with the declared set named, so a typo reads the same
     # whichever verb found it.
     if use_case is not None and use_case not in declared:
@@ -911,6 +929,13 @@ def _use_cases(
     names = [use_case] if use_case is not None else sorted(declared)
 
     lab = get_lab()
+    # One parent for every use-case: the rule reads the lab, never a fragment.
+    parent: "UnixHost | None" = None
+    parent_problem = ""
+    try:
+        parent = docker_parent(lab, None)
+    except DockerVerbError as e:
+        parent_problem = str(e)
     for name in names:
         candidates = declared[name]
         problems: list[str] = []
@@ -929,18 +954,17 @@ def _use_cases(
             # the `DockerUseCase` inside them is one shared object.
             participating = {id(sf.fragment) for sf in selection.fragments}
             excluded = {id(sf.fragment) for sf in candidates} - participating
-            try:
-                placed = resolve_placement(selection, lab)
-            except UseCaseResolutionError as e:
-                problems.append(str(e))
+            if parent is None:
+                problems.append(parent_problem)
             else:
                 hosts = {
-                    id(sf.fragment): host_id for host_id, frags in placed.items() for sf in frags
+                    id(sf.fragment): host_id
+                    for host_id, frags in place(selection, parent).items()
+                    for sf in frags
                 }
 
         table = Table(
             "fragment",
-            "role",
             "provides",
             "host",
             "env keys",
@@ -958,7 +982,6 @@ def _use_cases(
                 # which rendered a repo's two fragments identically (found on
                 # the live bed, T15). The other cells carry no bracket idiom.
                 escape(f"{sf.repo.name}[{','.join(frag.composes)}]"),
-                frag.role or "-",
                 provides,
                 hosts.get(id(frag), "-"),
                 _env_key_names(frag),
@@ -1025,11 +1048,14 @@ async def _ps(
         bool,
         typer.Option("--all", "-a", help="Show every container, not only the running ones."),
     ] = False,
-    on: Annotated[
+    parent: Annotated[
         str | None,
         typer.Option(
-            "--on",
-            help="Docker-capable host to ask (default: every one).",
+            "--parent",
+            help=(
+                "The docker-capable lab host (the parent) to ask; omitted: every "
+                "docker-capable host in the lab. Not docker's -H."
+            ),
             autocompletion=_docker_host_completer,
         ),
     ] = None,
@@ -1037,7 +1063,7 @@ async def _ps(
     """Print `docker ps` from every docker-capable host, as docker printed it."""
     from ..docker.observe import list_containers
 
-    report = await _run_docker(list_containers(on=on, all=all_))
+    report = await _run_docker(list_containers(parent=parent, all=all_))
     if isinstance(report, _Declined):
         return
     try:
@@ -1047,11 +1073,14 @@ async def _ps(
 
 
 async def _images(
-    on: Annotated[
+    parent: Annotated[
         str | None,
         typer.Option(
-            "--on",
-            help="Docker-capable host to ask (default: every one).",
+            "--parent",
+            help=(
+                "The docker-capable lab host (the parent) to ask; omitted: every "
+                "docker-capable host in the lab. Not docker's -H."
+            ),
             autocompletion=_docker_host_completer,
         ),
     ] = None,
@@ -1059,7 +1088,7 @@ async def _images(
     """Print `docker images` from every docker-capable host, as docker printed it."""
     from ..docker.observe import list_images
 
-    report = await _run_docker(list_images(on=on))
+    report = await _run_docker(list_images(parent=parent))
     if isinstance(report, _Declined):
         return
     try:
@@ -1090,8 +1119,8 @@ async def _logs(
         str,
         typer.Argument(
             help=(
-                "A container host id (test3.integration.web), "
-                "or with --on a docker container name or id."
+                "A docker container name or id on the parent "
+                "(--parent, or the lab's default parent)."
             ),
             autocompletion=_container_completer,
         ),
@@ -1116,11 +1145,14 @@ async def _logs(
             "--follow", "-f", help="Follow the log output live (docker's -f); Ctrl-C ends it."
         ),
     ] = False,
-    on: Annotated[
+    parent: Annotated[
         str | None,
         typer.Option(
-            "--on",
-            help="The host CONTAINER is a docker name or id on.",
+            "--parent",
+            help=(
+                "The docker-capable lab host (the parent) CONTAINER is on; omitted: the lab's "
+                "default parent (its only one, or its highest docker_priority). Not docker's -H."
+            ),
             autocompletion=_docker_host_completer,
         ),
     ] = None,
@@ -1134,14 +1166,19 @@ async def _logs(
         async def _target() -> "list[LogsTarget]":
             return [
                 await resolve_logs(
-                    container, on=on, tail=tail, since=since, timestamps=timestamps, follow=follow
+                    container,
+                    parent=parent,
+                    tail=tail,
+                    since=since,
+                    timestamps=timestamps,
+                    follow=follow,
                 )
             ]
 
         await _follow(_target())
         return
     report = await _run_docker(
-        container_logs(container, on=on, tail=tail, since=since, timestamps=timestamps)
+        container_logs(container, parent=parent, tail=tail, since=since, timestamps=timestamps)
     )
     if isinstance(report, _Declined):
         return
@@ -1162,11 +1199,14 @@ async def _compose_ps(
             "--all", "-a", help="Show every container of the project, not only the running ones."
         ),
     ] = False,
-    on: Annotated[
+    parent: Annotated[
         str | None,
         typer.Option(
-            "--on",
-            help="Collapse every fragment onto this lab host (as compose up resolves it).",
+            "--parent",
+            help=(
+                "The docker-capable lab host (the parent) to ask; omitted: every "
+                "docker-capable host in the lab. Not docker's -H."
+            ),
             autocompletion=_docker_host_completer,
         ),
     ] = None,
@@ -1175,11 +1215,13 @@ async def _compose_ps(
         typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
     ] = None,
 ) -> None:
-    """Print `docker compose ps` for a use-case's project on every host it is placed on."""
+    """Print `docker compose ps` for a use-case's project on one parent or every capable host."""
     from ..docker.observe import compose_ps
 
     name = _default_use_case(use_case)
-    report = await _run_docker(compose_ps(name, all=all_, on=on, provide=_parse_provide(provide)))
+    report = await _run_docker(
+        compose_ps(name, all=all_, parent=parent, provide=_parse_provide(provide))
+    )
     if isinstance(report, _Declined):
         return
     try:
@@ -1223,11 +1265,14 @@ async def _compose_logs(
             "--follow", "-f", help="Follow the log output live (docker's -f); Ctrl-C ends it."
         ),
     ] = False,
-    on: Annotated[
+    parent: Annotated[
         str | None,
         typer.Option(
-            "--on",
-            help="Collapse every fragment onto this lab host (as compose up resolves it).",
+            "--parent",
+            help=(
+                "The docker-capable lab host (the parent) to read; defaults to the lab's "
+                "only one, or its highest docker_priority. Not docker's -H."
+            ),
             autocompletion=_docker_host_completer,
         ),
     ] = None,
@@ -1236,7 +1281,7 @@ async def _compose_logs(
         typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
     ] = None,
 ) -> None:
-    """Print `docker compose logs` for a use-case's project on every host it is placed on."""
+    """Print `docker compose logs` for a use-case's project on one parent."""
     from ..docker.observe import compose_logs
 
     name = _default_use_case(use_case)
@@ -1249,7 +1294,7 @@ async def _compose_logs(
             return resolve_compose_logs(
                 name,
                 service or [],
-                on=on,
+                parent=parent,
                 provide=provide_map,
                 tail=tail,
                 since=since,
@@ -1262,7 +1307,7 @@ async def _compose_logs(
         compose_logs(
             name,
             service or [],
-            on=on,
+            parent=parent,
             provide=_parse_provide(provide),
             tail=tail,
             since=since,

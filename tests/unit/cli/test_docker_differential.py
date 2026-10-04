@@ -36,7 +36,7 @@ _EMPTY_UP = UseCaseStack(
 # (argv, seam, expected positional args, expected kwargs, an ok return)
 ROWS = [
     (
-        ["build", "--on", "test3"],
+        ["build", "--parent", "test3"],
         "otto.docker.build_verbs.build_on",
         ("test3",),
         {
@@ -51,7 +51,7 @@ ROWS = [
         _EMPTY_BUILD,
     ),
     (
-        ["build", "--on", "test3", "--repo", "r1", "api", "db"],
+        ["build", "--parent", "test3", "--repo", "r1", "api", "db"],
         "otto.docker.build_verbs.build_on",
         ("test3",),
         {
@@ -70,7 +70,7 @@ ROWS = [
         "otto.docker.build_verbs.compose_build",
         ("integration",),
         {
-            "on": None,
+            "parent": None,
             "provide": {},
             "images": None,
             "no_cache": False,
@@ -85,7 +85,7 @@ ROWS = [
             "build",
             "integration",
             "api",
-            "--on",
+            "--parent",
             "test3",
             "--provide",
             "db=r2",
@@ -93,7 +93,7 @@ ROWS = [
         "otto.docker.build_verbs.compose_build",
         ("integration",),
         {
-            "on": "test3",
+            "parent": "test3",
             "provide": {"db": "r2"},
             "images": ["api"],
             "no_cache": False,
@@ -106,14 +106,14 @@ ROWS = [
         ["compose", "down", "integration"],
         "otto.docker.deployment.teardown",
         ("integration",),
-        {"services": None, "on": None, "provide": {}},
+        {"services": None, "parent": None, "provide": {}},
         _EMPTY_DOWN,
     ),
     (
-        ["compose", "down", "integration", "api", "--on", "test3", "--provide", "db=r2"],
+        ["compose", "down", "integration", "api", "--parent", "test3", "--provide", "db=r2"],
         "otto.docker.deployment.teardown",
         ("integration",),
-        {"services": ["api"], "on": "test3", "provide": {"db": "r2"}},
+        {"services": ["api"], "parent": "test3", "provide": {"db": "r2"}},
         _EMPTY_DOWN,
     ),
     (
@@ -122,7 +122,7 @@ ROWS = [
         ("integration",),
         {
             "services": None,
-            "on": None,
+            "parent": None,
             "provide": {},
             "env": {},
             "env_files": None,
@@ -138,7 +138,7 @@ ROWS = [
         ("integration",),
         {
             "services": None,
-            "on": None,
+            "parent": None,
             "provide": {},
             "env": {},
             "env_files": None,
@@ -152,28 +152,28 @@ ROWS = [
         ["ps", "-a"],
         "otto.docker.observe.list_containers",
         (),
-        {"on": None, "all": True},
+        {"parent": None, "all": True},
         ObserveReport([]),
     ),
     (
-        ["images", "--on", "test3"],
+        ["images", "--parent", "test3"],
         "otto.docker.observe.list_images",
         (),
-        {"on": "test3"},
+        {"parent": "test3"},
         ObserveReport([]),
     ),
     (
-        ["logs", "test3.integration.web"],
+        ["logs", "web-1"],
         "otto.docker.observe.container_logs",
-        ("test3.integration.web",),
-        {"on": None, "tail": None, "since": None, "timestamps": False},
+        ("web-1",),
+        {"parent": None, "tail": None, "since": None, "timestamps": False},
         ObserveReport([]),
     ),
     (
-        ["compose", "ps", "integration", "-a", "--on", "test3", "--provide", "db=r2"],
+        ["compose", "ps", "integration", "-a", "--parent", "test3", "--provide", "db=r2"],
         "otto.docker.observe.compose_ps",
         ("integration",),
-        {"all": True, "on": "test3", "provide": {"db": "r2"}},
+        {"all": True, "parent": "test3", "provide": {"db": "r2"}},
         ObserveReport([]),
     ),
     (
@@ -182,7 +182,7 @@ ROWS = [
             "logs",
             "integration",
             "api",
-            "--on",
+            "--parent",
             "test3",
             "--provide",
             "db=r2",
@@ -195,7 +195,7 @@ ROWS = [
         "otto.docker.observe.compose_logs",
         ("integration", ["api"]),
         {
-            "on": "test3",
+            "parent": "test3",
             "provide": {"db": "r2"},
             "tail": "5",
             "since": "1m",
@@ -252,7 +252,7 @@ def test_compose_up_passes_env_and_env_file_through(tmp_path):
     assert fake.await_args.args == ("integration",)
     assert fake.await_args.kwargs == {
         "services": None,
-        "on": None,
+        "parent": None,
         "provide": {},
         "env": {"K": "V"},
         "env_files": [env_file],
@@ -267,12 +267,12 @@ REFUSALS = [
         ["build"],
         "otto.docker.build_verbs.build_on",
         DockerVerbError(
-            "host is required; docker-capable hosts in lab 'unix': ['test3']", field="host"
+            "host is required; docker-capable hosts in lab 'unix': ['test3']", field="parent"
         ),
-        "--on",
+        "--parent",
     ),
     (
-        ["build", "--on", "t", "--repo", "zz"],
+        ["build", "--parent", "t", "--repo", "zz"],
         "otto.docker.build_verbs.build_on",
         DockerVerbError(
             "repo 'zz' is not a loaded repo with a [docker] section; docker repos: ['r1']",
@@ -281,7 +281,7 @@ REFUSALS = [
         "--repo",
     ),
     (
-        ["build", "--on", "t", "apo"],
+        ["build", "--parent", "t", "apo"],
         "otto.docker.build_verbs.build_on",
         DockerVerbError(
             "no selected repo declares an image named 'apo'; declared: ['api']", field="images"
@@ -297,34 +297,33 @@ REFUSALS = [
         "IMAGE",
     ),
     (
-        ["ps", "--on", "ghost"],
+        ["ps", "--parent", "ghost"],
         "otto.docker.observe.list_containers",
         DockerVerbError(
             "host 'ghost' is not a docker-capable unix host in lab 'unix'; "
             "docker-capable hosts here: ['test3']",
-            field="host",
+            field="parent",
         ),
-        "--on",
+        "--parent",
     ),
     (
         ["ps"],
         "otto.docker.observe.list_containers",
-        DockerVerbError("lab 'unix' has no docker-capable unix host", field="host"),
-        "--on",
+        DockerVerbError("lab 'unix' has no docker-capable unix host", field="parent"),
+        "--parent",
     ),
     (
         ["logs", "web-1"],
         "otto.docker.observe.container_logs",
         DockerVerbError(
-            "'web-1' is not a container host id of lab 'unix' (declared: "
-            "['test3.integration.web']); to name a docker container or id directly, "
-            "name the host it is on (`on`)",
-            field="container",
+            "lab 'unix' has 2 docker-capable hosts at priority 0 (alt2, test3) "
+            '— name one with --parent, or rank one higher with "docker_priority" in lab.json',
+            field="parent",
         ),
-        "CONTAINER",
+        "--parent",
     ),
     (
-        ["logs", "x", "--on", "test3", "-f"],
+        ["logs", "x", "--parent", "test3", "-f"],
         "otto.docker.observe.follow_logs",
         DockerVerbError("follow needs an SSH parent; test3 is reached by telnet", field="follow"),
         "--follow",

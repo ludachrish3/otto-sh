@@ -3,47 +3,39 @@
 Print one container's `docker logs`, exactly as docker printed it.
 
 ```text
-otto docker logs CONTAINER [--tail N] [--since T] [-t|--timestamps] [-f|--follow] [--on HOST]
+otto docker logs CONTAINER [--tail N] [--since T] [-t|--timestamps] [-f|--follow] [--parent HOST]
 ```
 
-`CONTAINER` is read one of two ways. A **lab container host id**
-(`test3.integration.web`, as `otto host --list-hosts` shows it): otto finds the
-container on that host's docker daemon by its compose project and service
-labels, running or stopped, so a container that has exited still gives up its
-logs. With **`--on HOST`**, `CONTAINER` is a docker container name or id and
-goes to `docker logs` on that host verbatim; a name the daemon does not know is
-docker's error, printed as docker printed it, and otto exits with docker's own
-status (1 for that one).
+`CONTAINER` is a docker container name or id. It goes to `docker logs` on the
+parent verbatim: a container that has exited still gives up its logs, and a
+name the daemon does not know is docker's error, printed as docker printed it:
+otto exits with docker's own status (1 for that one). The parent is chosen as
+{ref}`Which host <docker-which-host>` describes.
 
 | Option | Description |
 | ------ | ----------- |
-| `CONTAINER` (argument) | A container host id, or with `--on` a docker container name or id |
+| `CONTAINER` (argument) | A docker container name or id on the parent |
 | `--tail N` | Number of lines from the end of the log (docker's `--tail`) |
 | `--since T` | Logs since a timestamp or a relative time such as `10m` (docker's `--since`) |
 | `-t`, `--timestamps` | Show timestamps (docker's `-t`) |
 | `-f`, `--follow` | Follow the log live; Ctrl-C ends it. Needs an SSH parent (a telnet-reached host is refused, exit 2) |
-| `--on HOST` | The docker-capable host `CONTAINER` is a docker name or id on |
+| `--parent HOST` | The docker-capable host `CONTAINER` is a docker name or id on (default: {ref}`Which host <docker-which-host>`) |
 
-TAB offers container host ids, then the container names and ids a verb saw in
-the last 15 minutes (with `--on`, only that host's names and ids — no host ids).
+TAB offers the container names and ids a verb saw on the parent in the last 15
+minutes ([Completion](index.md#completion)).
 
 Nothing is added to docker's output: one container on one host needs no
-`== <host-id> ==` header, so the lines are docker's alone. A container host id
-that names no container on its parent (the stack was never brought up, or was
-removed) is refused, naming both. A `CONTAINER` that is neither a container
-host id nor accompanied by `--on` is refused with the container host ids the
-lab declares. Library: {func}`~otto.docker.container_logs`.
+`== <host-id> ==` header, so the lines are docker's alone. Library:
+{func}`~otto.docker.container_logs`.
 
 An illustrative transcript — your container's lines are what you will see:
 
 ```text
-# by container host id
-$ otto docker logs test3.integration.web --tail 2
+$ otto docker logs unix-integration-1a2b3c4d-web-1 --tail 2
 listening on :8080
 ready
 
-# by docker name, on a named host
-$ otto docker logs unix-integration-1a2b3c4d-web-1 --on test3 --since 10m -t
+$ otto docker logs unix-integration-1a2b3c4d-web-1 --parent test3 --since 10m -t
 2026-10-03T12:00:01.000000000Z listening on :8080
 ```
 

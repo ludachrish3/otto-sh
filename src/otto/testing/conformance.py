@@ -268,7 +268,7 @@ def _expect_host_summaries_conform(
       quietly stops offering that host.
     - Every FIELD must agree with the constructed host. A summary is not an
       id lookup — ``labs`` drives ``--lab``-scoped completion, ``docker_capable``
-      gates ``otto docker --on``, and ``ip`` drives tunnel narrowing. A backend
+      gates ``otto docker --parent``, and ``ip`` drives tunnel narrowing. A backend
       that fills in only ``id`` passed every earlier version of this check
       while silently breaking the other surfaces.
 
@@ -380,6 +380,11 @@ def _expect_host_summaries_conform(
                 "docker_capable",
                 summary.docker_capable,
                 bool(getattr(host, "docker_capable", False)),
+            ),
+            (
+                "docker_priority",
+                summary.docker_priority,
+                int(getattr(host, "docker_priority", 0)),
             ),
             # A constructed host ALWAYS carries a selector (the factory defaults
             # it to "unix"), so a summary leaving it None is a backend that did

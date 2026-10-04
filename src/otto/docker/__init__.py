@@ -23,7 +23,8 @@ deploy pipeline, spec §8/§11), and ``build_on`` / ``compose_build`` /
 ``DockerVerbError`` with the report types they and ``teardown`` return
 (``BuildReport``, ``RepoBuild``, ``ImageBuild``, ``FailedImage``,
 ``HostReport``, ``TeardownReport``), and the read-only observe verbs
-``list_containers`` / ``list_images`` with their ``ObserveReport``: a caller
+``list_containers`` / ``list_images`` with their ``ObserveReport``, and the
+one parent rule (``default_docker_parent`` / ``docker_parent``): a caller
 pays for the one module that defines the name it asks for. Every command that
 loads a lab imports ``.compose`` to place the declared container hosts, and
 must not pay for ``.build`` and its build-context staging with it.
@@ -63,6 +64,8 @@ if TYPE_CHECKING:
     from .observe import compose_logs as compose_logs
     from .observe import compose_ps as compose_ps
     from .observe import container_logs as container_logs
+    from .observe import default_docker_parent as default_docker_parent
+    from .observe import docker_parent as docker_parent
     from .observe import docker_parents as docker_parents
     from .observe import follow_logs as follow_logs
     from .observe import list_containers as list_containers
@@ -100,6 +103,8 @@ _LAZY_ATTRS: dict[str, str] = {
     "compose_logs": "otto.docker.observe",
     "compose_ps": "otto.docker.observe",
     "container_logs": "otto.docker.observe",
+    "default_docker_parent": "otto.docker.observe",
+    "docker_parent": "otto.docker.observe",
     "docker_parents": "otto.docker.observe",
     "follow_logs": "otto.docker.observe",
     "list_containers": "otto.docker.observe",
@@ -152,8 +157,10 @@ __all__ = [
     "compose_up",
     "composed",
     "container_logs",
+    "default_docker_parent",
     "deploy",
     "deployed",
+    "docker_parent",
     "docker_parents",
     "follow_logs",
     "get_container_host",

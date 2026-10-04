@@ -78,7 +78,7 @@ just make it a decision rather than an omission.
     defaults so the dataclass will let you omit them, but each one drives a
     surface: `labs` scopes `otto host -l <lab> <TAB>` (and must be exactly the
     labs that contain the host — claiming one it is not in offers an id that
-    cannot dispatch there), `docker_capable` gates `otto docker --on`, and
+    cannot dispatch there), `docker_capable` gates `otto docker --parent`, and
     `ip` drives tunnel narrowing.
 
   `lab_patterns` is the one field a backend may legitimately leave empty. A

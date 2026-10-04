@@ -41,6 +41,7 @@ from otto.docker.compose import (
     unregister_container_hosts,
     use_case_project,
 )
+from otto.docker.observe import DockerVerbError
 from otto.docker.reports import ImageBuild
 from otto.host import product as product_mod
 from otto.host.docker_host import DockerContainerHost
@@ -105,12 +106,13 @@ def _make_repo(
     *,
     name: str = "repo1",
     services: tuple = ("api",),
-    host: str = "test3",
     users: dict | None = None,
 ) -> Repo:
-    """A repo whose lone use-case fragment pins its stack to *host* — the
-    same "declared exact host" semantics ``default_host`` used to carry,
-    now expressed as a committed placement pin (spec §14)."""
+    """A repo with one image, one compose and one use-case fragment named after it.
+
+    The fragment says nothing about where it runs: a use-case deploys on one
+    parent (spec §2), which ``_make_lab``'s single docker-capable host is.
+    """
     services_toml = "[" + ", ".join(f'"{s}"' for s in services) + "]"
     users_toml = (
         "users = {" + ", ".join(f'{k} = "{v}"' for k, v in users.items()) + "}\n" if users else ""
@@ -135,8 +137,6 @@ def _make_repo(
             f"[[docker.use_cases]]\n"
             f'name = "{name}"\n'
             f'composes = ["core"]\n'
-            f'role = "docker"\n'
-            f'placement = {{ docker = "{host}" }}\n'
         ),
         files={
             "docker/Dockerfile": "FROM alpine\n",
@@ -414,24 +414,44 @@ async def test_unregister_container_hosts_pops_a_host_that_fails_to_close():
 # ---------------------------------------------------------------------------
 
 
-def test_repo_parent_host_prefers_explicit_on(tmp_path):
-    repo = _make_repo(tmp_path)
+def test_repo_parent_host_prefers_explicit_parent():
     lab = _make_lab()
-    parent = _repo_parent_host(repo, lab, on="test3")
+    lab.hosts["test1"] = _wire_parent_mock(_capable_host("test1", ne="test1"))
+    parent = _repo_parent_host(lab, parent="test1")
+    assert parent.id == "test1"
+
+
+def test_repo_parent_host_falls_back_to_the_default_parent():
+    """No parent named: the lab's default parent by the one rule (spec §2)."""
+    lab = _make_lab()
+    parent = _repo_parent_host(lab, parent=None)
     assert parent.id == "test3"
 
 
-def test_repo_parent_host_falls_back_to_use_case_placement(tmp_path):
-    """No --on: the repo's sole use-case fragment's placement pin wins."""
-    repo = _make_repo(tmp_path, host="test3")
+def test_repo_parent_host_falls_back_to_the_ranked_parent():
     lab = _make_lab()
-    parent = _repo_parent_host(repo, lab, on=None)
-    assert parent.id == "test3"
+    low = _wire_parent_mock(_capable_host("test1", ne="test1"))
+    lab.hosts[low.id] = low
+    lab.hosts["test3"].docker_priority = 10
+    assert _repo_parent_host(lab, parent=None).id == "test3"
 
 
-def test_repo_parent_host_rejects_non_capable(tmp_path):
-    """Explicit --on still enforces docker_capable, regardless of how it got here."""
-    repo = _make_repo(tmp_path)
+def test_repo_parent_host_refuses_a_tie_naming_the_tied_hosts():
+    """Two hosts at the default priority: the rule refuses, it never picks by file order."""
+    lab = _make_lab()
+    lab.hosts["test1"] = _wire_parent_mock(_capable_host("test1", ne="test1"))
+    with pytest.raises(
+        DockerVerbError, match=r"2 docker-capable hosts at priority 0 \(test1, test3\)"
+    ) as exc:
+        _repo_parent_host(lab, parent=None)
+    assert exc.value.field == "parent"
+
+    # Load-bearing, not decorative: naming a parent sidesteps the tie entirely.
+    assert _repo_parent_host(lab, parent="test1").id == "test1"
+
+
+def test_repo_parent_host_rejects_non_capable():
+    """An explicit parent still enforces docker_capable, regardless of how it got here."""
     lab = _make_lab()
     # Add a host that is NOT docker_capable.
     other = _wire_parent_mock(
@@ -444,84 +464,17 @@ def test_repo_parent_host_rejects_non_capable(tmp_path):
         )
     )
     lab.hosts[other.id] = other
-    with pytest.raises(ValueError, match="not docker_capable"):
-        _repo_parent_host(repo, lab, on=other.id)
+    with pytest.raises(DockerVerbError, match="not a docker-capable unix host") as exc:
+        _repo_parent_host(lab, parent=other.id)
+    assert exc.value.field == "parent"
 
 
-def test_repo_parent_host_falls_back_to_a_non_capable_pin_still_refuses(tmp_path):
-    """The fallback path enforces docker_capable too (T14 review M3) — via a
-    DIFFERENT message than the ``--on`` path, because a committed placement
-    pin validates capability itself, inside ``_place_fragment``, before
-    ``_repo_parent_host``'s own tail check is ever reached. The scenario the
-    old ``on=None`` test asserted (a *resolved* candidate turning out
-    non-capable) is not gone with the fallback rewrite — it just now raises
-    from the pin's own validation, with its own wording.
-    """
-    other = _wire_parent_mock(
-        UnixHost(
-            ip="1.2.3.4",
-            element=Element("other"),
-            creds=[Cred(login="u", password="p")],
-            board="seed",
-            docker_capable=False,
-        )
-    )
-    repo = _make_repo(tmp_path, host=other.id)
-    lab = Lab(name="test")
-    lab.hosts[other.id] = other
-    with pytest.raises(ValueError, match="must name a docker-capable unix host"):
-        _repo_parent_host(repo, lab, on=None)
-
-
-def test_repo_parent_host_errors_when_no_host(tmp_path):
-    repo = _make_repo(tmp_path, host="test3")
+def test_repo_parent_host_errors_when_no_host():
     lab = _make_lab()
     # Use a wholly unknown host.
-    with pytest.raises(ValueError, match="not in lab"):
-        _repo_parent_host(repo, lab, on="nobody")
-
-
-def test_repo_parent_host_refuses_use_cases_split_across_hosts(tmp_path):
-    """A repo declaring TWO use-case fragments that each resolve cleanly but
-    to DIFFERENT hosts is ambiguous for a per-repo verb — a bare
-    ``compose_up``/``build`` cannot guess which one the caller means, so it
-    must pass ``--on``. This is the replacement for the old "no
-    default_host" fallback failure (spec §14): the per-repo primitives stay
-    public, but a repo whose use-cases place onto several hosts needs
-    disambiguation the per-repo surface has no way to ask for.
-    """
-    sut = make_sut_repo(
-        tmp_path / "repo1",
-        name="repo1",
-        extra=(
-            "[[docker.composes]]\n"
-            'name = "core"\n'
-            'path = "docker/compose.yml"\n'
-            'services = ["api"]\n'
-            "\n[[docker.use_cases]]\n"
-            'name = "web"\n'
-            'composes = ["core"]\n'
-            'role = "docker"\n'
-            'placement = { docker = "test1" }\n'
-            "\n[[docker.use_cases]]\n"
-            'name = "worker"\n'
-            'composes = ["core"]\n'
-            'role = "docker"\n'
-            'placement = { docker = "test3" }\n'
-        ),
-        files={"docker/compose.yml": "services: {}\n"},
-    )
-    repo = Repo(sut_dir=sut)
-
-    lab = Lab(name="test")
-    for ne in ("test1", "test3"):
-        lab.hosts[ne] = _wire_parent_mock(_capable_host(ne, ne=ne))
-
-    with pytest.raises(ValueError, match="ambiguous for a per-repo verb"):
-        _repo_parent_host(repo, lab, on=None)
-
-    # Load-bearing, not decorative: --on sidesteps the ambiguity entirely.
-    assert _repo_parent_host(repo, lab, on="test1").id == "test1"
+    with pytest.raises(DockerVerbError, match="'nobody' is not a docker-capable unix host") as exc:
+        _repo_parent_host(lab, parent="nobody")
+    assert exc.value.field == "parent"
 
 
 # ---------------------------------------------------------------------------
@@ -1233,6 +1186,33 @@ def test_register_declared_noop_without_capable_hosts(tmp_path):
     assert n == 0
 
 
+def test_register_declared_legacy_walk_registers_under_the_ranked_parent_only():
+    """A repo with `[[docker.composes]]` and no use-cases follows the lab's one
+    rule too: two docker-capable hosts, one ranked, and the placeholder sits
+    under the ranked one alone — never under every capable host."""
+    lab = _make_lab()
+    other = _wire_parent_mock(_capable_host("test1", ne="test1"))
+    other.docker_priority = 5
+    lab.hosts[other.id] = other
+    repo = _uc_repo("a", composes=[_core_compose()])  # composes, no use-cases
+
+    assert register_declared_container_hosts(lab, [repo]) == 1
+    assert "test1.a.api" in lab.hosts
+    assert "test3.a.api" not in lab.hosts
+
+
+def test_register_declared_legacy_walk_a_tied_lab_registers_nothing():
+    """The rule refuses (two docker-capable hosts, no ranking): the legacy walk
+    registers nothing and raises nothing."""
+    lab = _make_lab()
+    other = _wire_parent_mock(_capable_host("test1", ne="test1"))
+    lab.hosts[other.id] = other
+    repo = _uc_repo("a", composes=[_core_compose()])
+
+    assert register_declared_container_hosts(lab, [repo]) == 0
+    assert not any(isinstance(h, DockerContainerHost) for h in lab.hosts.values())
+
+
 def test_placeholder_id_collision_with_different_host_is_rejected(tmp_path):
     """A genuinely colliding placeholder — a DIFFERENT host already
     registered under the exact id a new placeholder would take — is
@@ -1506,8 +1486,6 @@ def _uc_repo(name: str, *fragments: DockerUseCase, composes: tuple = ()) -> Repo
 def _uc_frag(name: str = "integration", **kw: object) -> DockerUseCase:
     defaults: dict = {
         "composes": ("core",),
-        "role": None,
-        "placement": {},
         "provides": None,
         "priority": 0,
         "env": {},
@@ -1528,8 +1506,7 @@ def test_register_declared_use_case_repo_synthesizes_usecase_ids():
     lab = _make_lab()
     repo = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
 
-    with patch("otto.docker.resolve.scope_for_repo", return_value=None):
-        n = register_declared_container_hosts(lab, [repo])
+    n = register_declared_container_hosts(lab, [repo])
 
     assert n == 1
     placeholder = lab.hosts.get("test3.integration.api")
@@ -1548,8 +1525,7 @@ def test_register_declared_use_case_placeholder_carries_declared_user():
     lab = _make_lab()
     repo = _uc_repo("a", _uc_frag(), composes=[_core_compose(users=(("api", "postgres"),))])
 
-    with patch("otto.docker.resolve.scope_for_repo", return_value=None):
-        assert register_declared_container_hosts(lab, [repo]) == 1
+    assert register_declared_container_hosts(lab, [repo]) == 1
 
     assert lab.hosts["test3.integration.api"].user == "postgres"
 
@@ -1568,10 +1544,7 @@ def test_register_declared_use_case_conflicting_users_refuse():
         composes=_two_composes(users_a=(("db", "postgres"),), users_b=(("db", "root"),)),
     )
 
-    with (
-        patch("otto.docker.resolve.scope_for_repo", return_value=None),
-        pytest.raises(ValueError, match="conflicting declared users for service 'db'"),
-    ):
+    with pytest.raises(ValueError, match="conflicting declared users for service 'db'"):
         register_declared_container_hosts(lab, [repo])
 
 
@@ -1579,8 +1552,7 @@ def test_register_declared_use_case_placeholder_without_users_is_unset():
     lab = _make_lab()
     repo = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
 
-    with patch("otto.docker.resolve.scope_for_repo", return_value=None):
-        assert register_declared_container_hosts(lab, [repo]) == 1
+    assert register_declared_container_hosts(lab, [repo]) == 1
 
     assert lab.hosts["test3.integration.api"].user is None
 
@@ -1594,8 +1566,7 @@ def test_register_declared_use_case_fragment_with_no_declared_services_is_skippe
     empty_compose = DockerCompose(path=Path("docker/core.yml"), name="core", services=())
     repo = _uc_repo("a", _uc_frag(), composes=[empty_compose])
 
-    with patch("otto.docker.resolve.scope_for_repo", return_value=None):
-        n = register_declared_container_hosts(lab, [repo])
+    n = register_declared_container_hosts(lab, [repo])
 
     assert n == 0
     assert not any(hid.startswith("test3.integration.") for hid in lab.hosts)
@@ -1608,31 +1579,53 @@ def test_register_declared_use_case_repo_skips_legacy_composes_walk():
     lab = _make_lab()
     repo = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
 
-    with patch("otto.docker.resolve.scope_for_repo", return_value=None):
-        n = register_declared_container_hosts(lab, [repo])
+    n = register_declared_container_hosts(lab, [repo])
 
     assert n == 1  # exactly the use-case placeholder, no legacy duplicate
     assert "test3.a.api" not in lab.hosts
 
 
-def test_register_declared_use_case_fragment_whose_placement_raises_is_skipped():
-    """Placeholders are best-effort (spec §9): a fragment whose placement
-    raises contributes no placeholder, but a sibling fragment of the same
-    repo still registers — only UseCaseResolutionError is swallowed."""
+def test_register_declared_use_case_fragment_with_an_unknown_handle_is_skipped():
+    """Placeholders are best-effort (spec §9): a fragment naming a compose
+    handle its repo does not define contributes no placeholder, but a sibling
+    fragment of the same repo still registers."""
     lab = _make_lab()
     repo = _uc_repo(
         "a",
         _uc_frag(name="integration"),
-        _uc_frag(name="ghost-uc", role="ghost"),  # no host carries role "ghost"
+        _uc_frag(name="ghost-uc", composes=("nope",)),
         composes=[_core_compose()],
     )
 
-    with patch("otto.docker.resolve.scope_for_repo", return_value=None):
-        n = register_declared_container_hosts(lab, [repo])
+    n = register_declared_container_hosts(lab, [repo])
 
     assert n == 1
     assert "test3.integration.api" in lab.hosts
     assert not any(hid.startswith("test3.ghost-uc.") for hid in lab.hosts)
+
+
+def test_register_declared_use_case_a_tied_lab_registers_nothing_and_raises_nothing():
+    """The rule refuses (two docker-capable hosts, no ranking): no placeholder
+    is registered and the walk stays silent (spec §7)."""
+    lab = _make_lab()
+    other = _wire_parent_mock(_capable_host("test1", ne="test1"))
+    lab.hosts[other.id] = other
+    repo = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
+
+    assert register_declared_container_hosts(lab, [repo]) == 0
+    assert not any(".integration." in hid for hid in lab.hosts)
+
+
+def test_register_declared_use_case_a_ranked_lab_registers_under_the_ranked_parent():
+    lab = _make_lab()
+    other = _wire_parent_mock(_capable_host("test1", ne="test1"))
+    other.docker_priority = 5
+    lab.hosts[other.id] = other
+    repo = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
+
+    assert register_declared_container_hosts(lab, [repo]) == 1
+    assert "test1.integration.api" in lab.hosts
+    assert not any(hid.startswith("test3.integration.") for hid in lab.hosts)
 
 
 def test_register_declared_use_case_skips_existing():
@@ -1643,9 +1636,8 @@ def test_register_declared_use_case_skips_existing():
     lab = _make_lab()
     repo = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
 
-    with patch("otto.docker.resolve.scope_for_repo", return_value=None):
-        n1 = register_declared_container_hosts(lab, [repo])
-        n2 = register_declared_container_hosts(lab, [repo])
+    n1 = register_declared_container_hosts(lab, [repo])
+    n2 = register_declared_container_hosts(lab, [repo])
 
     assert (n1, n2) == (1, 0)
     assert [h for h in lab.hosts if h.startswith("test3.")] == ["test3.integration.api"]
@@ -1659,8 +1651,7 @@ def test_register_declared_use_case_non_resolution_error_propagates():
     repo = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
 
     with (
-        patch("otto.docker.resolve.scope_for_repo", return_value=None),
-        patch("otto.docker.resolve.resolve_placement", side_effect=TypeError("boom")),
+        patch("otto.docker.deployment._declared", side_effect=TypeError("boom")),
         pytest.raises(TypeError, match="boom"),
     ):
         register_declared_container_hosts(lab, [repo])
@@ -1675,8 +1666,7 @@ def test_register_declared_use_case_inherits_its_parents_lab_not_the_composite()
     lab = _merged_lab_with_stamped_parent()
     parent = lab.hosts["test3"]
 
-    with patch("otto.docker.resolve.scope_for_repo", return_value=None):
-        assert register_declared_container_hosts(lab, [repo]) == 1
+    assert register_declared_container_hosts(lab, [repo]) == 1
 
     (container,) = [h for h in lab.hosts.values() if isinstance(h, DockerContainerHost)]
     assert container.source_lab == "a"
@@ -1685,15 +1675,10 @@ def test_register_declared_use_case_inherits_its_parents_lab_not_the_composite()
     assert parent.lab_info.metadata == {"k": 1}
 
 
-def test_register_declared_use_case_respects_repo_project_scope(tmp_path):
-    """The interaction production actually depends on and every other new
-    test here patches away: a repo's `[project]` scope narrows `in_scope`
-    inside `_place_fragment`, via the REAL `scope_for_repo` (not patched)."""
+def test_register_declared_use_case_real_repo_registers_under_the_ranked_parent(tmp_path):
+    """A repo parsed from settings.toml (not a double) registers its use-case
+    placeholders under the one parent the lab's rule names — the ranked host."""
     extra = (
-        "[project]\n"
-        'lab_patterns = [".*"]\n'
-        'host_patterns = ["test3"]\n'
-        "\n"
         "[[docker.composes]]\n"
         'name = "core"\n'
         'path = "docker/compose.yml"\n'
@@ -1709,11 +1694,11 @@ def test_register_declared_use_case_respects_repo_project_scope(tmp_path):
     repo = Repo(sut_dir=sut)
 
     lab = _make_lab()  # "test3", docker-capable
+    lab.hosts["test3"].docker_priority = 5  # type: ignore[union-attr]
     other = _wire_parent_mock(_capable_host("test1", ne="test1"))
     lab.hosts[other.id] = other
 
-    with patch("otto.config.bootstrapped.get_repos", return_value=[repo]):
-        n = register_declared_container_hosts(lab, [repo])
+    n = register_declared_container_hosts(lab, [repo])
 
     assert n == 1
     assert "test3.integration.api" in lab.hosts
@@ -1839,31 +1824,17 @@ async def test_compose_up_build_failure_raises(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_repo_parent_host_no_candidate_raises(tmp_path):
-    """Raises ValueError when no on= and no [[docker.use_cases]] is declared."""
-    # Build a repo with a compose entry but NO use-case fragments.
-    sut = make_sut_repo(
-        tmp_path / "repo1",
-        name="repo1",
-        extra=(
-            "[docker]\n\n"
-            "[[docker.composes]]\n"
-            'path = "docker/compose.yml"\n'
-            'services = ["api"]\n'
-            "# no [[docker.use_cases]] declared\n"
-        ),
-        files={"docker/compose.yml": "services: {}\n"},
-    )
-    repo = Repo(sut_dir=sut)
-    lab = _make_lab()
+def test_repo_parent_host_no_candidate_raises():
+    """No parent= and no docker-capable host in the lab: the rule refuses."""
+    lab = Lab(name="test")
 
-    with pytest.raises(ValueError, match="No docker host"):
-        _repo_parent_host(repo, lab, on=None)
+    with pytest.raises(DockerVerbError, match="has no docker-capable unix host") as exc:
+        _repo_parent_host(lab, parent=None)
+    assert exc.value.field == "parent"
 
 
-def test_repo_parent_host_non_unixhost_raises(tmp_path):
-    """Raises TypeError when the resolved host is not a UnixHost."""
-    repo = _make_repo(tmp_path)
+def test_repo_parent_host_non_unixhost_raises():
+    """A host that is not a UnixHost is not a docker parent: the rule refuses it."""
     lab = _make_lab()
 
     # Install a non-UnixHost under the id "weird"
@@ -1871,8 +1842,9 @@ def test_repo_parent_host_non_unixhost_raises(tmp_path):
     weird.id = "weird"
     lab.hosts["weird"] = weird
 
-    with pytest.raises(TypeError, match="must be a UnixHost"):
-        _repo_parent_host(repo, lab, on="weird")
+    with pytest.raises(DockerVerbError, match="'weird' is not a docker-capable unix host") as exc:
+        _repo_parent_host(lab, parent="weird")
+    assert exc.value.field == "parent"
 
 
 # ---------------------------------------------------------------------------

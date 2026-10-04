@@ -1,10 +1,10 @@
 # otto docker compose up
 
-Deploy a use-case: one merged compose stack per resolved host, with every
+Deploy a use-case: one merged compose stack on the parent, with every
 resulting container registered as a lab host.
 
 ```text
-otto docker compose up [USE_CASE [SERVICE]...] [--on HOST] [--build] [--force-recreate]
+otto docker compose up [USE_CASE [SERVICE]...] [--parent HOST] [--build] [--force-recreate]
                        [--pull POLICY] [--provide CAP=REPO]... [--env K=V]...
                        [--env-file PATH]...
 ```
@@ -13,7 +13,7 @@ otto docker compose up [USE_CASE [SERVICE]...] [--on HOST] [--build] [--force-re
 | ------ | ----------- |
 | `USE_CASE` (argument) | Use-case to deploy (default: the only one declared; several is an error) |
 | `SERVICE...` (argument) | Deploy only these services; requires an explicit `USE_CASE` |
-| `--on HOST` | Collapse every fragment of the deployment onto this lab host |
+| `--parent HOST` | The docker-capable lab host to deploy on (default: {ref}`Which host <docker-which-host>`) |
 | `--build` | Build the participating repos' declared `[[docker.images]]` first (otto's build; docker's own `--build` is not passed) |
 | `--force-recreate` | Recreate containers even if their configuration is unchanged |
 | `--pull POLICY` | docker's `--pull` policy, passed through unchanged |
@@ -34,8 +34,8 @@ docker's to judge: a policy docker rejects is docker's error. `up` is
 convergent — re-running a broader deployment adds to a live stack, and
 `--remove-orphans` reaps what a provider swap left behind.
 
-{doc}`../use-cases` is the workflow home: which fragments take part, where each
-one lands, how the env mapping is assembled, and what a `--dry-run` preview
-shows. Once the stack is running, its services are addressable as
+{doc}`../use-cases` is the workflow home: which fragments take part, how the
+env mapping is assembled, and what a `--dry-run` preview shows. Once the
+stack is running, its services are addressable as
 `<parent>.<usecase>.<service>` — see
 [Container hosts](../index.md#container-hosts).

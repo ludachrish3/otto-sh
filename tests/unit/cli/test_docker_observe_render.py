@@ -78,39 +78,44 @@ def test_a_header_is_printed_even_for_one_host(capsys):
 @pytest.mark.parametrize(
     ("argv", "seam", "args", "kwargs"),
     [
-        (["ps"], "otto.docker.observe.list_containers", (), {"on": None, "all": False}),
+        (["ps"], "otto.docker.observe.list_containers", (), {"parent": None, "all": False}),
         (
-            ["ps", "-a", "--on", "test3"],
+            ["ps", "-a", "--parent", "test3"],
             "otto.docker.observe.list_containers",
             (),
-            {"on": "test3", "all": True},
+            {"parent": "test3", "all": True},
         ),
-        (["ps", "--all"], "otto.docker.observe.list_containers", (), {"on": None, "all": True}),
-        (["images"], "otto.docker.observe.list_images", (), {"on": None}),
-        (["images", "--on", "test3"], "otto.docker.observe.list_images", (), {"on": "test3"}),
+        (["ps", "--all"], "otto.docker.observe.list_containers", (), {"parent": None, "all": True}),
+        (["images"], "otto.docker.observe.list_images", (), {"parent": None}),
+        (
+            ["images", "--parent", "test3"],
+            "otto.docker.observe.list_images",
+            (),
+            {"parent": "test3"},
+        ),
         (
             ["compose", "ps", "integration"],
             "otto.docker.observe.compose_ps",
             ("integration",),
-            {"all": False, "on": None, "provide": {}},
+            {"all": False, "parent": None, "provide": {}},
         ),
         (
-            ["compose", "ps", "integration", "-a", "--on", "test3"],
+            ["compose", "ps", "integration", "-a", "--parent", "test3"],
             "otto.docker.observe.compose_ps",
             ("integration",),
-            {"all": True, "on": "test3", "provide": {}},
+            {"all": True, "parent": "test3", "provide": {}},
         ),
         (
             ["compose", "logs", "integration"],
             "otto.docker.observe.compose_logs",
             ("integration", []),
-            {"on": None, "provide": {}, "tail": None, "since": None, "timestamps": False},
+            {"parent": None, "provide": {}, "tail": None, "since": None, "timestamps": False},
         ),
         (
             ["compose", "logs", "integration", "api", "db", "--tail", "20", "--since", "5m", "-t"],
             "otto.docker.observe.compose_logs",
             ("integration", ["api", "db"]),
-            {"on": None, "provide": {}, "tail": "20", "since": "5m", "timestamps": True},
+            {"parent": None, "provide": {}, "tail": "20", "since": "5m", "timestamps": True},
         ),
     ],
     ids=lambda v: " ".join(v) if isinstance(v, list) else None,
@@ -134,12 +139,12 @@ def test_the_observe_verbs_hand_the_library_their_flags_and_print_its_report(
         (
             ["logs", "test3.integration.web"],
             ("test3.integration.web",),
-            {"on": None, "tail": None, "since": None, "timestamps": False},
+            {"parent": None, "tail": None, "since": None, "timestamps": False},
         ),
         (
-            ["logs", "web-1", "--on", "test3", "--tail", "9", "-t"],
+            ["logs", "web-1", "--parent", "test3", "--tail", "9", "-t"],
             ("web-1",),
-            {"on": "test3", "tail": "9", "since": None, "timestamps": True},
+            {"parent": "test3", "tail": "9", "since": None, "timestamps": True},
         ),
     ],
     ids=lambda v: " ".join(v) if isinstance(v, list) else None,
@@ -169,13 +174,13 @@ def test_logs_follow_resolves_then_follows_and_never_prints_a_one_shot_report():
     ):
         result = DispatchRunner().invoke(
             docker_cli.docker_app,
-            ["logs", "x", "--on", "test3", "--tail", "9", "-f"],
+            ["logs", "x", "--parent", "test3", "--tail", "9", "-f"],
             spec_name="docker",
         )
     assert result.exit_code == 0, result.output
     assert resolve.await_args.args == ("x",)
     assert resolve.await_args.kwargs == {
-        "on": "test3",
+        "parent": "test3",
         "tail": "9",
         "since": None,
         "timestamps": False,
@@ -196,13 +201,23 @@ def test_compose_logs_follow_resolves_then_follows_and_never_prints_a_one_shot_r
     ):
         result = DispatchRunner().invoke(
             docker_cli.docker_app,
-            ["compose", "logs", "integration", "api", "--on", "test3", "--tail", "5", "--follow"],
+            [
+                "compose",
+                "logs",
+                "integration",
+                "api",
+                "--parent",
+                "test3",
+                "--tail",
+                "5",
+                "--follow",
+            ],
             spec_name="docker",
         )
     assert result.exit_code == 0, result.output
     assert resolve.call_args.args == ("integration", ["api"])
     assert resolve.call_args.kwargs == {
-        "on": "test3",
+        "parent": "test3",
         "provide": {},
         "tail": "5",
         "since": None,
@@ -215,7 +230,7 @@ def test_compose_logs_follow_resolves_then_follows_and_never_prints_a_one_shot_r
 @pytest.mark.parametrize(
     ("argv", "seam"),
     [
-        (["logs", "x", "--on", "test3", "-f"], "otto.docker.observe.resolve_logs"),
+        (["logs", "x", "--parent", "test3", "-f"], "otto.docker.observe.resolve_logs"),
         (["compose", "logs", "integration", "-f"], "otto.docker.observe.resolve_compose_logs"),
     ],
     ids=lambda v: " ".join(v) if isinstance(v, list) else None,

@@ -74,7 +74,9 @@ def _references_of(daemon: "dict[str, str]", image_id: str) -> "set[str]":
 
 def _build(host: str, xdir, *flags: str, check: bool = True):
     """Build ``repo1-api`` on *host*; *check* False leaves the exit code to the caller."""
-    built = _run_otto("docker", "build", "repo1-api", "--on", host, *flags, xdir=xdir, env=_WIDE)
+    built = _run_otto(
+        "docker", "build", "repo1-api", "--parent", host, *flags, xdir=xdir, env=_WIDE
+    )
     if check:
         assert built.returncode == 0, built.stdout + built.stderr
     return built
@@ -157,7 +159,7 @@ def _archive_repo(root: Path, dockerfile: str) -> Path:
 
     The Dockerfile and its files sit at the archive root; *dockerfile* is the
     path inside the archive. The lab is the same one repo1 reads, by absolute
-    path, so `--on <host>` resolves the same hosts.
+    path, so `--parent <host>` resolves the same host.
     """
     archive = root / "ctx.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
@@ -183,7 +185,7 @@ context = "{archive}"
 
 def _build_archive_image(host: str, sut: Path, xdir):
     return _run_otto(
-        "docker", "build", _ARCHIVE_IMAGE, "--on", host, sut_dirs=str(sut), xdir=xdir, env=_WIDE
+        "docker", "build", _ARCHIVE_IMAGE, "--parent", host, sut_dirs=str(sut), xdir=xdir, env=_WIDE
     )
 
 
@@ -256,7 +258,7 @@ def test_compose_up_without_build_on_a_missing_image_is_dockers_error_and_no_bui
             "compose",
             "up",
             _REPO1_USE_CASE,
-            "--on",
+            "--parent",
             docker_host,
             xdir=tmp_path,
             compose_suffix=suffix,
@@ -294,7 +296,7 @@ def test_compose_up_with_build_builds_then_deploys_the_id_the_daemon_lists(
         "compose",
         "up",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         xdir=tmp_path,

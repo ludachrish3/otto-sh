@@ -306,6 +306,7 @@ def _merged_summary(s: HostSummary, existing: HostSummary | None, names: list[st
         lab_patterns=patterns,
         ip=s.ip,
         docker_capable=s.docker_capable,
+        docker_priority=s.docker_priority,
         os_type=s.os_type,
         logins=list(s.logins),
     )

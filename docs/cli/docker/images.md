@@ -4,12 +4,12 @@ Print `docker images` from every docker-capable host in the lab, exactly as
 docker printed it.
 
 ```text
-otto docker images [--on HOST]
+otto docker images [--parent HOST]
 ```
 
 | Option | Description |
 | ------ | ----------- |
-| `--on HOST` | Ask one docker-capable host (default: every one) |
+| `--parent HOST` | Ask one docker-capable host (default: every one; see {ref}`Which host <docker-which-host>`) |
 
 otto adds one line per host, `== <host-id> ==`, and changes nothing inside
 docker's output: every image id is as short as docker prints it, every

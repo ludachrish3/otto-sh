@@ -39,7 +39,7 @@ import time
 from typing import Any
 
 CACHE_FILENAME = "completion_cache.json"
-SCHEMA = 25
+SCHEMA = 26
 """Must equal ``otto.config.completion_cache.SCHEMA_VERSION`` (pinned by tests/unit/shim)."""
 WINDOW_SECONDS = 60
 """How long the ``names`` marker vouches for the ``names`` key set."""
@@ -552,48 +552,48 @@ def _observed_hosts(observed: Any) -> dict[str, Any]:
     return hosts if isinstance(hosts, dict) else {}
 
 
-def _container_candidates(
-    names: dict[str, Any], observed: Any, on: str | None, now: float
-) -> list[str]:
-    """Mirror ``otto.cli.docker._container_candidates``: host ids, then observed names, then ids.
+def _default_parent(names: dict[str, Any], labs: list[str]) -> "str | None":
+    """Return the parent the verb defaults to, from the names cache (the rule already ran there).
 
-    Change both or neither.
+    A selected lab with no entry (the rule refuses for it) makes the answer ``None``.
+    With no lab selected, the map's only distinct value is the answer.
+    Mirrors ``otto.cli.docker._default_parent_for_tab``; change both or neither.
     """
-    hosts = _observed_hosts(observed)
-
-    def _host_containers(host_id: str) -> tuple[list[str], list[str]]:
-        entry = hosts.get(host_id)
-        sub = entry.get("containers") if isinstance(entry, dict) else None
-        return _fresh_sub_entry(sub, DOCKER_OBSERVED_CONTAINERS_TTL_SECONDS, ("names", "ids"), now)
-
-    if on is not None:
-        found, ids = _host_containers(on)
-        return [*found, *ids]
-    capable = {str(h) for h in names.get("docker_hosts", [])}
-    host_ids = sorted(
-        str(h)
-        for h in names.get("hosts", [])
-        if "." in str(h) and str(h).split(".", 1)[0] in capable
-    )
-    found_all: list[str] = []
-    ids_all: list[str] = []
-    for host_id in sorted(hosts):
-        found, ids = _host_containers(host_id)
-        found_all.extend(found)
-        ids_all.extend(ids)
-    return list(dict.fromkeys([*host_ids, *found_all, *ids_all]))
+    by_lab = names.get("docker_default_parent_by_lab")
+    if not isinstance(by_lab, dict):
+        return None
+    if labs:
+        found = {by_lab.get(lab) for lab in labs}
+    else:
+        found = {v for v in by_lab.values() if isinstance(v, str)}
+    only = next(iter(found)) if len(found) == 1 else None
+    return only if isinstance(only, str) else None
 
 
 def _observed_values(
-    source: dict[str, Any], payloads: Payloads, res: "Resolution | None", now: float
+    source: dict[str, Any],
+    payloads: Payloads,
+    res: "Resolution | None",
+    labs: list[str],
+    now: float,
 ) -> list[str]:
-    """Answer an ``observed`` site from the namespace alone (never a handover)."""
-    on = res.option_values.get(source.get("by_option", "")) if res is not None else None
-    if source["key"] == "containers":
-        return _container_candidates(payloads.names, payloads.observed, on, now)
-    if on is None:
+    """Answer an ``observed`` site from the namespace alone (never a handover).
+
+    The parent is the option's value on the line, else the one the verb would
+    default to; its observed entry answers, an unknown parent answers nothing.
+    """
+    parent = res.option_values.get(source.get("by_option", "")) if res is not None else None
+    if parent is None:
+        parent = _default_parent(payloads.names, labs)
+    if parent is None:
         return []
-    entry = _observed_hosts(payloads.observed).get(on)
+    entry = _observed_hosts(payloads.observed).get(parent)
+    if source["key"] == "containers":
+        sub = entry.get("containers") if isinstance(entry, dict) else None
+        found, ids = _fresh_sub_entry(
+            sub, DOCKER_OBSERVED_CONTAINERS_TTL_SECONDS, ("names", "ids"), now
+        )
+        return [*found, *ids]
     sub = entry.get("images") if isinstance(entry, dict) else None
     refs, _ids = _fresh_sub_entry(sub, DOCKER_OBSERVED_IMAGES_TTL_SECONDS, ("refs", "ids"), now)
     return refs
@@ -665,7 +665,9 @@ def _source_values(
         return [v for v in values if v.startswith(frag)]
     if kind == "observed":
         stamp = time.time() if now is None else now
-        return [v for v in _observed_values(source, payloads, res, stamp) if v.startswith(frag)]
+        return [
+            v for v in _observed_values(source, payloads, res, labs, stamp) if v.startswith(frag)
+        ]
     raise Handover(f"unknown source kind {kind!r}")
 
 

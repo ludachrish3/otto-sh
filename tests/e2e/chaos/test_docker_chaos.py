@@ -189,7 +189,7 @@ def built_image(docker_parent, docker_repo):
 async def _teardown(repo: Repo, lab: Lab, parent: UnixHost, project: str) -> None:
     """compose down, then clean the staging tree — staging must not survive
     into the hygiene bracket's after-snapshot."""
-    down = await compose_down(repo, lab, on=parent.id, project_name=project)
+    down = await compose_down(repo, lab, parent=parent.id, project_name=project)
     # compose_down logs-and-returns on failure rather than raising (see its
     # docstring) — check the status explicitly so a failed teardown surfaces
     # as a named assertion here instead of silently leaving a stack for the
@@ -204,7 +204,7 @@ def api_host(docker_parent, docker_repo, docker_lab, built_image):
     always composed down + staging cleaned, whatever the scenario did."""
     proj = fresh_project()
     hosts = _run(
-        compose_up(docker_repo, docker_lab, on=docker_parent.id, project_name=proj, build=False)
+        compose_up(docker_repo, docker_lab, parent=docker_parent.id, project_name=proj, build=False)
     )
     api = hosts["api"]
     _active_hosts.append(api)
@@ -453,7 +453,12 @@ def test_composed_pileup_leaves_zero_accumulation(
 
     async def one_flow(entered: dict[str, bool]) -> None:
         async with composed(
-            docker_repo, docker_lab, on=docker_parent.id, project_name=proj, own=True, build=False
+            docker_repo,
+            docker_lab,
+            parent=docker_parent.id,
+            project_name=proj,
+            own=True,
+            build=False,
         ):
             entered["body"] = True
             await asyncio.sleep(8.0)  # body window; most cancels land before this expires
@@ -485,7 +490,7 @@ def test_composed_pileup_leaves_zero_accumulation(
             # legitimately strands a half-up stack (composed()'s finally never
             # armed); down must reconcile any half-state, idempotently.
             down = await compose_down(
-                docker_repo, docker_lab, on=docker_parent.id, project_name=proj
+                docker_repo, docker_lab, parent=docker_parent.id, project_name=proj
             )
             # compose_down logs-and-returns on failure rather than raising --
             # if the daemon itself died mid-pileup (it runs right after the

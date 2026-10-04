@@ -97,7 +97,7 @@ def test_compose_up_shows_a_displacement_once(tmp_path, caplog, monkeypatch):
         caplog.at_level(logging.INFO, logger="otto.docker.deployment"),
         _install(lab, [a, b]),
     ):
-        result = _invoke("compose", "up", "integration", "--on", "test3", "--provide", "edge=b")
+        result = _invoke("compose", "up", "integration", "--parent", "test3", "--provide", "edge=b")
 
     assert result.exit_code == 0, result.output
     assert "container(s) registered" in result.output, "the real deploy ran to its stack report"
@@ -112,7 +112,7 @@ def test_compose_up_dry_run_shows_a_displacement_once(tmp_path, caplog):
         _install(lab, [a, b]),
         active_context(dry_run=True),
     ):
-        result = _invoke("compose", "up", "integration", "--on", "test3", "--provide", "edge=b")
+        result = _invoke("compose", "up", "integration", "--parent", "test3", "--provide", "edge=b")
 
     assert result.exit_code == 0, result.output
     assert "Resolved plan:" in " ".join(result.output.split()), "the dry run declined with its plan"
@@ -141,7 +141,9 @@ def test_compose_build_shows_a_displacement_once(tmp_path, caplog):
         _install(lab, [a, b]),
         patch("otto.docker.build_verbs._build_plan", built),
     ):
-        result = _invoke("compose", "build", "integration", "--on", "test3", "--provide", "edge=b")
+        result = _invoke(
+            "compose", "build", "integration", "--parent", "test3", "--provide", "edge=b"
+        )
 
     assert result.exit_code == 0, result.output
     built.assert_awaited_once()
@@ -155,7 +157,9 @@ def test_compose_build_dry_run_shows_a_displacement_once(tmp_path, caplog):
         _install(lab, [a, b]),
         active_context(dry_run=True),
     ):
-        result = _invoke("compose", "build", "integration", "--on", "test3", "--provide", "edge=b")
+        result = _invoke(
+            "compose", "build", "integration", "--parent", "test3", "--provide", "edge=b"
+        )
 
     assert result.exit_code == 0, result.output
     text = _console_text(result, caplog)
@@ -186,8 +190,8 @@ def sentinel():
         yield
 
 
-_UP = ("compose", "up", "integration", "--on", "test3", "--provide", "edge=b")
-_BUILD = ("compose", "build", "integration", "--on", "test3", "--provide", "edge=b")
+_UP = ("compose", "up", "integration", "--parent", "test3", "--provide", "edge=b")
+_BUILD = ("compose", "build", "integration", "--parent", "test3", "--provide", "edge=b")
 
 
 def test_the_live_up_log_line_renders_through_describe(tmp_path, caplog, monkeypatch, sentinel):

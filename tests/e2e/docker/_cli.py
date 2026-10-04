@@ -8,17 +8,18 @@ from pathlib import Path
 
 from tests.e2e._otto_subprocess import PROJECT_ROOT, REPO1, run_otto
 
-# The one host repo1's fragments RESOLVE to without `--on`. Every
-# ``[[docker.use_cases]]`` fragment of the sample repos declares
-# ``role = "docker"``, and test3 is the only element in the `unix` fixture lab
-# tagged ``"roles": ["docker"]`` (spec §5 knob 3). Placeholder registration
-# therefore only ever mints ``test3.<usecase>.<service>`` ids, so any test that
-# addresses a container id in a SEPARATE otto process — `otto host <id> ...`,
-# `otto run --on <id>` — must run against this host and no other: `--on test1`
-# registers `test1.repo1.api` inside the invocation that deployed it, and the
-# next process knows nothing about it. Tests that only drive `docker up/down/
-# build/ps --on <host>` keep the two-daemon pool of docker_host.
-_ROLE_DOCKER_HOST = "test3"
+# The lab's default parent: the host every docker verb resolves to without
+# `--parent`. The `unix` fixture lab has three docker-capable hosts, and test3
+# is the one ranked by ``"docker_priority": 10`` in its lab.json, so it wins the
+# one rule (see "Which host" in docs/cli/docker/index.md). Placeholder
+# registration therefore only ever mints ``test3.<usecase>.<service>`` ids, so
+# any test that addresses a container id in a SEPARATE otto process — `otto host
+# <id> ...`, `otto run --on <id>` — must run against this host and no other:
+# `--parent test1` registers `test1.repo1.api` inside the invocation that
+# deployed it, and the next process knows nothing about it. Tests that only
+# drive `docker up/down/build/ps --parent <host>` keep the two-daemon pool of
+# docker_host.
+_DEFAULT_PARENT = "test3"
 
 # The use-cases the sample repos declare (spec §14's "name the fragment after
 # the repo and container ids stay literally unchanged"): repo1 declares `repo1`

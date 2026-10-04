@@ -77,6 +77,8 @@ def test_a_lazy_export_never_degrades_into_its_own_submodule():
         "compose_logs",
         "compose_ps",
         "container_logs",
+        "default_docker_parent",
+        "docker_parent",
         "docker_parents",
         "follow_logs",
         "list_containers",

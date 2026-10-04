@@ -93,7 +93,6 @@ async def parent(test3_lease):
     # compose project (spec §9), so leaving it empty would deploy under a
     # name no `otto docker` invocation would ever produce.
     h.source_lab = LAB
-    h.roles = list(data.get("roles") or ["docker"])
     yield h
     await h.close()
 
@@ -208,7 +207,7 @@ async def test_merged_stack_displaces_mock(parent, project):
     running container.
     """
     try:
-        stack = await deploy(USE_CASE, on=parent.id, build=True)
+        stack = await deploy(USE_CASE, parent=parent.id, build=True)
 
         assert sorted(stack.hosts) == ["api", "edge", "worker"], (
             f"the merged stack must carry each service exactly once: {sorted(stack.hosts)}"
@@ -269,7 +268,7 @@ async def test_additive_up_converges_and_removes_orphans(parent, project):
        ``--remove-orphans`` reaps them inside this project.
     """
     try:
-        narrowed = await deploy(USE_CASE, on=parent.id, services=["api"], build=True)
+        narrowed = await deploy(USE_CASE, parent=parent.id, services=["api"], build=True)
         assert sorted(narrowed.hosts) == ["api"], sorted(narrowed.hosts)
         api_first = await _container_of(parent, project, "api")
         assert api_first, f"no running `api` container in {project}"
@@ -278,7 +277,7 @@ async def test_additive_up_converges_and_removes_orphans(parent, project):
                 f"`services=['api']` started {absent!r} as well"
             )
 
-        full = await deploy(USE_CASE, on=parent.id, build=True)
+        full = await deploy(USE_CASE, parent=parent.id, build=True)
         assert sorted(full.hosts) == ["api", "edge", "worker"], sorted(full.hosts)
         assert await _container_of(parent, project, "api") == api_first, (
             "the convergent second deploy RECREATED the already-running api container"
@@ -287,7 +286,7 @@ async def test_additive_up_converges_and_removes_orphans(parent, project):
         assert real_edge, f"no running `edge` container in {project} after the full deploy"
         assert await _image_of(parent, real_edge) == "repo1-api:latest"
 
-        flipped = await deploy(USE_CASE, on=parent.id, provide={"edge": "repo2"})
+        flipped = await deploy(USE_CASE, parent=parent.id, provide={"edge": "repo2"})
         assert sorted(flipped.hosts) == ["edge", "worker"], (
             f"repo1 lost `edge`, so its whole fragment — `core` included — must be "
             f"excluded: {sorted(flipped.hosts)}"
@@ -314,14 +313,14 @@ async def test_additive_up_converges_and_removes_orphans(parent, project):
 async def test_teardown_removes_stack_and_hosts(parent, lab, project):
     """``teardown`` stops the containers AND unregisters the lab ids."""
     try:
-        stack = await deploy(USE_CASE, on=parent.id, build=True)
+        stack = await deploy(USE_CASE, parent=parent.id, build=True)
         registered = sorted(host.id for host in stack.hosts.values())
         assert registered == [f"{parent.id}.{USE_CASE}.{s}" for s in ("api", "edge", "worker")], (
             f"container ids are `<parent>.<usecase>.<service>` (spec §9): {registered}"
         )
         assert all(host_id in lab.hosts for host_id in registered)
 
-        await teardown(USE_CASE, on=parent.id)
+        await teardown(USE_CASE, parent=parent.id)
 
         remaining = await parent.exec(
             f"docker ps -aq --filter label=com.docker.compose.project={shlex.quote(project)}"

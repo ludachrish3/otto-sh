@@ -75,11 +75,11 @@ async def stack(test3_lease, sut_dirs_env_module):
 
     build_results = await build_images(repo, parent)
     assert build_results["repo1-api"].is_ok, build_results
-    hosts = await compose_up(repo, lab, on=parent.id)
+    hosts = await compose_up(repo, lab, parent=parent.id)
     try:
         yield hosts["api"]
     finally:
-        await compose_down(repo, lab, on=parent.id)
+        await compose_down(repo, lab, parent=parent.id)
         await parent.close()
 
 

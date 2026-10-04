@@ -1,7 +1,7 @@
-"""Use-case deployment (spec §8): one merged compose stack per resolved host.
+"""Use-case deployment (spec §8): one merged compose stack on one parent.
 
 This is where Tasks 6-10's pure engine meets the parent host. Everything
-above the first device touch — selection (§4), placement (§5), facts (§7),
+above the first device touch — selection (§4), the parent (§2), facts (§7),
 the adapter call (§7), the env mapping (§6) and the rendered compose texts —
 is settled from configuration, which is what lets ``--dry-run`` decline with
 a resolved plan rather than a shrug.
@@ -44,7 +44,7 @@ from .resolve import (
     UseCaseResolutionError,
     assemble_env,
     build_facts,
-    resolve_placement,
+    place,
     select_fragments,
 )
 from .staging import (
@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class UseCaseStack:
-    """What one :func:`deploy` produced, across every host it touched."""
+    """What one :func:`deploy` produced, on the one parent it deployed to."""
 
     use_case: str
     """The deployed use-case's name."""
@@ -81,27 +81,22 @@ class UseCaseStack:
     projects: "dict[str, str]" = field(default_factory=dict)
     """Parent host id -> the compose project its merged stack runs under.
 
-    A dict rather than one string because the project is derived PER HOST
-    from that host's own lab (spec §9): a use-case spanning two labs' hosts
-    must not put both stacks in one project, since ``--remove-orphans``
-    reaps within a project.
+    One entry: a use-case deploys on one parent. The project is derived from
+    that parent's own lab (spec §9), since ``--remove-orphans`` reaps within
+    a project.
     """
 
     hosts: "dict[str, DockerContainerHost]" = field(default_factory=dict)
-    """Service name -> container host, flattened across every parent."""
+    """Service name -> the parent's container host."""
 
     by_host: "dict[str, dict[str, DockerContainerHost]]" = field(default_factory=dict)
     """Parent host id -> that parent's own ``{service: container host}``."""
 
     env: "dict[str, str]" = field(default_factory=dict)
-    """The final env mapping, as one host saw it.
+    """The final env mapping the parent's stack was rendered with.
 
-    Assembled PER HOST (``${otto:parent.*}`` differs between them), so on a
-    multi-host deployment this carries the last host's mapping and no other.
-    There is deliberately no per-host env view to consult instead --
-    ``by_host`` maps parents to their CONTAINER HOSTS, not to env mappings.
-    Nothing in otto renders this field; a caller that needs every host's
-    mapping should deploy per host, or ask for the field to be added.
+    Assembled for the one parent (``${otto:parent.*}`` resolves against it).
+    Nothing in otto renders this field.
     """
 
 
@@ -110,46 +105,22 @@ class UseCaseStack:
 # ---------------------------------------------------------------------------
 
 
-def _canonical_on(lab: "Lab", on: "str | None") -> "str | None":
-    """Canonicalize an ``on=`` host id, refusing one the lab lacks.
-
-    ``on`` is the one placement knob that bypasses roles, pins and scope
-    entirely (spec §5 knob 1), so nothing downstream ever checks it: an
-    unknown value would be handed to ``resolve_placement`` as the group key
-    and only surface as a ``KeyError``-ish failure a host lookup later, with
-    the user's typo nowhere in the message. Looked up through ``lab.hosts``
-    so the error below can report the actual id, not a lookup surprise.
-    """
-    if on is None:
-        return None
-    host = lab.hosts.get(on)
-    if host is None:
-        raise UseCaseResolutionError(
-            f"on={on!r} matches no host in lab {lab.name!r} — a use-case cannot be "
-            f"deployed onto a host this session does not have. Available hosts: "
-            f"{sorted(lab.hosts)}"
-        )
-    return host.id
-
-
 def parent_for(lab: "Lab", host_id: str) -> UnixHost:
-    """Return the docker-capable parent behind a resolved placement, or refuse.
+    """Return the docker-capable parent behind an acting host id, or refuse.
 
     Only called for a host :func:`acting_hosts` decided this call actually
-    touches — a host whose services were all narrowed away by ``services=``
-    is never handed here, so it never has to be a docker-capable unix host
-    for THIS call to succeed. Deliberate: a use-case spanning several hosts
-    must be narrowable to a subset without also requiring the excluded hosts
-    to be valid docker parents.
+    touches. The id is always the resolution's one parent (spec §2), which
+    :func:`~otto.docker.observe.docker_parent` already checked; this lookup
+    turns the id an acting host carries back into that host.
     """
     host = lab.hosts.get(host_id)
     if not isinstance(host, UnixHost) or not host.docker_capable:
         kind = "absent from the lab" if host is None else f"a {type(host).__name__}"
         raise UseCaseResolutionError(
-            f"placement resolved to host {host_id!r}, which is {kind} and not a "
+            f"the parent resolved to host {host_id!r}, which is {kind} and not a "
             f"docker-capable unix host, so a use-case stack cannot be deployed onto "
-            f'it. Mark it in lab.json ("docker_capable": true), or place the '
-            f"fragment elsewhere."
+            f'it. Mark it in lab.json ("docker_capable": true), or name another '
+            f"parent."
         )
     return host
 
@@ -340,7 +311,6 @@ class _HostPlan:
 def _plan_host(
     *,
     selection: Selection,
-    placed: "dict[str, list[SelectedFragment]]",
     lab: "Lab",
     host_id: str,
     frags: "list[SelectedFragment]",
@@ -374,7 +344,6 @@ def _plan_host(
     scratch_dir = tempfile.mkdtemp(prefix="otto-adapter-")
     facts = build_facts(
         selection,
-        placed,
         lab,
         compose_project=compose_project,
         parent_id=host_id,
@@ -585,8 +554,10 @@ class UseCaseResolution:
 
     lab: "Lab"
     selection: Selection
+    parent: UnixHost
+    """The one host the use-case deploys on (spec §2)."""
     placed: "dict[str, list[SelectedFragment]]"
-    """Each placed host id to the fragments that win on it."""
+    """The parent's id to every fragment that won; one key."""
     order: "dict[str, int]"
     """Repo name to its dependency-order position."""
 
@@ -594,24 +565,32 @@ class UseCaseResolution:
 def resolve_use_case(
     use_case: str,
     *,
-    on: "str | None",
+    parent: "str | None",
     provide: "Mapping[str, str] | None",
 ) -> UseCaseResolution:
     """Run the pure prefix `deploy`, `teardown` and `deployed` all share.
 
-    Shared so ``--on`` and ``--provide`` cannot mean one thing on the way up
+    Shared so *parent* and ``--provide`` cannot mean one thing on the way up
     and another on the way down: a teardown that resolved differently would
     tear down a project nobody deployed and leave the real one running.
+    *parent* ``None`` is the lab's default parent by the one rule (spec §2).
+
+    Raises:
+        ~otto.docker.observe.DockerVerbError: *parent* is not a
+            docker-capable unix host of the lab, or the rule cannot pick one
+            (``field="parent"``).
+        ~otto.docker.resolve.UseCaseResolutionError: the selection refused.
     """
     from ..config.bootstrapped import get_ordered_repos, get_repos
     from ..config.fleet import get_lab
+    from .observe import docker_parent
 
     lab = get_lab()
-    on_id = _canonical_on(lab, on)
+    host = docker_parent(lab, parent)
     selection = select_fragments(use_case, get_repos(), provide=provide)
-    placed = resolve_placement(selection, lab, on=on_id)
+    placed = place(selection, host)
     order = {repo.name: i for i, repo in enumerate(get_ordered_repos())}
-    return UseCaseResolution(lab, selection, placed, order)
+    return UseCaseResolution(lab, selection, host, placed, order)
 
 
 def _ordered(
@@ -634,14 +613,14 @@ async def deploy(
     services: "Sequence[str] | None" = None,
     env: "Mapping[str, str] | None" = None,
     env_files: "Sequence[Path] | None" = None,
-    on: "str | None" = None,
+    parent: "str | None" = None,
     provide: "Mapping[str, str] | None" = None,
     build: bool = False,
     force_recreate: bool = False,
     pull: "str | None" = None,
     project_name: "str | None" = None,
 ) -> UseCaseStack:
-    """Deploy *use_case*: one merged compose stack per resolved host (spec §8).
+    """Deploy *use_case*: one merged compose stack on its one parent (spec §8).
 
     Args:
         services: Narrow the deployment to these services. Every name must be
@@ -649,24 +628,27 @@ async def deploy(
             own intersection, and a host left with none is skipped.
         env: Caller overrides, the last layer of the merge (§6).
         env_files: ``K=V`` files merged under *env* and over the adapters.
-        on: Collapse every fragment onto this host (§5 knob 1). Accepts the
-            host's id.
+        parent: The parent to deploy on, by host id; ``None`` is the lab's
+            default parent by the one rule (spec §2).
         provide: ``capability -> repo`` overrides for the provider
             competition (§4).
         build: Build each participating repo's declared images first (the
             default is docker's: build nothing).
         force_recreate: Pass ``--force-recreate`` to ``docker compose up``.
         pull: ``docker compose up``'s ``--pull`` policy, passed through verbatim.
-        project_name: Use this compose project on every host instead of
-            deriving ``<lab>-<usecase>-<suffix>`` per host.
+        project_name: Use this compose project on the parent instead of
+            deriving ``<lab>-<usecase>-<suffix>``.
 
     Returns:
         The :class:`UseCaseStack` describing every registered container.
 
     Raises:
         ~otto.docker.resolve.UseCaseResolutionError: a configuration refusal
-            — unknown use-case, provider tie, unresolvable role, an ``on`` or
-            a service name nothing declares. Nothing was touched.
+            — unknown use-case, provider tie, or a service name nothing
+            declares. Nothing was touched.
+        ~otto.docker.observe.DockerVerbError: *parent* is not a docker-capable
+            host of the lab, or the rule cannot pick a default parent.
+            Nothing was touched.
         ~otto.host.errors.HostCommandError: a build, an ``up`` or the
             container-id resolution failed. Whatever THIS call brought up has
             been torn down again first.
@@ -681,7 +663,7 @@ async def deploy(
             above the first build/stage/up, which are the first device
             touches.
     """
-    resolution = resolve_use_case(use_case, on=on, provide=provide)
+    resolution = resolve_use_case(use_case, parent=parent, provide=provide)
     services_filter = validated_services(resolution.selection, services)
 
     # Read once: every host's branch below must agree about which run this is.
@@ -699,8 +681,8 @@ async def deploy(
             resolution.placed, resolution.order, services_filter, use_case=use_case, report=True
         ):
             host_id, frags, wanted = acting.host_id, acting.fragments, acting.services
-            parent = parent_for(resolution.lab, host_id)
-            proj = project_name or use_case_project(parent.source_lab, use_case)
+            parent_host = parent_for(resolution.lab, host_id)
+            proj = project_name or use_case_project(parent_host.source_lab, use_case)
             units = _units(frags)
             # Planned BEFORE the build, so a dry run reaches the render
             # without a build in front of it -- and so a live run discovers a
@@ -708,7 +690,6 @@ async def deploy(
             # after minutes of image building.
             plan = _plan_host(
                 selection=resolution.selection,
-                placed=resolution.placed,
                 lab=resolution.lab,
                 host_id=host_id,
                 frags=frags,
@@ -725,7 +706,7 @@ async def deploy(
                 # would produce, not a second guess at it.
                 previews.append(
                     (
-                        parent.id,
+                        parent_host.id,
                         _up_command(
                             proj,
                             use_case_compose_paths(proj, plan.files),
@@ -747,18 +728,18 @@ async def deploy(
                 # files still join the `-f` merge (compose needs the whole
                 # document set to resolve the merge), they simply have nothing
                 # running, so nothing of theirs needs an image.
-                await _build_for([u for u in units if _unit_services(u) & set(wanted)], parent)
+                await _build_for([u for u in units if _unit_services(u) & set(wanted)], parent_host)
             staged = await stage_use_case(
-                parent, proj, plan.files, _env_text(plan.env), extra_files=plan.extra_files
+                parent_host, proj, plan.files, _env_text(plan.env), extra_files=plan.extra_files
             )
             # `is True`, so an UNKNOWN probe answer counts as "we brought it
             # up" and the rollback below will clean up after us. The opposite
             # default would strand a stack nobody claims.
-            was_up = await _stack_already_up(parent, proj) is True
+            was_up = await _stack_already_up(parent_host, proj) is True
             if not was_up:
-                brought_up.append((parent, proj))
-            logger.info(rf"\[docker] deploying {use_case} as {proj} on {parent.id}")
-            result = await parent.exec(
+                brought_up.append((parent_host, proj))
+            logger.info(rf"\[docker] deploying {use_case} as {proj} on {parent_host.id}")
+            result = await parent_host.exec(
                 _up_command(
                     proj,
                     staged.compose_paths,
@@ -773,10 +754,10 @@ async def deploy(
                 timeout=float("inf"),
             )
             if not result.is_ok:
-                _refuse_failed_up(proj, parent.id, result.value)
+                _refuse_failed_up(proj, parent_host.id, result.value)
             hosts = await register_stack_hosts(
                 resolution.lab,
-                parent,
+                parent_host,
                 compose_project=proj,
                 id_project=use_case,
                 services=wanted,
@@ -787,9 +768,8 @@ async def deploy(
             stack.hosts.update(hosts)
             stack.env = plan.env
     except BaseException:
-        # Only what THIS call brought up, on every host it reached — the
-        # multi-host generalization of compose_up's rollback. A stack that
-        # was already running belongs to someone else and is left alone.
+        # Only what THIS call brought up — compose_up's rollback. A stack
+        # that was already running belongs to someone else and is left alone.
         await _rollback(resolution.lab, brought_up)
         raise
     if dry:
@@ -912,7 +892,7 @@ async def teardown(
     use_case: str,
     *,
     services: "Sequence[str] | None" = None,
-    on: "str | None" = None,
+    parent: "str | None" = None,
     provide: "Mapping[str, str] | None" = None,
     stop_timeout: int = 1,
     project_name: "str | None" = None,
@@ -926,8 +906,8 @@ async def teardown(
     services — stable across compose versions, and it leaves the rest of the
     stack and its network standing.
 
-    *on* and *provide* are accepted (and resolved) exactly as :func:`deploy`
-    resolves them, so the two verbs always agree on which hosts and which
+    *parent* and *provide* are accepted (and resolved) exactly as :func:`deploy`
+    resolves them, so the two verbs always agree on which parent and which
     project a deployment lives in.
 
     Returns:
@@ -939,11 +919,13 @@ async def teardown(
     Raises:
         ~otto.docker.resolve.UseCaseResolutionError: a configuration refusal,
             identical to :func:`deploy`'s.
+        ~otto.docker.observe.DockerVerbError: the parent refusal, identical
+            to :func:`deploy`'s.
         ~otto.result.CommandNotRunError: this is a dry run. Armed here rather
             than inherited, for ``compose_down``'s reason: the second half of
             this verb mutates ``lab.hosts``, which a dry run must leave alone.
     """
-    resolution = resolve_use_case(use_case, on=on, provide=provide)
+    resolution = resolve_use_case(use_case, parent=parent, provide=provide)
     services_filter = validated_services(resolution.selection, services)
 
     if is_dry_run():
@@ -956,16 +938,16 @@ async def teardown(
 
     hosts: "dict[str, list[CommandResult]]" = {}
     for host_id, host_frags in resolution.placed.items():
-        parent = parent_for(resolution.lab, host_id)
-        proj = project_name or use_case_project(parent.source_lab, use_case)
-        prefix = f"{parent.id}.{use_case.lower()}."
+        parent_host = parent_for(resolution.lab, host_id)
+        proj = project_name or use_case_project(parent_host.source_lab, use_case)
+        prefix = f"{parent_host.id}.{use_case.lower()}."
         if services_filter is None:
             # No -f, and no render either: the project label is the whole
             # input, so a full teardown never re-reads a compose file (and so
             # cannot be blocked by one that has since been edited away).
             hosts[host_id] = [
                 await compose_down_project(
-                    parent,
+                    parent_host,
                     proj,
                     lab=resolution.lab,
                     remove_ids_under=prefix,
@@ -981,12 +963,12 @@ async def teardown(
         quoted = shlex.quote(proj)
         ran: "list[CommandResult]" = []
         for action in (f"stop -t {int(stop_timeout)} {names}", f"rm -f {names}"):
-            result = await parent.exec(f"docker compose -p {quoted} {action}")
+            result = await parent_host.exec(f"docker compose -p {quoted} {action}")
             ran.append(result)
             if not result.is_ok:
                 logger.error(
                     rf"\[docker] `{action.split()[0]}` failed for {proj} on "
-                    f"{parent.id}: {result.value}"
+                    f"{parent_host.id}: {result.value}"
                 )
         await unregister_container_hosts(resolution.lab, prefix, services=wanted)
         hosts[host_id] = ran
@@ -1022,7 +1004,7 @@ async def deployed(
             compensating action never masks the real failure, so a body
             exception always wins and the teardown failure is logged instead.
     """
-    resolution = resolve_use_case(use_case, on=kw.get("on"), provide=kw.get("provide"))
+    resolution = resolve_use_case(use_case, parent=kw.get("parent"), provide=kw.get("provide"))
     services_filter = validated_services(resolution.selection, kw.get("services"))
     if is_dry_run():
         raise CommandNotRunError(
@@ -1073,7 +1055,7 @@ async def deployed(
             teardown_kw = {
                 k: v
                 for k, v in kw.items()
-                if k in ("services", "on", "provide", "stop_timeout", "project_name")
+                if k in ("services", "parent", "provide", "stop_timeout", "project_name")
             }
             report = await compensate(
                 teardown(use_case, **teardown_kw),

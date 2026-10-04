@@ -162,15 +162,15 @@ nothing by default; leave it out when the images are already on the host.
 
 {func}`~otto.docker.deployment.deployed` is the recommended scope. It deploys
 a **use-case** — the same named, cross-repo deployment `otto docker compose up` brings
-up, with the same provider competition and placement — and hands back a
+up, with the same provider competition and parent — and hands back a
 {class}`~otto.docker.deployment.UseCaseStack`: `hosts` (service -> container
 host, flattened), `by_host`, the final `env` mapping, and the selection
 report. On exit it tears the stack down, unless it found the stack already
 running, in which case nested users share without yanking it from peers.
 Ownership is stack-level and all-or-nothing.
 
-`--on`, `--provide`, `--env` and service narrowing are all keyword arguments
-here (`on=`, `provide=`, `env=`, `services=`); see
+`--parent`, `--provide`, `--env` and service narrowing are all keyword arguments
+here (`parent=`, `provide=`, `env=`, `services=`); see
 {doc}`../cli/docker/use-cases` for what each one does and
 {mod}`otto.docker.deployment` for the signatures.
 

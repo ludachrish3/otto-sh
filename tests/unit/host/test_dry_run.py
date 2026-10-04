@@ -2523,7 +2523,7 @@ class TestADeclineNeverResurfacesAsAFabricatedFailure:
         assert "no such image" in str(real.value), (
             f"the wide arm lost the underlying cause: {real.value}"
         )
-        assert "Build its image first (`otto docker build --on" in str(real.value)
+        assert "Build its image first (`otto docker build --parent" in str(real.value)
 
 
 class TestTheDryRunLabelFollowsTheInvocationNotTheFile:

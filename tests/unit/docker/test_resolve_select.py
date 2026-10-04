@@ -22,8 +22,6 @@ def _repo(name, *fragments):
 def _frag(name="integration", **kw):
     defaults = {
         "composes": ("core",),
-        "role": None,
-        "placement": {},
         "provides": None,
         "priority": 0,
         "env": {},

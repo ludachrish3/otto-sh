@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from otto.config.repo import Repo
-from otto.host.element import Element
 from otto.models.settings import DockerUseCaseSpec
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -20,8 +19,6 @@ services = ["api", "db"]
 [[docker.use_cases]]
 name = "integration"
 composes = ["core"]
-role = "edge"
-placement = { edge = "test3" }
 provides = "edge"
 priority = 10
 env = { LOG_LEVEL = "debug", PORT = 8080 }
@@ -34,12 +31,21 @@ def test_use_case_round_trip(tmp_path):
     (uc,) = repo.docker_settings.use_cases
     assert uc.name == "integration"
     assert uc.composes == ("core",)
-    assert uc.role == "edge"
-    assert uc.placement == {"edge": "test3"}
+    assert not hasattr(uc, "role"), "a use-case deploys on one parent: no role"
+    assert not hasattr(uc, "placement"), "a use-case deploys on one parent: no pin"
     assert uc.provides == "edge"
     assert uc.priority == 10
     assert uc.env == {"LOG_LEVEL": "debug", "PORT": "8080"}  # scalars stringified
     assert uc.pass_env == ("EDGE_TAG",)
+
+
+@pytest.mark.parametrize("line", ['role = "edge"', 'placement = { edge = "test3" }'])
+def test_a_settings_file_with_role_or_placement_is_refused_at_load(tmp_path, line):
+    """The old model's keys fail the repo load, never silently ignored."""
+    toml = _UC_TOML.replace('provides = "edge"', f'{line}\nprovides = "edge"')
+    assert line in toml
+    with pytest.raises(Exception, match="is gone: a use-case deploys on one parent"):
+        Repo(sut_dir=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
 
 
 def test_compose_name_defaults_to_path_stem(tmp_path):
@@ -130,23 +136,3 @@ def test_default_host_is_refused(tmp_path):
         match=r"(?m)^docker\.composes\.0\.default_host\n\s+Extra inputs are not permitted",
     ):
         Repo(sut_dir=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
-
-
-def test_unix_host_spec_carries_roles():
-    from otto.models.host import UnixHostSpec
-
-    spec = UnixHostSpec(
-        ip="10.0.0.1",
-        creds=[{"login": "u", "password": "p"}],
-        roles=["edge", "builder"],
-    )
-    host = spec.to_host(element=Element("server"))
-    assert host.roles == ["edge", "builder"]
-    assert host.roles is not spec.roles  # copied, not aliased (see valid_terms et al.)
-
-
-def test_unix_host_roles_default_empty():
-    from otto.models.host import UnixHostSpec
-
-    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u"}])
-    assert spec.to_host(element=Element("server")).roles == []

@@ -28,14 +28,15 @@ from tests.e2e._otto_subprocess import REPO1, assert_output_dir, run_otto
 # uses docker exec via the parent's SSH session), which rules out test2
 # (telnet is first in its valid_terms).
 #
-# The pool is ONE element, and that is a placement fact rather than a
-# preference: repo1's `[[docker.use_cases]]` fragments declare
-# ``role = "docker"``, and test3 is the only element in the `unix` fixture lab
-# tagged ``"roles": ["docker"]`` (spec §5 knob 3). Placeholder registration
-# therefore only mints ``test3.<usecase>.<service>`` ids — and the test below
-# hands such an id to a SECOND otto process, which knows only what placement
-# gave it. `--on test1` would register `test1.repo1.api` inside the
-# invocation that deployed it and nowhere else.
+# The pool is ONE element, and that is a parent-resolution fact rather than a
+# preference: a lab's docker verbs default to its single docker-capable host,
+# or to the one ranked highest by ``docker_priority`` (``--parent HOST`` names
+# one explicitly), and placeholder registration mints
+# ``<parent>.<usecase>.<service>`` ids under that one parent. The test below
+# hands such an id to a SECOND otto process, which knows only what the parent
+# resolution gave it, so the pool names the element every invocation must
+# resolve to: test3. A different parent would register ``test1.repo1.api``
+# inside the invocation that deployed it and nowhere else.
 _DOCKER_POOL = ("test3",)
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("run_exec_e2e")]
@@ -112,7 +113,7 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
         "compose",
         "down",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         xdir=tmp_path,
         compose_suffix=fresh_suffix,
@@ -144,7 +145,7 @@ def test_run_instruction_on_container(teardown_after, docker_host, tmp_path):
         "compose",
         "up",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         xdir=tmp_path,

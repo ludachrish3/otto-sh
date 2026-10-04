@@ -1,4 +1,4 @@
-"""build_on: the image-level verb. Every rule is the library's; the host is required."""
+"""build_on: the image-level verb. Every rule is the library's; the host comes from the one rule."""
 
 from contextlib import contextmanager
 from pathlib import Path
@@ -194,13 +194,15 @@ async def test_builds_every_docker_repo_on_the_named_host_in_dependency_order(in
 
 
 @pytest.mark.asyncio
-async def test_host_is_required(install):
+async def test_no_host_named_applies_the_default_rule_and_a_tie_refuses(install):
     with (
         install([_repo("a", images=("api",))]),
-        pytest.raises(DockerVerbError, match=r"host is required.*\['alt2', 'test3'\]") as e,
+        pytest.raises(
+            DockerVerbError, match=r"2 docker-capable hosts at priority 0 \(alt2, test3\)"
+        ) as e,
     ):
-        await build_on(None)  # type: ignore[arg-type]
-    assert e.value.field == "host"
+        await build_on()
+    assert e.value.field == "parent"
 
 
 @pytest.mark.asyncio
@@ -211,7 +213,7 @@ async def test_a_host_outside_the_lab_or_not_docker_capable_is_refused(install, 
         pytest.raises(DockerVerbError, match=r"'ghost' is not a docker-capable") as e,
     ):
         await build_on("ghost")
-    assert e.value.field == "host"
+    assert e.value.field == "parent"
     with (
         install([_repo("a", images=("api",))]),
         pytest.raises(DockerVerbError, match=r"'test3' is not a docker-capable.*\['alt2'\]"),
@@ -340,15 +342,21 @@ def _uc_repo(name, *fragments, images=()):
 
 
 def _resolved(lab, placed, *, displaced=(), order=None):
-    """Patch deployment.resolve_use_case to a fixed placement: {host_id: [SelectedFragment...]}."""
+    """Patch deployment.resolve_use_case to a fixed placement: {host_id: [SelectedFragment...]}.
+
+    The resolution's ``parent`` is the first placed host. Real resolution only
+    ever places one (spec §2); several keys exercise the kept multi-host shape
+    of the consumers.
+    """
     frags = [sf for sfs in placed.values() for sf in sfs]
     selection = Selection("integration", frags, displaced=list(displaced))
     repos = {sf.repo.name: sf.repo for sf in frags}
     order_map = order or {name: i for i, name in enumerate(repos)}
+    parent = lab.hosts[next(iter(placed))]
     return patch.object(
         deploy_mod,
         "resolve_use_case",
-        return_value=UseCaseResolution(lab, selection, placed, order_map),
+        return_value=UseCaseResolution(lab, selection, parent, placed, order_map),
     )
 
 
@@ -384,8 +392,8 @@ async def test_compose_build_shares_resolve_with_deploy(lab):
             ),
         ),
     ):
-        await compose_build("integration", on="test3", provide={"db": "b"})
-    resolve.assert_called_once_with("integration", on="test3", provide={"db": "b"})
+        await compose_build("integration", parent="test3", provide={"db": "b"})
+    resolve.assert_called_once_with("integration", parent="test3", provide={"db": "b"})
 
 
 @pytest.mark.asyncio

@@ -87,7 +87,9 @@ from a test file.
 register something. Its payload keys are `instructions`, `test_options`,
 `hosts`, `hosts_by_lab`, `host_drops`, `docker_hosts`, `docker_use_cases`,
 `docker_images`, `docker_services_by_use_case`, `repos`, `term_backends`, `transfer_backends`, `usernames`, `commands`, `labs`,
-`host_classes_by_id`, `projects`, `links` and `logins_by_host`.
+`host_classes_by_id`, `projects`, `links`, `logins_by_host` and
+`docker_default_parent_by_lab` (each lab to the parent the docker verbs default to by the one rule;
+a lab the rule refuses is absent, and the container ids in `hosts` and `hosts_by_lab` sit under that parent only).
 
 - `test_options` is the `test` verb's merged flags, the options classes
   registered for `test` serialised as plain data, so the Typer fast path in
@@ -233,6 +235,24 @@ and each has writers of its own:
   empty, so the hint vanishes after a `compose down`; a probe that failed, was
   declined, or answered with no row otto could read records nothing. A TAB never writes or deletes: an expired
   sub-entry is simply absent from what it reads.
+
+A docker TAB at `CONTAINER` or `--tag` reads one host's entry here: the host
+`--parent` names, or without it the parent the verb itself would use — the
+selected lab's entry in `docker_default_parent_by_lab` (the rule is under
+{ref}`Which host <docker-which-host>`). Where the map has no entry the rule
+refuses, and TAB offers nothing, as the verb would refuse. With several labs
+selected (`-l east,west`), TAB offers names only when every selected lab
+resolves to the same parent; one refusing lab, or two different parents, offers
+nothing, so TAB never offers what the verb would reject. With no lab
+selected, TAB answers the map's only distinct value: two labs that map to the
+same host still answer it, two different hosts answer nothing.
+
+That guarantee rests on one premise: a host id carries one `docker_priority`
+across the labs a selection merges. A host that two lab sources rank
+differently is ranked per lab in the cache but by the later source in the
+session (`_summaries_by_lab` keeps the first summary; the merged lab keeps the
+later component's object), so "every selected lab agrees" holds only when the
+inventories agree on the host.
 
 `write_sections` carries all three namespaces across every rewrite, including a
 rewrite that drops sections from an older schema. They come from work a
@@ -445,7 +465,7 @@ digraph cache_paths {
 | any other command | nothing | nothing |
 | `otto tunnel list`/`remove` | nothing | never; writes `__dynamic_tunnels__` only (keyed by the narrow tunnel-scope digest, which reads no test file) |
 | a docker verb that asks a daemon (`ps`, `images`, `build`, `compose ps`/`build`/`up`/`down`) | nothing | never a section; writes the host's `__docker_observed__` sub-entries only |
-| a docker TAB (`CONTAINER`, `--tag`) | `names` for host ids; `__docker_observed__` for names and references | reads only; never contacts a host, never writes or deletes |
+| a docker TAB (`CONTAINER`, `--tag`) | `names` for the default parent; `__docker_observed__` for names and references | reads only; never contacts a host, never writes or deletes |
 
 **A stale TAB repairs the cache.** When the shim hands a TAB over, it says
 why. `Handover.stale` is true when the cache itself is at fault: no cache
@@ -491,7 +511,8 @@ change a cached flag. The schema history is in the comments above
 `SCHEMA_VERSION` in `otto.config.completion_cache`: 21 dropped the `suites`
 payload when `otto test` became a single command, 22 added `test_options`,
 and 23 removed the `tests` section, whose static scan of the test files was
-the last thing in a rebuild that read one.
+the last thing in a rebuild that read one. 26 added
+`docker_default_parent_by_lab`.
 
 ## What it costs, and the guards that hold it
 

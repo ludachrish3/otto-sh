@@ -127,7 +127,10 @@ class HostSummary:
     """Management address, or ``""`` when the backend does not expose one."""
 
     docker_capable: bool = False
-    """Whether the host can host containers (drives ``otto docker --on``)."""
+    """Whether the host can host containers (drives ``otto docker --parent``)."""
+
+    docker_priority: int = 0
+    """The lab's rank of this host as a default docker parent; highest wins."""
 
     os_type: str | None = None
     """The entry's ``os_type`` selector as the backend recorded it — the json

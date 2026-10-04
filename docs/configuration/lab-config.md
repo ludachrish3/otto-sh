@@ -227,12 +227,14 @@ host field — the third reservation level, beside the
 | `is_virtual` | boolean | `true` when the host is a VM or emulator. |
 | `log` | string | Standing log disposition for this host's command I/O, named by its `LogMode`: `"normal"` (the default) logs everywhere, `"quiet"` keeps it in `verbose.log` but off the console, `"never"` redacts it from every sink.  Composed with each command's own mode, the more restrictive winning.  Booleans are no longer accepted — write the mode name. |
 | `docker_capable` | boolean | `true` when this host can run Docker containers (Unix hosts only). |
-| `roles` | array of strings | Lab-intent tags for this host (e.g. `["edge", "db"]`, Unix hosts only). Consumed by docker use-case placement resolution to pick the host a use-case's role names. Defaults to `[]`. |
+| `docker_priority` | integer | Lab intent: ranks this host as the docker verbs' default parent ({ref}`Which host <docker-which-host>`). Defaults to `0`. Only on a `docker_capable` host. |
 | `has_bash` | boolean | `true` when the host has a working `bash` to `exec -a`-tag processes through. Gates which hosts can host or be scanned for `otto tunnel` tunnels — see {doc}`../cli/tunnel/index`. Defaults to `true` for Unix hosts (including `local` and Docker containers), `false` for embedded hosts. |
 | `shell_history` | boolean | Whether otto's own commands are recorded in this host's shell history (Unix hosts only). Defaults to `false` — otto neutralizes `HISTFILE` on each shell it opens so automation traffic doesn't bury a human's history. Set `true` where otto's commands should stay visible in the history file. See {ref}`per-host-shell-history`. |
 | `command_frame` | string | Shell-framing dialect (e.g. `"bash"`, `"zephyr"`, `"zephyr-serial"`). `"raw"` is refused here — it is a landing-only dialect, valid only as `landing_frame`. See {ref}`per-host-session-setup`. |
 | `session_setup` | string or object | A registered session-setup hook that runs once on every shell session, after the readiness handshake and every login-proxy hop, with a real session handle: export variables, provision through an app shell, or manoeuvre into the application the `command_frame` describes. A string names the hook; an object names it in `type` and passes every other key as the hook's params. See {ref}`per-host-session-setup`. |
 | `landing_frame` | string | Dialect of the shell otto *lands* in when it is not the shell `command_frame` describes — `"bash"` for a Linux login shell in front of a vendor CLI, `"raw"` for a landing that answers no frame at all (a boot menu). Only valid with `session_setup`, which does the manoeuvring; with a proxied cred the landing must be bash-family. See {ref}`per-host-session-setup`. |
+
+The host field `roles` is removed and refused by name; which host runs docker is `--parent` or `docker_priority` ({ref}`Which host <docker-which-host>`).
 
 ### Referencing the inventory
 
@@ -315,7 +317,7 @@ in the lab entry, with no case change and no number added.  Setting an
 explicit `name` on the host entry replaces this label entirely.
 
 On the CLI, wherever a *host* is named — the `otto host <id>` positional,
-`--hop`, and docker's `--on` — you type the id; tab completion offers it.
+`--hop`, and docker's `--parent` — you type the id; tab completion offers it.
 
 ```json
 {
@@ -950,27 +952,24 @@ container joins the same universes its parent is in.
 ## Docker-capable hosts
 
 Mark hosts that can host containers.  `docker_capable` is a *host* field, so
-it goes on the host entry inside its element, and `roles` sits beside it:
+it goes on the host entry inside its element, and `docker_priority` sits beside
+it:
 
 ```text
 {
   "name": "test3",
   "labs": ["unix"],
   "hosts": [
-    { "ip": "...", "creds": [...], "docker_capable": true, "roles": ["edge"] }
+    { "ip": "...", "creds": [...], "docker_capable": true, "docker_priority": 10 }
   ]
 }
 ```
 
-`roles` is lab **intent** — what this lab uses the machine for — not a fact
-about the machine: it is a lab-file field, and the inventory never supplies it.
-A docker use-case fragment declaring `role = "edge"` is placed on the host
-tagged with it; a multi-role host is normal, and two hosts claiming one role is
-representable and refused at resolution rather than guessed at.
-
-See {doc}`../cli/docker/use-cases` for how a role is resolved and what the
-other placement knobs are, and {doc}`../cli/docker/index` for the commands
-that read this.
+`docker_priority` is lab **intent** — which machine this lab prefers to run
+containers on — not a fact about the machine: it is a lab-file field, and the
+inventory never supplies it.  It defaults to `0` and is refused on a host that
+is not `docker_capable`.  Which host the docker verbs default to, and what a tie
+does, is {ref}`Which host <docker-which-host>`.
 
 ## Declaring toolchain tools in lab data
 

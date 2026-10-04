@@ -337,10 +337,11 @@ the converge directly.
 ## `otto docker` previews the exact command
 
 `otto --dry-run docker compose up <usecase>` is a place a preview is *more* than
-a description. Selection, placement, env assembly and a repo's compose adapter
+a description. Selection, env assembly and a repo's compose adapter
 are all pure — they contact no device — so otto runs the whole resolution and
 declines at the first real touch, printing the resolved plan **and the exact
-per-host `docker compose` command it would have issued**, env prefix included.
+`docker compose` command it would have issued on the parent**, env prefix
+included.
 For `up` that is the exact `up` command, carrying `--force-recreate` and
 `--pull` when given; the build `--build` adds is not part of it — that is
 `compose build`'s preview. `down` declines the same way with its resolved plan. See
@@ -350,5 +351,5 @@ For `up` that is the exact `up` command, carrying `--force-recreate` and
 
 `otto docker use-cases` opts out of the seam's generic stop as well, because it
 is already a configuration-only inventory: under `--dry-run` it prints the same
-tables, displacement lines and placement problems as without, and exits with
+tables, displacement lines and parent problems as without, and exits with
 the same code. `otto docker ps` and `otto docker images` keep the seam default.

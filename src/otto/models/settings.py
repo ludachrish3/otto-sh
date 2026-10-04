@@ -157,8 +157,8 @@ class DockerComposeSpec(OttoModel):
     """Boundary spec for a ``[[docker.composes]]`` entry in ``settings.toml``.
 
     Validates the Compose file path and the list of services within the
-    Compose project — a pure file inventory (spec §14): placement lives on
-    ``[[docker.use_cases]]`` fragments, never here. Builds a ``DockerCompose``
+    Compose project — a pure file inventory (spec §14): what deploys is named
+    by ``[[docker.use_cases]]`` fragments, never here. Builds a ``DockerCompose``
     runtime dataclass via ``to_runtime()``. ``name`` is the handle
     ``[[docker.use_cases]]`` entries reference; defaults to the path stem.
     """
@@ -205,20 +205,31 @@ class DockerComposeSpec(OttoModel):
 class DockerUseCaseSpec(OttoModel):
     """Boundary spec for a ``[[docker.use_cases]]`` fragment (spec §3.1).
 
-    A fragment is the atomic unit of participation and placement. Same-named
-    fragments across repos form one use-case; ``provides``/``priority`` enter
-    the provider competition (spec §4). ``env`` accepts scalar TOML values and
-    stringifies them, like ``build_args``.
+    A fragment is the atomic unit of participation. Same-named fragments
+    across repos form one use-case; ``provides``/``priority`` enter the
+    provider competition (spec §4). ``env`` accepts scalar TOML values and
+    stringifies them, like ``build_args``. The removed ``role`` and
+    ``placement`` keys are refused by name: a use-case deploys on one parent.
     """
 
     name: str
     composes: list[str] = Field(min_length=1)
-    role: str | None = None
-    placement: dict[str, str] = Field(default_factory=dict)
     provides: str | None = None
     priority: int = 0
     env: dict[str, Any] = Field(default_factory=dict)
     pass_env: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _role_and_placement_are_gone(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for key in ("role", "placement"):
+                if key in data:
+                    raise ValueError(
+                        f"{key} is gone: a use-case deploys on one parent; name it with "
+                        f"--parent or rank a host with docker_priority"
+                    )
+        return data
 
     @model_validator(mode="after")
     def _priority_requires_provides(self) -> "DockerUseCaseSpec":
@@ -236,8 +247,6 @@ class DockerUseCaseSpec(OttoModel):
         return DockerUseCase(
             name=self.name,
             composes=tuple(self.composes),
-            role=self.role,
-            placement=dict(self.placement),
             provides=self.provides,
             priority=self.priority,
             env={k: str(v) for k, v in self.env.items()},

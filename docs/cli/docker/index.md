@@ -16,30 +16,48 @@ fragments to; `compose build`, `compose up`, `compose down`, `compose ps` and
 (docker-verbs)=
 ## Verbs
 
-| otto | docker analogue | scope | `--on` |
+| otto | docker analogue | scope | `--parent` omitted means |
 | --- | --- | --- | --- |
-| `otto docker build --on HOST [--repo NAME] [IMAGE...] [-t REF]... [--no-cache] [--pull] [--build-arg K=V]... [--target STAGE]` | `docker build` | the selected repos' images, on one host | required |
-| `otto docker ps [-a] [--on HOST]` | `docker ps` | containers per host, as docker prints them | optional |
-| `otto docker images [--on HOST]` | `docker images` | images per host, as docker prints them | optional |
-| `otto docker logs CONTAINER [--tail N] [--since T] [-t] [-f|--follow] [--on HOST]` | `docker logs` | one container's log, found by host id or named on a host | optional |
-| `otto docker use-cases [USE_CASE]` | none | declared inventory, config only | none |
-| `otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]... [--no-cache] [--pull] [--build-arg K=V]...` | `docker compose build` | the images `up` would deploy, placed by the engine | optional collapse |
-| `otto docker compose up [USE_CASE [SERVICE]...] [--on HOST] [--build] [--force-recreate] [--pull POLICY] [--provide]... [--env]... [--env-file]...` | `docker compose up` | deploy a use-case | optional collapse |
-| `otto docker compose down [USE_CASE [SERVICE]...] [--on HOST] [--provide]...` | `docker compose down` | tear a use-case down | optional collapse |
-| `otto docker compose ps [USE_CASE] [-a] [--on HOST] [--provide]...` | `docker compose ps` | the use-case's containers per host, as docker prints them | optional collapse |
-| `otto docker compose logs [USE_CASE [SERVICE]...] [--tail N] [--since WHEN] [-t] [-f|--follow] [--on HOST] [--provide]...` | `docker compose logs` | the use-case's logs per host, as docker prints them | optional collapse |
+| `otto docker build [--parent HOST] [--repo NAME] [IMAGE...] [-t REF]... [--no-cache] [--pull] [--build-arg K=V]... [--target STAGE]` | `docker build` | the selected repos' images, on one parent | the default parent |
+| `otto docker ps [-a] [--parent HOST]` | `docker ps` | containers per host, as docker prints them | every docker-capable host |
+| `otto docker images [--parent HOST]` | `docker images` | images per host, as docker prints them | every docker-capable host |
+| `otto docker logs CONTAINER [--tail N] [--since T] [-t] [-f|--follow] [--parent HOST]` | `docker logs` | one container's log, a docker name or id on the parent | the default parent |
+| `otto docker use-cases [USE_CASE]` | none | declared inventory, config only | no `--parent` flag; shows the default parent |
+| `otto docker compose build [USE_CASE [IMAGE]...] [--parent HOST] [--provide CAP=REPO]... [--no-cache] [--pull] [--build-arg K=V]...` | `docker compose build` | the images `up` would deploy, on the parent | the default parent |
+| `otto docker compose up [USE_CASE [SERVICE]...] [--parent HOST] [--build] [--force-recreate] [--pull POLICY] [--provide]... [--env]... [--env-file]...` | `docker compose up` | deploy a use-case on the parent | the default parent |
+| `otto docker compose down [USE_CASE [SERVICE]...] [--parent HOST] [--provide]...` | `docker compose down` | tear a use-case down on the parent | the default parent |
+| `otto docker compose ps [USE_CASE] [-a] [--parent HOST] [--provide]...` | `docker compose ps` | the use-case's containers per host, as docker prints them | every docker-capable host |
+| `otto docker compose logs [USE_CASE [SERVICE]...] [--tail N] [--since WHEN] [-t] [-f|--follow] [--parent HOST] [--provide]...` | `docker compose logs` | the use-case's logs on the parent, as docker prints them | the default parent |
 
-`build` builds images and nothing else: it needs a host (`--on`), not a
+`build` builds images and nothing else: it needs a parent, not a
 use-case. Everything use-case-scoped is a `compose` verb, mirroring docker's
 own `docker build` / `docker compose` split.
 
 Both build verbs take `docker build`'s own flags; {doc}`build` is the one home for them.
 
-A curated verb exists only where otto adds something docker cannot do from the host's shell: resolving a container host id ({doc}`logs`) or a use-case ({doc}`compose/ps`, {doc}`compose/logs`) to the real container or project, or fanning out over the lab's docker hosts ({doc}`ps`, {doc}`images`). Each prints what docker printed: every verb that may reach several hosts prints it under one `== host ==` line per host (whether one host or ten answered); `logs`, one container on one host, prints docker's lines alone. Everything else is `otto host <HOST> exec "docker …"`:
+A curated verb exists only where otto adds something docker cannot do from the host's shell: resolving a use-case ({doc}`compose/ps`, {doc}`compose/logs`) to the real project, choosing the host for you ({doc}`logs`), or fanning out over the lab's docker hosts ({doc}`ps`, {doc}`images`). Each prints what docker printed: every verb that may reach several hosts prints it under one `== host ==` line per host (whether one host or ten answered); `logs`, one container on one host, prints docker's lines alone. Everything else is `otto host <HOST> exec "docker …"`:
 
 ```text
 otto host test3 exec "docker ps --format '{{.ID}} {{.Names}}'"
 ```
+
+(docker-which-host)=
+## Which host
+
+Every docker verb runs on one **parent** — a docker-capable lab host, the
+one whose daemon holds the containers. Name it with `--parent HOST`. When
+you omit it, otto uses the lab selection's only docker-capable host, or, when
+there are several, the one whose `docker_priority` in `lab.json` is strictly
+highest. A tie at the top (every host at the default `0` counts) is refused
+with the tied hosts named — otto never picks a host by file order. A use-case
+deploys on one parent; a deployment that spans hosts is two use-cases, each
+brought up with its own `--parent`.
+
+`ps`, `images` and `compose ps` are the exception: without `--parent` they
+list every docker-capable host in the lab.
+
+`--parent` is otto's flag, not docker's `-H/--host`: it names the lab host,
+never a daemon socket.
 
 ## Completion
 
@@ -49,31 +67,33 @@ lab's container host ids. It adds what a docker daemon last said, once a verb
 has asked it: `ps`, `compose ps`, `compose up` and `compose down` record that
 host's containers, `images`, `build` and `compose build` its images, and only for the
 host it asked. Those names are offered at `logs CONTAINER` ({doc}`logs`) and
-`build --tag` with `--on` ({doc}`build`). A TAB never contacts a host; it reads
-what the last verb recorded. `otto cache info` ({doc}`../cache/index`) shows
-which hosts still have something vouched for, and
+`build --tag` ({doc}`build`) for the parent the verb would use: the host
+`--parent` names, or without it the default of {ref}`Which host <docker-which-host>`.
+Where that rule refuses, TAB offers none — the verb would refuse too. A TAB never
+contacts a host; it reads what the last verb recorded. `otto cache info`
+({doc}`../cache/index`) shows which hosts still have something vouched for, and
 {doc}`../../architecture/subsystems/completion-cache` is the home for which
 verb records what, for how long, and how the record is kept.
 
 ## Synopsis
 
 ```text
-otto docker build     --on HOST [--repo NAME] [IMAGE...] [-t/--tag REF]... [--no-cache]
+otto docker build     [--parent HOST] [--repo NAME] [IMAGE...] [-t/--tag REF]... [--no-cache]
                       [--pull] [--build-arg K=V]... [--target STAGE]
-otto docker ps        [-a|--all] [--on HOST]
-otto docker images    [--on HOST]
+otto docker ps        [-a|--all] [--parent HOST]
+otto docker images    [--parent HOST]
 otto docker logs      CONTAINER [--tail N] [--since T] [-t|--timestamps] [-f|--follow]
-                      [--on HOST]
+                      [--parent HOST]
 otto docker use-cases [USE_CASE]
-otto docker compose build [USE_CASE [IMAGE]...] [--on HOST] [--provide CAP=REPO]...
+otto docker compose build [USE_CASE [IMAGE]...] [--parent HOST] [--provide CAP=REPO]...
                           [--no-cache] [--pull] [--build-arg K=V]...
-otto docker compose up    [USE_CASE [SERVICE]...] [--on HOST] [--build] [--force-recreate]
+otto docker compose up    [USE_CASE [SERVICE]...] [--parent HOST] [--build] [--force-recreate]
                           [--pull POLICY] [--provide CAP=REPO]... [--env K=V]...
                           [--env-file PATH]...
-otto docker compose down  [USE_CASE [SERVICE]...] [--on HOST] [--provide CAP=REPO]...
-otto docker compose ps    [USE_CASE] [-a|--all] [--on HOST] [--provide CAP=REPO]...
+otto docker compose down  [USE_CASE [SERVICE]...] [--parent HOST] [--provide CAP=REPO]...
+otto docker compose ps    [USE_CASE] [-a|--all] [--parent HOST] [--provide CAP=REPO]...
 otto docker compose logs  [USE_CASE [SERVICE]...] [--tail N] [--since WHEN]
-                          [-t|--timestamps] [-f|--follow] [--on HOST]
+                          [-t|--timestamps] [-f|--follow] [--parent HOST]
                           [--provide CAP=REPO]...
 ```
 
@@ -92,7 +112,10 @@ otto host test3.integration.api get /etc/os-release ./
 ```
 
 Container ids are also synthesized at lab-load time **before** any
-`otto docker compose up`, so tab completion works immediately. Accessing a
+`otto docker compose up`, under the default parent of
+{ref}`Which host <docker-which-host>` — so tab completion works immediately
+wherever that rule resolves; a lab whose rule refuses has none until a stack
+is up. Accessing a
 declared-but-stopped container auto-starts its compose stack on demand
 (`build=False`, so access never triggers an image build). If the stack
 can't be started — for example its image hasn't been built — the command
@@ -103,7 +126,7 @@ delegates to its parent host instead of being a parallel transport stack.
 
 Configuration lives with the rest of the project's settings: the per-project
 `[docker]` block in {doc}`../../configuration/settings`, and the per-lab
-`docker_capable`/`roles` host fields in {doc}`../../configuration/lab-config`.
+`docker_capable`/`docker_priority` host fields in {doc}`../../configuration/lab-config`.
 
 (docker-persistent-shell-state)=
 ## Persistent shell state

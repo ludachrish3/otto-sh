@@ -432,6 +432,13 @@ def cli_sut_dir(tmp_path: Path) -> Path:
     # the elements' membership, which the plain flat dict no longer does.
     by_element = {h["element"]: h for h in flat_hosts(with_labs=True)}
     hosts = [by_element[ne] for ne in ("test1", "test2")]
+    # Both hosts are ``docker_capable``, so the one parent rule needs a
+    # strictly higher ``docker_priority`` on one of them or it ties and no
+    # placeholders register. test2 is the parent: the placeholders are
+    # ``test2.repo1.api`` (issue #139's trigger).
+    for host in hosts:
+        if host["element"] == "test2":
+            host["docker_priority"] = 10
     doc = lab_json_v2(hosts)
     # Each declared lab's reservable set is restated rather than hoisted, and
     # DERIVED rather than spelled out: tech1 names every one of these hosts'
@@ -458,8 +465,6 @@ def cli_sut_dir(tmp_path: Path) -> Path:
             f"[[docker.use_cases]]\n"
             f'name = "repo1"\n'
             f'composes = ["core"]\n'
-            f'role = "docker"\n'
-            f'placement = {{ docker = "test2" }}\n'
         ),
         files={"lab_data/lab.json": json.dumps(doc)},
     )

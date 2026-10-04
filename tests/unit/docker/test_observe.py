@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, call, patch
 import pytest
 
 from otto.config.repo import DockerUseCase
+from otto.docker import deployment as observe_deployment
 from otto.docker import observe as observe_mod
+from otto.docker.deployment import UseCaseResolution
 from otto.docker.observe import (
     CONTAINERS_PROBE,
     IMAGES_PROBE,
@@ -30,7 +32,7 @@ from otto.docker.observe import (
     resolve_logs,
     run_on,
 )
-from otto.docker.resolve import SelectedFragment, UseCaseResolutionError
+from otto.docker.resolve import SelectedFragment, Selection, UseCaseResolutionError
 from otto.errors import FieldError
 from otto.host.docker_host import DockerContainerHost
 from otto.logger.mode import LogMode
@@ -38,7 +40,6 @@ from otto.result import CommandNotRunError, CommandResult, NotRunResult
 from otto.utils import Status
 from tests.conftest import active_context
 
-from .test_build_verbs import _resolved
 from .test_deploy import _compose_file, _host, _lab, _repo
 
 
@@ -58,26 +59,30 @@ def lab():
 
 
 def test_docker_verb_error_is_a_field_error():
-    exc = DockerVerbError("bad", field="host")
+    exc = DockerVerbError("bad", field="parent")
     assert isinstance(exc, FieldError)
     assert isinstance(exc, ValueError)
-    assert exc.field == "host"
+    assert exc.field == "parent"
 
 
 def test_capable_ids_lists_the_docker_capable_unix_hosts_sorted(lab):
     assert capable_ids(lab) == ["alt2", "test3"]
 
 
-def test_docker_parent_requires_a_host_and_names_the_capable_ones(lab):
-    with pytest.raises(DockerVerbError, match=r"host is required.*\['alt2', 'test3'\]") as exc:
+def test_docker_parent_with_no_name_applies_the_default_rule_and_names_a_tie(lab):
+    with pytest.raises(
+        DockerVerbError, match=r"2 docker-capable hosts at priority 0 \(alt2, test3\)"
+    ) as exc:
         docker_parent(lab, None)
-    assert exc.value.field == "host"
+    assert exc.value.field == "parent"
+    lab.hosts["alt2"].docker_priority = 1
+    assert docker_parent(lab, None).id == "alt2"
 
 
 def test_docker_parent_refuses_a_host_that_is_not_docker_capable(lab):
-    with pytest.raises(DockerVerbError, match=r"host 'test2' is not a docker-capable") as exc:
+    with pytest.raises(DockerVerbError, match=r"'test2' is not a docker-capable") as exc:
         docker_parent(lab, "test2")
-    assert exc.value.field == "host"
+    assert exc.value.field == "parent"
 
 
 def test_docker_parents_is_every_capable_host_in_lab_order_or_the_one_named(lab):
@@ -85,14 +90,14 @@ def test_docker_parents_is_every_capable_host_in_lab_order_or_the_one_named(lab)
     assert [h.id for h in docker_parents(lab, "alt2")] == ["alt2"]
     with pytest.raises(DockerVerbError) as exc:
         docker_parents(lab, "test2")
-    assert exc.value.field == "host"
+    assert exc.value.field == "parent"
 
 
 def test_docker_parents_refuses_a_lab_with_no_docker_capable_host_rather_than_answering_silence():
     lab = _lab(_plain("test2", "10.10.200.12"))
     with pytest.raises(DockerVerbError, match=r"lab '.*' has no docker-capable unix host") as exc:
         docker_parents(lab, None)
-    assert exc.value.field == "host"
+    assert exc.value.field == "parent"
 
 
 def _ok(value: str, command: str = "") -> CommandResult:
@@ -196,12 +201,12 @@ async def test_the_fan_out_verbs_run_dockers_own_command_on_every_capable_host(
 
 
 @pytest.mark.asyncio
-async def test_on_narrows_a_fan_out_to_one_host_and_a_bad_on_refuses_by_field(two_hosts):
-    report = await list_images(on="alt2")
+async def test_parent_narrows_a_fan_out_to_one_host_and_a_bad_parent_refuses_by_field(two_hosts):
+    report = await list_images(parent="alt2")
     assert [h.host_id for h in report.hosts] == ["alt2"]
     with pytest.raises(DockerVerbError) as exc:
-        await list_containers(on="test2")
-    assert exc.value.field == "host"
+        await list_containers(parent="test2")
+    assert exc.value.field == "parent"
 
 
 def _placed(lab, tmp_path, *host_ids, services=("api", "db"), per_host=None):
@@ -215,6 +220,22 @@ def _placed(lab, tmp_path, *host_ids, services=("api", "db"), per_host=None):
     return placed
 
 
+def _resolved_each(lab, tmp_path):
+    """Patch ``resolve_use_case`` the way the real one behaves: one host per call.
+
+    The one host is the *parent* the call names, or ``None``'s answer by the
+    one rule (``docker_parent``, which refuses a tie as the real one does).
+    """
+
+    def _resolve(use_case, *, parent, provide):
+        host = docker_parent(lab, parent)
+        placed = _placed(lab, tmp_path, host.id)
+        selection = Selection(use_case, [sf for sfs in placed.values() for sf in sfs])
+        return UseCaseResolution(lab, selection, host, placed, {"r1": 0})
+
+    return patch.object(observe_deployment, "resolve_use_case", side_effect=_resolve)
+
+
 def test_logs_flags_spells_dockers_flags_in_dockers_order():
     assert logs_flags(tail=None, since=None, timestamps=False) == ""
     assert logs_flags(tail="50", since="10m", timestamps=True) == " --tail 50 --since 10m -t"
@@ -225,7 +246,7 @@ async def test_compose_ps_runs_docker_compose_ps_with_the_project_on_every_actin
     lab, tmp_path, two_hosts
 ):
     with (
-        _resolved(lab, _placed(lab, tmp_path, "test3", "alt2")),
+        _resolved_each(lab, tmp_path),
         patch.object(observe_mod, "use_case_project", return_value="unix-integration-x") as project,
     ):
         report = await compose_ps("integration", all=True)
@@ -240,29 +261,61 @@ async def test_compose_ps_without_all_asks_for_the_running_containers_only(
     lab, tmp_path, two_hosts
 ):
     with (
-        _resolved(lab, _placed(lab, tmp_path, "test3")),
+        _resolved_each(lab, tmp_path),
         patch.object(observe_mod, "use_case_project", return_value="p"),
     ):
-        report = await compose_ps("integration")
+        report = await compose_ps("integration", parent="test3")
     assert [h.command for h in report.hosts] == ["docker compose -p p ps"]
 
 
 @pytest.mark.asyncio
-async def test_compose_ps_hands_on_and_provide_to_the_shared_resolution(lab, tmp_path, two_hosts):
+async def test_compose_ps_hands_parent_and_provide_to_the_shared_resolution(
+    lab, tmp_path, two_hosts
+):
     with (
-        _resolved(lab, _placed(lab, tmp_path, "alt2")) as resolve,
+        _resolved_each(lab, tmp_path) as resolve,
         patch.object(observe_mod, "use_case_project", return_value="p"),
     ):
-        await compose_ps("integration", on="alt2", provide={"cap": "r1"})
-    assert resolve.call_args == call("integration", on="alt2", provide={"cap": "r1"})
+        await compose_ps("integration", parent="alt2", provide={"cap": "r1"})
+    assert resolve.call_args == call("integration", parent="alt2", provide={"cap": "r1"})
+
+
+@pytest.mark.asyncio
+async def test_compose_ps_without_a_parent_covers_the_fleet_even_where_deploy_would_tie(
+    lab, tmp_path, two_hosts
+):
+    # Two docker-capable hosts at priority 0: the rule refuses for deploy ...
+    with pytest.raises(DockerVerbError, match="2 docker-capable hosts at priority 0"):
+        docker_parent(lab, None)
+    # ... but a listing names no parent, so it asks every capable host.
+    with (
+        _resolved_each(lab, tmp_path) as resolve,
+        patch.object(observe_mod, "use_case_project", return_value="p"),
+    ):
+        report = await compose_ps("integration")
+    assert [h.host_id for h in report.hosts] == ["test3", "alt2"]
+    assert [c.kwargs["parent"] for c in resolve.call_args_list] == ["test3", "alt2"]
+
+
+@pytest.mark.asyncio
+async def test_compose_ps_with_a_parent_covers_exactly_that_host(lab, tmp_path, two_hosts):
+    with (
+        _resolved_each(lab, tmp_path) as resolve,
+        patch.object(observe_mod, "use_case_project", return_value="p"),
+    ):
+        report = await compose_ps("integration", parent="alt2")
+    assert [h.host_id for h in report.hosts] == ["alt2"]
+    assert [c.kwargs["parent"] for c in resolve.call_args_list] == ["alt2"]
 
 
 def test_resolve_compose_logs_names_the_services_and_carries_the_flags(lab, tmp_path, two_hosts):
     with (
-        _resolved(lab, _placed(lab, tmp_path, "test3")),
+        _resolved_each(lab, tmp_path),
         patch.object(observe_mod, "use_case_project", return_value="p") as project,
     ):
-        targets = resolve_compose_logs("integration", ["api"], tail="5", timestamps=True)
+        targets = resolve_compose_logs(
+            "integration", ["api"], parent="test3", tail="5", timestamps=True
+        )
     # The live form puts `-f` right after the verb, before docker's flags.
     assert targets == [
         LogsTarget(
@@ -278,130 +331,149 @@ def test_resolve_compose_logs_never_mistakes_a_project_named_logs_for_the_verb(
     lab, tmp_path, two_hosts
 ):
     with (
-        _resolved(lab, _placed(lab, tmp_path, "test3")),
+        _resolved_each(lab, tmp_path),
         patch.object(observe_mod, "use_case_project", return_value="logs-integration-x"),
     ):
-        (target,) = resolve_compose_logs("integration", ["api"])
+        (target,) = resolve_compose_logs("integration", ["api"], parent="test3")
     assert target.command == "docker compose -p logs-integration-x logs api"
     assert target.follow_command == "docker compose -p logs-integration-x logs -f api"
 
 
-def test_resolve_compose_logs_names_each_hosts_own_share_of_the_requested_services(
+def test_resolve_compose_logs_names_the_requested_services_on_the_one_parent(
     lab, tmp_path, two_hosts
 ):
-    placed = _placed(lab, tmp_path, "test3", "alt2", per_host={"test3": ("api",), "alt2": ("db",)})
+    lab.hosts["test3"].docker_priority = 10
     with (
-        _resolved(lab, placed),
+        _resolved_each(lab, tmp_path),
         patch.object(observe_mod, "use_case_project", return_value="p"),
     ):
-        targets = resolve_compose_logs("integration", ["api", "db"])
+        targets = resolve_compose_logs("integration", ["db"])
     assert [(t.parent.id, t.command) for t in targets] == [
-        ("test3", "docker compose -p p logs api"),
-        ("alt2", "docker compose -p p logs db"),
+        ("test3", "docker compose -p p logs db"),
     ]
+
+
+def test_compose_logs_without_a_parent_targets_the_ranked_host_only(lab, tmp_path, two_hosts):
+    lab.hosts["test3"].docker_priority = 10
+    with (
+        _resolved_each(lab, tmp_path) as resolve,
+        patch.object(observe_mod, "use_case_project", return_value="p"),
+    ):
+        targets = resolve_compose_logs("integration")
+    assert [t.parent.id for t in targets] == ["test3"]
+    assert [c.kwargs["parent"] for c in resolve.call_args_list] == [None]
+
+
+@pytest.mark.asyncio
+async def test_compose_logs_at_a_tie_refuses_by_the_rule_while_compose_ps_still_lists_the_fleet(
+    lab, tmp_path, two_hosts
+):
+    with (
+        _resolved_each(lab, tmp_path),
+        patch.object(observe_mod, "use_case_project", return_value="p"),
+    ):
+        with pytest.raises(DockerVerbError) as exc:
+            resolve_compose_logs("integration")
+        assert exc.value.field == "parent"
+        report = await compose_ps("integration")
+    assert [h.host_id for h in report.hosts] == ["test3", "alt2"]
+
+
+def test_compose_logs_with_a_parent_targets_that_host(lab, tmp_path, two_hosts):
+    lab.hosts["test3"].docker_priority = 10
+    with (
+        _resolved_each(lab, tmp_path),
+        patch.object(observe_mod, "use_case_project", return_value="p"),
+    ):
+        targets = resolve_compose_logs("integration", parent="alt2")
+    assert [t.parent.id for t in targets] == ["alt2"]
 
 
 def test_resolve_compose_logs_refuses_an_undeclared_service_naming_the_declared_ones(
     lab, tmp_path, two_hosts
 ):
     with (
-        _resolved(lab, _placed(lab, tmp_path, "test3")),
+        _resolved_each(lab, tmp_path),
         pytest.raises(UseCaseResolutionError, match=r"\['web'\].*\['api', 'db'\]"),
     ):
-        resolve_compose_logs("integration", ["web"])
+        resolve_compose_logs("integration", ["web"], parent="test3")
 
 
 @pytest.mark.asyncio
-async def test_compose_logs_execs_each_target_and_keeps_dockers_text(lab, tmp_path, two_hosts):
+async def test_compose_logs_execs_its_target_and_keeps_dockers_text(lab, tmp_path, two_hosts):
     with (
-        _resolved(lab, _placed(lab, tmp_path, "test3", "alt2")),
+        _resolved_each(lab, tmp_path),
         patch.object(observe_mod, "use_case_project", return_value="p"),
     ):
-        report = await compose_logs("integration", since="1h")
+        report = await compose_logs("integration", parent="alt2", since="1h")
     assert [(h.host_id, h.command) for h in report.hosts] == [
-        ("test3", "docker compose -p p logs --since 1h"),
         ("alt2", "docker compose -p p logs --since 1h"),
     ]
-    assert report.hosts[1].result.value == "out of alt2\n"
+    assert report.hosts[0].result.value == "out of alt2\n"
 
 
 @pytest.mark.asyncio
 async def test_compose_verbs_ask_the_daemon_quietly(lab, tmp_path, two_hosts):
     with (
-        _resolved(lab, _placed(lab, tmp_path, "test3")),
+        _resolved_each(lab, tmp_path),
         patch.object(observe_mod, "use_case_project", return_value="p"),
     ):
-        await compose_ps("integration")
-        await compose_logs("integration")
+        await compose_ps("integration", parent="test3")
+        await compose_logs("integration", parent="test3")
     assert [c.kwargs["log"] for c in two_hosts[0].exec.await_args_list] == [
         LogMode.QUIET,
         LogMode.QUIET,
     ]
 
 
-def _container(lab, parent_id="test3", project="integration", service="web", cid=""):
-    parent = lab.hosts[parent_id]
-    ch = DockerContainerHost(parent, cid, project, service, f"unix-{project}-x")
-    lab.add_host(ch)
-    return ch
+@pytest.fixture
+def lab_one_parent():
+    """A lab with exactly one docker-capable host (``test3``): the rule resolves it."""
+    lab = _lab(_host("test3", "10.10.200.13"), _plain("test2", "10.10.200.12"))
+    with patch("otto.config.fleet.get_lab", return_value=lab):
+        yield lab
 
 
 @pytest.mark.asyncio
-async def test_a_container_host_id_resolves_through_its_parent_with_the_compose_labels_and_minus_a(
-    lab, two_hosts
-):
-    ch = _container(lab)
-    parent = lab.hosts["test3"]
-    parent.exec = AsyncMock(return_value=_ok("deadbeef1234\n", "docker ps"))
-    target = await resolve_logs(ch.id, tail="3")
-    assert target.parent is parent
-    assert target.command == "docker logs --tail 3 deadbeef1234"
-    assert target.follow_command == "docker logs -f --tail 3 deadbeef1234"
-    asked = parent.exec.await_args.args[0]
-    assert asked.startswith("docker ps -aq ")
-    assert "label=com.docker.compose.project=unix-integration-x" in asked
-    assert "label=com.docker.compose.service=web" in asked
-    assert "label=com.docker.compose.oneoff=False" in asked
-    assert parent.exec.await_args.kwargs["log"] is LogMode.QUIET
+async def test_logs_names_a_docker_container_on_the_parent_and_nothing_else(lab_one_parent):
+    target = await resolve_logs("unix-i-api-1")
+    assert target.parent.id == "test3"
+    assert target.command.endswith("docker logs unix-i-api-1")
+    target = await resolve_logs("3f9a", parent="test3", tail="5")
+    assert "--tail 5" in target.command
+    assert target.command.endswith(" 3f9a")
 
 
 @pytest.mark.asyncio
-async def test_a_container_host_id_with_no_container_on_the_parent_refuses_naming_both(
-    lab, two_hosts
-):
-    ch = _container(lab)
-    lab.hosts["test3"].exec = AsyncMock(return_value=_ok("", "docker ps"))
-    with pytest.raises(DockerVerbError, match=rf"{ch.id}.*test3") as exc:
-        await resolve_logs(ch.id)
-    assert exc.value.field == "container"
-
-
-@pytest.mark.asyncio
-async def test_a_failed_probe_relays_dockers_error_not_a_fabricated_absence(lab, two_hosts):
-    ch = _container(lab)
-    lab.hosts["test3"].exec = AsyncMock(
-        return_value=_fail("Cannot connect to the Docker daemon", "docker ps")
+async def test_logs_of_a_container_host_id_is_just_a_name_docker_will_not_find(lab_one_parent):
+    # No second route: the id is handed to docker verbatim; otto does not look it up,
+    # even when the lab really declares a container host under that id.
+    parent = lab_one_parent.hosts["test3"]
+    parent.exec = AsyncMock()
+    container = DockerContainerHost(
+        parent=parent,
+        container_id="cid",
+        project="integration",
+        service="api",
+        compose_project="unix-integration-u",
     )
-    with pytest.raises(DockerVerbError) as exc:
-        await resolve_logs(ch.id)
-    assert "Cannot connect to the Docker daemon" in str(exc.value)
-    assert "never brought up" not in str(exc.value)
-    assert exc.value.field == "container"
+    lab_one_parent.hosts[container.id] = container
+    assert container.id == "test3.integration.api"
+    target = await resolve_logs("test3.integration.api")
+    assert target.command.endswith("docker logs test3.integration.api")
+    lab_one_parent.hosts["test3"].exec.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_resolve_logs_refuses_a_dry_runs_declined_probe(lab, two_hosts):
-    ch = _container(lab)
-    lab.hosts["test3"].exec = AsyncMock(
-        return_value=NotRunResult(Status.NotRun, command="docker ps")
-    )
-    with pytest.raises(CommandNotRunError, match="resolve_logs"):
-        await resolve_logs(ch.id)
+async def test_logs_with_no_parent_on_a_tied_lab_refuses_naming_the_parent_field(lab, two_hosts):
+    with pytest.raises(DockerVerbError, match=r"name one with --parent") as exc:
+        await resolve_logs("web-1")
+    assert exc.value.field == "parent"
 
 
 @pytest.mark.asyncio
-async def test_with_on_the_name_goes_to_docker_verbatim(lab, two_hosts):
-    target = await resolve_logs("web-1", on="alt2", since="2h", timestamps=True)
+async def test_with_a_parent_the_name_goes_to_docker_verbatim(lab, two_hosts):
+    target = await resolve_logs("web-1", parent="alt2", since="2h", timestamps=True)
     assert target.parent is lab.hosts["alt2"]
     assert target.command == "docker logs --since 2h -t web-1"
     assert target.follow_command == "docker logs -f --since 2h -t web-1"
@@ -409,16 +481,8 @@ async def test_with_on_the_name_goes_to_docker_verbatim(lab, two_hosts):
 
 
 @pytest.mark.asyncio
-async def test_neither_a_host_id_nor_on_refuses_listing_the_container_host_ids(lab, two_hosts):
-    ch = _container(lab)
-    with pytest.raises(DockerVerbError, match=rf"'web-1'.*{ch.id}") as exc:
-        await resolve_logs("web-1")
-    assert exc.value.field == "container"
-
-
-@pytest.mark.asyncio
 async def test_container_logs_runs_the_resolved_command_and_keeps_dockers_text(lab, two_hosts):
-    report = await container_logs("web-1", on="alt2")
+    report = await container_logs("web-1", parent="alt2")
     assert [(h.host_id, h.command) for h in report.hosts] == [("alt2", "docker logs web-1")]
     assert report.hosts[0].result.value == "out of alt2\n"
 
@@ -494,7 +558,7 @@ async def test_follow_refuses_a_telnet_parent_by_field_before_any_connection(
 async def test_follow_refuses_more_than_one_host_naming_them(lab, two_hosts, bridge):
     t3, alt2 = lab.hosts["test3"], lab.hosts["alt2"]
     with pytest.raises(
-        DockerVerbError, match=r"one terminal follows one host.*test3.*alt2.*`on`"
+        DockerVerbError, match=r"one terminal follows one host.*test3.*alt2.*`parent`"
     ) as exc:
         await follow_logs([LogsTarget(t3, "x"), LogsTarget(alt2, "x")])
     assert exc.value.field == "follow"
@@ -502,10 +566,10 @@ async def test_follow_refuses_more_than_one_host_naming_them(lab, two_hosts, bri
 
 
 @pytest.mark.asyncio
-async def test_follow_refuses_no_target_without_printing_an_empty_host_list_as_a_placement(
+async def test_follow_refuses_no_target_without_printing_an_empty_host_list(
     bridge,
 ):
-    with pytest.raises(DockerVerbError, match="is placed on no host") as exc:
+    with pytest.raises(DockerVerbError, match="covers no host") as exc:
         await follow_logs([])
     assert exc.value.field == "follow"
     bridge.assert_not_awaited()
@@ -524,17 +588,14 @@ async def test_follow_declines_a_dry_run_at_the_top(lab, two_hosts, bridge):
 
 
 @pytest.mark.asyncio
-async def test_a_follow_on_a_telnet_parent_is_refused_before_the_probe(lab, two_hosts):
-    ch = _container(lab)
+async def test_a_follow_on_a_telnet_parent_is_refused_before_anything_runs(lab, two_hosts):
     parent = lab.hosts["test3"]
     parent.term = "telnet"
     parent.exec = AsyncMock()
     with pytest.raises(DockerVerbError, match="follow needs an SSH parent") as exc:
-        await resolve_logs(ch.id, follow=True)
+        await resolve_logs("web-1", parent="test3", follow=True)
     assert exc.value.field == "follow"
     parent.exec.assert_not_awaited()
-    with pytest.raises(DockerVerbError, match="follow needs an SSH parent"):
-        await resolve_logs("web-1", on="test3", follow=True)
 
 
 def test_the_probes_are_dockers_format_flags_verbatim():
@@ -633,4 +694,4 @@ async def test_only_dangling_rows_are_still_an_answer(lab, two_hosts):
 async def test_a_probe_on_a_non_docker_host_refuses_by_field(lab, two_hosts):
     with pytest.raises(DockerVerbError) as exc:
         await observed_images("nowhere")
-    assert exc.value.field == "host"
+    assert exc.value.field == "parent"

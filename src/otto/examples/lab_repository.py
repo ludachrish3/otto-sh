@@ -231,6 +231,7 @@ class ExampleLabRepository:
                         labs=[name],
                         ip=identity.ip,
                         docker_capable=identity.docker_capable,
+                        docker_priority=identity.docker_priority,
                         os_type=str(resolved.get("os_type", "unix")),
                         logins=logins_of_host_data(resolved),
                     )

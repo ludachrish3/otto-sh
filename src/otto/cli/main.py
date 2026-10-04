@@ -887,6 +887,7 @@ DELEGATED_NAMES_KEYS: frozenset[str] = frozenset(
         "projects",
         "links",
         "logins_by_host",
+        "docker_default_parent_by_lab",
     }
 )
 """The remaining ``names`` payload keys. Each is consumed by a completer that
@@ -905,6 +906,9 @@ no change to them. ``logins_by_host`` is read by
 ``--user`` menu to the typed host's logins. ``docker_images``,
 ``docker_services_by_use_case`` and ``repos`` are the declared names the docker
 verbs complete from (images, the services of a typed use-case, ``--repo``).
+``docker_default_parent_by_lab`` maps each lab to the parent the docker verbs
+default to by the one rule (a lab the rule refuses is absent); the docker
+completers read it to scope a container id to the default parent.
 Test names are in no section:
 they live in the per-file test tables (``otto.config.collected_tests``).
 
@@ -1132,6 +1136,7 @@ def entry(cache_stale: bool = False) -> None:
                         collect_cli_commands,
                         collect_current_commands,
                         collect_docker_capable_host_ids,
+                        collect_docker_default_parent_by_lab,
                         collect_docker_image_names,
                         collect_docker_services_by_use_case,
                         collect_docker_use_case_names,
@@ -1176,6 +1181,9 @@ def entry(cache_stale: bool = False) -> None:
                             projects=collect_project_names(),
                             links=collect_links(result.repos),
                             logins_by_host=collect_logins_by_host(result.repos),
+                            docker_default_parent_by_lab=collect_docker_default_parent_by_lab(
+                                result.repos
+                            ),
                             # No explicit `app`: the Section's `_collect_shim` and this
                             # call both default to `otto.cli.main.app`, so the tree
                             # has one source and cannot drift between the two.

@@ -786,10 +786,11 @@ class UnixHostSpec(HostSpec):
     impairer: str | None = None  # optional active pin; resolved at to_host
     docker_capable: bool = False
     shell_history: bool = False
-    roles: list[str] = Field(default_factory=list)
-    """Lab-intent role tags ("edge", "builder") consumed by docker use-case
-    placement (spec 2026-08-30 §5). Intent about how THIS LAB uses the host —
-    never an inventory fact, so it lives here and not in the facts layer."""
+    docker_priority: int = 0
+    """Which docker-capable host a use-case deploys on when ``--parent`` is
+    omitted and the lab selection has several. Highest wins; a tie at the top
+    refuses. Meaningful only with ``docker_capable``. Intent about how THIS LAB
+    uses the host, never an inventory fact."""
     ssh_options: SshOptionsSpec = SshOptionsSpec()
     sftp_options: SftpOptionsSpec = SftpOptionsSpec()
     scp_options: ScpOptionsSpec = ScpOptionsSpec()
@@ -803,6 +804,25 @@ class UnixHostSpec(HostSpec):
     ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``."""
 
     _host_family: ClassVar[str] = "unix"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _roles_is_gone(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "roles" in data:
+            raise ValueError(
+                "roles is gone; see docker_priority "
+                "(rank one docker-capable host as the default parent)"
+            )
+        return data
+
+    @model_validator(mode="after")
+    def _priority_needs_docker_capable(self) -> "UnixHostSpec":
+        if self.docker_priority != 0 and not self.docker_capable:
+            raise ValueError(
+                f"docker_priority on {self.name or self.ip!r}, which is not docker_capable — "
+                f"only a docker-capable host can be ranked as a parent"
+            )
+        return self
 
     @field_validator("valid_terms", "valid_transfers", "valid_impairers", mode="before")
     @classmethod
@@ -860,10 +880,9 @@ class UnixHostSpec(HostSpec):
         kw["impairer"] = IMPAIRER_RESOLVER.resolve_active(
             self.valid_impairers, pin=self.impairer, preference=prefs.get("impairer")
         )
-        for n in ("docker_capable", "shell_history", "roles"):
+        for n in ("docker_capable", "docker_priority", "shell_history"):
             if n in s:
-                v = getattr(self, n)
-                kw[n] = list(v) if isinstance(v, list) else v
+                kw[n] = getattr(self, n)
         for n in (
             "ssh_options",
             "sftp_options",

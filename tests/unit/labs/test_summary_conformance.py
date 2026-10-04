@@ -1,7 +1,7 @@
 """The `SupportsHostSummaries` contract is about FIELDS, not just ids.
 
 A summary drives five completion surfaces — `--lab` scoping (`labs`), `otto
-docker --on` (`docker_capable`), tunnel narrowing (`ip`), the class-scoped
+docker --parent` (`docker_capable`), tunnel narrowing (`ip`), the class-scoped
 verb menu (`os_type`) and `--user` login completion (`logins`). A backend
 that fills in only `id` used to pass every rule while silently breaking all
 of them.

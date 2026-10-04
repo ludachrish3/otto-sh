@@ -896,7 +896,7 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
     # test1, not on whatever host use-case/pin resolution happens to pick.
     # (Latent bug surfaced by the multi-host docker pool — see
     # docker_host.py::_auto_up.)
-    assert compose_up.call_args.kwargs["on"] == parent.id
+    assert compose_up.call_args.kwargs["parent"] == parent.id
     assert h.container_id == "freshcid"
     assert result.status == Status.Success
 
@@ -956,7 +956,9 @@ async def test_placeholder_use_case_project_auto_starts_via_deploy(monkeypatch):
 
     result = await h.exec("echo hi")
 
-    deploy.assert_awaited_once_with("integration", build=False)
+    # The placeholder knows its parent: the auto-up names it rather than
+    # leaving the rule to re-pick one (dropping `parent=` fails here).
+    deploy.assert_awaited_once_with("integration", parent=parent.id, build=False)
     compose_up.assert_not_awaited()
     assert h.container_id == "freshcid"
     assert result.status == Status.Success
@@ -970,12 +972,12 @@ def _uc_repos(use_case: str = "integration"):
 
 @pytest.mark.asyncio
 async def test_use_case_auto_up_picks_the_container_of_its_own_parent(monkeypatch):
-    """A use-case can span parents that legally declare the same service
-    name (_declared_services warns, it does not refuse). `_auto_up` must
-    read `stack.by_host[self.parent.id]`, never the flattened `stack.hosts`
-    — the flattened map is keyed last-write-wins across every parent, so a
-    naive read can hand THIS container (bound to `self.parent` for every
-    subsequent docker exec) a container id belonging to a DIFFERENT host."""
+    """`_auto_up` reads `stack.by_host[self.parent.id]`, never the flattened
+    `stack.hosts` (keyed last-write-wins across parents), so a stack that
+    carries another parent's same-named service cannot hand THIS container
+    (bound to `self.parent` for every subsequent docker exec) a container id
+    belonging to a DIFFERENT host. The deploy itself is pinned to this
+    placeholder's parent."""
     parent_other = _mock_parent("test1")
     parent_mine = _mock_parent("test3")
     h = DockerContainerHost(
@@ -1003,6 +1005,7 @@ async def test_use_case_auto_up_picks_the_container_of_its_own_parent(monkeypatc
 
     await h.exec("echo hi")
 
+    deploy.assert_awaited_once_with("integration", parent="test3", build=False)
     assert h.container_id == "right-parent-cid"
 
 
@@ -1092,7 +1095,7 @@ async def test_use_case_auto_up_no_container_for_service_is_refused(monkeypatch)
     assert "`otto docker compose up --build integration`" in str(exc.value)
 
 
-_LEGACY_REMEDY = "Build its image first (`otto docker build --on test3`) and retry."
+_LEGACY_REMEDY = "Build its image first (`otto docker build --parent test3`) and retry."
 
 
 @pytest.mark.asyncio

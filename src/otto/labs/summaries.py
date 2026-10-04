@@ -66,6 +66,7 @@ def host_summaries(
                 labs=[name],
                 ip=getattr(host, "ip", "") or "",
                 docker_capable=bool(getattr(host, "docker_capable", False)),
+                docker_priority=int(getattr(host, "docker_priority", 0)),
                 os_type=getattr(host, "os_type", None),
                 logins=logins_of_creds(getattr(host, "creds", None) or []),
             )

@@ -457,7 +457,7 @@ async def test_container_endpoint_oldos(tunnel_lab, reap_tunnels) -> None:
     """
     repo = _oldos_repo()
     hosts = await compose_up(
-        repo, tunnel_lab, on=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT, build=True
+        repo, tunnel_lab, parent=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT, build=True
     )
     try:
         container = hosts["oldos"]
@@ -495,7 +495,7 @@ async def test_container_endpoint_oldos(tunnel_lab, reap_tunnels) -> None:
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
-        await compose_down(repo, tunnel_lab, on=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT)
+        await compose_down(repo, tunnel_lab, parent=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT)
 
 
 # ---------------------------------------------------------------------------

@@ -290,10 +290,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     and the configured user can talk to it). Containers declared by projects
     are scheduled onto docker-capable hosts; non-capable hosts are skipped."""
 
-    roles: list[str] = field(default_factory=list)
-    """Role tags this lab assigned to the host ("edge", "builder"). Docker
-    use-case fragments name a role; placement resolves it to the unique
-    docker-capable host carrying the tag (otto.docker.resolve)."""
+    docker_priority: int = 0
+    """Rank of this host as a default docker parent; highest wins."""
 
     impairer: str = "netem"
     """Active impairer used for link-impairment placements on this host."""

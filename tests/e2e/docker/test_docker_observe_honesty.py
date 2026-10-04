@@ -53,7 +53,7 @@ def test_ps_prints_only_container_ids_the_daemon_holds(teardown_after, docker_ho
         "compose",
         "up",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         xdir=tmp_path,
@@ -62,7 +62,7 @@ def test_ps_prints_only_container_ids_the_daemon_holds(teardown_after, docker_ho
     assert up.returncode == 0, up.stdout + up.stderr
     # Asked of the leased host only: a fan-out would also read the other pool
     # host's daemon, which another session may be changing under this one.
-    ps = _run_otto("docker", "ps", "-a", "--on", docker_host, xdir=tmp_path, env=_WIDE)
+    ps = _run_otto("docker", "ps", "-a", "--parent", docker_host, xdir=tmp_path, env=_WIDE)
     assert ps.returncode == 0, ps.stdout + ps.stderr
     assert _first_line(ps.stdout) == f"== {docker_host} ==", ps.stdout
     printed = parse_ps_ids(ps.stdout)
@@ -75,9 +75,11 @@ def test_ps_prints_only_container_ids_the_daemon_holds(teardown_after, docker_ho
 
 
 def test_images_prints_only_references_and_ids_the_daemon_holds(docker_host, tmp_path):
-    built = _run_otto("docker", "build", "repo1-api", "--on", docker_host, xdir=tmp_path, env=_WIDE)
+    built = _run_otto(
+        "docker", "build", "repo1-api", "--parent", docker_host, xdir=tmp_path, env=_WIDE
+    )
     assert built.returncode == 0, built.stdout + built.stderr
-    images = _run_otto("docker", "images", "--on", docker_host, xdir=tmp_path, env=_WIDE)
+    images = _run_otto("docker", "images", "--parent", docker_host, xdir=tmp_path, env=_WIDE)
     assert images.returncode == 0, images.stdout + images.stderr
     printed = parse_images_rows(images.stdout)
     assert printed.get(docker_host), images.stdout
@@ -105,7 +107,7 @@ def _up_repo1(docker_host: str, suffix: str, xdir) -> None:
         "compose",
         "up",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--build",
         xdir=xdir,
@@ -126,7 +128,7 @@ def test_compose_ps_names_only_containers_of_the_project_the_daemon_holds(
         "compose",
         "ps",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         xdir=tmp_path,
         compose_suffix=suffix,
@@ -165,7 +167,7 @@ def test_compose_logs_prints_the_services_log_lines_the_daemon_holds(
         "compose",
         "logs",
         _REPO1_USE_CASE,
-        "--on",
+        "--parent",
         docker_host,
         "--tail",
         "5",
@@ -250,18 +252,22 @@ def _assert_lines_are_the_daemons(printed: str, host: str, cid: str, xdir) -> No
         assert " ".join(line.split()) in held, f"not in the daemon's logs: {line!r}\n{held}"
 
 
-def test_logs_of_a_container_host_id_prints_what_docker_logs_prints(
-    teardown_role_host_after, role_docker_host, tmp_path
+def test_logs_with_no_parent_prints_what_docker_logs_prints(
+    teardown_default_parent_after, default_parent_host, tmp_path
 ):
-    """A container host id is read by a SECOND otto process, so it must be one placement minted."""
-    suffix = teardown_role_host_after
+    """With no `--parent`, `logs <name>` asks the default parent's daemon.
+
+    The stack is brought up on the default parent, and the name goes to
+    `docker logs` there verbatim, so the lines must be the daemon's own.
+    """
+    suffix = teardown_default_parent_after
     project = f"unix-{_REPO1_USE_CASE}-{suffix}"
-    _up_repo1(role_docker_host, suffix, tmp_path)
-    marker = _plant_marker(role_docker_host, project, tmp_path)
+    _up_repo1(default_parent_host, suffix, tmp_path)
+    marker = _plant_marker(default_parent_host, project, tmp_path)
     logs = _run_otto(
         "docker",
         "logs",
-        f"{role_docker_host}.repo1.api",
+        f"{project}-api-1",
         "--tail",
         "5",
         xdir=tmp_path,
@@ -272,27 +278,32 @@ def test_logs_of_a_container_host_id_prints_what_docker_logs_prints(
     assert not logs.stdout.startswith("=="), logs.stdout  # one container, no host header
     # The planted line is what makes the comparison below non-vacuous.
     assert marker in logs.stdout, logs.stdout
-    cid = _project_container_id(role_docker_host, project, tmp_path)
-    _assert_lines_are_the_daemons(logs.stdout, role_docker_host, cid, tmp_path)
+    cid = _project_container_id(default_parent_host, project, tmp_path)
+    _assert_lines_are_the_daemons(logs.stdout, default_parent_host, cid, tmp_path)
 
 
 def test_logs_of_a_stopped_container_are_still_dockers_to_print(
-    teardown_role_host_after, role_docker_host, tmp_path
+    teardown_default_parent_after, default_parent_host, tmp_path
 ):
-    """The lookup uses `docker ps -aq`: a stopped container is still found."""
-    suffix = teardown_role_host_after
+    """`docker logs` reads a stopped container's log, so `logs <name>` still prints it."""
+    suffix = teardown_default_parent_after
     project = f"unix-{_REPO1_USE_CASE}-{suffix}"
-    _up_repo1(role_docker_host, suffix, tmp_path)
-    marker = _plant_marker(role_docker_host, project, tmp_path)
-    cid = _project_container_id(role_docker_host, project, tmp_path)
+    _up_repo1(default_parent_host, suffix, tmp_path)
+    marker = _plant_marker(default_parent_host, project, tmp_path)
+    cid = _project_container_id(default_parent_host, project, tmp_path)
     stopped = _run_otto(
-        "host", role_docker_host, "exec", f"docker stop {project}-api-1", xdir=tmp_path, env=_WIDE
+        "host",
+        default_parent_host,
+        "exec",
+        f"docker stop {project}-api-1",
+        xdir=tmp_path,
+        env=_WIDE,
     )
     assert stopped.returncode == 0, stopped.stdout + stopped.stderr
     logs = _run_otto(
         "docker",
         "logs",
-        f"{role_docker_host}.repo1.api",
+        f"{project}-api-1",
         "--tail",
         "5",
         xdir=tmp_path,
@@ -301,11 +312,13 @@ def test_logs_of_a_stopped_container_are_still_dockers_to_print(
     )
     assert logs.returncode == 0, logs.stdout + logs.stderr
     assert marker in logs.stdout, logs.stdout
-    _assert_lines_are_the_daemons(logs.stdout, role_docker_host, cid, tmp_path)
+    _assert_lines_are_the_daemons(logs.stdout, default_parent_host, cid, tmp_path)
 
 
-def test_logs_with_on_of_an_unknown_name_is_dockers_error(docker_host, tmp_path):
-    logs = _run_otto("docker", "logs", "no-such-ctr", "--on", docker_host, xdir=tmp_path, env=_WIDE)
+def test_logs_with_parent_of_an_unknown_name_is_dockers_error(docker_host, tmp_path):
+    logs = _run_otto(
+        "docker", "logs", "no-such-ctr", "--parent", docker_host, xdir=tmp_path, env=_WIDE
+    )
     assert logs.returncode != 0, logs.stdout + logs.stderr
     assert "No such container" in logs.stdout + logs.stderr, logs.stdout + logs.stderr
 
@@ -326,7 +339,7 @@ def _observed_entry(xdir, host: str, kind: str) -> dict:
 def test_ps_records_exactly_the_containers_the_daemon_lists(teardown_after, docker_host, tmp_path):
     """After `otto docker ps`, the host's containers entry is the daemon's own list."""
     _up_repo1(docker_host, teardown_after, tmp_path)
-    ps = _run_otto("docker", "ps", "-a", "--on", docker_host, xdir=tmp_path, env=_WIDE)
+    ps = _run_otto("docker", "ps", "-a", "--parent", docker_host, xdir=tmp_path, env=_WIDE)
     assert ps.returncode == 0, ps.stdout + ps.stderr
     pairs = _daemon_pairs(docker_host, DAEMON_PS_PAIRS_COMMAND, tmp_path)
     assert pairs, "the stack just came up; the daemon lists at least one container"
@@ -343,7 +356,7 @@ def test_images_records_the_daemons_references_minus_dangling(
     """After `otto docker images`, the images entry is the daemon's list minus dangling."""
     # `compose up --build` leaves repo1's images on the daemon, so the list is never empty.
     _up_repo1(docker_host, teardown_after, tmp_path)
-    images = _run_otto("docker", "images", "--on", docker_host, xdir=tmp_path, env=_WIDE)
+    images = _run_otto("docker", "images", "--parent", docker_host, xdir=tmp_path, env=_WIDE)
     assert images.returncode == 0, images.stdout + images.stderr
     pairs = [
         p

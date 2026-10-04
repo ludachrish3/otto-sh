@@ -30,58 +30,9 @@ from tests.conftest import active_context
 _DOCKER_FILES = {"docker/Dockerfile": "FROM alpine\n", "docker/compose.yml": "services: {}\n"}
 
 
-def _use_case_block(name: str, host: str) -> str:
-    """A [[docker.use_cases]] fragment pinning its stack to *host* — the same
-    "declared exact host" semantics ``default_host`` used to carry, now
-    expressed as a committed placement pin (spec §14)."""
-    return (
-        f"\n[[docker.use_cases]]\n"
-        f'name = "{name}"\n'
-        f'composes = ["core"]\n'
-        f'role = "docker"\n'
-        f'placement = {{ docker = "{host}" }}\n'
-    )
-
-
-def _make_repo(tmp: Path, *, name: str, host: str) -> Repo:
-    sut = make_sut_repo(
-        tmp / name,
-        name=name,
-        extra=(
-            "[[docker.composes]]\n"
-            'name = "core"\n'
-            'path = "docker/compose.yml"\n'
-            'services = ["svc"]\n' + _use_case_block(name, host)
-        ),
-        files=_DOCKER_FILES,
-    )
-    return Repo(sut_dir=sut)
-
-
-def _make_repo_with_image(tmp: Path, *, name: str, host: str) -> Repo:
-    """Like _make_repo but also declares a [[docker.images]] entry so
-    _build's ``if not r.docker_settings.images: continue`` guard is passed."""
-    sut = make_sut_repo(
-        tmp / name,
-        name=name,
-        extra=(
-            "[[docker.images]]\n"
-            'name = "myimage"\n'
-            'dockerfile = "docker/Dockerfile"\n'
-            'context = "docker"\n'
-            "\n[[docker.composes]]\n"
-            'name = "core"\n'
-            'path = "docker/compose.yml"\n'
-            'services = ["svc"]\n' + _use_case_block(name, host)
-        ),
-        files=_DOCKER_FILES,
-    )
-    return Repo(sut_dir=sut)
-
-
 def _make_repo_images_only(tmp: Path, *, name: str) -> Repo:
-    """A repo declaring [[docker.images]] but no [[docker.composes]] at all —
-    the mirror image of ``_make_repo``. Used to prove ``_compose_up``/``_compose_down`` now
+    """A repo declaring [[docker.images]] but no [[docker.composes]] at all.
+    Used to prove ``_compose_up``/``_compose_down`` now
     print a loud notice (and fail if it's all they were given) instead of
     silently doing nothing for a build-only repo."""
     sut = make_sut_repo(
@@ -115,7 +66,7 @@ async def test_build_hands_the_library_exactly_its_flags():
         patch.object(docker_cli, "rprint", MagicMock()),
     ):
         await docker_cli._build(
-            on="test3",
+            parent="test3",
             repo="r1",
             image=["api"],
             tag=["api:1"],
@@ -146,7 +97,7 @@ def test_build_takes_dockers_flags_in_dockers_spelling_through_the_dispatch():
             docker_app,
             [
                 "build",
-                "--on",
+                "--parent",
                 "test3",
                 "-t",
                 "api:1",
@@ -181,7 +132,7 @@ def test_a_malformed_build_arg_is_a_usage_error_naming_the_form():
     build_on = AsyncMock(return_value=_report())
     with patch("otto.docker.build_verbs.build_on", build_on):
         result = DispatchRunner().invoke(
-            docker_app, ["build", "--on", "test3", "--build-arg", "nope"], spec_name="docker"
+            docker_app, ["build", "--parent", "test3", "--build-arg", "nope"], spec_name="docker"
         )
     build_on.assert_not_called()
     assert result.exit_code == 2, result.output
@@ -197,7 +148,7 @@ def test_a_tag_with_several_images_is_spelled_as_tag():
     err = DockerVerbError("tags name one image, and 2 are selected (api, db)", field="tag")
     with patch("otto.docker.build_verbs.build_on", AsyncMock(side_effect=err)):
         result = DispatchRunner().invoke(
-            docker_app, ["build", "--on", "test3", "-t", "x:1"], spec_name="docker"
+            docker_app, ["build", "--parent", "test3", "-t", "x:1"], spec_name="docker"
         )
     assert result.exit_code == 2
     assert "--tag" in result.output
@@ -243,7 +194,7 @@ async def test_build_renders_built_and_failed_and_exits_1_on_a_failure():
         patch.object(docker_cli, "print_error", err),
         pytest.raises(typer.Exit) as e,
     ):
-        await docker_cli._build(on="test3", repo=None, image=None)
+        await docker_cli._build(parent="test3", repo=None, image=None)
     printed = " ".join(str(c) for c in out.call_args_list)
     assert "r1/api: built api:latest  cbd8571d4b6e  (test3)" in printed
     # `str(call(...))` reprs the arg, doubling rich.markup.escape()'s own
@@ -288,7 +239,7 @@ def test_render_build_report_prints_literal_brackets_with_the_real_rprint(capsys
 
 
 @pytest.mark.parametrize(
-    "argv", [["build", "--on", "test3", "--rebuild"], ["compose", "build", "--rebuild"]]
+    "argv", [["build", "--parent", "test3", "--rebuild"], ["compose", "build", "--rebuild"]]
 )
 def test_rebuild_is_not_an_option(argv):
     from otto.cli.docker import docker_app
@@ -307,7 +258,7 @@ def test_build_without_on_is_a_usage_error_spelled_as_the_flag():
     ``usage_error_from`` does not run ``spell_flags`` on a ``DockerVerbError``
     (its message can embed user text, e.g. a repo or image name) -- the
     message passes through byte-identical and only ``param_hint`` carries the
-    flag, so click renders ``Invalid value for --on: <message verbatim>``.
+    flag, so click renders ``Invalid value for --parent: <message verbatim>``.
 
     A plain ``def`` (no ``@pytest.mark.asyncio``): ``DispatchRunner`` bridges
     the async leaf itself via the production lifecycle, and running the test
@@ -321,12 +272,12 @@ def test_build_without_on_is_a_usage_error_spelled_as_the_flag():
     from tests._fixtures.dispatch import DispatchRunner
 
     err = DockerVerbError(
-        "host is required; docker-capable hosts in lab 'unix': ['test3']", field="host"
+        "host is required; docker-capable hosts in lab 'unix': ['test3']", field="parent"
     )
     with patch("otto.docker.build_verbs.build_on", AsyncMock(side_effect=err)):
         result = DispatchRunner().invoke(docker_app, ["build"], spec_name="docker")
     assert result.exit_code == 2
-    assert "Invalid value for --on: host is required" in result.output
+    assert "Invalid value for --parent: host is required" in result.output
 
 
 def test_build_unknown_image_is_spelled_as_IMAGE():  # noqa: N802 — IMAGE is the flag's own spelling
@@ -338,7 +289,7 @@ def test_build_unknown_image_is_spelled_as_IMAGE():  # noqa: N802 — IMAGE is t
     )
     with patch("otto.docker.build_verbs.build_on", AsyncMock(side_effect=err)):
         result = DispatchRunner().invoke(
-            docker_app, ["build", "--on", "test3", "apo"], spec_name="docker"
+            docker_app, ["build", "--parent", "test3", "apo"], spec_name="docker"
         )
     assert result.exit_code == 2
     assert "Invalid value for IMAGE" in result.output
@@ -356,7 +307,7 @@ async def test_compose_build_defaults_the_use_case_and_hands_the_flags():
         await docker_cli._compose_build(
             use_case=None,
             image=None,
-            on="test3",
+            parent="test3",
             provide=["db=r2"],
             no_cache=True,
             pull=True,
@@ -364,7 +315,7 @@ async def test_compose_build_defaults_the_use_case_and_hands_the_flags():
         )
     compose_build.assert_awaited_once_with(
         "integration",
-        on="test3",
+        parent="test3",
         provide={"db": "r2"},
         images=None,
         no_cache=True,
@@ -397,7 +348,7 @@ async def test_compose_build_prints_displacements_then_images():
         patch.object(docker_cli, "_default_use_case", return_value="integration"),
         patch.object(docker_cli, "rprint", out),
     ):
-        await docker_cli._compose_build(use_case=None, image=None, on=None, provide=None)
+        await docker_cli._compose_build(use_case=None, image=None, parent=None, provide=None)
     calls = [str(c) for c in out.call_args_list]
     assert any("mock" in c and "real" in c for c in calls[:1]), "displacement notice comes first"
     assert any("real/db: built real-db:1  cbd8571d4b6e" in c for c in calls)
@@ -410,14 +361,14 @@ async def test_compose_build_with_no_declared_use_case_is_the_existing_refusal()
         patch("otto.config.bootstrapped.get_repos", return_value=[]),
         pytest.raises(typer.Exit) as e,
     ):
-        await docker_cli._compose_build(use_case=None, image=None, on=None, provide=None)
+        await docker_cli._compose_build(use_case=None, image=None, parent=None, provide=None)
     assert e.value.exit_code == 1
 
 
 @pytest.mark.parametrize(
     ("message", "field", "hint"),
     [
-        ("host is required; docker-capable hosts in lab 'unix': ['test3']", "host", "--on"),
+        ("host is required; docker-capable hosts in lab 'unix': ['test3']", "parent", "--parent"),
         (
             "repo 'c' is not a loaded repo with a [docker] section; docker repos: ['a']",
             "repo",
@@ -461,7 +412,6 @@ def _uc(
     name: str = "integration",
     *,
     composes=("core",),
-    role=None,
     provides=None,
     priority=0,
     env=None,
@@ -471,7 +421,6 @@ def _uc(
     return DockerUseCase(
         name=name,
         composes=tuple(composes),
-        role=role,
         provides=provides,
         priority=priority,
         env=dict(env or {}),
@@ -636,7 +585,7 @@ async def test_up_forwards_provide_env_and_env_files(tmp_path):
         await docker_cli._compose_up(
             use_case="integration",
             service=None,
-            on="test3",
+            parent="test3",
             build=True,
             provide=["edge=repo1"],
             env=["A=1", "B=2"],
@@ -647,7 +596,7 @@ async def test_up_forwards_provide_env_and_env_files(tmp_path):
     assert kwargs["provide"] == {"edge": "repo1"}
     assert kwargs["env"] == {"A": "1", "B": "2"}
     assert kwargs["env_files"] == [env_file]
-    assert kwargs["on"] == "test3"
+    assert kwargs["parent"] == "test3"
     assert kwargs["build"] is True
 
 
@@ -672,7 +621,7 @@ def _invoke_up(*argv: str):
     from tests._fixtures.dispatch import DispatchRunner
 
     return DispatchRunner().invoke(
-        docker_app, ["compose", "up", "integration", "--on", "test3", *argv], spec_name="docker"
+        docker_app, ["compose", "up", "integration", "--parent", "test3", *argv], spec_name="docker"
     )
 
 
@@ -758,28 +707,27 @@ async def test_up_leaves_displacements_to_the_librarys_log_line():
 
 
 @pytest.mark.asyncio
-async def test_up_surfaces_the_librarys_on_refusal_verbatim(capsys):
-    """T7 review I3, CLI side: `--on` naming no lab host refuses LOUDLY here.
+async def test_up_surfaces_the_librarys_parent_refusal_verbatim():
+    """`--parent` naming no docker host of the lab is a usage error, in the library's words.
 
     The REAL `deploy` runs — only its lab is stubbed — so the sentence under
-    assertion is the one `_canonical_on` actually produces, not one this test
+    assertion is the one `docker_parent` actually produces, not one this test
     wrote and then found in its own output. A library rewording turns this red
     where a hand-written copy would have stayed green while asserting a
     sentence nobody emits any more (review M5).
     """
     lab = Lab(name="unix")
-    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3")))
+    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
 
     with (
         patch("otto.config.fleet.get_lab", return_value=lab),
-        pytest.raises(typer.Exit) as excinfo,
+        pytest.raises(typer.BadParameter) as excinfo,
     ):
-        await docker_cli._compose_up(use_case="integration", service=None, on="ghost")
+        await docker_cli._compose_up(use_case="integration", service=None, parent="ghost")
 
-    assert excinfo.value.exit_code == 1
-    out = " ".join(capsys.readouterr().out.split())
-    assert "on='ghost' matches no host in lab 'unix'" in out
-    assert "test3" in out, "the refusal must name what IS available"
+    msg = str(excinfo.value)
+    assert "'ghost' is not a docker-capable unix host in lab 'unix'" in msg
+    assert "['test3']" in msg, "the refusal must name what IS available"
 
 
 @pytest.mark.asyncio
@@ -873,7 +821,9 @@ async def test_down_renders_each_host_and_exits_1_when_one_failed():
         patch.object(docker_cli, "print_error", err),
         pytest.raises(typer.Exit) as e,
     ):
-        await docker_cli._compose_down(use_case="integration", service=None, on=None, provide=None)
+        await docker_cli._compose_down(
+            use_case="integration", service=None, parent=None, provide=None
+        )
     assert "test3: integration torn down" in " ".join(str(c) for c in out.call_args_list)
     assert "alt2: FAILED" in str(err.call_args)
     assert "docker compose -p q down" in str(err.call_args)
@@ -892,7 +842,7 @@ async def test_down_partial_names_the_services():
         patch.object(docker_cli, "rprint", out),
     ):
         await docker_cli._compose_down(
-            use_case="integration", service=["api"], on=None, provide=None
+            use_case="integration", service=["api"], parent=None, provide=None
         )
     assert "test3: integration (api) torn down" in " ".join(str(c) for c in out.call_args_list)
 
@@ -975,8 +925,8 @@ def test_use_cases_renders_the_compose_names_literally_not_as_rich_markup(capsys
     """
     repo = _uc_repo(
         "repo2",
-        _uc(name="soak", composes=("core",), role="edge"),
-        _uc(name="soak", composes=("mock",), role="dut"),
+        _uc(name="soak", composes=("core",)),
+        _uc(name="soak", composes=("mock",)),
     )
     lab = Lab(name="unix")
 
@@ -992,21 +942,53 @@ def test_use_cases_renders_the_compose_names_literally_not_as_rich_markup(capsys
     assert "repo2[mock]" in out, "the second fragment must render DIFFERENTLY"
 
 
-def test_use_cases_prints_the_resolution_error_instead_of_a_host(capsys):
-    """An unresolvable placement is REPORTED, not raised — this verb is a listing."""
-    repo = _uc_repo("repo1", _uc(role="nosuchrole"))
+def test_use_cases_prints_the_parent_rule_refusal_instead_of_a_host(capsys):
+    """A tie the parent rule refuses is REPORTED, not raised — this verb is a listing.
+
+    Reported in the rule's own words (the sentence ``deploy`` would refuse
+    with), and every row's host cell falls back to ``-``: nothing landed.
+    """
+    repo = _uc_repo("repo1", _uc())
     lab = Lab(name="unix")
-    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
+    for name, ip in (("test1", "10.0.0.1"), ("test3", "10.0.0.3")):
+        lab.add_host(UnixHost(ip=ip, creds=[], element=Element(name), docker_capable=True))
 
     with (
         patch("otto.config.bootstrapped.get_repos", return_value=[repo]),
         patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch("otto.docker.resolve.scope_for_repo", return_value=None),
     ):
         docker_cli._use_cases()  # exit 0
 
     out = " ".join(capsys.readouterr().out.split())
-    assert "nosuchrole" in out
+    assert "has 2 docker-capable hosts at priority 0 (test1, test3)" in out
+    assert "name one with --parent" in out
+
+
+def test_use_cases_shows_the_ranked_parent_and_no_role_column(capsys):
+    """The host column is the parent the rule picks; the role column is gone."""
+    repo = _uc_repo("repo1", _uc())
+    lab = Lab(name="unix")
+    lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test1"), docker_capable=True))
+    lab.add_host(
+        UnixHost(
+            ip="10.0.0.3",
+            creds=[],
+            element=Element("test3"),
+            docker_capable=True,
+            docker_priority=10,
+        )
+    )
+
+    with (
+        patch("otto.config.bootstrapped.get_repos", return_value=[repo]),
+        patch.object(fleet_mod, "get_lab", return_value=lab),
+    ):
+        docker_cli._use_cases()
+
+    out = capsys.readouterr().out
+    assert "test3" in out
+    assert "test1" not in out, "only the ranked parent is a deployment host"
+    assert " role " not in out, "the role column is gone"
 
 
 def test_use_cases_prints_a_provider_tie_refusal_instead_of_a_table_row(capsys):

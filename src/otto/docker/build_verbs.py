@@ -3,8 +3,9 @@
 Both compose :func:`~otto.docker.build.build_images` and own every rule about
 their inputs, so ``otto docker build`` / ``otto docker compose build`` and a
 Python caller get identical refusals and identical reports. ``build_on``
-takes a HOST and places nothing: an image is built on the daemon that will
-run its container, and with no use-case in play the caller names that daemon.
+takes a PARENT and places nothing: an image is built on the daemon that will
+run its container, and with no use-case in play the caller names that daemon
+(or leaves it to the one default-parent rule).
 ``compose_build`` places the winners of a use-case through the same
 ``resolve_use_case`` call ``deploy`` and ``teardown`` make, so a use-case build lands
 on exactly the hosts a deployment would use.
@@ -207,7 +208,7 @@ def _plan_text(
 
 
 async def build_on(
-    host: "str | None",
+    parent: "str | None" = None,
     *,
     repo: "str | None" = None,
     images: "Sequence[str] | None" = None,
@@ -217,14 +218,11 @@ async def build_on(
     build_args: "Mapping[str, str] | None" = None,
     target: "str | None" = None,
 ) -> BuildReport:
-    """Build the selected repos' declared images on *host* (``otto docker build``).
+    """Build the selected repos' declared images on *parent* (``otto docker build``).
 
     Args:
-        host: The lab id of a docker-capable unix host. Required: an image is
-            built on the daemon that will run it, and with no use-case there is
-            nothing else to derive the daemon from. ``None`` is accepted by the
-            signature so the CLI can hand an omitted ``--on`` straight through,
-            and is refused here, as the rule's owner.
+        parent: The lab id of a docker-capable unix host to build on; ``None``
+            is the default parent (spec §2).
         repo: Narrow the selection to this repo by name.
         images: Build only these declared ``[[docker.images]]`` names; each
             selected repo builds the subset it declares.
@@ -242,22 +240,22 @@ async def build_on(
         in dependency order; a repo declaring no images is a ``no_images`` entry.
 
     Raises:
-        DockerVerbError: *host* is missing or not a docker-capable unix host in
-            the active lab; *repo* names no docker repo; an *images* name no
-            selected repo declares; no selected repo declares any image; two
-            selected repos declare one image name, or two selected images of
-            one repo share a staging directory key; or *tags* is given with more than
-            one image selected.
+        DockerVerbError: *parent* is not a docker-capable unix host in
+            the active lab, or ``None`` and the one rule picks none; *repo*
+            names no docker repo; an *images* name no selected repo declares;
+            no selected repo declares any image; two selected repos declare one
+            image name, or two selected images of one repo share a staging
+            directory key; or *tags* is given with more than one image selected.
         ~otto.result.CommandNotRunError: this is a dry run; the message carries
             the whole plan.
     """
     from ..config.fleet import get_lab
 
     lab = get_lab()
-    parent = docker_parent(lab, host)
+    parent_host = docker_parent(lab, parent)
     repos = _dependency_order(_select_docker_repos(repo))
     _check_images(repos, images)
-    plan = [(parent, r, _names_for(r, images)) for r in repos]
+    plan = [(parent_host, r, _names_for(r, images)) for r in repos]
     _check_tags(plan, tags)
     options = BuildOptions(
         tags=list(tags or []),
@@ -268,7 +266,7 @@ async def build_on(
     )
     if is_dry_run():
         raise CommandNotRunError(
-            f"build_on({parent.id})", parent.id, _plan_text(plan, options=options)
+            f"build_on({parent_host.id})", parent_host.id, _plan_text(plan, options=options)
         )
     return BuildReport(repos=await _build_plan(plan, options=options))
 
@@ -276,7 +274,7 @@ async def build_on(
 async def compose_build(
     use_case: str,
     *,
-    on: "str | None" = None,
+    parent: "str | None" = None,
     provide: "Mapping[str, str] | None" = None,
     images: "Sequence[str] | None" = None,
     no_cache: bool = False,
@@ -285,14 +283,15 @@ async def compose_build(
 ) -> BuildReport:
     """Build the images a deployment of *use_case* would use (``otto docker compose build``).
 
-    Placement is :func:`~otto.docker.deployment.deploy`'s own: the winners of
-    the provider competition, placed by the engine, collapsed onto *on* when
-    given. A use-case build therefore lands on exactly the hosts ``deploy``
+    The selection is :func:`~otto.docker.deployment.deploy`'s own: the winners
+    of the provider competition, built on *parent* (the default parent when
+    ``None``). A use-case build therefore lands on exactly the host ``deploy``
     would deploy to; a test pins the two against each other.
 
     Args:
         use_case: The declared use-case name.
-        on: Collapse every winner onto this lab host (spec §5 knob 1).
+        parent: The parent to build on, by host id; ``None`` is the lab's
+            default parent by the one rule (spec §2).
         provide: ``capability -> repo`` overrides for the competition (§4).
         images: Build only these declared image names, over the winners.
         no_cache: ``docker build --no-cache``, for every image.
@@ -306,11 +305,12 @@ async def compose_build(
         displacements on ``displaced``.
 
     Raises:
-        ~otto.docker.resolve.UseCaseResolutionError: a placement refusal,
+        ~otto.docker.resolve.UseCaseResolutionError: a selection refusal,
             identical to ``deploy``'s.
-        DockerVerbError: an *images* name no winner declares, no winner
-            declares any image, or two winners declare one image name (or two
-            images of one winner share a staging directory key).
+        DockerVerbError: the parent refusal (identical to ``deploy``'s), an
+            *images* name no winner declares, no winner declares any image, or
+            two winners declare one image name (or two images of one winner
+            share a staging directory key).
         ~otto.result.CommandNotRunError: this is a dry run; the message carries
             the whole plan.
     """
@@ -318,16 +318,16 @@ async def compose_build(
     # import ...`) so a test can patch `deployment.resolve_use_case` and have THIS
     # call see it -- the placement differential pins compose_build against
     # deploy by patching exactly that seam.
-    resolution = deployment.resolve_use_case(use_case, on=on, provide=provide)
+    resolution = deployment.resolve_use_case(use_case, parent=parent, provide=provide)
     plan: "list[tuple[UnixHost, Repo, list[str] | None]]" = []
     winners: "list[Repo]" = []
     seen: "set[str]" = set()
     for host_id in sorted(resolution.placed):
-        parent = deployment.parent_for(resolution.lab, host_id)
+        parent_host = deployment.parent_for(resolution.lab, host_id)
         for unit in deployment._units(  # noqa: SLF001 — see seam note above
             deployment._ordered(resolution.placed[host_id], resolution.order)  # noqa: SLF001 — see seam note above
         ):
-            plan.append((parent, unit.repo, _names_for(unit.repo, images)))
+            plan.append((parent_host, unit.repo, _names_for(unit.repo, images)))
             if unit.repo.name not in seen:
                 seen.add(unit.repo.name)
                 winners.append(unit.repo)

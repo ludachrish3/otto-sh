@@ -24,6 +24,7 @@ HOSTS = [
         "labs": ["east"],
         "creds": DUT1_CREDS,
         "docker_capable": True,
+        "docker_priority": 10,
     },
     {
         "ip": "10.0.0.2",
@@ -31,10 +32,22 @@ HOSTS = [
         "labs": ["east", "west"],
         "creds": CREDS,
         "os_type": "shimos",
+        "docker_capable": True,
     },
     {"ip": "10.0.0.3", "element": "box", "labs": ["west"], "creds": CREDS, "os_type": "zephyr"},
+    {
+        "ip": "10.0.0.4",
+        "element": "dut3",
+        "labs": ["west"],
+        "creds": CREDS,
+        "docker_capable": True,
+        "docker_priority": 0,
+    },
 ]
-"""The json backend derives the ids ``dut1``, ``dut2`` and ``box`` from the element names."""
+"""The json backend derives the ids ``dut1``, ``dut2``, ``box`` and ``dut3`` from the element
+names. The docker parents shape the default-parent rule: ``east`` has two capable hosts and
+dut1's priority 10 wins it; ``west``'s dut2 and dut3 tie at priority 0, so the rule leaves
+``west`` without a default parent."""
 LINKS = [{"endpoints": [{"host": "dut1"}, {"host": "dut2"}]}]
 """Host-only endpoints — the shape tests/unit/config/test_completion_link_ids.py:60-75 loads."""
 

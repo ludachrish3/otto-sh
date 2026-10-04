@@ -104,6 +104,9 @@ class HostIdentity:
     slot: int | None
     """Validated slot (a profile may default it) — an id portion, kept to name the host."""
 
+    docker_priority: int = 0
+    """The lab's rank of this host as a default docker parent (0 when undeclared)."""
+
 
 def reject_unresolved_reference(host_data: dict[str, Any]) -> None:
     """Refuse a host dict that still carries a non-null ``inventory`` key.
@@ -157,6 +160,7 @@ def host_identity(host_data: dict[str, Any], element: Element) -> HostIdentity:
         docker_capable=bool(getattr(spec, "docker_capable", False)),
         board=spec.board,
         slot=spec.slot,
+        docker_priority=int(getattr(spec, "docker_priority", 0)),
     )
 
 

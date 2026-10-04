@@ -4,13 +4,13 @@ Print `docker ps` from every docker-capable host in the lab, exactly as
 docker printed it.
 
 ```text
-otto docker ps [-a|--all] [--on HOST]
+otto docker ps [-a|--all] [--parent HOST]
 ```
 
 | Option | Description |
 | ------ | ----------- |
 | `-a`, `--all` | Show every container, not only the running ones (docker's `-a`) |
-| `--on HOST` | Ask one docker-capable host (default: every one) |
+| `--parent HOST` | Ask one docker-capable host (default: every one; see {ref}`Which host <docker-which-host>`) |
 
 otto adds one line per host, `== <host-id> ==`, and changes nothing inside
 docker's output: every id is as long as docker printed it, every column

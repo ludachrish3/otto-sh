@@ -149,8 +149,7 @@ _TEST1_DOCKER = {**_TEST1, "docker_capable": True}
 def test_lab_filter_synthesizes_container_for_docker_capable_host_in_lab(tmp_path: Path) -> None:
     """A docker-capable host that survives the lab filter yields its container.
 
-    [[docker.composes]] carries no placement of its own (spec §14) — every
-    docker-capable host in the repo's (filtered) labs is a candidate parent.
+    The lab's only docker-capable host is its default parent by the one rule.
     """
     compose = SimpleNamespace(services=("api",))
     repo = _repo_with_docker(tmp_path, [_TEST1_DOCKER], compose)
@@ -190,3 +189,25 @@ def test_by_lab_buckets_hold_the_container_ids_the_lab_filter_synthesizes(tmp_pa
     assert by_lab["unix_alt"] == ["alt2"]
     for lab, ids in by_lab.items():
         assert sorted({*ids, "local"}) == collect_host_ids([repo], lab_names=[lab])
+
+
+def test_container_ids_sit_under_the_default_parent_only(tmp_path: Path) -> None:
+    """Two docker-capable hosts in one lab: only the ranked one is a parent (one rule)."""
+    compose = SimpleNamespace(services=("api",))
+    ranked = {**_TEST2, "docker_capable": True, "docker_priority": 3}
+    repo = _repo_with_docker(tmp_path, [_TEST1_DOCKER, ranked], compose)
+
+    ids = collect_host_ids([repo], lab_names=["unix"])
+    assert "test2.myrepo.api" in ids
+    assert "test1.myrepo.api" not in ids
+    assert collect_host_ids_by_lab([repo])["unix"] == ["test1", "test2", "test2.myrepo.api"]
+
+
+def test_a_lab_the_rule_refuses_offers_no_container_ids(tmp_path: Path) -> None:
+    """Two docker-capable hosts tied at the default priority: no parent, no ids."""
+    compose = SimpleNamespace(services=("api",))
+    tied = {**_TEST2, "docker_capable": True}
+    repo = _repo_with_docker(tmp_path, [_TEST1_DOCKER, tied], compose)
+
+    assert collect_host_ids([repo], lab_names=["unix"]) == ["local", "test1", "test2"]
+    assert collect_host_ids_by_lab([repo])["unix"] == ["test1", "test2"]

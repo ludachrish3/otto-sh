@@ -1,7 +1,7 @@
 """The read-only docker questions: what a host's daemon prints, verbatim.
 
-Each function here resolves otto's part -- which hosts, which container,
-which compose project -- runs one docker command per host, and returns
+Each function here resolves otto's part -- which parent, which compose
+project -- runs one docker command per host, and returns
 docker's text whole. Nothing is parsed, shortened or re-columned: a person
 who knows docker sees docker.
 """
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 class DockerVerbError(FieldError, ValueError):
     """A docker verb's input is unusable; nothing was touched.
 
-    ``field`` names the offending parameter (``host``, ``repo``, ``images``,
+    ``field`` names the offending parameter (``parent``, ``repo``, ``images``,
     ``tag``, ``container``, ``follow``) or is ``None`` for a refusal about the
     selection as a whole. The CLI spells the field in the verb's flags at
     its one translation site.
@@ -46,36 +46,58 @@ def capable_ids(lab: "Lab") -> "list[str]":
     return sorted(hid for hid, _ in _capable(lab))
 
 
-def docker_parent(lab: "Lab", host: "str | None") -> UnixHost:
-    """Return the docker-capable unix host *host* names in *lab*, or refuse."""
-    capable = capable_ids(lab)
-    if host is None:
-        raise DockerVerbError(
-            f"host is required; docker-capable hosts in lab {lab.name!r}: {capable}",
-            field="host",
-        )
-    candidate = lab.hosts.get(host)
+def default_docker_parent(lab: "Lab") -> UnixHost:
+    """Return the parent a docker verb uses when none is named: the one rule.
+
+    Exactly one docker-capable unix host in *lab* is it. Several: the one with
+    the strictly highest ``docker_priority``. A tie at the top (every host at
+    the default 0 included) refuses and names the tied hosts: otto never picks
+    a parent by file order. No docker-capable host refuses too.
+    """
+    capable = [host for _, host in _capable(lab)]
+    if not capable:
+        raise DockerVerbError(f"lab {lab.name!r} has no docker-capable unix host", field="parent")
+    if len(capable) == 1:
+        return capable[0]
+    top = max(h.docker_priority for h in capable)
+    ranked = sorted((h for h in capable if h.docker_priority == top), key=lambda h: h.id)
+    if len(ranked) == 1:
+        return ranked[0]
+    names = ", ".join(h.id for h in ranked)
+    raise DockerVerbError(
+        f"lab {lab.name!r} has {len(ranked)} docker-capable hosts at priority {top} "
+        f"({names}) — name one with --parent, or rank one higher with "
+        f'"docker_priority" in lab.json',
+        field="parent",
+    )
+
+
+def docker_parent(lab: "Lab", parent: "str | None") -> UnixHost:
+    """Return the docker-capable unix host *parent* names in *lab*, or the default (one rule)."""
+    if parent is None:
+        return default_docker_parent(lab)
+    candidate = lab.hosts.get(parent)
     if not isinstance(candidate, UnixHost) or not candidate.docker_capable:
         raise DockerVerbError(
-            f"host {host!r} is not a docker-capable unix host in lab {lab.name!r}; "
-            f"docker-capable hosts here: {capable}",
-            field="host",
+            f"{parent!r} is not a docker-capable unix host in lab {lab.name!r}; "
+            f"docker-capable hosts here: {capable_ids(lab)}",
+            field="parent",
         )
     return candidate
 
 
-def docker_parents(lab: "Lab", on: "str | None") -> "list[UnixHost]":
-    """Every docker-capable unix host of *lab* in lab order, or the one *on* names.
+def docker_parents(lab: "Lab", parent: "str | None") -> "list[UnixHost]":
+    """Every docker-capable unix host of *lab* in lab order, or the one *parent* names.
 
-    The ``--on`` rule of the fan-out verbs, in one place: ``None`` is the
+    The ``--parent`` rule of the fan-out verbs, in one place: ``None`` is the
     whole fleet, a name is checked the way the build verbs check theirs. A
     lab with no docker-capable host is refused, not answered with silence.
     """
-    if on is not None:
-        return [docker_parent(lab, on)]
+    if parent is not None:
+        return [docker_parent(lab, parent)]
     parents = [host for _, host in _capable(lab)]
     if not parents:
-        raise DockerVerbError(f"lab {lab.name!r} has no docker-capable unix host", field="host")
+        raise DockerVerbError(f"lab {lab.name!r} has no docker-capable unix host", field="parent")
     return parents
 
 
@@ -161,19 +183,19 @@ async def run_on(parents: "list[UnixHost]", command: str, *, asked: str) -> Obse
     return await _exec_targets([LogsTarget(parent, command) for parent in parents], asked=asked)
 
 
-async def list_containers(on: "str | None" = None, *, all: bool = False) -> ObserveReport:  # noqa: A002 -- docker's flag name
-    """``docker ps [-a]`` on every docker-capable host, or the one *on* names."""
+async def list_containers(parent: "str | None" = None, *, all: bool = False) -> ObserveReport:  # noqa: A002 -- docker's flag name
+    """``docker ps [-a]`` on every docker-capable host, or the one *parent* names."""
     from ..config.fleet import get_lab
 
     command = "docker ps -a" if all else "docker ps"
-    return await run_on(docker_parents(get_lab(), on), command, asked="list_containers")
+    return await run_on(docker_parents(get_lab(), parent), command, asked="list_containers")
 
 
-async def list_images(on: "str | None" = None) -> ObserveReport:
-    """``docker images`` on every docker-capable host, or the one *on* names."""
+async def list_images(parent: "str | None" = None) -> ObserveReport:
+    """``docker images`` on every docker-capable host, or the one *parent* names."""
     from ..config.fleet import get_lab
 
-    return await run_on(docker_parents(get_lab(), on), "docker images", asked="list_images")
+    return await run_on(docker_parents(get_lab(), parent), "docker images", asked="list_images")
 
 
 IMAGES_PROBE = r"docker images --format '{{.Repository}}:{{.Tag}}\t{{.ID}}'"
@@ -298,26 +320,41 @@ def _compose_sites(
     use_case: str,
     services: "Sequence[str]",
     *,
-    on: "str | None",
+    parent: "str | None",
     provide: "Mapping[str, str] | None",
+    fleet: bool = False,
 ) -> "list[_ComposeSite]":
     """Resolve *use_case* as ``deploy`` does; one site per acting host.
 
+    One parent by default: *parent* named, or the lab's default parent by the
+    one rule (a tie refuses, field ``parent``). With *fleet* and no *parent*
+    -- ``compose ps``, a listing -- every docker-capable host in lab order is
+    asked instead (a tied lab, which ``deploy`` refuses, is no refusal there).
     With a services filter, each site names only the requested services its
-    host declares: a host cannot be asked for a service it does not run.
+    acting host runs: a host cannot be asked for a service it does not run.
     """
     # Function-local: the listing verbs must not import the deployment stack.
+    from ..config.fleet import get_lab
     from . import deployment
 
-    resolution = deployment.resolve_use_case(use_case, on=on, provide=provide)
-    wanted = deployment.validated_services(resolution.selection, list(services) or None)
-    acting = deployment.acting_hosts(resolution.placed, resolution.order, wanted, use_case=use_case)
+    if fleet and parent is None:
+        asked: "list[str | None]" = [host.id for host in docker_parents(get_lab(), None)]
+    else:
+        asked = [parent]
     sites: "list[_ComposeSite]" = []
-    for host in acting:
-        parent = deployment.parent_for(resolution.lab, host.host_id)
-        project = shlex.quote(use_case_project(parent.source_lab, use_case))
-        names = "".join(f" {shlex.quote(s)}" for s in host.services) if wanted is not None else ""
-        sites.append(_ComposeSite(parent, f"docker compose -p {project}", names))
+    for asked_parent in asked:
+        resolution = deployment.resolve_use_case(use_case, parent=asked_parent, provide=provide)
+        wanted = deployment.validated_services(resolution.selection, list(services) or None)
+        acting = deployment.acting_hosts(
+            resolution.placed, resolution.order, wanted, use_case=use_case
+        )
+        for host in acting:
+            parent_host = deployment.parent_for(resolution.lab, host.host_id)
+            project = shlex.quote(use_case_project(parent_host.source_lab, use_case))
+            names = (
+                "".join(f" {shlex.quote(s)}" for s in host.services) if wanted is not None else ""
+            )
+            sites.append(_ComposeSite(parent_host, f"docker compose -p {project}", names))
     return sites
 
 
@@ -325,14 +362,14 @@ async def compose_ps(
     use_case: str,
     *,
     all: bool = False,  # noqa: A002 -- docker's flag name
-    on: "str | None" = None,
+    parent: "str | None" = None,
     provide: "Mapping[str, str] | None" = None,
 ) -> ObserveReport:
-    """``docker compose -p <project> ps [-a]`` on every host *use_case* is placed on."""
+    """``docker compose -p <project> ps [-a]`` on *parent*, or on every docker-capable host."""
     verb = "ps -a" if all else "ps"
     targets = [
         LogsTarget(site.parent, f"{site.prefix} {verb}")
-        for site in _compose_sites(use_case, (), on=on, provide=provide)
+        for site in _compose_sites(use_case, (), parent=parent, provide=provide, fleet=True)
     ]
     return await _exec_targets(targets, asked="compose_ps")
 
@@ -341,23 +378,24 @@ def resolve_compose_logs(
     use_case: str,
     services: "Sequence[str]" = (),
     *,
-    on: "str | None" = None,
+    parent: "str | None" = None,
     provide: "Mapping[str, str] | None" = None,
     tail: "str | None" = None,
     since: "str | None" = None,
     timestamps: bool = False,
 ) -> "list[LogsTarget]":
-    """Resolve the ``docker compose -p <project> logs …`` command per acting host.
+    """Resolve the ``docker compose -p <project> logs …`` command on one parent.
 
-    An empty *services* means every service (docker's own meaning for
-    ``compose logs`` with no names), unlike ``deploy``'s ``services=[]``.
-    Otherwise each host's command names only the requested services that
-    host declares.
+    *parent* names it, ``None`` the lab's default parent by the one rule: logs
+    never fans out over the fleet. An empty *services* means every service
+    (docker's own meaning for ``compose logs`` with no names), unlike
+    ``deploy``'s ``services=[]``. Otherwise the command names only the
+    requested services.
     """
     flags = logs_flags(tail=tail, since=since, timestamps=timestamps)
     return [
         _logs_target(site.parent, site.prefix, flags, site.names)
-        for site in _compose_sites(use_case, services, on=on, provide=provide)
+        for site in _compose_sites(use_case, services, parent=parent, provide=provide)
     ]
 
 
@@ -365,19 +403,25 @@ async def compose_logs(
     use_case: str,
     services: "Sequence[str]" = (),
     *,
-    on: "str | None" = None,
+    parent: "str | None" = None,
     provide: "Mapping[str, str] | None" = None,
     tail: "str | None" = None,
     since: "str | None" = None,
     timestamps: bool = False,
 ) -> ObserveReport:
-    """Each acting host's compose logs, docker's text whole.
+    """Return the use-case's compose logs on one parent, docker's text whole.
 
     An empty *services* means every service (docker's own meaning for
     ``compose logs`` with no names), unlike ``deploy``'s ``services=[]``.
     """
     targets = resolve_compose_logs(
-        use_case, services, on=on, provide=provide, tail=tail, since=since, timestamps=timestamps
+        use_case,
+        services,
+        parent=parent,
+        provide=provide,
+        tail=tail,
+        since=since,
+        timestamps=timestamps,
     )
     return await _exec_targets(targets, asked="compose_logs")
 
@@ -385,73 +429,41 @@ async def compose_logs(
 async def resolve_logs(
     container: str,
     *,
-    on: "str | None" = None,
+    parent: "str | None" = None,
     tail: "str | None" = None,
     since: "str | None" = None,
     timestamps: bool = False,
     follow: bool = False,
 ) -> LogsTarget:
-    """Name the host and the ``docker logs`` command for *container*.
+    """Name the parent and the ``docker logs`` command for *container*.
 
-    Two routes, by what *container* is. A lab container host id names its
-    parent and its compose project + service; the container is looked up on
-    the parent by the compose labels, with ``-a`` so a stopped container's
-    logs are still docker's to print. With *on*, *container* is a docker name
-    or id and goes to ``docker logs`` on that host verbatim -- an unknown one
-    is docker's error, not otto's. With *follow*, a parent not reached by SSH
-    is refused before it is probed.
+    One contract: *container* is a docker name or id, handed to ``docker logs``
+    on the parent verbatim; an unknown one is docker's error, not otto's. A lab
+    container host id is just a name here: otto does not look it up. *parent*
+    names the host, ``None`` the default parent. With *follow*, a parent not
+    reached by SSH is refused.
     """
     from ..config.fleet import get_lab
-    from ..host.docker_host import DockerContainerHost, compose_container_probe
 
-    lab = get_lab()
-    flags = logs_flags(tail=tail, since=since, timestamps=timestamps)
-    if on is not None:
-        parent = docker_parent(lab, on)
-        if follow:
-            _require_ssh_parent(parent)
-        return _logs_target(parent, "docker", flags, f" {shlex.quote(container)}")
-    host = lab.hosts.get(container)
-    if not isinstance(host, DockerContainerHost):
-        declared = sorted(hid for hid, h in lab.hosts.items() if isinstance(h, DockerContainerHost))
-        raise DockerVerbError(
-            f"{container!r} is not a container host id of lab {lab.name!r} (declared: "
-            f"{declared}); to name a docker container or id directly, name the host it "
-            f"is on (`on`)",
-            field="container",
-        )
-    parent = docker_parent(lab, host.parent.id)
+    parent_host = docker_parent(get_lab(), parent)
     if follow:
-        _require_ssh_parent(parent)
-    probe = compose_container_probe(host.compose_project, host.service, all=True)
-    result = await parent.exec(probe, log=LogMode.QUIET)
-    refuse_declined_fact(result, asked=f"resolve_logs({host.id})")
-    if not result.status.is_ok:
-        raise DockerVerbError(
-            f"{host.id}: could not look the container up on {parent.id}: {result.value}",
-            field="container",
-        )
-    cid = result.value.strip().splitlines()[0] if result.value.strip() else ""
-    if not cid:
-        raise DockerVerbError(
-            f"{host.id}: no container of project {host.compose_project!r} service "
-            f"{host.service!r} exists on {parent.id} -- the stack was never brought up "
-            f"here, or was removed",
-            field="container",
-        )
-    return _logs_target(parent, "docker", flags, f" {shlex.quote(cid)}")
+        _require_ssh_parent(parent_host)
+    flags = logs_flags(tail=tail, since=since, timestamps=timestamps)
+    return _logs_target(parent_host, "docker", flags, f" {shlex.quote(container)}")
 
 
 async def container_logs(
     container: str,
     *,
-    on: "str | None" = None,
+    parent: "str | None" = None,
     tail: "str | None" = None,
     since: "str | None" = None,
     timestamps: bool = False,
 ) -> ObserveReport:
     """One container's logs, docker's text whole."""
-    target = await resolve_logs(container, on=on, tail=tail, since=since, timestamps=timestamps)
+    target = await resolve_logs(
+        container, parent=parent, tail=tail, since=since, timestamps=timestamps
+    )
     return await _exec_targets([target], asked="container_logs")
 
 
@@ -490,10 +502,10 @@ async def follow_logs(targets: "list[LogsTarget]") -> int | None:
 
     if len(targets) != 1:
         hosts = [t.parent.id for t in targets]
-        where = f"is placed on {hosts}" if hosts else "is placed on no host"
+        where = f"covers {hosts}" if hosts else "covers no host"
         raise DockerVerbError(
             f"one terminal follows one host; this use-case {where} -- name the host "
-            f"(`on`), or drop follow to print every host's logs once",
+            f"(`parent`), or drop follow to print every host's logs once",
             field="follow",
         )
     target = targets[0]

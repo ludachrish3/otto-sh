@@ -661,12 +661,11 @@ if not torn.ok:
         print(host, [r.command for r in results])
 ```
 
-`build_on("test3", images=["api"])` builds one host's images without a
-use-case, the way `otto docker build --on test3 api` does. Every input rule
-is the library's: a missing host, an unknown repo or image name raises
-{class}`~otto.docker.observe.DockerVerbError` with a `field`, and a
-placement refusal is {class}`~otto.docker.resolve.UseCaseResolutionError`,
-identical to `deploy`'s.
+`build_on(parent="test3", images=["api"])` builds one parent's images without a
+use-case, the way `otto docker build --parent test3 api` does; leave `parent`
+out and the library names it ({ref}`Which host <docker-which-host>`).
+Every input rule is the library's: a missing or tied parent, an unknown repo or
+image name raises {class}`~otto.docker.observe.DockerVerbError` with a `field`.
 
 The observe verbs are the same shape: {func}`~otto.docker.observe.list_containers`,
 {func}`~otto.docker.observe.compose_logs` and the rest return an

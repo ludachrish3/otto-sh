@@ -1,7 +1,7 @@
 """Shared shell-completion helpers used across CLI subapps.
 
 Host-id completion must be lab-scoped everywhere host ids are accepted —
-``otto host``, ``otto tunnel add --hosts``, ``otto docker --on`` (issue
+``otto host``, ``otto tunnel add --hosts``, ``otto docker --parent`` (issue
 #138) — so the lab-selection walk and the cache-then-live host-id resolution
 live here rather than in any one subapp.
 """

@@ -101,19 +101,16 @@ class DockerCompose:
 
 @dataclass(frozen=True)
 class DockerUseCase:
-    """One ``[[docker.use_cases]]`` fragment (spec §3.1): participation + placement atom."""
+    """One ``[[docker.use_cases]]`` fragment (spec §3.1): the atom of participation.
+
+    A use-case deploys on one parent (the ``--parent`` it is given, or the
+    lab's default by the one rule), so a fragment says nothing about where.
+    """
 
     name: str
     """Use-case this fragment belongs to; same name across repos = one use-case."""
     composes: "tuple[str, ...]"
     """Handles into this repo's [[docker.composes]]."""
-    role: "str | None" = None
-    """Placement role, resolved against `roles` host tags in the owning repo's scope."""
-    placement: "dict[str, str]" = field(default_factory=dict)
-    """Committed role→host pins.
-
-    A value may be lab-qualified (``unix:test3``) for multi-lab sessions.
-    """
     provides: "str | None" = None
     """Capability this fragment offers to the provider competition (spec §4)."""
     priority: int = 0

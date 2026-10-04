@@ -71,7 +71,7 @@ async def test_instruction_uses_composed_context_manager(parent_lab):
 
     # Mimic: @instruction async def my_workflow(): async with composed(...) as ...
     async def my_workflow() -> str:
-        async with composed(repo, lab, on=parent.id, own=True) as containers:
+        async with composed(repo, lab, parent=parent.id, own=True) as containers:
             api = containers["api"]
             res = await api.exec("hostname")
             assert res.status is Status.Success
@@ -94,11 +94,11 @@ async def test_session_fixture_holds_stack_for_inner_users(parent_lab):
     build_results = await build_images(repo, parent)
     assert build_results["repo1-api"].is_ok, build_results
 
-    async with composed(repo, lab, on=parent.id, own=True) as outer_hosts:
+    async with composed(repo, lab, parent=parent.id, own=True) as outer_hosts:
         outer_id = outer_hosts["api"].container_id
 
         # Inner user: default own=False — must reuse and NOT teardown on exit.
-        async with composed(repo, lab, on=parent.id, own=False) as inner_hosts:
+        async with composed(repo, lab, parent=parent.id, own=False) as inner_hosts:
             assert inner_hosts["api"].container_id == outer_id
 
         # Container must still be running after inner exit.

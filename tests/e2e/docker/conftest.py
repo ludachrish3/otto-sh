@@ -8,7 +8,7 @@ import pytest
 from tests._fixtures._host_pool import lease_unix_host
 from tests.e2e._otto_subprocess import REPO1
 
-from ._cli import _MERGED_USE_CASE, _REPO1_USE_CASE, _ROLE_DOCKER_HOST, REPO2, _run_otto
+from ._cli import _DEFAULT_PARENT, _MERGED_USE_CASE, _REPO1_USE_CASE, REPO2, _run_otto
 
 # Docker container hosts require an SSH-based UnixHost parent (see
 # DockerContainerHost._make_session: term must be 'ssh').  test2 defaults
@@ -37,15 +37,15 @@ def docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
 
 
 @pytest.fixture
-def role_docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
-    """Lease :data:`_ROLE_DOCKER_HOST` — the host repo1's fragments place onto.
+def default_parent_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
+    """Lease :data:`_DEFAULT_PARENT` — the host a docker verb resolves to with no flag.
 
     Same fd-flock as ``docker_host``, narrowed to one element. Used by the
     tests that address a container id from a second otto process, where the
-    id must be one PLACEMENT produced rather than one ``--on`` invented.
+    id must be one the default parent minted rather than one ``--parent`` invented.
     """
     lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, [_ROLE_DOCKER_HOST]) as element:
+    with lease_unix_host(lock_dir, [_DEFAULT_PARENT]) as element:
         yield element
 
 
@@ -79,7 +79,7 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
     """
     yield fresh_suffix
     # Both repos in SUT_DIRS so the merged use-case resolves the same set of
-    # fragments the test deployed. --on <docker_host> targets the daemon the
+    # fragments the test deployed. --parent <docker_host> targets the daemon the
     # test used. `provide` is deliberately NOT passed: the compose project is
     # derived from (lab, use-case, suffix) alone, so one `down` reaps the
     # stack whichever provider won.
@@ -89,7 +89,7 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
             "compose",
             "down",
             use_case,
-            "--on",
+            "--parent",
             docker_host,
             sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
             xdir=tmp_path,
@@ -98,8 +98,8 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
 
 
 @pytest.fixture
-def teardown_role_host_after(fresh_suffix, role_docker_host, tmp_path):
-    """``teardown_after``, for the tests that lease :data:`_ROLE_DOCKER_HOST`."""
+def teardown_default_parent_after(fresh_suffix, default_parent_host, tmp_path):
+    """``teardown_after``, for the tests that lease :data:`_DEFAULT_PARENT`."""
     yield fresh_suffix
     for use_case in (_REPO1_USE_CASE, _MERGED_USE_CASE):
         _run_otto(
@@ -107,8 +107,8 @@ def teardown_role_host_after(fresh_suffix, role_docker_host, tmp_path):
             "compose",
             "down",
             use_case,
-            "--on",
-            role_docker_host,
+            "--parent",
+            default_parent_host,
             sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
             xdir=tmp_path,
             compose_suffix=fresh_suffix,

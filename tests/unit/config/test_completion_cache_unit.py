@@ -1180,7 +1180,7 @@ def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> No
 
     Un-memoized, a stalled backend cost three deadlines — and worse, could
     time out for one collector and not another, writing a cache where
-    `otto host <TAB>` is full and `otto docker --on <TAB>` is empty, served
+    `otto host <TAB>` is full and `otto docker --parent <TAB>` is empty, served
     for the whole TTL.
     """
     from otto.labs import HostSummary

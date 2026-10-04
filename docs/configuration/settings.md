@@ -525,13 +525,9 @@ users = { db = "postgres", api = "1000:1000" }  # optional: declared default
 [[docker.use_cases]]                     # a FRAGMENT; repeatable, and two
 name = "integration"                     # fragments sharing a name join one
 composes = ["core"]                      # use-case. Handles from above.
-role = "edge"                            # placement role, matched against a
-                                         # host's `roles` tags
-placement = { edge = "test3" }           # optional committed pin; may be
-                                         # lab-qualified ("unix:test3")
 provides = "edge"                        # optional: candidate provider of a
 priority = 10                            # capability, higher priority wins
-env = { LOG_LEVEL = "debug", EDGE_ADDR = "${otto:role.edge.addr}" }
+env = { LOG_LEVEL = "debug", EDGE_ADDR = "${otto:parent.addr}" }
 pass_env = ["EDGE_TAG"]                  # allowlist copied from your shell
 ```
 
@@ -556,7 +552,11 @@ to docker verbatim (`"1000:1000"`, `"postgres"`, `"postgres:staff"`). See
 Relative paths resolve against the repo root — see
 [Path resolution](#path-resolution).
 
+A use-case fragment no longer takes `role` or `placement`: both are removed
+and refused by name. The parent is `--parent`, or the lab's `docker_priority`
+({ref}`Which host <docker-which-host>`).
+
 {doc}`../cli/docker/use-cases` is the home for what these keys *mean* — how
-fragments compete and are placed, what `${otto:...}` resolves to and where that
+fragments compete, what `${otto:...}` resolves to and where that
 syntax is valid, and how the env channels merge. {doc}`../cli/docker/index`
 lists the commands that read this block.

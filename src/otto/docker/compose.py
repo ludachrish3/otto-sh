@@ -117,55 +117,18 @@ def _safe_username() -> str:
         return "anon"
 
 
-def _repo_parent_host(repo: Repo, lab: Lab, on: str | None) -> UnixHost:
-    """Pick a parent host for *repo*'s compose stack (spec §14).
+def _repo_parent_host(lab: Lab, parent: str | None) -> UnixHost:
+    """Pick the parent host for a repo's compose stack (spec §2).
 
-    Order: explicit *on* > the repo's sole use-case placement > error.
-    ``[[docker.composes]]`` is a pure file inventory now — it carries no
-    placement of its own — so a per-repo verb with no *on* falls through to
-    the repo's declared ``[[docker.use_cases]]`` fragments. The per-repo
-    primitives stay public (spec §11); a repo whose use-cases place onto
-    several hosts is ambiguous here and must pass *on*. The chosen host must
-    be ``docker_capable``.
+    Explicit *parent*, else the lab's default parent: the one rule
+    (:func:`~otto.docker.observe.docker_parent`), the same host a use-case
+    deploys on; the repo has no say. Every refusal is the rule's own
+    :class:`~otto.docker.observe.DockerVerbError` on the ``parent`` field.
     """
-    candidate = on
-    if candidate is None:
-        from .resolve import SelectedFragment, Selection, resolve_placement
+    # Function-scope: observe imports this module.
+    from .observe import docker_parent
 
-        frags = [SelectedFragment(repo, f) for f in repo.docker_settings.use_cases]
-        if not frags:
-            raise ValueError(
-                f"No docker host specified for repo {repo.name!r}. Pass on=<host_id>, "
-                f"or declare [[docker.use_cases]] with a role/placement."
-            )
-        # The Selection's own `use_case` name is a carrier here, never a
-        # claim about which fragment is "the" one: `resolve_placement` never
-        # reads it (`_place_fragment` labels each refusal from the fragment
-        # itself), but naming it after repo.name rather than borrowing
-        # frags[0]'s name avoids attributing every fragment's placement to
-        # whichever one happened to sort first.
-        placed = resolve_placement(Selection(repo.name, frags), lab)
-        if len(placed) != 1:
-            raise ValueError(
-                f"repo {repo.name!r}'s use-cases place onto {sorted(placed)} — "
-                f"ambiguous for a per-repo verb; pass on=<host_id>."
-            )
-        candidate = next(iter(placed))
-
-    if candidate not in lab.hosts:
-        raise ValueError(
-            f"Docker host {candidate!r} is not in lab {lab.name!r}. "
-            f"Available hosts: {sorted(lab.hosts)}"
-        )
-    host = lab.hosts[candidate]
-    if not isinstance(host, UnixHost):
-        raise TypeError(f"Docker host {candidate!r} must be a UnixHost; got {type(host).__name__}")
-    if not host.docker_capable:
-        raise ValueError(
-            f"Host {candidate!r} is not docker_capable. Mark it in lab.json with "
-            f'"docker_capable": true.'
-        )
-    return host
+    return docker_parent(lab, parent)
 
 
 async def _compose_cmd(
@@ -259,7 +222,7 @@ async def compose_up(
     repo: Repo,
     lab: Lab,
     *,
-    on: str | None = None,
+    parent: str | None = None,
     project_name: str | None = None,
     build: bool = False,
 ) -> dict[str, DockerContainerHost]:
@@ -293,7 +256,7 @@ async def compose_up(
     if not settings.composes:
         raise ValueError(f"Repo {repo.name!r} has no [[docker.composes]] entries; nothing to up.")
 
-    parent = _repo_parent_host(repo, lab, on)
+    parent_host = _repo_parent_host(lab, parent)
     proj = project_name or get_user_compose_project(repo.name)
 
     # Below _repo_parent_host, so a dry run still fails on an unknown host, a
@@ -304,7 +267,7 @@ async def compose_up(
     if is_dry_run():
         raise CommandNotRunError(
             f"compose_up({repo.name}: {proj})",
-            parent.id,
+            parent_host.id,
             "No image was built, no file was staged, no container was started "
             "and no host was registered.",
         )
@@ -313,7 +276,7 @@ async def compose_up(
         # Late import to avoid a circular `compose <-> build` import.
         from .build import build_images
 
-        results = await build_images(repo, parent)
+        results = await build_images(repo, parent_host)
         for name, built in results.items():
             if not built.is_ok:
                 # value, not msg: the captured build output is the diagnosis.
@@ -327,7 +290,7 @@ async def compose_up(
     # ``OTTO_COMPOSE_SUFFIX``-suffixed variant) rather than ``repo.name`` so
     # concurrent ``otto docker compose up`` invocations with different suffixes
     # don't ``rm -rf`` each other's compose dir mid-stage.
-    remote_files = await stage_compose_files(parent, proj, list(settings.composes))
+    remote_files = await stage_compose_files(parent_host, proj, list(settings.composes))
     remote_file_strs = [str(p) for p in remote_files]
 
     # `is True`, so an UNKNOWN answer (a failed probe) means this call is
@@ -335,9 +298,9 @@ async def compose_up(
     # opposite default would strand a stack nobody claims. This is now used
     # ONLY for that ownership decision: `up -d` itself always runs below,
     # convergent regardless of what this probe answered.
-    brought_up_here = await _stack_already_up(parent, proj) is not True
+    brought_up_here = await _stack_already_up(parent_host, proj) is not True
     try:
-        return await _up_and_register(repo, lab, parent, proj, remote_file_strs)
+        return await _up_and_register(repo, lab, parent_host, proj, remote_file_strs)
     except BaseException:
         # Every raise below this point happens AFTER `up -d` has run, and the
         # caller cannot clean up what it never received: `composed()` arms its
@@ -347,7 +310,7 @@ async def compose_up(
         # failing loud without this would be strictly worse than the bug.
         # Only what WE started; a stack that was already up is someone else's.
         if brought_up_here:
-            await _rollback_partial_up(repo, lab, parent, proj)
+            await _rollback_partial_up(repo, lab, parent_host, proj)
         raise
 
 
@@ -359,7 +322,7 @@ async def _rollback_partial_up(repo: Repo, lab: Lab, parent: UnixHost, proj: str
     residue the user has to clean up by hand deserves to be named.
     """
     try:
-        result = await compose_down(repo, lab, on=parent.id, project_name=proj)
+        result = await compose_down(repo, lab, parent=parent.id, project_name=proj)
     except Exception as e:  # noqa: BLE001 — a rollback may not mask the real error
         # .error, not .exception: the traceback the user needs belongs to the
         # error we are propagating, not to the rollback that failed after it.
@@ -584,7 +547,7 @@ async def _up_and_register(
     if not services:
         # ValueError, not a host error: nothing on the parent failed. The
         # compose file simply declares no services, which is the same class of
-        # refusal as _repo_parent_host's "no docker host specified".
+        # refusal as _repo_parent_host's "not docker_capable".
         raise ValueError(
             f"compose stack {proj} is up on {parent.id} but names no services, so there "
             "is nothing to register — check the compose file's `services:` block"
@@ -604,7 +567,7 @@ async def compose_down(
     repo: Repo,
     lab: Lab,
     *,
-    on: str | None = None,
+    parent: str | None = None,
     project_name: str | None = None,
     stop_timeout: int = 1,
 ) -> CommandResult:
@@ -641,13 +604,13 @@ async def compose_down(
     if not settings.composes:
         return CommandResult(Status.Skipped, value="", command="", retcode=-1)
 
-    parent = _repo_parent_host(repo, lab, on)
+    parent_host = _repo_parent_host(lab, parent)
     proj = project_name or get_user_compose_project(repo.name)
 
     if is_dry_run():
         raise CommandNotRunError(
             f"compose_down({repo.name}: {proj})",
-            parent.id,
+            parent_host.id,
             "No container was stopped and no host was unregistered from the lab.",
         )
 
@@ -667,7 +630,9 @@ async def compose_down(
         # teardown. Staging's own `rm -rf` has already wiped the directory the
         # advisory would name by the time it could fire, so on this path it
         # reports a loss that has happened, about a stack being torn down.
-        remote_files = await stage_compose_files(parent, proj, list(settings.composes), warn=False)
+        remote_files = await stage_compose_files(
+            parent_host, proj, list(settings.composes), warn=False
+        )
     except RuntimeError as e:
         # .error, not .exception: this is returned as a failed CommandResult,
         # so the caller decides how loud to be about it.
@@ -676,7 +641,7 @@ async def compose_down(
         )
         return CommandResult(Status.Failed, value=str(e), command="", retcode=1)
     result = await _compose_cmd(
-        parent,
+        parent_host,
         proj,
         [str(p) for p in remote_files],
         "down",
@@ -687,7 +652,7 @@ async def compose_down(
 
     # Unregister any hosts that came from this stack (shared with the
     # use-case teardown path, which sweeps `<parent>.<usecase>.` instead).
-    await unregister_container_hosts(lab, f"{parent.id}.{repo.name.lower()}.")
+    await unregister_container_hosts(lab, f"{parent_host.id}.{repo.name.lower()}.")
 
     return result
 
@@ -799,7 +764,7 @@ async def composed(
     repo: Repo,
     lab: Lab,
     *,
-    on: str | None = None,
+    parent: str | None = None,
     project_name: str | None = None,
     own: bool = False,
     build: bool = False,
@@ -823,13 +788,13 @@ async def composed(
             the ``finally`` exists, so no teardown is armed for a stack that
             was never brought up.
     """
-    parent = _repo_parent_host(repo, lab, on)
+    parent_host = _repo_parent_host(lab, parent)
     proj = project_name or get_user_compose_project(repo.name)
 
     if is_dry_run():
         raise CommandNotRunError(
             f"composed({repo.name}: {proj})",
-            parent.id,
+            parent_host.id,
             "No stack was brought up, so none was torn down either.",
         )
 
@@ -838,16 +803,16 @@ async def composed(
     # already said it owns the stack.
     was_up = False
     if not own:
-        probed = await _stack_already_up(parent, proj)
+        probed = await _stack_already_up(parent_host, proj)
         if probed is None:
             raise HostCommandError(
-                f"cannot tell whether {proj} was already running on {parent.id}, so "
+                f"cannot tell whether {proj} was already running on {parent_host.id}, so "
                 "composed() cannot promise to leave a peer's stack alone; pass "
                 "own=True to tear down unconditionally"
             )
         was_up = probed
 
-    hosts = await compose_up(repo, lab, on=on, project_name=proj, build=build)
+    hosts = await compose_up(repo, lab, parent=parent, project_name=proj, build=build)
     try:
         yield hosts
     finally:
@@ -863,9 +828,28 @@ async def composed(
             from ..lifecycle import compensate
 
             await compensate(
-                compose_down(repo, lab, on=on, project_name=proj),
+                compose_down(repo, lab, parent=parent, project_name=proj),
                 what=f"docker compose down {proj}",
             )
+
+
+def _default_parent_or_none(lab: Lab) -> UnixHost | None:
+    """Return the lab's default docker parent by the one rule, or ``None`` when it refuses.
+
+    The placeholder walks run at the start of every otto invocation, long
+    before a caller names a use-case, so a lab with no unambiguous parent
+    (a tie, or no docker-capable host) is normal there: they register
+    nothing and say nothing (spec §7).
+    """
+    # Function-scope: a bare `otto docker --help` must not pay observe.py's
+    # import cost (import budget); both modules are fully loaded by the time
+    # this RUNS, so there is no cycle.
+    from .observe import DockerVerbError, default_docker_parent
+
+    try:
+        return default_docker_parent(lab)
+    except DockerVerbError:
+        return None
 
 
 def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
@@ -886,21 +870,29 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
     two kinds apart and auto-start through the right pipeline. A repo with no
     ``use_cases`` keeps today's per-repo ids unchanged.
 
+    Both branches register under the ONE parent the lab's default rule names
+    (:func:`~otto.docker.observe.default_docker_parent`) and under none when
+    the rule refuses — a lab with no unambiguous parent is normal at this
+    point (this walk runs at the start of every otto invocation), not an error.
+
     Returns the number of placeholders registered.
     """
     count = 0
+    parent: UnixHost | None = None
+    resolved = False
     for repo in repos:
         settings = repo.docker_settings
+        if not (settings.use_cases or settings.composes):
+            continue
+        # Resolved once, lazily: a lab none of whose repos declares docker
+        # never pays the rule (or observe.py's import) on the every-invocation
+        # preamble this walk runs in.
+        if not resolved:
+            parent, resolved = _default_parent_or_none(lab), True
+        if parent is None:
+            break  # the rule refuses: no repo gets a placeholder
         if settings.use_cases:
-            count += _register_use_case_placeholders(lab, repo)
-            continue
-        if not settings.composes:
-            continue
-        # Build a map of docker-capable parents in the lab, by id.
-        capable: list[UnixHost] = [
-            h for h in lab.hosts.values() if isinstance(h, UnixHost) and h.docker_capable
-        ]
-        if not capable:
+            count += _register_use_case_placeholders(lab, repo, parent)
             continue
         # Merged over the repo's WHOLE compose set, once, before the loop —
         # not per compose. Reading each entry's own `users` in the loop would
@@ -911,84 +903,64 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
         # One gate, one answer, both paths.
         users = merge_declared_users(settings.composes)
         for compose in settings.composes:
-            # No per-compose placement any more (spec §14) — every
-            # docker-capable host in the lab is a candidate parent
-            # (pessimistic but stable; the actual bring-up picks one).
-            for parent in capable:
-                for service in compose.services:
-                    placeholder = DockerContainerHost(
-                        parent=parent,
-                        container_id="",
-                        project=repo.name,
-                        service=service,
-                        compose_project=get_user_compose_project(repo.name),
-                        user=users.get(service),
-                    )
-                    # Same rule as compose_up's registration: the container
-                    # belongs to its parent's lab, not to whatever composite the
-                    # session assembled.
-                    placeholder.source_lab = parent.source_lab
-                    # Copied, not aliased — same reason as compose_up's.
-                    placeholder.lab_info = replace(parent.lab_info)
-                    if placeholder.id in lab.hosts:
-                        continue
-                    # Same ingest a factory-built host runs, for the same
-                    # reason compose_up's registration runs it — and after the
-                    # duplicate skip, so a placeholder this walk discards
-                    # never runs a provider against a host nobody will see.
-                    apply_providers(placeholder)
-                    lab.add_host(placeholder)
-                    count += 1
+            # One parent, the lab's default by the one rule — the same one the
+            # use-case walk and completion use, so all three agree on which
+            # container hosts exist before the first `up`.
+            for service in compose.services:
+                placeholder = DockerContainerHost(
+                    parent=parent,
+                    container_id="",
+                    project=repo.name,
+                    service=service,
+                    compose_project=get_user_compose_project(repo.name),
+                    user=users.get(service),
+                )
+                # Same rule as compose_up's registration: the container
+                # belongs to its parent's lab, not to whatever composite the
+                # session assembled.
+                placeholder.source_lab = parent.source_lab
+                # Copied, not aliased — same reason as compose_up's.
+                placeholder.lab_info = replace(parent.lab_info)
+                if placeholder.id in lab.hosts:
+                    continue
+                # Same ingest a factory-built host runs, for the same
+                # reason compose_up's registration runs it — and after the
+                # duplicate skip, so a placeholder this walk discards
+                # never runs a provider against a host nobody will see.
+                apply_providers(placeholder)
+                lab.add_host(placeholder)
+                count += 1
     return count
 
 
-def _register_use_case_placeholders(lab: Lab, repo: Repo) -> int:
+def _register_use_case_placeholders(lab: Lab, repo: Repo, parent: UnixHost) -> int:
     """Best-effort use-case placeholders for one repo's fragments (spec §9).
 
-    Each fragment is placed independently via
-    :func:`~otto.docker.resolve.resolve_placement` — NOT via
-    :func:`~otto.docker.resolve.select_fragments`, so the provider
-    competition (spec §4) never runs here: a fragment that would lose its
-    ``provides`` competition at deploy time still gets its own placeholder.
-    That is deliberate (a placeholder exists so `otto host <id>` and
-    completion see something before the first `deploy`), not a bug — its
-    auto-up (``DockerContainerHost._auto_up``)
-    deploys the ACTUAL winning use-case, which may register a different
-    container under the same id and leave this one's id resolving to
-    whatever the competition produced.
-
-    Placement is best-effort PER FRAGMENT: one whose placement cannot be
-    resolved from the lab that happens to be loaded right now (no host
-    carries its role, an ambiguous scope, ...) — or whose ``composes``
-    handles cannot be resolved to services — contributes no placeholder,
-    and the rest of the repo's fragments are still tried. This walk runs at
-    the start of every otto invocation, long before a caller names a
-    specific use-case to bring up, so a fragment that cannot yet be placed
-    is normal, not an error. :func:`~otto.docker.deployment.deploy` still
-    refuses hard on the same conditions when the use-case is actually
-    asked for — the single ``except UseCaseResolutionError`` below is what
-    turns deploy's hard refusal into this walk's soft skip; there is no
-    second, looser copy of the services-from-handles traversal here (see
-    :func:`~otto.docker.deployment._declared`, delegated to below — the
-    one walk that answers both services AND declared users).
+    Every fragment's services are registered under *parent*, the one the
+    lab's default rule names (:func:`_default_parent_or_none`, resolved once
+    by the caller). The provider
+    competition (spec §4) never runs here — a placeholder exists so
+    `otto host <id>` and completion see something before the first `deploy`,
+    whose auto-up (``DockerContainerHost._auto_up``) deploys the ACTUAL
+    winning use-case. A fragment whose ``composes`` handles cannot be
+    resolved to services contributes nothing and the rest are still tried;
+    the walk of services and
+    declared users is :func:`~otto.docker.deployment._declared`, the one
+    answer for both.
     """
     # Function-scope: this walk runs in `cli/invoke.py`'s preamble on every
     # otto invocation, so a bare `otto docker --help` must not pay
-    # deployment.py's or resolve.py's import cost (import budget). No cycle
-    # at call time: `deployment` already imports from `compose` at module
-    # scope, but by the time this function RUNS both modules are fully
-    # loaded.
+    # deployment.py's import cost (import budget). No cycle at call time:
+    # both modules are fully loaded by the time this RUNS.
     from .deployment import _declared
-    from .resolve import SelectedFragment, Selection, UseCaseResolutionError, resolve_placement
+    from .resolve import SelectedFragment, UseCaseResolutionError
 
     count = 0
     for frag in repo.docker_settings.use_cases:
-        sf = SelectedFragment(repo, frag)
         try:
-            placed = resolve_placement(Selection(frag.name, [sf]), lab)
-            declared = _declared([sf], report=False)
+            declared = _declared([SelectedFragment(repo, frag)], report=False)
         except UseCaseResolutionError:
-            continue
+            continue  # a handle this repo does not define: no placeholder, rest still tried
         services = declared.services
         if not services:
             continue
@@ -1001,30 +973,28 @@ def _register_use_case_placeholders(lab: Lab, repo: Repo) -> int:
         # the same thing on both paths.
         users = merge_declared_users(declared.composes)
 
-        for host_id in placed:
-            parent = lab.hosts[host_id]
-            compose_project = use_case_project(parent.source_lab, frag.name)
-            for service in services:
-                placeholder = DockerContainerHost(
-                    parent=parent,
-                    container_id="",
-                    project=frag.name,
-                    service=service,
-                    compose_project=compose_project,
-                    user=users.get(service),
-                )
-                # Same rule as the legacy walk's registration above: the
-                # container belongs to its parent's lab, not to whatever
-                # composite the session assembled.
-                placeholder.source_lab = parent.source_lab
-                # Copied, not aliased — same reason as the legacy walk's.
-                placeholder.lab_info = replace(parent.lab_info)
-                if placeholder.id in lab.hosts:
-                    continue
-                # Same ingest as the legacy walk's, same placement.
-                apply_providers(placeholder)
-                lab.add_host(placeholder)
-                count += 1
+        compose_project = use_case_project(parent.source_lab, frag.name)
+        for service in services:
+            placeholder = DockerContainerHost(
+                parent=parent,
+                container_id="",
+                project=frag.name,
+                service=service,
+                compose_project=compose_project,
+                user=users.get(service),
+            )
+            # Same rule as the legacy walk's registration above: the
+            # container belongs to its parent's lab, not to whatever
+            # composite the session assembled.
+            placeholder.source_lab = parent.source_lab
+            # Copied, not aliased — same reason as the legacy walk's.
+            placeholder.lab_info = replace(parent.lab_info)
+            if placeholder.id in lab.hosts:
+                continue
+            # Same ingest as the legacy walk's, same parent.
+            apply_providers(placeholder)
+            lab.add_host(placeholder)
+            count += 1
     return count
 
 

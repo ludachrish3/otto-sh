@@ -61,7 +61,6 @@ def _budget_ssh_lab(port: int) -> str:
         "rack": 1,
         "shelf": 4,
         "docker_capable": True,
-        "roles": ["docker"],
         "creds": [
             {"login": "vagrant", "password": "vagrant"},
             {"login": "test", "password": "Password1"},

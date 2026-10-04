@@ -142,7 +142,7 @@ def test_the_names_section_carries_the_three_keys_and_read_cache_serves_them(tmp
     assert view["repos"] == ["one"]
 
 
-def test_schema_is_25():
+def test_schema_is_26():
     from otto import _shim_complete as sc
 
-    assert cc.SCHEMA_VERSION == 25 == sc.SCHEMA
+    assert cc.SCHEMA_VERSION == 26 == sc.SCHEMA

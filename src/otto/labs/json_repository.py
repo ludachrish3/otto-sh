@@ -561,6 +561,7 @@ class JsonFileLabRepository:
                         lab_patterns=list(element.labs),
                         ip=identity.ip,
                         docker_capable=identity.docker_capable,
+                        docker_priority=identity.docker_priority,
                         os_type=str(host_data.get("os_type", "unix")),
                         logins=logins_of_host_data(host_data),
                     )

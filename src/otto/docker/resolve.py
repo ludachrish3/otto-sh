@@ -1,4 +1,4 @@
-"""Use-case resolution (spec §4-§6): selection, placement, env — pure functions.
+"""Use-case resolution (spec §4-§6): selection, the one parent, env — pure functions.
 
 No device touches anywhere in this module, so everything here runs under
 ``--dry-run`` and powers ``otto docker use-cases``. Refusals raise
@@ -211,134 +211,9 @@ def _highest_priority(
     )
 
 
-_PLACEMENT_KNOBS = (
-    "Disambiguate with --on <host> for this invocation, or a committed "
-    'placement pin on the fragment (placement = { <role> = "<host>" }).'
-)
-
-
-def resolve_placement(
-    selection: Selection, lab: "Lab", *, on: "str | None" = None
-) -> "dict[str, list[SelectedFragment]]":
-    """Resolve each fragment's host (spec §5); group fragments by host id.
-
-    *on* must be a canonical host id and collapses every fragment to it.
-    """
-    from ..host.unix_host import UnixHost  # function-scope: import-budget
-
-    placed: dict[str, list[SelectedFragment]] = {}
-    for sf in selection.fragments:
-        host_id = on if on is not None else _place_fragment(sf, lab, UnixHost)
-        placed.setdefault(host_id, []).append(sf)
-    return placed
-
-
-def _place_fragment(sf: SelectedFragment, lab: "Lab", unix_cls: "type[UnixHost]") -> str:
-    """Resolve one fragment's host per spec §5 knobs 2-4.
-
-    Knob 1, ``--on``, is handled by the caller before this is ever reached.
-    Knob 2 (the committed pin) is consulted first, but only when it is even
-    *addressable* — a ``placement`` table whose only usable key is the
-    fragment's own ``role`` (anything else can never fire for this fragment,
-    in any lab, since ``role`` is fixed per fragment instance; that shape is
-    refused as config debris, not resolved). When the pin is addressable but
-    :func:`_validate_pin` reports it does not target *this* lab session
-    (``None``), that is legitimate multi-lab config, not an error: fall
-    through to knobs 3-4 exactly as if no pin had been declared.
-    """
-    frag, repo_name, uc = sf.fragment, sf.repo.name, sf.fragment.name
-    where = f"use-case {uc!r} fragment of repo {repo_name!r}"
-
-    if frag.placement and (frag.role is None or frag.role not in frag.placement):
-        raise UseCaseResolutionError(
-            f"{where}: declares a placement pin for role(s) {sorted(frag.placement)} "
-            f"but its own role is {frag.role!r} — the pin can never apply to this "
-            f"fragment in any lab. Fix the key to match the role, add the missing "
-            f"role, or drop the unused pin."
-        )
-    if frag.role is not None and frag.role in frag.placement:
-        pinned = _validate_pin(frag.placement[frag.role], where, lab, unix_cls)
-        if pinned is not None:
-            return pinned
-        # Pin is well-formed but addressed to a lab this session isn't running —
-        # not this call's problem, fall through to role/fallback resolution.
-
-    scope = scope_for_repo(repo_name)
-    in_scope = [
-        (hid, h)
-        for hid, h in lab.hosts.items()
-        if isinstance(h, unix_cls) and h.docker_capable and repo_targets(scope, h.source_lab, hid)
-    ]
-    if frag.role is not None:
-        matches = [hid for hid, h in in_scope if frag.role in h.roles]
-        if len(matches) == 1:
-            return matches[0]
-        if not matches:
-            raise UseCaseResolutionError(
-                f"{where}: no docker-capable host in the repo's scope carries role "
-                f'{frag.role!r}. Tag a host in lab.json ("roles": ["{frag.role}"]). '
-                f"{_PLACEMENT_KNOBS}"
-            )
-        raise UseCaseResolutionError(
-            f"{where}: role {frag.role!r} is ambiguous — carried by {sorted(matches)}. "
-            f"{_PLACEMENT_KNOBS}"
-        )
-
-    if len(in_scope) == 1:
-        return in_scope[0][0]
-    ids = sorted(hid for hid, _ in in_scope)
-    raise UseCaseResolutionError(
-        f"{where} declares no role and the repo's scope holds "
-        f"{len(in_scope)} docker-capable host(s) {ids} — give the fragment a role. "
-        f"{_PLACEMENT_KNOBS}"
-    )
-
-
-def _validate_pin(pin: str, where: str, lab: "Lab", unix_cls: "type[UnixHost]") -> "str | None":
-    """Validate a committed ``placement`` pin, or report it as not-applicable-here.
-
-    Deliberately does **not** consult scope: a committed pin is the repo
-    author explicitly reaching for a host, the same trust ``--on`` gets
-    (spec §5).
-
-    Returns the resolved host id, or ``None`` when the pin is well-formed but
-    plainly addressed to a lab session other than *lab* (a lab-qualified pin
-    naming a lab that is neither the active lab nor a host present here) —
-    that is legitimate multi-lab config (the schema explicitly supports
-    lab-qualified values "for multi-lab sessions") and the caller falls
-    through to the next knob rather than treating it as a refusal.
-
-    Raises when the pin's *shape* could never resolve in any lab (an empty
-    lab or host component), or when it names a host that exists right here
-    under a conflicting lab tag or lacks docker capability — those are real
-    conflicts with what this session can see, not an absent lab.
-    """
-    lab_part, sep, host_part = pin.partition(":")
-    want_lab, host_id = (lab_part, host_part) if sep else (None, pin)
-    if sep and (not lab_part or not host_part):
-        raise UseCaseResolutionError(
-            f"{where}: placement pin {pin!r} is malformed — a lab-qualified pin "
-            f'needs both parts non-empty ("<lab>:<host>"); got lab={lab_part!r} '
-            f"host={host_part!r}"
-        )
-    host = lab.hosts.get(host_id)
-    if host is None:
-        if want_lab is not None and want_lab != lab.name:
-            return None
-        raise UseCaseResolutionError(
-            f"{where}: placement pin {pin!r} names no host in the active lab "
-            f"{lab.name!r}; available: {sorted(lab.hosts)}"
-        )
-    if want_lab is not None and host.source_lab != want_lab:
-        raise UseCaseResolutionError(
-            f"{where}: placement pin {pin!r} is lab-qualified but {host_id!r} "
-            f"belongs to lab {host.source_lab!r}, not {want_lab!r}"
-        )
-    if not isinstance(host, unix_cls) or not host.docker_capable:
-        raise UseCaseResolutionError(
-            f"{where}: placement pin {pin!r} must name a docker-capable unix host"
-        )
-    return host_id
+def place(selection: Selection, parent: "UnixHost") -> "dict[str, list[SelectedFragment]]":
+    """Every selected fragment on *parent* (spec §2): a use-case is one host."""
+    return {parent.id: list(selection.fragments)}
 
 
 _FACT_REF = re.compile(r"\$\{otto:([^}]+)\}")
@@ -371,31 +246,31 @@ def resolve_fact_refs(env: "Mapping[str, str]", facts: "Mapping[str, object]") -
 
 
 _PAIR = 2  # "<namespace>.<attr>" — parent.id, parent.addr
-_TRIPLE = 3  # "<namespace>.<key>.<attr>" — role.<r>.addr, host.<id>.addr
+_TRIPLE = 3  # "<namespace>.<key>.<attr>" — host.<id>.addr
 
 
 def _lookup_fact(path: str, facts: "Mapping[str, object]") -> str:
     parts = path.split(".")
+    if parts[0] == "role":
+        raise UseCaseResolutionError(
+            f"${{otto:{path}}}: role facts are gone; use ${{otto:parent.<fact>}} — a use-case "
+            f"deploys on one parent"
+        )
     try:
         if parts in (["use_case"], ["compose_project"]):
             return str(facts[parts[0]])
         if parts[0] == "parent" and len(parts) == _PAIR and parts[1] in ("id", "addr"):
             parent = cast("Mapping[str, str]", facts["parent"])
             return str(parent[parts[1]])
-        if parts[0] == "role" and len(parts) == _TRIPLE and parts[2] in ("host_id", "addr"):
-            roles_by_id = cast("Mapping[str, Mapping[str, str]]", facts["roles"])
-            return str(roles_by_id[parts[1]][parts[2]])
         if parts[0] == "host" and len(parts) == _TRIPLE and parts[2] == "addr":
             hosts_by_id = cast("Mapping[str, Mapping[str, str]]", facts["hosts"])
             return str(hosts_by_id[parts[1]][parts[2]])
     except KeyError:
         pass
-    roles = sorted(cast("Mapping[str, object]", facts.get("roles", {})))
     hosts = sorted(cast("Mapping[str, object]", facts.get("hosts", {})))
     raise UseCaseResolutionError(
         f"unknown fact ref ${{otto:{path}}}. Known forms: use_case, compose_project, "
-        f"parent.id|addr, role.<role>.host_id|addr (roles: {roles}), "
-        f"host.<id>.addr (hosts: {hosts})."
+        f"parent.id|addr, host.<id>.addr (hosts: {hosts})."
     )
 
 
@@ -436,13 +311,6 @@ class ParentFact(TypedDict):
     addr: str
 
 
-class RoleFact(TypedDict):
-    """One role's resolved host id + address, as carried in facts (spec §7)."""
-
-    host_id: str
-    addr: str
-
-
 class HostFact(TypedDict):
     """One host's address, as carried in facts (spec §7)."""
 
@@ -455,7 +323,6 @@ class Facts(TypedDict):
     use_case: str
     compose_project: str
     parent: ParentFact
-    roles: "dict[str, RoleFact]"
     hosts: "dict[str, HostFact]"
     files: "dict[str, str]"
     scratch_dir: str
@@ -463,7 +330,6 @@ class Facts(TypedDict):
 
 def build_facts(
     selection: Selection,
-    placed: "dict[str, list[SelectedFragment]]",
     lab: "Lab",
     *,
     compose_project: str,
@@ -473,9 +339,9 @@ def build_facts(
 ) -> Facts:
     """Build the plain-data facts dict handed to adapters and fact refs (spec §7).
 
-    A role that resolves to more than one host across fragments, or a host
-    with no resolvable address, is a configuration error refused here (pure,
-    before anything is staged) rather than silently guessed at — spec §2.4/§12.
+    A parent or host with no resolvable address is a configuration error
+    refused here (pure, before anything is staged) rather than silently
+    guessed at — spec §12.
     """
     from ..host.unix_host import UnixHost  # function-scope: import-budget
 
@@ -495,33 +361,12 @@ def build_facts(
             )
         return str(ip)
 
-    roles: "dict[str, RoleFact]" = {}
-    for host_id, frags in placed.items():
-        for sf in frags:
-            role = sf.fragment.role
-            if role is None:
-                continue
-            entry: RoleFact = {
-                "host_id": host_id,
-                "addr": _addr(host_id, context=f"role {role!r}"),
-            }
-            prev = roles.setdefault(role, entry)
-            if prev != entry:
-                raise UseCaseResolutionError(
-                    f"use-case {selection.use_case!r}: role {role!r} resolves to "
-                    f"multiple hosts across fragments ({prev['host_id']!r} and "
-                    f"{host_id!r}) — facts cannot carry one address for it. Give "
-                    f"the fragments distinct roles, or pin them to one host "
-                    f'(placement = {{ {role} = "<host>" }}), or use --on.'
-                )
-
-    # Union of the participating repos' scoped universes — same clause
-    # `_place_fragment` applies per repo, but a fact dict serves every
-    # participating repo at once, so no single repo's scope can narrow it
-    # alone (spec §7: "the owning repo's scoped universe").
+    # Union of the participating repos' scoped universes: a fact dict serves
+    # every participating repo at once, so no single repo's scope can narrow
+    # it alone (spec §7: "the owning repo's scoped universe").
     #
-    # Deliberately NOT filtered by `docker_capable`, unlike placement's own
-    # in-scope list. Placement asks "where can this stack RUN"; these facts
+    # Deliberately NOT filtered by `docker_capable`, unlike the parent rule.
+    # The parent rule asks "where can this stack RUN"; these facts
     # answer "what may a deployed service be told the address of", and the
     # answer includes hosts that will never run a container — the bench DUT a
     # container is meant to talk to is the motivating case, and spec §7 defines
@@ -540,7 +385,6 @@ def build_facts(
         "use_case": selection.use_case,
         "compose_project": compose_project,
         "parent": {"id": parent_id, "addr": _addr(parent_id, context="parent_id")},
-        "roles": roles,
         "hosts": hosts,
         "files": dict(files),
         "scratch_dir": scratch_dir,

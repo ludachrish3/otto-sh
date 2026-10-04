@@ -1,22 +1,22 @@
 # otto docker compose ps
 
-Print `docker compose ps` for a use-case's project on every host the use-case
-is placed on, exactly as docker printed it.
+Print `docker compose ps` for a use-case's project on each docker-capable
+host, exactly as docker printed it.
 
 ```text
-otto docker compose ps [USE_CASE] [-a|--all] [--on HOST] [--provide CAP=REPO]...
+otto docker compose ps [USE_CASE] [-a|--all] [--parent HOST] [--provide CAP=REPO]...
 ```
 
 | Option | Description |
 | ------ | ----------- |
 | `USE_CASE` (argument) | Use-case whose stacks to list (default: the only one declared; several is an error) |
 | `-a`, `--all` | Show every container of the project, not only the running ones (docker's `-a`) |
-| `--on HOST` | Collapse every fragment onto this lab host; resolved exactly as {doc}`up` resolves it |
+| `--parent HOST` | Ask this docker-capable host only (default: every one; see {ref}`Which host <docker-which-host>`) |
 | `--provide CAP=REPO` | Break a provider tie for capability `CAP`; resolved exactly as {doc}`up` resolves it. Repeatable |
 
-`USE_CASE`, `--on` and `--provide` pick the same hosts and the same compose
-project `up` and {doc}`down` pick, so `ps` can never look at a different
-stack than the one deployed. Where the plain {doc}`../ps` lists every container
+`USE_CASE`, `--parent` and `--provide` pick the same compose project `up` and
+{doc}`down` pick, so `ps` can never look at a different stack than the one
+deployed. Where the plain {doc}`../ps` lists every container
 a host's daemon holds, this lists only that project's.
 
 otto adds one line per host, `== <host-id> ==`, and changes nothing inside

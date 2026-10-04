@@ -3,17 +3,16 @@
 Build the container images the selected repos declare, on one lab host.
 
 ```text
-otto docker build --on HOST [--repo NAME] [IMAGE...]
+otto docker build [--parent HOST] [--repo NAME] [IMAGE...]
                   [-t/--tag REF]... [--no-cache] [--pull]
                   [--build-arg KEY=VALUE]... [--target STAGE]
 ```
 
 `build` builds images and nothing else. Like `docker build`, it knows nothing
 about a composition: the context of each `[[docker.images]]` entry is staged
-onto `HOST` and `docker build` runs on that host's daemon. Because an image
-has to land on the daemon that will run it, the host is the one thing this
-verb needs, so `--on` is required. To build the images a deployment would
-use, on the hosts it would use, run {doc}`compose/build` instead.
+onto the parent and `docker build` runs on that host's daemon; the parent is
+chosen as {ref}`Which host <docker-which-host>` describes. To build the images a
+deployment would use, run {doc}`compose/build` instead.
 
 Every build runs. Otto keeps no record of earlier builds and skips nothing:
 docker's own layer cache decides what a rebuild reuses, and `--no-cache`
@@ -23,7 +22,7 @@ turns it off.
 
 | Option | Description |
 | ------ | ----------- |
-| `--on HOST` | The docker-capable lab host to build on. Required |
+| `--parent HOST` | The docker-capable lab host to build on (default: {ref}`Which host <docker-which-host>`) |
 | `--repo NAME` | Restrict to a single repo by name |
 | `IMAGE...` (argument) | Declared `[[docker.images]]` names to build (default: every declared image) |
 
@@ -47,7 +46,7 @@ home for them; {doc}`compose/build` links here.
 | `--build-arg KEY=VALUE` | As `docker build`'s `--build-arg`. Repeatable; added to the entry's declared `build_args`, and a repeated key wins over the declaration |
 | `--target STAGE` | As `docker build`'s `--target`; replaces the entry's declared `target` |
 
-`--tag <TAB>` offers the references the `--on` host's daemon listed in the last
+`--tag <TAB>` offers the references the parent's daemon listed in the last
 day.
 
 A flag docker does not have is not here, and a flag otto once had that
