@@ -149,10 +149,16 @@ even when the change is to the enum, not to the function.
 9. any other callable with a signature (`functools.partial`, a callable instance): `callable`;
 10. anything else: `value`.
 
+A `functools.partial` is tested for before rule 8. Python 3.14's `inspect.isroutine` reports one
+as a routine and earlier versions do not, so a binding is `callable` on every version.
+
 **Ancestry:** `mro\t<key>\t<entries>` for `class`, `model`, `enum` and `protocol` bindings.
 - An entry is a base that is a declared public binding, or a `builtins` class other than
   `object` (exception bases, `str`, `int`, …), written `@builtin:builtins.ValueError` as in
   §3.2. Private and otto-internal bases have no entry.
+- A `builtins` class is always written `@builtin:`, even when a public binding is bound to it
+  (`otto.host.OsType = str`). A binding never stands in for a builtin, so binding one changes no
+  other class's ancestry.
 - `mro` records the `isinstance` facts only. Members are recorded separately: a class's `member`
   records are its effective members along the whole MRO, public bases included (§3.4).
 - A public base is written as the sorted set of **all** its public bindings, such as
@@ -214,7 +220,9 @@ Input names are data keys, not Python members. D-5 does not apply to them.
   `x: int`, own or inherited, found through `typing_extensions.get_protocol_members`. These are
   absent from the class `__dict__` when they have no default, so ordinary member discovery misses
   them. Types are not recorded. A `__slots__` entry (a member descriptor) is a `field` too.
-- **`attribute`.** Any other class attribute that is not a descriptor.
+- **`attribute`.** Any other class attribute that is not a descriptor. A `functools.partial`
+  class attribute is an `attribute` on every version: 3.13 gave it `__get__`, but how a partial
+  binds as a method is Python's behaviour, not otto's.
 - **`class`.** A nested public class. It is also emitted as its own binding `<key>.<m>`, with a
   full record set.
 - **`classref=<binding>`.** A nested class reference back to a class already on the current
@@ -229,8 +237,10 @@ Input names are data keys, not Python members. D-5 does not apply to them.
 - `__eq__`, `__hash__`.
 
 **Discovery reads `__dict__` along the MRO,** never `dir()`, so a custom `__dir__` hides nothing.
-It covers the class itself and every otto class on its MRO, public or private, plus each one's
-dataclass, pydantic or NamedTuple field metadata. For an `enum` binding, names in
+It covers every otto class on the MRO, the class itself included, public or private, plus each
+one's dataclass, pydantic or NamedTuple field metadata. A class is an otto class when its module
+is `otto` or `otto.*`. A public binding bound to a class otto does not define (`OsType = str`)
+gets its `name`, `mro`, `call` and `abstract` records, and no `member` records (§3.5). For an `enum` binding, names in
 `cls.__members__` are excluded: the `enum` records carry them (§3.7).
 
 **Unclassifiable members are refused.** A public member whose value defines `__get__`, `__set__`
@@ -240,7 +250,8 @@ or `__delete__` and is none of the above (a function, `classmethod`, `staticmeth
 ### 3.5 External bases (D-4)
 
 - Builtin bases appear in `mro`, so `except ValueError` stays protected. Their members are never
-  enumerated: they vary by Python version, and they are the standard library's to promise.
+  enumerated: they vary by Python version, and they are the standard library's to promise. The
+  same holds when a public binding *is* such a class.
 - Members inherited from a third-party base are not enumerated either. Replacing such a base can
   remove methods users rely on, and that is **not detected**. This is a stated coverage limit.
 
@@ -258,7 +269,7 @@ or `__delete__` and is none of the above (a function, `classmethod`, `staticmeth
 
 `enum\t<key>\t<member>\t<value>` over `cls.__members__.items()`, so aliases, zero flags and
 declared composite flags are all recorded, in definition order. A member whose value cannot be
-encoded is a producer refusal.
+encoded is a producer refusal: its encoding is `O`, or holds `O` anywhere inside a `T:` or `Z:`.
 
 ## 4. Compatibility rules
 
