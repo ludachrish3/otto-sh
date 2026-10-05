@@ -188,7 +188,8 @@ gated, if and only if its name has no leading underscore, or it is one of the su
 
 `api/public.toml` (repo root, read only by tooling) lists namespaces, never names. For each one
 it records the tier, the stability (`provisional` throughout at first) and a free-text *pending*
-note.
+note. It also declares otto's versioned formats, each pointing at the constants that hold the
+versions otto reads and writes (dump spec §13).
 
 A name reachable from two namespaces (`otto.host:TransferProgressHandler` and
 `otto.host.transfer:TransferProgressHandler`) is public at both. A test asserts that both resolve
@@ -396,6 +397,9 @@ object. Otherwise those objects stay public at their declared paths.
    - **Additions:** the appendix-B names join their namespaces, and `DeclaredEntry` becomes a
      runtime binding.
    - **First `__all__`:** every declared module in appendix F gets one.
+   - **Versioned formats (dump spec §13):** the formats in its inventory are declared. Their
+     acceptance paths, the browser's monitor-export reader included, switch to the declared
+     constants. Each declared `reads` version gets a frozen, populated conformance sample.
    - **Hook renames (D-5):** every underscore member that is an extension contract gets a
      public name, with every implementation, override, caller, docs page and example (dump spec
      §7.4).
@@ -537,7 +541,10 @@ lands earlier, and spec 5.
   `cli-exposed-verbs.md:96`; `otto.host.transfer.unix` at `extending-backends.md:47` names no
   module). These are reported to the owner for triage.
 - **Settings and lab-file key stability:** the schema-diff gate already planned at
-  `docs/contributing.md:349`.
+  `docs/contributing.md:349`. It also covers the other retained but unversioned inputs listed in
+  dump spec §13.4.
+- **Version bumps.** A cache schema bump needs no mark. A versioned format's dropped version
+  does (dump spec §13).
 
 ## 10. Verification
 

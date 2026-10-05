@@ -30,6 +30,7 @@ file-operation accounting. Spec 1 §6 links here instead of restating.
 | D-4 | **Two relaxations, stated as policy.** `Host` keyword-only parameter *order* is no longer checked. Members inherited from non-otto bases are not enumerated (§3.5). |
 | D-5 | **Gated ⟺ public ⟺ no leading underscore,** for members of declared classes. The owner: "a gated symbol and a public symbol are one and the same." Replaces spec 1 Q1 (§7). |
 | D-6 | **Keyword interception is not breaking.** Adding `x=0` in front of `**kw` keeps every old call working; `x` is now a named parameter instead of a `kw` entry. |
+| D-7 | **Versioned formats are declared,** each with the set of versions otto reads and writes. Dropping a version is a marked break; adding one is how otto grows backwards compatibility (§13). |
 
 ## 1. Scope
 
@@ -71,7 +72,9 @@ The golden stays at `tests/unit/api_snapshot/public_api.txt`.
   - `name`, `mro`, `call`, `abstract` and `requires` are unique per key;
   - `member` repeats per member name;
   - `input` repeats per input name;
-  - `enum` repeats per member name.
+  - `enum` repeats per member name;
+  - `format` is unique per format name. Format records have no binding and come after every
+    binding group (§13.2).
 - **Freshness.** Any byte difference from the regenerated dump, a re-sort included, is a
   freshness refusal. The compatibility comparison runs on parsed records, so a re-sort produces
   no compatibility finding.
@@ -81,7 +84,7 @@ The golden stays at `tests/unit/api_snapshot/public_api.txt`.
 The parser refuses:
 - an unknown kind;
 - a duplicate identity;
-- a record whose binding has no `name` record;
+- a record whose binding has no `name` record (`format` records excepted, §13.2);
 - a binding missing a record its kind requires:
 
   | Kind | Required records |
@@ -210,7 +213,7 @@ Input names are data keys, not Python members. D-5 does not apply to them.
   NamedTuple field, or a protocol data member. A protocol data member is an annotation-only
   `x: int`, own or inherited, found through `typing_extensions.get_protocol_members`. These are
   absent from the class `__dict__` when they have no default, so ordinary member discovery misses
-  them. Types are not recorded.
+  them. Types are not recorded. A `__slots__` entry (a member descriptor) is a `field` too.
 - **`attribute`.** Any other class attribute that is not a descriptor.
 - **`class`.** A nested public class. It is also emitted as its own binding `<key>.<m>`, with a
   full record set.
@@ -316,6 +319,9 @@ The rules below implement the invariant. Where a rule here and §4.3 seem to ove
 the parent.
 
 **Enums:** an `enum` member removed, or its encoded value changed.
+
+**Formats:** a version removed from a format's `reads` or `writes`, or a declared format removed
+(§13.3).
 
 ### 4.3 Not breaking
 
@@ -569,6 +575,7 @@ table, and every P0 proof it does not mention is kept.
 | Schema | a producer-schema decrease, ordinary or through a merge; a schema bump without a table row | — |
 | Conversion | a `Host` method loses a keyword name v1 recorded; an unaccounted v1 `Host` line; a v1 deep line dropped; an omitted rename-inventory entry in the P1 footer | a representation-only conversion; safe `Host` widening; a `Host` keyword-only reorder (D-4); a kind narrowing v1's projection never recorded, such as `(self, x)` → `(self, *, x)` (it has no retroactive obligation) |
 | Merges | a merge-only shape break; a merge leaving v2; a v2 rollback through a merged parent | a harmless v2 merge; a v1-first, v2-second merge that keeps v2 |
+| Formats | a version dropped from `reads`; a version dropped from `writes`; a format removed; a format constant missing, non-literal or holding a duplicate (refusal); a format module that does not import (refusal) | a version added; a new format; a constant moved to another module with the same values; a marked removal passes; a string version (`"otto-check/1"`) |
 | Marks | a marked §4.4 refusal still fails, for each refusal kind | either mark form makes a §4.2 finding pass |
 | Matrix (CI lane) | a divergent `auto()` enum | the real surface and every fixture byte-identical on 3.10–3.14 under two hash seeds |
 
@@ -588,5 +595,137 @@ history carries the `name`-line format. Nothing live is enforced before P1.
 - **`scripts/check_breaking_marks.py`:** §4's comparators, §5's per-commit generation, §8's
   conversion and §9's merges. The v1 → v1 path is untouched.
 - **`scripts/api_teaching.py`:** gains `taught-private-member` (§7.3).
+- **`scripts/api_manifest.py`:** parses `[formats.*]` (§13.1). The child resolves the constants
+  and writes `format` records; `api_compat` applies §13.3. No format is declared in P0, and
+  conformance samples are P1 work (§13.5).
 - **No new dependency.** `typing_extensions` is already a direct dependency
   (`pyproject.toml:100`). File-operation accounting is all zeros, since only dev scripts change.
+
+## 13. Versioned formats (D-7)
+
+**The question.** Does a bump in a version number mean a breaking change? Not necessarily. What
+decides it is whether anything outside the running otto keeps data or a process in the old
+version and can no longer use it.
+
+**Disposable storage is exempt.** Bumping a cache's schema, and so invalidating it, needs no
+mark: otto discards and rebuilds it. This covers the completion cache and the shim, the
+dynamic-tunnel and docker-observed caches, collected tests and the remote completion cache. The
+exemption covers the schema bump only. A user-facing behaviour change, or a change to a
+document that is also reused outside the cache, keeps the normal policy. The inventory snapshot,
+for example, is also a supported export.
+
+### 13.1 Declaration
+
+`api/public.toml` gains one `[formats.<name>]` table per retained versioned interface. `<name>`
+is a kebab-case identifier. Each table points at runtime constants and holds nothing else:
+
+```toml
+[formats.link-sentinel]
+reads  = "otto.link.sentinel:READ_VERSIONS"    # the versions otto accepts
+writes = "otto.link.sentinel:WRITE_VERSIONS"   # the versions otto emits
+```
+
+- **`reads`** is the set of versions otto accepts as **retained input**, whoever wrote it:
+  otto, an older otto, a user or another tool. **`writes`** is the set of versions otto emits for
+  others to read. A format declares at least one of the two. They are independent: a reader
+  need not have a single "current" version, and the link sentinel already reads `"v1"`, `"v2"`
+  and `"v3"` while writing `"v1"` and `"v3"`.
+- **A version is an `int` or a `str`.** The `otto check` report's marker is `"otto-check/1"`.
+- **Each constant is a literal list,** and must live in a dependency-light module. The child
+  imports that module, and never imports or runs a reader to learn a version. If the module
+  does not import, that is a refusal; the producer never falls back to a static value.
+- **Every acceptance and dispatch path uses the declared `reads` constant,** including the
+  browser's reader of the monitor export, and **every writer chooses or validates its emitted
+  version against `writes`.** P1 wires each one. A path that checks its own literal is a defect
+  that review catches; the gate cannot see it.
+- **`reads` promises reading only.** Appending to or editing a file of an older version needs
+  its own migration or compatible writer. Until one exists, mutation stays restricted to the
+  current shape (the monitor database is the case today). An incompatible change of shape
+  needs a new version, even when the old number could be kept.
+
+### 13.2 Record
+
+`format\t<name>\t<reads>\t<writes>`. Both are lists of encoded versions (`I:` or `S:`),
+sorted by encoded text, `-` when empty.
+- **Standalone.** A `format` record has no binding; §2.3's owner rule does not apply to it.
+- **Identity** is `(format, <name>)`.
+- **Position.** All `format` records come after every binding group, sorted by name.
+- **Producer refusals:**
+  - a missing constant;
+  - a constant that is not a literal list of `int`/`str`;
+  - a duplicate version;
+  - both lists empty;
+  - a module that does not import.
+
+### 13.3 Compatibility rules
+
+**Breaking (§4.2):**
+- a version removed from `reads` or from `writes`;
+- a declared format removed.
+
+Moving a constant to another module, with the same facts, is not a change: the record carries
+values, not pointers.
+
+**Not breaking:** a version added to either set (how otto grows backwards compatibility), or a
+new format declared.
+
+**Not detected:**
+- an incompatible change that keeps its version number, such as a field dropped from
+  `tickets.json` while it still says 2;
+- a reader whose validation silently narrows what a version accepts.
+
+Both are review matters. P1's conformance tests (§13.5) are the evidence for the second.
+
+**Marks and refusals.** A format support removal is a markable §4.2 finding. It is a data-format
+version, not the producer schema: lowering it with a mark is allowed. The producer-schema,
+golden and manifest refusals of §4.4 and §5.4 are unchanged, and no mark excuses them. Merges are
+judged against the first parent, as for every other record (§9).
+
+### 13.4 Inventory, from the code on `6d2093b9`
+
+| Format | Versions today | Declared |
+|---|---|---|
+| Coverage store | reads/writes 8 | yes |
+| Coverage capture | reads 3; writes 3 by default, though a caller can override the stamp today | yes |
+| Monitor database | reads/writes 2 (`PRAGMA user_version`; existing v2 files also differ by columns) | yes |
+| Monitor JSON export | reads/writes 1 (Python and the browser) | yes |
+| Reservations JSON | reads 1 (user-maintained input) | yes |
+| `tickets.json` | writes 2 | yes |
+| `otto check` report | writes `"otto-check/1"` | yes |
+| Link impairment sentinel | reads `"v1"`, `"v2"`, `"v3"`; writes `"v1"`, `"v3"` (remote process argv) | yes |
+| Tunnel and check-echo sentinels | reads/writes `"v1"` (remote process argv) | yes |
+| kmodcov interface | reads 2 (`.ko` metadata) | yes |
+| Caches (completion, shim, tunnels, docker, collected tests, remote completion) | — | no: disposable |
+| gcov `.gcda` stamps | GCC's and Clang's formats | no: external; dropping a toolchain dialect is a review matter |
+
+**Retained but unversioned, recorded for the schema-diff design** (spec 1 §9):
+- lab files;
+- project and user settings;
+- inventory documents and snapshots;
+- credentials;
+- coverage overrides;
+- coverage metadata (`.otto_cov_meta.json`).
+
+They get no invented version constants here.
+
+**Other emitted formats, out of scope:**
+- monitor server-sent-event fragments;
+- generated JSON Schemas;
+- coverage-report JavaScript chunks, which are bundled implementation;
+- JUnit results, an external standard.
+
+They are not part of this gate. One that becomes an independently consumed protocol is declared
+then.
+
+### 13.5 Conformance (P1)
+
+Every declared `reads` version gets a frozen, **populated** sample input, and **every reader**
+of the format gets a domain test that loads it through that reader's real entry point and
+asserts semantic results, not just "did not raise". For the monitor export, that means Python
+review, the browser's `parseExportDocument` and the SQLite `build_db_export`, including its
+nested-JSON decoding. Each declared `writes` version gets an emission test. Where a format can
+be mutated (append, edit), a test runs the mutation on a copy of each older sample. It shows
+either a refusal, or a migration that keeps the rows and stamps the version correctly. Historical samples are frozen independently of today's writers: a SQLite sample is a
+checkpointed database or frozen SQL with its historical schema, `user_version` and rows. Removing
+a version deletes its sample in the same, marked commit. A failing conformance test is an
+inconsistency to fix; a mark never excuses it.
