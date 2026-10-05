@@ -1,7 +1,7 @@
 # Public surface declaration — design (spec 1 of the #590 contract-first series)
 
-**Status:** v6, for owner approval. Codex approved v5, and its two factual corrections are
-applied. **Date:** 2026-10-04.
+**Status:** v7, for owner approval. v6 was approved and P0 built against it. **Date:**
+2026-10-04, amended 2026-10-05.
 - v1 tried to freeze otto's contracts. Codex rejected it, and the owner then said a freeze is not
   the goal (§1).
 - v2 declared the surface, but its transition dropped protection for paths the docs teach today.
@@ -24,6 +24,11 @@ applied. **Date:** 2026-10-04.
   the whole #590 series makes **one** public cutover. P0 lands first; specs 2–4 are designed
   next; then a single P1 carries every public-path change in the series. Spec 5 moves code
   behind paths that no longer change.
+- v7 adopts the **API dump** (`2026-10-05-api-dump-design.md`, "the dump spec"). The golden
+  records each public binding's shape: calls, inputs, members, ancestry, obligations, enums. Each
+  commit's dump is regenerated from that commit and diffed by explicit compatibility rules. It
+  replaces the `Host` lines and Q1: a gated member is a public member, and P1 gives the
+  underscore hooks public names.
 
 **Series:** #590 (untangle the import cycle) is split into specs, each approved before code
 moves: **1. public surface declaration (this)**, 2. run-state contracts (variant/policy lifetime,
@@ -60,14 +65,17 @@ the thin CLI). The owner's goal for "long-term public-API stability" is:
    spec 1's (D1 and appendix G) and whatever specs 2–4 decide. From then on, the declared surface is what paths are kept against.
 2. **Every breaking change to the public API is visible.** Either a `!` in the subject or a
    `BREAKING CHANGE:` footer marks it; the checker accepts either, as it does today. Additions
-   are not breaking. They appear as ordinary `feat:` entries in the generated changelog.
+   are not breaking, and appear as ordinary `feat:` entries in the generated changelog. Three
+   kinds of addition are breaking, because they break existing callers or implementers: a new
+   required parameter, a new required input, and a new obligation (abstract or protocol member) on an existing class (dump
+   spec §4.2).
 3. **Contracts stay free to evolve.** Changing a signature or behaviour is allowed when it is
    visible (point 2). It is not prevented.
 
 So this spec **declares** the public surface: which names are public, and at which path. It does
-**not** freeze signatures or behaviour. Every public name starts **provisional**. An area is
-promoted to **stable** on its own schedule (§5), which is when detailed contract pinning is
-designed for it.
+**not** freeze signatures or behaviour. Shape changes are detected and must be marked (the dump
+spec), but they are allowed. Every public name starts **provisional**. An area is promoted to
+**stable** on its own schedule (§5), which is when its behavioural contract is designed.
 
 ## 2. What exists today
 
@@ -169,10 +177,14 @@ lacks evidence (§4, K).
   - `otto.lifecycle`, `otto.layout`, `otto.declared`.
 - Every other module path is internal.
 
-**Membership authority: `__all__`, and nothing else.** A name is public if and only if it is in
-the `__all__` of a declared namespace. Every package facade has one today (`otto.host.transfer`
-included), and so does `otto.tls`. P1 gives every other declared module its first `__all__`
-(appendix F).
+**Membership authority for namespace bindings: `__all__`, and nothing else.** A name is public
+if and only if it is in the `__all__` of a declared namespace. Every package facade has one
+today (`otto.host.transfer` included), and so does `otto.tls`. P1 gives every other declared
+module its first `__all__` (appendix F).
+
+**Members of a declared class** follow D-5 instead (dump spec §7.1): a member is public, and
+gated, if and only if its name has no leading underscore, or it is one of the supported dunders
+(dump spec §3.4).
 
 `api/public.toml` (repo root, read only by tooling) lists namespaces, never names. For each one
 it records the tier, the stability (`provisional` throughout at first) and a free-text *pending*
@@ -241,19 +253,19 @@ object. Otherwise those objects stay public at their declared paths.
 
 | Class | Remove, rename or move a public name | Breaking signature/behaviour change | Mechanically detected |
 |---|---|---|---|
-| **provisional** (default) | mark required | mark required | `name` lines; the namespace list |
-| **stable** (by promotion) | mark required | mark required | adds contract-level facts, designed per area at promotion |
+| **provisional** (default) | mark required | mark required | the dump's records (dump spec §4); the namespace list |
+| **stable** (by promotion) | mark required | mark required | the same, plus the area's conformance tests |
 | internal | free | free | — |
 
-- **What provisional means.** The gate catches a removed, moved or renamed name. A signature or
-  behaviour break of a provisional name relies on review and the commit convention, not on a gate.
-  This is the deliberate cost of not freezing. The existing `Host` lines are kept as they are.
+- **What provisional means.** The gate catches a removed, moved or renamed name, and every shape
+  break the dump records (dump spec §4.2). A behaviour break, and any break the dump does not
+  cover (dump spec §1), relies on review and the commit convention. This is the deliberate cost
+  of not freezing.
 - **Promotion** of an area is a small spec of its own, and must provide:
   1. a contract page: hooks with their direction (who calls whom), required/optional/conditional
-     members, constructor obligations, and which underscore members are contract (Q1);
-  2. the structural facts its golden pins, chosen from Codex's v1 matrix;
-  3. named conformance tests for its behaviour;
-  4. owner sign-off.
+     members and constructor obligations. Every contract member is already public (D-5);
+  2. named conformance tests for its behaviour;
+  3. owner sign-off.
 - **Transitions, read from `api/public.toml`:**
   - internal → public: free;
   - provisional → stable: free;
@@ -262,10 +274,10 @@ object. Otherwise those objects stay public at their declared paths.
 
 ## 6. Machinery
 
-- **Producer** (`scripts/api_snapshot.py`). The golden becomes v2, with a `# api-snapshot v2`
-  header and two line kinds:
-  - `name <namespace>:<name>` for every member of every declared namespace's `__all__`;
-  - the existing `Host` lines.
+- **Producer** (`scripts/api_snapshot.py`). The golden becomes v2: the API dump. Its format,
+  records and generation are the dump spec's §§2–3 and §5. Every member of every declared
+  namespace's `__all__` gets a `name` record, plus the records its kind carries. The `Host`
+  lines are replaced by `otto.host:Host`'s records.
 
   Docs stop producing lines; they are validated instead.
 - **Docs validator,** replacing the docs scan.
@@ -293,7 +305,8 @@ object. Otherwise those objects stay public at their declared paths.
     - every `import otto.x [as y]` is a declared namespace;
     - every later `otto.x.N` / `y.N` access in the same block or file is a declared name of `x`;
     - every `"pkg.mod:Name"` string that names an otto object is declared;
-    - no star import.
+    - no star import;
+    - no taught use of an otto underscore member (`taught-private-member`, dump spec §7.3).
   - Unsupported syntax fails loudly. There is no exception list.
   - Explanatory roles are not restricted (§3).
 - **Shared line format.** `scripts/api_lines.py` holds one renderer/parser that both the producer
@@ -303,30 +316,32 @@ object. Otherwise those objects stay public at their declared paths.
   - **Parent v1:** today's rules, unchanged. A removed root or `Host` line needs a mark. A removed
     deep line needs one if its path no longer imports, including bare-module lines.
   - **Parent v2:**
-    - a removed `name` line needs a mark;
+    - the commit's dump must equal the one regenerated from that commit (dump spec §5). A stale
+      or re-sorted dump is refused, marked or not;
+    - records are compared by the dump spec's §4 rules. A breaking finding (§4.2), such as a
+      removed `name` record, needs a mark;
     - a namespace removed from `api/public.toml`, or downgraded from stable to provisional,
-      needs a mark (the checker diffs the parent and current TOML);
-    - `Host` lines keep today's rules;
-    - removed lines are matched against added lines after normalisation, so a re-sort is not a
-      break.
-  - **Merge commits.** Today's walk skips them (`check_breaking_marks.py:249-266`). Under v2, a
-    merge is compared with its **first parent**:
+      needs a mark (the checker diffs the parent and current TOML).
+  - **Merge commits.** Before P0 the walk skipped them. P0 includes them
+    (`check_breaking_marks.py:255`). Under v2, a merge is compared with its **first parent**:
     - one that changes the golden or the TOML in a breaking way needs a mark in its message;
     - a harmless merge passes;
     - a merge with any v2 parent is in the v2 era: if a merged parent carries a v2 golden and
       the merge does not, it is refused, marked or not (otherwise `git merge -s ours` from a
       v1 branch would leave v2).
 
-    The existing "merges are skipped" test (`test_check_breaking_marks.py:132-151`) is replaced
-    by two tests: a harmless merge passes, and a merge-only removal fails.
+    P0 replaced the old "merges are skipped" test with merge-inclusion tests
+    (`tests/unit/scripts/test_check_breaking_marks.py:132`): a harmless merge passes, and a merge-only removal
+    fails.
   - **The v1 → v2 commit** (P1) is converted record by record:
-    - a v1 root line (`otto:N`) that does not reappear as `name otto:N` needs a mark, even if `N`
-      still imports (today's rule, `test_check_breaking_marks.py:330-342`);
-    - `Host` lines keep their comparison rules;
+    - a v1 root line (`otto:N`) that does not reappear as a `name otto:N` record needs a mark,
+      even if `N`
+      still imports (today's rule, `tests/unit/scripts/test_check_breaking_marks.py:330-342`);
+    - `Host` lines convert to `otto.host:Host` member records, by the dump spec's §8;
     - a bare v1 module line (`otto.docker:`, `otto.coverage:`, `otto:`) converts to that
       namespace's entry in `api/public.toml`. Without one it needs a mark, whether or not the
       module still imports;
-    - a v1 deep line that does not reappear as a `name` line needs a mark, **whether or not it
+    - a v1 deep line that does not reappear as a `name` record needs a mark, **whether or not it
       still imports**. The v1 "still imports" exemption ends at the conversion. P1 is marked
       anyway, and its footer lists every such line.
     Nothing is inferred that v1 did not record.
@@ -339,9 +354,10 @@ object. Otherwise those objects stay public at their declared paths.
       would otherwise let the next commit add a v1 golden under the v1 rules, switching the
       manifest and the name diff off in two passing commits. Retiring or moving the golden is a
       change to this spec and to the checker, not a marked commit;
+    - a producer-schema decrease, along any parent edge, is refused (dump spec §5.4);
     - a missing or malformed `api/public.toml`, or an unknown stability value, fails the check;
-    - the TOML diff runs on every commit, including commits that change no golden line (today the
-      checker skips those, `check_breaking_marks.py:489-494`).
+    - the TOML diff runs on every commit, including commits that change no golden line. Before
+      P0 the checker skipped those; P0 does not.
 - **Agreement tests:**
   - Every namespace in `api/public.toml` exists and has a literal `__all__`.
   - Every `__all__` name resolves.
@@ -350,7 +366,7 @@ object. Otherwise those objects stay public at their declared paths.
     `otto.tunnel:DryRunPlan` are different classes).
   - These checks run against **runtime** bindings, in a fresh interpreter. A name bound only
     under `TYPE_CHECKING` fails. Today's guarantee that every golden line resolves
-    (`test_public_api_snapshot.py:53-61`) carries over to `name` lines.
+    (`test_public_api_snapshot.py:53-61`) carries over to `name` records.
   - No docs import targets an internal package.
 - **Guards:**
   - Package facades keep the existing lazy-package guard: `__all__` equals the public eager
@@ -380,6 +396,9 @@ object. Otherwise those objects stay public at their declared paths.
    - **Additions:** the appendix-B names join their namespaces, and `DeclaredEntry` becomes a
      runtime binding.
    - **First `__all__`:** every declared module in appendix F gets one.
+   - **Hook renames (D-5):** every underscore member that is an extension contract gets a
+     public name, with every implementation, override, caller, docs page and example (dump spec
+     §7.4).
    - **D1:** `otto.lab` is created and `otto.config` loses the fleet names. Everything that used
      the old names switches in the same commit:
      - the root lazy entries and their `TYPE_CHECKING` imports (`otto/__init__.py:40,81-85`);
@@ -390,14 +409,16 @@ object. Otherwise those objects stay public at their declared paths.
    - **API reference:** the split into *Public API* and *Internals* pages goes live.
    - **Retirements:** the 26 appendix-G paths stop being public, and every docs page and example
      moves to the declared path. The `link_app` example is rewritten.
-   - **Footer.** Generated from four inventories frozen from the **pre-cutover** tree:
+   - **Footer.** Generated from six inventories frozen from the **pre-cutover** tree:
      1. the retirement inventory (appendix G). It comes from the ledger's original taught paths,
         so it includes paths v1 never recorded, such as `otto.host.factory:host_identity`;
      2. the D1 export delta;
      3. the star-import narrowing: for each module in appendix F, its old non-underscore globals
         minus its new `__all__`;
      4. the path deltas of specs 2–4;
-     5. the v1 → v2 golden and TOML diff.
+     5. the v1 → v2 golden and TOML diff;
+     6. the hook rename inventory (dump spec §7.4). v1 never recorded underscore members, so
+        these renames do not appear in item 5.
 
      A test asserts that the footer names every item in each inventory.
    - **Import checks:** additions go through each facade's lazy table and its matching
@@ -409,7 +430,7 @@ object. Otherwise those objects stay public at their declared paths.
      So the P1 branch is squashed to its single marked commit **before** it is gated and pushed,
      not at landing.
 4. **Spec 5** moves implementations behind the declared facades, so no public path changes.
-   - The v2 checker proves it: a spec-5 commit that removes a `name` line fails unless marked,
+   - The v2 checker proves it: a spec-5 commit that removes a `name` record fails unless marked,
      and a mark would contradict this plan.
    - Changes to declared names after P1 are additions, or contract changes marked case by case.
    - A path retirement after P1 would need the owner's future deprecation policy, not another
@@ -458,10 +479,9 @@ lands earlier, and spec 5.
 
 - **Q1. Underscore hooks** (`_run_put`, `_run_get`, `_dispatch_per_file`, `_apply_mode`,
   `ZephyrFrame._region_before_end`, the `BaseHost` family hooks, `_connection_factory`).
-  - No rename in this series. Each area decides at promotion whether to declare them or rename
-    them.
-  - Until then, the extension page that tells implementers to define or call one is its
-    declaration.
+  *Replaced 2026-10-05 by D-5 (dump spec §7).* A gated member is a public member. P1 gives every
+  contract underscore member a public name; from then on the producer refuses a hidden
+  obligation, and the validator refuses taught underscore use.
 - **Q2. Host extension base.**
   - Registered hosts subclass `RemoteHost`/`UnixHost`/`EmbeddedHost`; `register_host_class`
     already requires it (`os_profile.py:78-101`).
@@ -498,6 +518,14 @@ lands earlier, and spec 5.
   - no name is planned to move twice;
   - spec 5 changes no public path.
 
+**API dump decisions (2026-10-05):** D-1 to D-6 are recorded in the dump spec's §0:
+- per-commit freshness;
+- gated obligations;
+- version-invariant records;
+- the `Host` keyword-order and external-member relaxations;
+- gated ⟺ public ⟺ no underscore;
+- keyword interception not breaking.
+
 ## 9. Out of scope, recorded
 
 - **Spec 5:** internal code imports from the owning module, never through a re-export alias, even
@@ -513,6 +541,9 @@ lands earlier, and spec 5.
 
 ## 10. Verification
 
+- **The dump's proofs** are the dump spec's §11 table, which is authoritative for records,
+  comparisons, generation, conversion of `Host` lines and D-5. The lists below keep spec 1's own
+  proofs.
 - **Red proofs, each a planted change the gate must refuse:**
   - **Docs validator:**
     - a docs import of an undeclared path;
@@ -522,7 +553,7 @@ lands earlier, and spec 5.
     - a new internal import planted in an ordinary (non-doctest) line of `src/otto/examples`;
     - a page using an otto name that only `doctest_global_setup` binds.
   - **Checker:**
-    - a removed `name` line;
+    - a removed `name` record;
     - a moved name;
     - a namespace removed from the TOML;
     - a stable → provisional edit;
@@ -536,13 +567,14 @@ lands earlier, and spec 5.
     - a declared namespace without a literal `__all__`;
     - a non-literal or unresolvable `__all__` in an implementation module.
 - **Must-not-flag proofs:**
-  - a re-sorted golden;
-  - a v1-parent commit dropping a docs line whose path still imports (today's exemption, kept for
+  - a re-sorted golden produces no compatibility finding (freshness refuses it, dump spec §2.2);
+  - a v1 → v1 commit dropping a docs line whose path still imports (today's exemption, kept for
     history);
   - a harmless merge;
   - checker matrix: v1→v1, strict v1→v2, v2→v2, rejected v2→v1, a TOML-only downgrade;
   - P0 as a whole;
-  - additions.
+  - additions that the dump spec's §4.3 classifies as not breaking. §4.2 takes precedence, so a
+    new required parameter or input, or a new obligation, is not covered by this.
 - **Preserved behaviour:** every existing `test_public_api_snapshot.py` and
   `test_check_breaking_marks.py` case is kept, or replaced by a stated equivalent. The
   subject-only and footer-only marker cases stay valid (P-2).
@@ -567,5 +599,7 @@ These are implementation choices inside the rules above, not open policy:
   RST/MyST constructs are covered by fixtures.
 - **Where the scanners live.** The docs validator and the ledger-derived retirement inventory are
   scripts with their own tests. The ledger rules in §3 are their specification.
+- **Hook names.** The rename inventory is derived mechanically (dump spec §7.4); the public name
+  for each hook is chosen per seam in P1's review.
 - **Splitting P1.** P1 may be developed as several commits on its branch, but it lands as **one**
   commit, squashed, so the checker sees a single v1 → v2 step.
