@@ -396,7 +396,8 @@ object. Otherwise those objects stay public at their declared paths.
    - **Import checks:** additions go through each facade's lazy table and its matching
      `TYPE_CHECKING` block. The lazy guard, the import-budget and import-contract tests, and `tach
      check --exact` stay green. New names are imported in fresh interpreters, in both import
-     orders.
+     orders. P1 also accounts for its file operations, as described in *File-operation accounting*
+     below.
    - **Squash timing.** CI checks a PR commit by commit (`.github/workflows/ci.yml:425-434`).
      So the P1 branch is squashed to its single marked commit **before** it is gated and pushed,
      not at landing.
@@ -406,6 +407,45 @@ object. Otherwise those objects stay public at their declared paths.
    - Changes to declared names after P1 are additions, or contract changes marked case by case.
    - A path retirement after P1 would need the owner's future deprecation policy, not another
      cutover.
+
+### File-operation accounting (P1, specs 2–4, spec 5)
+
+The import budget (`scripts/import_budget.py`, `docs/architecture/startup-performance.md`) caps
+each gated command's file operations at its baseline plus 10%, or plus 5 for small counters. That
+catches an unneeded heavy dependency. It does not account for a refactor:
+- **The slack is large.** 10% of `dispatch_local_warm` (about 2,600 operations) is about 260. On
+  Python 3.10 a module costs about 3 operations, so roughly 85 extra modules fit unnoticed.
+- **A saving is not kept.** The ceiling stays at the old baseline, and the saving only earns an
+  advisory note.
+- **Not every command is gated.** The 25 gated surfaces leave out `init`, `env`, `cache`,
+  `docker`, `link`, `tunnel`, `monitor`, `cov`, `reservation`, `inventory`, `schema`, `host
+  probe` and `host power`. These 13 are measured at `--help` and never enforced.
+
+#590 changes what otto imports, so a module split can add operations and breaking a cycle can
+remove them. For example, today a warm TAB handover loads `otto.host` (167 operations). So every
+phase that changes otto's imports accounts for them: P1, any internal work from specs 2–4 that
+lands earlier, and spec 5.
+
+1. **Before and after table.**
+   - The phase runs `scripts/import_budget.py --report-json` on its base and on its tip, under
+     Python 3.10, the highest-measuring gated interpreter.
+   - It records the `file_ops` and `workspace` delta for every surface, tracked ones included. The
+     table goes in the plan's hand-back and in the commit body.
+   - A surface that grew lists the packages that grew, from the report's breakdown.
+2. **Budget.**
+   - **No growth** on the latency-critical surfaces: `import_otto`, `version_repo`,
+     `completion_repo_warm`, `completion_repo_handover` and `help_repo_warm`. TAB is the most
+     NFS-sensitive path otto has.
+   - **Growth anywhere else** is allowed only when the phase's spec names the surface and says why.
+     Staying within the ceiling is not a reason.
+3. **Savings are locked in.** A phase that shrinks a gated surface regenerates the ceilings in the
+   same commit (`make import-snapshot`), on every gated interpreter (3.10–3.14). The next
+   regression is then measured from the new baseline.
+4. **Internal imports skip the facades.** Otto's own code imports from the module that defines a
+   name, never through a public facade, so a facade never joins a command's import path just
+   because it exists. This is §9's spec-5 rule, applied in P1 to every import site P1 adds or
+   switches. D1 is the first case: internal callers of the fleet names import the implementing
+   module, not `otto.lab`.
 
 ## 8. Decisions (owner-approved 2026-10-04, recorded for review)
 
@@ -454,7 +494,8 @@ object. Otherwise those objects stay public at their declared paths.
 ## 9. Out of scope, recorded
 
 - **Spec 5:** internal code imports from the owning module, never through a re-export alias, even
-  when the owning module is public.
+  when the owning module is public. P1 already follows this rule for the import sites it touches
+  (§7, *File-operation accounting*, item 4).
 - **A registration-semantics spec** (Q3): duplicate handling, the constructor contract for a
   replaced built-in, and `options_key`'s `module:qualname` identity.
 - **Docs defects** from the extension audit (26, e.g. `Arg(type=)` raises `TypeError` in
@@ -500,6 +541,13 @@ object. Otherwise those objects stay public at their declared paths.
   subject-only and footer-only marker cases stay valid (P-2).
 - **Gates:** `make check-api-snapshot`, `make check-breaking`, the lazy-package guard, `make
   docs`, the full chain, and `make gate-fresh`.
+- **File operations (P1, and every later phase that changes imports):** a 3.10 before and after
+  table from `import_budget.py --report-json` covering every surface, gated and tracked:
+  - zero growth on the five latency-critical surfaces;
+  - every other growth named and justified in the spec;
+  - shrunk surfaces re-baselined on 3.10–3.14 in the same commit.
+
+  P0 changes nothing under `src/`, so its table is all zeros.
 
 ## 11. Left to the P1 implementation plan
 
