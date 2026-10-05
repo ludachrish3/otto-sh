@@ -312,7 +312,10 @@ object. Otherwise those objects stay public at their declared paths.
   - **Merge commits.** Today's walk skips them (`check_breaking_marks.py:249-266`). Under v2, a
     merge is compared with its **first parent**:
     - one that changes the golden or the TOML in a breaking way needs a mark in its message;
-    - a harmless merge passes.
+    - a harmless merge passes;
+    - a merge with any v2 parent is in the v2 era: if a merged parent carries a v2 golden and
+      the merge does not, it is refused, marked or not (otherwise `git merge -s ours` from a
+      v1 branch would leave v2).
 
     The existing "merges are skipped" test (`test_check_breaking_marks.py:132-151`) is replaced
     by two tests: a harmless merge passes, and a merge-only removal fails.
@@ -331,7 +334,11 @@ object. Otherwise those objects stay public at their declared paths.
     header. A v1 → v1 commit needs no `api/public.toml`. P0 is therefore checked by the v1 rules
     alone, and its new tests run on fixtures, not the live tree.
   - **Schema edge cases:**
-    - a commit whose parent is v2 and which writes v1 (rollback) is refused;
+    - a commit whose parent is v2 and which writes v1 (rollback) **or deletes the golden** is
+      refused, marked or not: once the golden is v2, its only next state is v2. A marked deletion
+      would otherwise let the next commit add a v1 golden under the v1 rules, switching the
+      manifest and the name diff off in two passing commits. Retiring or moving the golden is a
+      change to this spec and to the checker, not a marked commit;
     - a missing or malformed `api/public.toml`, or an unknown stability value, fails the check;
     - the TOML diff runs on every commit, including commits that change no golden line (today the
       checker skips those, `check_breaking_marks.py:489-494`).
