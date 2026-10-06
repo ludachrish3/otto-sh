@@ -34,7 +34,7 @@ file-operation accounting. Spec 1 §6 links here instead of restating.
 
 ## 1. Scope
 
-The dump is produced at runtime by the P0 agreement child (`scripts/api_agreement.py`), keyed by
+The dump is produced at runtime by the producer child (`scripts/api_dump_child.py`), keyed by
 **public binding**: `ns:N` for each name in a declared namespace's `__all__`, plus nested classes
 reached through it (§3.4).
 
@@ -254,6 +254,11 @@ Input names are data keys, not Python members. D-5 does not apply to them.
 - `__iter__`, `__next__`, `__aiter__`, `__anext__`;
 - `__len__`, `__contains__`, `__getitem__`, `__setitem__`, `__delitem__`;
 - `__eq__`, `__hash__`.
+
+A supported dunder whose value is `None` (a dataclass's `__hash__ = None`) is **absent**: it gets no
+`member` record, and it still hides the same name inherited from a base. Python reads `None` there
+as "not supported", so adding `frozen=True`, which supplies a real `__hash__`, is an addition, not
+a kind change.
 
 **Discovery reads `__dict__` along the MRO,** never `dir()`, so a custom `__dir__` hides nothing.
 It covers every otto class on the MRO, the class itself included, public or private, plus each
@@ -538,7 +543,7 @@ overriding `__aenter__` is never a finding.
 **Scope.**
 - The validator tracks explicit imports of declared otto classes, simple aliases, local subclasses
   in the same scope, and names bound by constructing an otto class.
-- It learns each class's underscore members from the runtime class, in the agreement child.
+- It learns each class's underscore members from the runtime class, in the producer child.
 - A reader's own helper (`def _my_helper` in their subclass, where otto defines no `_my_helper`) is
   not a finding.
 - A construct it cannot follow fails loudly, as spec 1 §6 already requires. It does not try to
@@ -555,8 +560,9 @@ inventory records each rename, **frozen from the pre-cutover tree**.
 
   Nothing else is renamed in P1: underscore storage nobody is taught stays private.
 - **The rename commit** updates implementations, overrides, callers, docs and examples together.
-- **Independent of the golden.** v1 never recorded underscore members (`scripts/api_snapshot.py:266`,
-  `:286-290`), so these renames are invisible to the golden conversion. A test asserts that the
+- **Independent of the golden.** v1 never recorded underscore members (v1's surface and
+  `host_protocol_lines` in `scripts/api_snapshot.py` skip them), so these renames are invisible
+  to the golden conversion. A test asserts that the
   footer names every inventory entry.
 
 **Today's evidence, not the inventory:**
@@ -577,7 +583,7 @@ The conversion stays mechanical:
   already in `otto.host.__all__`, so these exist as soon as P1 declares the `otto.host`
   namespace. Each is compared under v1's projection: `PO` and `VP`
   are excluded, and `VK` is the `"**"` sentinel (`src/otto/testing/conformance_host.py:94-103`).
-  P0's safe-widening rule (`scripts/check_breaking_marks.py:535-542`) still holds, so an optional
+  P0's safe-widening rule (`host_conversion_breaks` in `scripts/check_breaking_marks.py`) still holds, so an optional
   trailing parameter is not a break. Keyword-only order is not compared (D-4).
 - **Every v1 `Host` line must be accounted for** by the table.
 - **New records** carry no retroactive obligation. Underscore renames are handled by §7.4, not by
@@ -587,7 +593,7 @@ The conversion stays mechanical:
 
 - A merge is judged against its first parent, as in P0.
 - A merge whose result leaves v2 while a merged parent carries v2 is refused, marked or not
-  (`scripts/check_breaking_marks.py:618-623`, `:643-650`). So is a producer-schema decrease
+  (the rollback checks in `evaluate_commit`, `scripts/check_breaking_marks.py`). So is a producer-schema decrease
   through any parent (§5.4).
 - A merge of a v1 first parent with a v2 second parent, whose result **keeps** v2, takes the
   conversion path.
@@ -635,17 +641,20 @@ table, and every P0 proof it does not mention is kept.
 
 P0 is rebuilt on its unpushed branch and re-squashed into a single commit, so no commit in
 history carries the `name`-line format. Nothing live is enforced before P1.
-- **`scripts/api_agreement.py`:** the child emits the §3 records, plus the D-5 member data the
-  validator needs.
+- **`scripts/api_dump_child.py`:** the producer child. It emits the §3 records, plus the D-5
+  member data the validator needs. `scripts/api_agreement.py` keeps the `__all__` agreement
+  checks (spec 1 §6).
 - **Deleted:** P0's `name`-line format. That is `name_line`, `parse_name_line`, `_NAME_RE` and
   `render_v2` in `scripts/api_lines.py`, `surface_v2_lines` in `scripts/api_agreement.py`, and
   `_main_v2` in `scripts/api_snapshot.py`, with their tests. CI's header check for
   `# api-snapshot v2` (`.github/workflows/ci.yml:436-439`) stays.
-- **`scripts/api_lines.py`:** the v2 grammar (render and parse). v1 parsing is unchanged.
+- **`scripts/api_records.py`:** the v2 grammar (render and parse). `scripts/api_lines.py` keeps
+  v1 parsing and the header check, unchanged.
 - **`scripts/api_snapshot.py`:** writes the dump. `host_protocol_lines` serves only the v1 path
   and the conversion table.
-- **`scripts/check_breaking_marks.py`:** §4's comparators, §5's per-commit generation, §8's
-  conversion and §9's merges. The v1 → v1 path is untouched.
+- **`scripts/api_compat.py`:** §4's comparators. **`scripts/api_regen.py`:** §5's per-commit
+  generation. **`scripts/check_breaking_marks.py`:** §8's conversion, §9's merges and the
+  marks. The v1 → v1 path is untouched.
 - **`scripts/api_teaching.py`:** gains `taught-private-member` (§7.3).
 - **`scripts/api_manifest.py`:** parses `[formats.*]` (§13.1). The child resolves the constants
   and writes `format` records; `api_compat` applies §13.3. No format is declared in P0, and

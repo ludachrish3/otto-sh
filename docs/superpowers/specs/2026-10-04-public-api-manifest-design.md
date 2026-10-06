@@ -310,8 +310,9 @@ object. Otherwise those objects stay public at their declared paths.
     - no taught use of an otto underscore member (`taught-private-member`, dump spec §7.3).
   - Unsupported syntax fails loudly. There is no exception list.
   - Explanatory roles are not restricted (§3).
-- **Shared line format.** `scripts/api_lines.py` holds one renderer/parser that both the producer
-  and `check_breaking_marks.py` import.
+- **Shared record format.** `scripts/api_records.py` holds the one v2 renderer/parser that the
+  producer, the comparator and `check_breaking_marks.py` all import (dump spec §2).
+  `scripts/api_lines.py` keeps the v1 format and the header check.
 - **`check_breaking_marks.py`.** It already walks commits one by one, and picks each commit's
   policy from its **parent's** schema:
   - **Parent v1:** today's rules, unchanged. A removed root or `Host` line needs a mark. A removed
@@ -323,21 +324,23 @@ object. Otherwise those objects stay public at their declared paths.
       removed `name` record, needs a mark;
     - a namespace removed from `api/public.toml`, or downgraded from stable to provisional,
       needs a mark (the checker diffs the parent and current TOML).
-  - **Merge commits.** Before P0 the walk skipped them. P0 includes them
-    (`check_breaking_marks.py:255`). Under v2, a merge is compared with its **first parent**:
+  - **Merge commits.** Before P0 the walk skipped them. P0 includes them in the v2 era
+    (`evaluate_commit` in `check_breaking_marks.py`). Under v2, a merge is compared with its
+    **first parent**:
     - one that changes the golden or the TOML in a breaking way needs a mark in its message;
     - a harmless merge passes;
     - a merge with any v2 parent is in the v2 era: if a merged parent carries a v2 golden and
       the merge does not, it is refused, marked or not (otherwise `git merge -s ours` from a
       v1 branch would leave v2).
 
-    P0 replaced the old "merges are skipped" test with merge-inclusion tests
-    (`tests/unit/scripts/test_check_breaking_marks.py:132`): a harmless merge passes, and a merge-only removal
-    fails.
+    P0 replaced the old "merges are skipped" test with merge-inclusion tests for the v2
+    era (`test_check_breaking_marks.py`): a harmless merge passes, and a merge-only removal
+    fails. A merge whose parents are all v1 is still skipped, as v1 always did: the
+    v1 → v1 path is unchanged.
   - **The v1 → v2 commit** (P1) is converted record by record:
     - a v1 root line (`otto:N`) that does not reappear as a `name otto:N` record needs a mark,
       even if `N`
-      still imports (today's rule, `tests/unit/scripts/test_check_breaking_marks.py:330-342`);
+      still imports (today's rule, pinned in `tests/unit/scripts/test_check_breaking_marks.py`);
     - `Host` lines convert to `otto.host:Host` member records, by the dump spec's §8;
     - a bare v1 module line (`otto.docker:`, `otto.coverage:`, `otto:`) converts to that
       namespace's entry in `api/public.toml`. Without one it needs a mark, whether or not the
@@ -367,7 +370,8 @@ object. Otherwise those objects stay public at their declared paths.
     `otto.tunnel:DryRunPlan` are different classes).
   - These checks run against **runtime** bindings, in a fresh interpreter. A name bound only
     under `TYPE_CHECKING` fails. Today's guarantee that every golden line resolves
-    (`test_public_api_snapshot.py:53-61`) carries over to `name` records.
+    (`test_every_golden_line_resolves` in `test_public_api_snapshot.py`) carries over to `name`
+    records.
   - No docs import targets an internal package.
 - **Guards:**
   - Package facades keep the existing lazy-package guard: `__all__` equals the public eager
@@ -384,7 +388,7 @@ object. Otherwise those objects stay public at their declared paths.
 
 1. **P0, tooling, dormant.** It lands as soon as this spec is approved, unmarked, because it
    changes no surface:
-   - producer v2, the validator, `api_lines.py`, the per-parent checker and the agreement tests
+   - producer v2 (the API dump), the validator, the per-parent checker and the agreement tests
      are built and tested **on fixtures**;
    - against today's tree they run report-only;
    - no `api/public.toml`, no v2 golden and no `otto.lab` exist yet, so nothing live is enforced.
