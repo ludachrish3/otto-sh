@@ -1,7 +1,7 @@
 # Public surface declaration — design (spec 1 of the #590 contract-first series)
 
 **Status:** v7, for owner approval. v6 was approved and P0 built against it. **Date:**
-2026-10-04, amended 2026-10-05.
+2026-10-04, amended 2026-10-05; spec 4 amended §7 and the appendix on 2026-10-06.
 - v1 tried to freeze otto's contracts. Codex rejected it, and the owner then said a freeze is not
   the goal (§1).
 - v2 declared the surface, but its transition dropped protection for paths the docs teach today.
@@ -197,7 +197,9 @@ to the **same object**.
 
 **Dispositions:**
 - **K. Keep.** Every current export of a tier-1/2 namespace stays public-provisional at its
-  current path. Nothing is narrowed (Q4).
+  current path. Nothing is narrowed (Q4). Two sets move instead: D1's fleet names go to
+  `otto.lab`, and spec 4's five repo accessors go from `otto.config` to `otto.bootstrap`
+  (`2026-10-06-repo-and-scope-inputs-design.md` §2).
 - **A. Add.** Each taught name without a public path gets one (appendix B).
   - The default is the deepest declared namespace above its defining module: `HostCapabilities`
     → `otto.host`, `CredSpec` → `otto.models`, `prepare_run` → `otto.suite`.
@@ -208,9 +210,9 @@ to the **same object**.
       a re-export from parsers would be a reverse edge.
     - `DeclaredEntry` → `otto.host.product`. It becomes a runtime binding: `product.py` already
       imports `otto.declared` at runtime, so this adds no dependency.
-  - Scope helpers (`resolve_scopes`, `scoped_ids`): appendix B shows `otto.config` only as a
-    placeholder. D1 keeps `otto.config` for settings and `Repo`, so spec 4 names their final
-    home, and P1 puts them there directly. They are never declared at the placeholder.
+  - Scope helpers (`resolve_scopes`, `scoped_ids`): spec 4 (§2) keeps them internal. The one
+    page that imported them teaches `otto.lab:fleet_of_interest` instead, and
+    `EmptySelectionError` is declared at `otto.lab`.
 - **R. Retire.** Appendix G lists 26 taught paths that are not declared: every v1 golden deep
   line plus every import a reader copies (docs code, `docs/examples`, `otto.examples`). The
   ledger keeps each import's **original** path, not just its defining site. Examples:
@@ -235,13 +237,22 @@ to the **same object**.
 
 **Pending seams.** Each is settled by the spec named here, **before P1**. Any path change it
 decides lands in P1, and its `api/public.toml` entry names that spec:
-- host construction (`HostSpec`, `to_host`, custom host fields): spec 3;
-- run state (`otto.context`): spec 2;
-- repo and scope inputs (`otto.config.scope`, `get_ordered_repos`, `is_bootstrapped`): spec 4;
+- host construction (`HostSpec`, `to_host`, custom host fields): spec 3b;
+- run state (`otto.context`): spec 2, **settled** (`2026-10-06-run-state-contracts-design.md`).
+  `otto.context` stays the facade; `RunPolicy`, `HostResolver` and `ContextBinding` join it after
+  P1, implemented in a leaf `otto.invocation` with no public path;
+- repo and scope inputs (`otto.config.scope`, `get_ordered_repos`, `is_bootstrapped`): spec 4,
+  **settled** (`2026-10-06-repo-and-scope-inputs-design.md`). The repo accessors move to
+  `otto.bootstrap`; `fleet_of_interest` and `EmptySelectionError` are declared at `otto.lab`;
+  the scope helpers stay internal;
 - registry objects (`Registry`, `Ref`, `*_BACKENDS`, `FRAME_CLASSES`, `LOGIN_PROXIES`,
-  `SESSION_SETUPS`, `OPTIONS`): a registration-semantics spec (Q3);
-- the term-backend seam (`ConnectionManager`, `TermContext`, `register_term_backend`): no
-  contract yet;
+  `SESSION_SETUPS`, `OPTIONS`): spec 3a, **settled** (`2026-10-06-registry-catalog-design.md`).
+  Every registry object keeps its declared path. P1 adds `otto.registry`'s `__all__` (appendix F)
+  and retires three facade names (appendix G addendum); the new registration contract lands after
+  P1 as marked commits;
+- the term-backend seam (`ConnectionManager`, `TermContext`, `register_term_backend`): spec 3a
+  settles its construction contract (`TermContext`, `build_term_backend(name, ctx)`); the ABC
+  stays with #600;
 - inventory constants imported by conformance (`INVENTORY_KEY_FIELDS`, ...): whether users
   should import them is decided when the inventory area is promoted.
 
@@ -394,10 +405,12 @@ object. Otherwise those objects stay public at their declared paths.
    - no `api/public.toml`, no v2 golden and no `otto.lab` exist yet, so nothing live is enforced.
 2. **Specs 2–4 are designed and approved.** Each records its public-path changes as a delta to
    this declaration: additions, moves, retirements. Their internal work may land before P1 if it
-   changes no declared path.
+   changes no declared path. Their contract changes land **after** P1, each as its own marked
+   commit, so the live dump judges each one (owner decision S-1, recorded in spec 4,
+   `2026-10-06-repo-and-scope-inputs-design.md` §0).
 3. **P1, the cutover. One marked commit** (`feat(api)!: ...`):
    - **Declaration:** `api/public.toml` becomes live, and the golden switches to v2.
-   - **Specs 2–4:** their approved path deltas, including the scope helpers' final home.
+   - **Specs 2–4:** their approved path deltas (spec 4: `2026-10-06-repo-and-scope-inputs-design.md` §2).
    - **Additions:** the appendix-B names join their namespaces, and `DeclaredEntry` becomes a
      runtime binding.
    - **First `__all__`:** every declared module in appendix F gets one.
@@ -500,15 +513,20 @@ lands earlier, and spec 5.
   - The objects stay public-provisional until a registration-semantics spec defines the
     replacement operations: membership (`.names()`, `gs_example/__init__.py:41,53`), lookup, lazy
     `Ref` registration, attribution and duplicates.
+  - **Settled by spec 3a** (`2026-10-06-registry-catalog-design.md`): the objects stay public;
+    the operations are defined there.
 - **Q4. Narrowing.**
   - No name-level narrowing here. Narrowing happens per area at promotion, using appendix C.
-  - The only exception is the package-level internal list (§4): 65 facade names with no taught
-    use, which back a CLI verb.
+  - There are two exceptions:
+    - the package-level internal list (§4): 65 facade names with no taught use, which back a
+      CLI verb;
+    - the three names spec 3a retires (appendix G addendum).
   - Easiest later candidates: the 49 names used only by their own module and tests.
 - **Q5. Initial stable set:** empty.
   - First promotion candidates: the `Host` protocol, transfer backends, `Result`/`Status` and
     monitor parsers.
-  - The term-backend seam and binary loaders have no contract yet.
+  - Binary loaders have no contract yet.
+  - The term-backend seam's construction contract is in spec 3a; its ABC is #600.
 - **P-1. Hard cutover.** No code depends on otto yet, so nothing is carried. P1 does every
   public change at once:
   - undeclared taught paths are retired;
@@ -540,7 +558,8 @@ lands earlier, and spec 5.
   when the owning module is public. P1 already follows this rule for the import sites it touches
   (§7, *File-operation accounting*, item 4).
 - **A registration-semantics spec** (Q3): duplicate handling, the constructor contract for a
-  replaced built-in, and `options_key`'s `module:qualname` identity.
+  replaced built-in, and `options_key`'s `module:qualname` identity. Settled by spec 3a
+  (`2026-10-06-registry-catalog-design.md`).
 - **Docs defects** from the extension audit (26, e.g. `Arg(type=)` raises `TypeError` in
   `cli-exposed-verbs.md:96`; `otto.host.transfer.unix` at `extending-backends.md:47` names no
   module). These are reported to the owner for triage.

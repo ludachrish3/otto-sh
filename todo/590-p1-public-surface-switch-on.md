@@ -67,6 +67,89 @@ the end of P0.
   The rule, the docs test and the later per-symbol and experimental work are
   in `todo/590-api-stability-visible.md`.
 
+## Spec 4's P1 work (repo and scope inputs)
+
+Spec `docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md` §2, §9 and §10.
+
+- [ ] **Before P1:** commit 2, `feat(config)`: `fleet_of_interest` in `otto.config.fleet`, the
+  shared membership-flag helper (`OttoContext.all_hosts` refactored onto it), and the differential
+  test (spec 4 §3, §8).
+- [ ] Fold `get_repos`, `get_ordered_repos` and `get_env` into `src/otto/bootstrap.py` (it already
+  has `is_bootstrapped` and `get_completion_names`; keep the wrapper's `get_completion_names`
+  docstring) and delete `src/otto/config/bootstrapped.py`. Internal callers and test patch targets
+  use `otto.bootstrap` (364 lines in 33 src and 68 test files at `d0839893`, plus
+  `tests/repo3/tests/test_embedded_coverage.py:39` and commit 2's patch target).
+- [ ] A static guard refuses any old spelling of the five accessors, relative imports included.
+  It is the primary defence for the six swallowed-import sites (spec 4 §2.1): `config/scope.py`
+  `scope_for_repo`, `lifecycle.py`, `declared.py`, `context.py` `scopes` and `_detect_cov`, and
+  `cli/remote_completion.py`. Those six also run unpatched against a real bootstrap.
+- [ ] `otto.config`'s `__all__` and lazy table drop the five accessors (ten names remain).
+  `otto.bootstrap`'s first `__all__` is the twelve names in spec 4 §2; `otto.lab` adds
+  `EmptySelectionError` and `fleet_of_interest`.
+- [ ] The lazy-getter guard (`tests/unit/test_no_import_time_lazy_exports.py`) covers an explicit
+  set of `otto.bootstrap` getters; `tests/_fixtures/_lazy_exports.py`,
+  `tests/unit/test_patch_targets.py`, `tests/unit/test_lazy_packages.py`'s expected message and
+  `docs/contributing.md`'s two rules follow.
+- [ ] Ratchet re-baseline (S-5, owner-approved): `tach.toml` and
+  `tests/unit/test_import_cycle_ratchet.py` gain coverage/docker/host/lifecycle/monitor.live/
+  project/suite → `otto.bootstrap` and lose `otto.lifecycle → otto.config`;
+  `docs/architecture/modules.md` is regenerated.
+- [ ] The preview declaration (`scripts/api_public_preview.toml`) carries spec 4's delta and drops
+  its `pending = "spec 4 …"` note.
+- [ ] Docs build: `docs/api/config.rst` drops `otto.config.bootstrapped`; `src` roles naming
+  `otto.config.bootstrapped.*` are re-pointed; `docs/api/bootstrap.rst` renders the public
+  `__all__`, with an Internals `:ignore-module-all:` entry for `discover`, `DiscoveryResult` and
+  `set_completion_names`.
+- [ ] Re-point the docs: `getting-started/boards-of-interest.md` (teaches `fleet_of_interest`),
+  `cookbook/python-library.md:535`, `configuration/settings.md:399`,
+  `contributing.md:582-611` (patch targets), the `EmptySelectionError` roles at
+  `cli/run/defaults.md:235` and `cookbook/authoring/writing-instructions.md:89`,
+  `architecture/subsystems/bootstrap.md`, the `otto.config` row of `architecture/overview.md`, and
+  the Project scope section of `configuration/lab-config.md`.
+- [ ] The footer: retired `otto.config.scope:{resolve_scopes,scoped_ids}` and the five
+  `otto.config` accessors; added `otto.lab:{fleet_of_interest,EmptySelectionError}` and the
+  `otto.bootstrap` names; the ratchet and `tach.toml` delta.
+- [ ] **After P1**, its own commit: `fix(context)!:` `OttoContext.scopes` never widens silently
+  (spec 4 §4). Rule 1: verdicts over `get_repos()`; D3 sees a skipped first repo; `status --full`
+  lists skipped repos. Rule 2: the classifier is shared with `check_repos`; the refusal is cached;
+  the readers' table; remote completion carries `-I`. The unit tests that relied on the removed
+  `except` are named and migrated.
+
+## Spec 2's P1 work (run-state contracts)
+
+Spec `docs/superpowers/specs/2026-10-06-run-state-contracts-design.md` §2, §5 and §6.
+
+- [ ] **Before P1:** commit 2, `fix(cli)`: the CLI's resets run on Click's `call_on_close`;
+  `_cli_token`, `_variant_token`, `set_cli_context`, `set_cli_variant` and `reset_cli_context`
+  are deleted; the root conftest stops snapshotting them (spec 2 §5).
+- [ ] `otto.context`'s first `__all__`: the eleven names in appendix F (spec 2 §2). The footer notes
+  the narrowed `from otto.context import *`.
+- [ ] Its docs (spec 2 §6.1): `docs/api/context.rst` renders the `__all__` plus an Internals entry
+  (`:ignore-module-all:`) for the names the architecture docs still link; the
+  `pending = "spec 2 …"` note in `scripts/api_public_preview.toml` is removed.
+- [ ] **After P1**, each its own marked commit (spec 2 §6): commit 4 (`otto.invocation`,
+  `RunPolicy`, `HostResolver`, `ContextBinding`, the host layer off `otto.context`), commit 5
+  (loop-owned registrations, counted boundaries), commit 6 (`ctx.repos`, `scopes_of`, S-5's edges
+  retired per an import-site inventory; after spec 4's commit 4).
+
+## Spec 3a's P1 work (registries)
+
+Spec `docs/superpowers/specs/2026-10-06-registry-catalog-design.md` §8 and §9.
+
+- [ ] **Before P1:** commit 2, `fix(host)`: #601. Embedded hosts build through the term registry;
+  `_connection_factory` and its teaching (`extending-backends.md:136`) are deleted, so P1's
+  underscore-rename inventory (dump spec §7.4) no longer contains it. The golden is regenerated,
+  with a mark only if the producer records the init keyword (spec 3a §5).
+- [ ] `otto.registry`'s first `__all__`: the four names in appendix F.
+- [ ] The three retirements in the appendix G addendum: `get_inventory_backend_class`,
+  `get_creds_backend_class` and `reset_half_ported_warnings` leave their facades' `__all__`. The
+  two teaching sentences (`inventory-backends.md:103`, `creds-backends.md:99`) are rewritten to
+  say an unregistered name raises when otto builds the store; no replacement is taught. The
+  footer lists all three.
+- [ ] **After P1**, each its own marked commit (spec 3a §9): commit 4 (strict engine, legacy list,
+  conformance and discovery suites, isolation through `instances()`), commits 5.1–5.13 (one per
+  seam group), commit 6 (allowances and `origin=` deleted, `@final`, ast-grep rules on).
+
 ## The dump's P1 work (dump spec)
 
 - [ ] **Producer-refusal triage.** Run `make api-surface-report` on the

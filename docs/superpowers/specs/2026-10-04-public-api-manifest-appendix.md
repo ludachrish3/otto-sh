@@ -27,12 +27,12 @@ Generated from the static evidence ledger (scratchpad `ledger.py`). Evidence kin
 | `otto.testing` | 1 | package facade |  |
 | `otto.init` | 1 | package facade |  |
 | `otto.bootstrap` | 1 | single-file module (gains `__all__` in P1) |  |
-| `otto.context` | 1 | single-file module (gains `__all__` in P1) | spec 2 (run state) |
+| `otto.context` | 1 | single-file module (gains `__all__` in P1) | spec 2 (run state), settled: `2026-10-06-run-state-contracts-design.md` |
 | `otto.instructions` | 1 | single-file module (gains `__all__` in P1) |  |
 | `otto.result` | 1 | single-file module (gains `__all__` in P1) |  |
 | `otto.errors` | 1 | single-file module (gains `__all__` in P1) |  |
 | `otto.utils` | 1 | single-file module (gains `__all__` in P1) |  |
-| `otto.registry` | 1 | single-file module (gains `__all__` in P1) | registration-semantics spec (Q3) |
+| `otto.registry` | 1 | single-file module (gains `__all__` in P1) | spec 3a (`2026-10-06-registry-catalog-design.md`) |
 | `otto.params` | 1 | single-file module (gains `__all__` in P1) |  |
 | `otto.tls` | 1 | single-file module (existing `__all__`) |  |
 | `otto.host.transfer` | 2 | extension namespace | |
@@ -64,9 +64,9 @@ Module references (`{mod}` links, `import otto.x`) are listed in B.2, not here.
 | `otto.cli.registry:CLI_COMMANDS` | `otto.cli.registry:CLI_COMMANDS` | 2; role `docs/cookbook/extending/extending-cli.md:244` |  |
 | `otto.cli.registry:CommandSpec` | `otto.cli.registry:CommandSpec` | 2; role `docs/cookbook/extending/extending-cli.md:186` |  |
 | `otto.config.lab:Lab` | `otto.lab:Lab` | 8; import `docs/cookbook/extending/reservation-backends.md:518` | D1 |
-| `otto.config.scope:EmptySelectionError` | `otto.config:EmptySelectionError` | 4; role `docs/cli/run/defaults.md:235` | placeholder only: spec 4 sets the final home before P1, and P1 declares it there (D1 keeps otto.config to settings + Repo) |
-| `otto.config.scope:resolve_scopes` | `otto.config:resolve_scopes` | 1; import `docs/getting-started/boards-of-interest.md:47` | placeholder only: spec 4 sets the final home before P1, and P1 declares it there (D1 keeps otto.config to settings + Repo) |
-| `otto.config.scope:scoped_ids` | `otto.config:scoped_ids` | 1; import `docs/getting-started/boards-of-interest.md:47` | placeholder only: spec 4 sets the final home before P1, and P1 declares it there (D1 keeps otto.config to settings + Repo) |
+| `otto.config.scope:EmptySelectionError` | `otto.lab:EmptySelectionError` | 4; role `docs/cli/run/defaults.md:235` | spec 4 §2 (hand-amended 2026-10-06) |
+| `otto.config.scope:resolve_scopes` | *internal* — the page teaches `otto.lab:fleet_of_interest` | 1; import `docs/getting-started/boards-of-interest.md:47` | spec 4 §2 (hand-amended 2026-10-06) |
+| `otto.config.scope:scoped_ids` | *internal* — the page teaches `otto.lab:fleet_of_interest` | 1; import `docs/getting-started/boards-of-interest.md:47` | spec 4 §2 (hand-amended 2026-10-06) |
 | `otto.context:reset_context` | `otto.context:reset_context` | 3; import `docs/cookbook/python-library.md:219` | spec 2 (run state) |
 | `otto.context:reset_variant` | `otto.context:reset_variant` | 1; attr `docs/cookbook/python-library.md:210` | spec 2 (run state) |
 | `otto.context:set_context` | `otto.context:set_context` | 3; import `docs/cookbook/python-library.md:219` | spec 2 (run state) |
@@ -101,7 +101,7 @@ Module references (`{mod}` links, `import otto.x`) are listed in B.2, not here.
 | `otto.host.capability_grid:SessionIdentity` | `otto.host:SessionIdentity` | 1; testing `src/otto/testing/conformance_host.py:26` |  |
 | `otto.host.capability_grid:UserSupport` | `otto.host:UserSupport` | 1; testing `src/otto/testing/conformance_host.py:26` |  |
 | `otto.host.command_frame:FRAME_CLASSES` | `otto.host.command_frame:FRAME_CLASSES` | 3; import `docs/architecture/subsystems/registries.md:79` |  |
-| `otto.host.connections:TermContext` | `otto.host:TermContext` | 4; role `docs/cookbook/extending/extending-backends.md:120` | term-backend seam (no contract yet) |
+| `otto.host.connections:TermContext` | `otto.host:TermContext` | 4; role `docs/cookbook/extending/extending-backends.md:120` | term-backend seam (construction contract in spec 3a; ABC in #600) |
 | `otto.host.element:Element` | `otto.host:Element` | 4; import `docs/cookbook/connection-options.md:101` |  |
 | `otto.host.embedded_filesystem:EmbeddedFileSystem` | `otto.host.embedded_filesystem:EmbeddedFileSystem` | 3; import `docs/cookbook/extending/extending-embedded.md:170` |  |
 | `otto.host.embedded_filesystem:register_filesystem` | `otto.host.embedded_filesystem:register_filesystem` | 1; import `docs/cookbook/extending/extending-embedded.md:170` |  |
@@ -160,10 +160,10 @@ Module references (`{mod}` links, `import otto.x`) are listed in B.2, not here.
 | `otto.params:OptionsValidationError` | `otto.params:OptionsValidationError` | 4; role `docs/cookbook/python-library.md:445` |  |
 | `otto.params:options_key` | `otto.params:options_key` | 1; import `src/otto/examples/options.py:38` |  |
 | `otto.params:verbs_for` | `otto.params:verbs_for` | 1; import `src/otto/examples/options.py:38` |  |
-| `otto.registry:Ref` | `otto.registry:Ref` | 1; import `docs/architecture/subsystems/registries.md:80` | registration-semantics spec (Q3) |
-| `otto.registry:RegistrationRefused` | `otto.registry:RegistrationRefused` | 4; role `docs/cookbook/authoring/options-classes.md:110` | registration-semantics spec (Q3) |
-| `otto.registry:Registry` | `otto.registry:Registry` | 4; role `docs/cookbook/extending/extending-backends.md:27` | registration-semantics spec (Q3) |
-| `otto.registry:registering_repo` | `otto.registry:registering_repo` | 1; import `docs/getting-started/boards-of-interest.md:30` | registration-semantics spec (Q3) |
+| `otto.registry:Ref` | `otto.registry:Ref` | 1; import `docs/architecture/subsystems/registries.md:80` | spec 3a |
+| `otto.registry:RegistrationRefused` | `otto.registry:RegistrationRefused` | 4; role `docs/cookbook/authoring/options-classes.md:110` | spec 3a |
+| `otto.registry:Registry` | `otto.registry:Registry` | 4; role `docs/cookbook/extending/extending-backends.md:27` | spec 3a |
+| `otto.registry:registering_repo` | `otto.registry:registering_repo` | 1; import `docs/getting-started/boards-of-interest.md:30` | spec 3a |
 | `otto.reservations.registry:RESERVATION_BACKENDS` | `otto.reservations:RESERVATION_BACKENDS` | 2; import `docs/examples/getting-started/libs/gs_example/__init__.py:47` |  |
 | `otto.result:CommandNotRunError` | `otto.result:CommandNotRunError` | 2; import `docs/cookbook/dry-run-contract.md:197` |  |
 | `otto.suite.expect:ExpectCollector` | `otto.suite:ExpectCollector` | 5; import `docs/cookbook/test-recipes.md:50` |  |
@@ -252,7 +252,7 @@ Module references (`{mod}` links, `import otto.x`) are listed in B.2, not here.
 
 ## C. Current facade exports by evidence (the Q4 detail)
 
-Every name here stays public-provisional at its current path unless its package is in D, or it is one of D1's fleet names, which move from `otto.config` to `otto.lab` in P1.
+Every name here stays public-provisional at its current path unless its package is in D, or it is one of D1's fleet names, which move from `otto.config` to `otto.lab` in P1, or one of spec 4's five repo accessors, which move from `otto.config` to `otto.bootstrap` in P1 (hand-amended 2026-10-06).
 *Taught* = deliberate evidence; *reference* = only autodoc/architecture mentions; *none* = no evidence at all.
 
 | Facade | Exports | Taught | Reference only | None | Reference-only / none names |
@@ -261,7 +261,7 @@ Every name here stays public-provisional at its current path unless its package 
 | `otto._webassets` | 3 | 0 | 1 | 2 | COVAPP, ALL°, MONITOR° |
 | `otto.check` | 30 | 0 | 30 | 0 | CHECK_HOST_TIMEOUT, CheckCommandFailedError, CheckHostUnreachableError, CheckRow, CheckSection, FeatureResult, HostFingerprint, LINK_TOOLS, LINK_VERSIONS, ProvenEntry, ProvenRange, REPORT_SCHEMA, RangeLabel, ReportVerdicts, SWEEP_MIN_AGE_S, TUNNEL_TOOLS, TUNNEL_VERSIONS, UnmeasuredReason, Verdict, check_exec, count_verdicts, fingerprint_command, label_against_range, load_proven_range, parse_fingerprint, probe_fingerprint, range_labels, render_sections, report_to_json, section_counts |
 | `otto.cli` | 1 | 1 | 0 | 0 |  |
-| `otto.config` | 21 | 8 | 13 | 0 | DockerCompose, DockerImage, DockerSettings, MonitorSettings, ResolvedDependency, Version, get_completion_names, get_env, get_ordered_repos, is_bootstrapped, load_otto_env, load_user_settings, user_settings_path |
+| `otto.config` | 21 | 8 | 13 | 0 | DockerCompose, DockerImage, DockerSettings, MonitorSettings, ResolvedDependency, Version, get_completion_names, get_env, get_ordered_repos, is_bootstrapped, load_otto_env, load_user_settings, user_settings_path. In P1, D1's six fleet names move to `otto.lab`, and spec 4 moves the taught `get_repos` and the reference-only `get_completion_names`, `get_env`, `get_ordered_repos` and `is_bootstrapped` to `otto.bootstrap`; ten names stay |
 | `otto.coverage` | 19 | 13 | 6 | 0 | CollectResult, CoverageNotInstrumentedError, CoverageReporter, CoverageStore, GcdaFetcher, ReportInputs |
 | `otto.coverage.fetcher` | 1 | 0 | 1 | 0 | GcdaFetcher |
 | `otto.coverage.merge` | 4 | 0 | 4 | 0 | LCOVLoader, LcovMerger, PathMapping, PathRemapper |
@@ -304,7 +304,7 @@ Their `__all__` stays (the lazy-package guard needs it); they produce no golden 
 - `otto.coverage.merge` — sub-package; LCOV merge internals, never taught
 - `otto.lifecycle` — process lifecycle plumbing
 - `otto.layout` — workspace layout plumbing
-- `otto.declared` — declared products/tools parsing (pending spec 3; `DeclaredEntry` is declared at `otto.host.product`)
+- `otto.declared` — declared products/tools parsing (spec 3a for `KindBuilder`, 3b for declared-entry validation; `DeclaredEntry` is declared at `otto.host.product`)
 
 ## E. Unresolved references
 
@@ -316,9 +316,9 @@ P1 writes each list into the module as its first `__all__` (that narrows `from m
 
 | Namespace | Initial names |
 |---|---|
-| `otto.lab` (new package facade, D1) | Lab, load_lab, get_lab, get_host, all_hosts, do_for_all_hosts, run_on_all_hosts — created in P1; `otto.config` stops exporting them in the same commit (no aliases) |
-| `otto.bootstrap` | BootstrapError, bootstrap |
-| `otto.context` | OttoContext, get_context, open_context, reset_context, reset_variant, set_context, set_variant, try_get_context, variant |
+| `otto.lab` (new package facade, D1) | Lab, load_lab, get_lab, get_host, all_hosts, do_for_all_hosts, run_on_all_hosts — created in P1; `otto.config` stops exporting them in the same commit (no aliases). Spec 4 adds EmptySelectionError, fleet_of_interest |
+| `otto.bootstrap` | BootstrapError, BootstrapResult, BootstrapWarning, DependencyError, ProjectScopeError, bootstrap, get_completion_names, get_env, get_ordered_repos, get_repos, invalidate, is_bootstrapped (spec 4 §2) |
+| `otto.context` | OttoContext, ProjectContextView, Variant, get_context, open_context, reset_context, reset_variant, set_context, set_variant, try_get_context, variant (spec 2 §2; RunPolicy, HostResolver and ContextBinding are declared by spec 2's commit 4, after P1) |
 | `otto.instructions` | instruction, run_instruction |
 | `otto.result` | CommandNotRunError, CommandResult, NotRunResult, Result, Results, ShellResult |
 | `otto.errors` | EnsureStateError, OttoError |
@@ -355,8 +355,8 @@ P1 writes each list into the module as its first `__all__` (that narrows `from m
 | `otto.config.lab:Lab` | `otto.lab:Lab` | docs/cookbook/extending/reservation-backends.md:518 (+5) |
 | `otto.config.lab:load_lab` | `otto.lab:load_lab` | docs/getting-started/boards-of-interest.md:45 (+1) |
 | `otto.config.repo:Repo` | `otto.config:Repo` | docs/getting-started/boards-of-interest.md:29 (+2) |
-| `otto.config.scope:resolve_scopes` | `otto.config:resolve_scopes` | docs/getting-started/boards-of-interest.md:47 (+1) |
-| `otto.config.scope:scoped_ids` | `otto.config:scoped_ids` | docs/getting-started/boards-of-interest.md:47 (+1) |
+| `otto.config.scope:resolve_scopes` | `otto.lab:fleet_of_interest` (spec 4) | docs/getting-started/boards-of-interest.md:47 (+1) |
+| `otto.config.scope:scoped_ids` | `otto.lab:fleet_of_interest` (spec 4) | docs/getting-started/boards-of-interest.md:47 (+1) |
 | `otto.coverage.reporter:run_coverage_report` | `otto.coverage:run_coverage_report` | docs/cookbook/python-library.md:537 (+1) |
 | `otto.docker.compose:get_container_host` | `otto.docker:get_container_host` | docs/cli/docker/index.md:195 (+1) |
 | `otto.host.element:Element` | `otto.host:Element` | docs/cookbook/connection-options.md:101 (+4) |
@@ -378,3 +378,13 @@ P1 writes each list into the module as its first `__all__` (that narrows `from m
 | `otto.suite.expect:ExpectCollector` | `otto.suite:ExpectCollector` | docs/cookbook/test-recipes.md:50 (+1) |
 | `otto.suite.run:RunOptions` | `otto.suite:RunOptions` | docs/cookbook/python-library.md:454 (+1) |
 | `otto.suite.run:prepare_run` | `otto.suite:prepare_run` | docs/cookbook/python-library.md:454 (+1) |
+
+### G addendum: facade names retired by spec 3a
+
+Spec 3a (`2026-10-06-registry-catalog-design.md` §8.1) deletes three functions that are in their facades' `__all__` today. P1 drops each from that `__all__` and lists it in its footer. None has a replacement: users register backends and otto builds them, so P1 rewrites the two teaching sentences to say that an unregistered name raises when otto builds the store, listing the registered names. This is the second exception to Q4's "no name-level narrowing", after the §4 internal list. 3a's seam commits delete the functions after P1.
+
+| Retired name | P1 docs change | First source |
+|---|---|---|
+| `otto.inventory:get_inventory_backend_class` | the sentence is rewritten as above | docs/cookbook/extending/inventory-backends.md:103 |
+| `otto.creds:get_creds_backend_class` | the sentence is rewritten as above | docs/cookbook/extending/creds-backends.md:99 |
+| `otto.reservations:reset_half_ported_warnings` | none: it is untaught, and the diagnostic it reset is deleted | src/otto/reservations/__init__.py:130 |
