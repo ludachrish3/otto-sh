@@ -149,7 +149,10 @@ even when the change is to the enum, not to the function.
 7. any other class: `class`;
 8. a function: `function`;
 9. any other callable with a signature (`functools.partial`, a callable instance): `callable`;
-10. anything else: `value`.
+10. anything else that is not callable: `value`. A callable that is not a class and has no
+    readable signature, for any reason (a non-`Signature` `__signature__`, a `__wrapped__`
+    loop), is a producer refusal and is never recorded as a `value`. A `value` record carries no
+    call kind, so a sync-to-async change behind it would go unseen.
 
 A `functools.partial` is tested for before rule 8. Python 3.14's `inspect.isroutine` reports one
 as a routine and earlier versions do not, so a binding is `callable` on every version.
