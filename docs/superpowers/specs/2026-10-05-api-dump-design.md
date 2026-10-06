@@ -62,6 +62,8 @@ The golden stays at `tests/unit/api_snapshot/public_api.txt`.
 - A field that holds a list (`mro` entries, `call` parameters, `abstract`/`requires` names,
   `input` routes) separates its elements with single spaces; encoded values never contain a
   space. An empty list is written `-`.
+- A name inside a field (a parameter, member, input or enum-member name) is any string
+  `str.isidentifier()` accepts: Python's own rule, so every name the producer can meet parses.
 
 ### 2.2 Order and identity
 
@@ -184,6 +186,9 @@ the call is its constructor.
     `class OttoError(Exception)`.
   - Any other failure is a **producer refusal** naming the binding. Nothing falls back to a
     placeholder.
+- **A metaclass `__call__`.** A class whose metaclass defines its own `__call__` (anything but
+  `type.__call__`; enum metaclasses excepted, §3.7) is a producer refusal: its constructor
+  contract lives in that `__call__`, which the dump does not model.
 
 ### 3.3 Constructor inputs
 
@@ -367,8 +372,11 @@ A mark excuses §4.2 findings only. It never excuses:
 ### 5.1 Inputs
 
 For each v2-era commit, the producer reads only that commit:
-- `git archive <full sha>` of the **whole tree**, not just `src/`. The build backend lives under
-  `scripts/` (`pyproject.toml:123-124`);
+- `git archive <full sha> -- <paths>` of only the paths regeneration reads: `src/`,
+  `pyproject.toml`, `uv.lock` and the manifest. The build backend under `scripts/` is never
+  needed, because otto is never built or installed (§5.2). A path the archive omits but uv
+  needs fails `uv sync --locked` loudly; it cannot produce a wrong dump. Extraction cost grows
+  with the number of members (§5.5), so the archive holds nothing else;
 - that commit's `api/public.toml`, `pyproject.toml` and `uv.lock`.
 
 The checker never reads the working tree or an installed otto. That is why CI's detached checkout
@@ -396,6 +404,10 @@ so their bytes agree.
   says how to build it from the same commit.
 - **A lock that no longer resolves** (a yanked package, say) is an environment refusal, distinct
   from a stale dump.
+- **uv acts on the archive alone.** Inherited uv environment variables that select which
+  project, lock, environment or working directory uv uses (`UV_PROJECT` and its kin) are
+  removed before `uv lock --check` and `uv sync`; the key cannot see them. Cache, index,
+  network and offline settings pass through, so an air-gapped index still works.
 
 ### 5.3 The child process
 
@@ -444,10 +456,25 @@ so their bytes agree.
 
 ### 5.5 Cost
 
-The prototype's warm production takes 0.46 s. Per commit, the producer does one archive extraction
-and runs one child, and it builds a dependency cache only per new key. The P0 rework benchmarks a
-real range with a dependency change before P1 activates the gate. A squash-landed branch is checked
-as its squash commit against the landing parent; no extra policy is needed.
+Cost is measured in **file operations**, never wall-clock time: the count does not move with load
+or host, and file operations are what a network filesystem charges for. The count is
+`strace -f -e trace=%file,getdents64` over the whole process tree (git and uv included), less
+`/proc`, `/sys` and `/dev`, as the import budget counts it.
+
+Per commit, the producer does one archive extraction and runs one child, and it builds a
+dependency cache only per new key. Measured in P0 on a real range with a dependency change
+(`0b29aa0a^..0b29aa0a`, a hypothesis bump; 3,210 records):
+
+| Commit | Archive | Environment | Child | Total |
+|---|---|---|---|---|
+| cold: new key, empty uv cache | 10,063 | 9,602 | 8,515 | 28,180 |
+| new key, uv cache warm | 10,063 | 5,724 | 8,512 | 24,299 |
+| warm: cache hit | 10,063 | 309 | 8,511 | 18,883 |
+
+Extracting the whole tree instead (2,578 files) cost 67,485 operations per commit: tarfile's safe
+extraction resolves every member's path, statting each ancestor of the destination. That is why
+§5.1 archives only the inputs. A squash-landed branch is checked as its squash commit against the
+landing parent; no extra policy is needed.
 
 ## 6. Version invariance (D-3)
 
@@ -665,7 +692,8 @@ sorted by encoded text, `-` when empty.
   - a missing constant;
   - a constant that is not a literal list of `int`/`str`;
   - a duplicate version;
-  - both lists empty;
+  - a declared constant whose list is empty. A pointer that names no version declares
+    nothing; a side with no versions omits its pointer instead;
   - a module that does not import.
 
 ### 13.3 Compatibility rules
