@@ -21,17 +21,5 @@ def test_set_variant_refuses_anything_but_the_two_names():
         context.set_variant("release")  # type: ignore[arg-type]
 
 
-def test_the_cli_variant_is_undone_with_the_cli_context():
-    context.set_cli_variant("field")
-    assert context.variant() == "field"
-    context.reset_cli_context()
-    assert context.variant() == "debug"
-
-
-def test_reset_cli_context_without_a_cli_variant_is_a_noop():
-    context.reset_cli_context()
-    assert context.variant() == "debug"
-
-
 def test_variants_is_the_public_pair():
     assert context.VARIANTS == ("debug", "field")

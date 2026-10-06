@@ -1,13 +1,12 @@
 """Two root-conftest guards, exercised through a real inner pytest session.
 
 ``tests/conftest.py``'s ``_reset_otto_context`` puts the OttoContext state back
-after every test: the two ContextVars (``_active``, ``_variant``) and the two
-reset tokens the CLI parks in module globals (``_cli_token``,
-``_variant_token``). Its ``pytest_runtest_teardown`` wrapper runs the
-lazy-export leak check (``tests/_fixtures/_lazy_exports.py``) after every
-fixture has finalized, and evicts a leak even when the teardown failed first
-(an inner teardown raised, or the loop reaper refused a leaked running loop),
-so the leak cannot cascade onto the next test.
+after every test: the two ContextVars (``_active``, ``_variant``). Its
+``pytest_runtest_teardown`` wrapper runs the lazy-export leak check
+(``tests/_fixtures/_lazy_exports.py``) after every fixture has finalized, and
+evicts a leak even when the teardown failed first (an inner teardown raised,
+or the loop reaper refused a leaked running loop), so the leak cannot cascade
+onto the next test.
 
 ``tests/unit/test_lazy_packages.py`` tests the check's functions directly;
 what this module pins is the WIRING. Each test runs an inner session with the
@@ -35,29 +34,17 @@ PROBE_CONTEXT = """\
 from otto import context
 
 _SENTINEL = object()
-_BEFORE = (
-    context._active.get(),
-    context._variant.get(),
-    context._cli_token,
-    context._variant_token,
-)
+_BEFORE = (context._active.get(), context._variant.get())
 
 
 def test_leaves_the_context_state_behind():
     context._active.set(_SENTINEL)
     context._variant.set("field" if _BEFORE[1] != "field" else "debug")
-    context._cli_token = "leaked-cli-token"
-    context._variant_token = "leaked-variant-token"
 
 
 def test_starts_from_the_state_the_leaker_found():
-    after = (
-        context._active.get(),
-        context._variant.get(),
-        context._cli_token,
-        context._variant_token,
-    )
-    names = ["_active", "_variant", "_cli_token", "_variant_token"]
+    after = (context._active.get(), context._variant.get())
+    names = ["_active", "_variant"]
     leaked = [n for n, b, a in zip(names, _BEFORE, after) if b is not a]
     assert not leaked, f"not restored: {leaked}"
 """
@@ -151,7 +138,7 @@ def _outcomes(result: pytest.RunResult) -> dict[str, int]:
     return {k: v for k, v in result.parseoutcomes().items() if k != "warnings"}
 
 
-def test_reset_otto_context_restores_both_vars_and_both_tokens(inner: pytest.Pytester) -> None:
+def test_reset_otto_context_restores_both_vars(inner: pytest.Pytester) -> None:
     (inner.path / "test_probe_context.py").write_text(PROBE_CONTEXT)
     result = inner.runpytest_subprocess(*PROBE_ARGS, timeout=180)
     combined = str(result.stdout) + str(result.stderr)

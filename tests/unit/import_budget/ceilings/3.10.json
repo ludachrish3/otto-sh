@@ -71,7 +71,7 @@
       "by_bucket": {
         "fd": 102,
         "other": 169,
-        "otto:*": 28,
+        "otto:*": 27,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-310-aarch64-linux-gnu.so": 1,
@@ -87,8 +87,6 @@
         "otto:config": 53,
         "otto:console": 2,
         "otto:console.cpython-310.pyc": 1,
-        "otto:context": 2,
-        "otto:context.cpython-310.pyc": 1,
         "otto:declared": 2,
         "otto:declared.cpython-310.pyc": 1,
         "otto:errors": 2,
@@ -137,9 +135,9 @@
         "workspace": 40
       },
       "by_process": {
-        "python": 2416
+        "python": 2412
       },
-      "file_ops": 2416,
+      "file_ops": 2412,
       "workspace": 40
     },
     "completion_repo_warm": {
@@ -530,7 +528,7 @@
       "by_bucket": {
         "fd": 120,
         "other": 205,
-        "otto:*": 23,
+        "otto:*": 22,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-310-aarch64-linux-gnu.so": 1,
@@ -544,8 +542,6 @@
         "otto:config": 49,
         "otto:console": 2,
         "otto:console.cpython-310.pyc": 1,
-        "otto:context": 2,
-        "otto:context.cpython-310.pyc": 1,
         "otto:declared": 2,
         "otto:declared.cpython-310.pyc": 1,
         "otto:errors": 2,
@@ -593,9 +589,9 @@
         "workspace": 17
       },
       "by_process": {
-        "python": 2874
+        "python": 2870
       },
-      "file_ops": 2874,
+      "file_ops": 2870,
       "workspace": 17
     },
     "host": {

@@ -318,6 +318,15 @@ method of the same name. Anything that wants its dependency visible takes a
 `ctx` parameter — CLI commands can declare `ctx: OttoContext` and have it
 injected.
 
+For a CLI invocation the lab load (`ensure_lab_context`, shared by the preamble and
+the inline `--show-lab`/`--list-hosts` paths) installs the context, and the root
+callback the run's product variant; each registers its reset with Click's `call_on_close` on
+the invocation's root context. Click closes that context once, when the invocation
+ends, whether it returns, exits or raises, and the same way for the console script,
+`app()` and a `CliRunner`. It runs the resets last-in first-out, so the context is
+reset before the variant and nothing an invocation installed outlives it: read the
+context inside the command, never after `app()` returns.
+
 ## HostScope: deterministic teardown, no `__del__`
 
 Hosts hold real resources — SSH connections, telnet consoles, docker exec

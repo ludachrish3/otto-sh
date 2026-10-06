@@ -21,6 +21,7 @@ import dataclasses
 import logging
 import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -100,6 +101,19 @@ def no_logger_output_dir():
         root.handlers[:] = list(saved_root_handlers)
         if token is not None:
             reset_context(token)
+
+
+@pytest.fixture
+def contexts_at_close(monkeypatch: pytest.MonkeyPatch) -> "list[Any]":
+    """Every context a CLI invocation installed, read at Click's close as its reset runs.
+
+    The invocation resets its context when it ends, so a test that asserts on
+    the context it built reads it from this list, never from ``get_context()``
+    after the invocation returned. See ``tests/_fixtures/contexts_at_close.py``.
+    """
+    from tests._fixtures.contexts_at_close import record_contexts_at_close
+
+    return record_contexts_at_close(monkeypatch)
 
 
 @pytest.fixture(autouse=True)

@@ -231,52 +231,6 @@ def reset_variant(token: "Token[Variant]") -> None:
     _variant.reset(token)
 
 
-_cli_token: "Token[OttoContext | None] | None" = None
-
-
-def set_cli_context(ctx: "OttoContext") -> None:
-    """Install *ctx* as the CLI invocation's context, remembering the reset token.
-
-    The CLI installs the context from deep inside the Typer callback
-    (``cli.invoke.ensure_lab_context``) while the natural reset point is the
-    console-script entry's ``finally`` — the two can't share a stack frame, so
-    the token lives module-side. One CLI invocation per process; tests that
-    drive the app via CliRunner are covered by the autouse ContextVar
-    snapshot fixture in tests/conftest.py either way.
-    """
-    global _cli_token  # noqa: PLW0603 — module-level singleton/cache
-    _cli_token = set_context(ctx)
-
-
-_variant_token: "Token[Variant] | None" = None
-
-
-def set_cli_variant(value: Variant) -> None:
-    """Set the CLI invocation's variant, remembering the reset token.
-
-    The root callback writes the variant; the console-script entry's
-    ``finally`` (:func:`reset_cli_context`) undoes it. They share no stack
-    frame, so the token lives module-side, exactly as :func:`set_cli_context`
-    keeps the context's.
-    """
-    global _variant_token  # noqa: PLW0603 — module-level singleton/cache
-    _variant_token = set_variant(value)
-
-
-def reset_cli_context() -> None:
-    """Undo :func:`set_cli_context` and :func:`set_cli_variant` if they ran; safe to call always."""
-    global _cli_token, _variant_token  # noqa: PLW0603 — module-level singleton/cache
-    try:
-        if _cli_token is not None:
-            reset_context(_cli_token)
-            _cli_token = None
-    finally:
-        # Each reset stands on its own: the second runs even if the first throws.
-        if _variant_token is not None:
-            reset_variant(_variant_token)
-            _variant_token = None
-
-
 def _flags_hiding_every_match(
     matched: "list[Any]",
     *,

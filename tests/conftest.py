@@ -830,10 +830,10 @@ def _hermetic_otto_home(_hermetic_otto_home_dir: Path) -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _reset_otto_context():
-    """Restore the OttoContext ContextVar to its pre-test value after every test.
+    """Restore the OttoContext and variant ContextVars to their pre-test values after every test.
 
-    The main() callback (and some fixtures) call set_context(), which persists in
-    the ContextVar. We snapshot the value at test start and restore it at
+    Fixtures and tests call set_context() / set_variant() directly, which persist
+    in the ContextVars. We snapshot the values at test start and restore them at
     teardown, so a test that sets a context can't leak into later tests run on
     the same (long-lived) xdist worker. We do NOT force the var to None during
     the test — that would wipe a module/session scoped context a fixture
@@ -844,31 +844,19 @@ def _reset_otto_context():
     ``make coverage`` the whole suite runs in one process and ungrouped unit
     tests can land on a worker that previously ran integration tests.
 
-    ``otto.context._cli_token`` is restored with it. ``set_cli_context`` stores
-    its reset token in that module global, and only ``entry()``'s ``finally``
-    clears it, so a test that reaches ``ensure_lab_context`` without ``entry()``
-    (a ``CliRunner`` on ``app``) leaves the token behind. A later ``entry()``
-    then resets that token, which raises ``ValueError: ... was created in a
-    different Context`` whenever the leaking test ran in another contextvars
-    context, an async test for one.
+    A CLI invocation needs none of this: it resets the context and the variant
+    it installed when Click closes its root context, through ``CliRunner`` as
+    through ``entry()``.
     """
-    from otto import context
     from otto.context import _active, _variant
 
     snapshot = _active.get()
-    cli_token = context._cli_token
     variant_snapshot = _variant.get()
-    # The CLI's variant reset token too: a CliRunner invocation leaves one
-    # behind, and a later test's reset_cli_context() must see the state it
-    # started with.
-    variant_token = context._variant_token
     try:
         yield
     finally:
         _active.set(snapshot)
-        context._cli_token = cli_token
         _variant.set(variant_snapshot)
-        context._variant_token = variant_token
 
 
 @pytest.fixture(autouse=True)

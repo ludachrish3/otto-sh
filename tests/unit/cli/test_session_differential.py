@@ -101,7 +101,6 @@ import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -126,10 +125,8 @@ _SOURCES = '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n'
 def _hermetic_env(tmp_path, monkeypatch):
     """A fresh ``otto`` process's starting state, as far as the run can see it.
 
-    No OTTO_* from the shell, an empty user home, logs under tmp_path, CI's
-    console, and no CLI context token (the root ``_reset_otto_context``
-    fixture restores ``otto.context._cli_token``; the local setattr just
-    starts each test with none).
+    No OTTO_* from the shell, an empty user home, logs under tmp_path, and CI's
+    console.
     """
     for key in list(os.environ):
         if key.startswith("OTTO_"):
@@ -140,7 +137,6 @@ def _hermetic_env(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_XDIR", str(tmp_path / "xdir"))
     for key, value in _CI_ENV.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setattr("otto.context._cli_token", None)
 
 
 def _install(monkeypatch, repos: "list[Any]", errors: "list[bs.BootstrapError] | None" = None):
@@ -404,17 +400,20 @@ FIELD = Layout("field-variant", _variants, "lab1", _field_witness)
 
 
 def _cli_lab(lab: str) -> LabFacts:
-    """The CLI's lab: the real ``--lab`` parse, then ``ensure_lab_context`` on what it stashes."""
+    """The CLI's lab: the real ``--lab`` parse, then ``ensure_lab_context`` on what it stashes.
+
+    A real Click context, closed as an invocation's root is, so the reset
+    ``ensure_lab_context`` registers runs here too.
+    """
+    from typer.core import TyperGroup
+
     from otto.cli.invoke import ensure_lab_context
     from otto.cli.main import parse_lab_selection
-    from otto.context import reset_cli_context
 
     labs = parse_lab_selection([lab])  # the root callback's `--lab` callback
-    ctx: Any = SimpleNamespace(meta={"_otto_root_options": make_root_options(labs=labs)})
-    try:
+    with typer.Context(TyperGroup(name="otto")) as ctx:
+        ctx.meta["_otto_root_options"] = make_root_options(labs=labs)
         return _facts(ensure_lab_context(ctx).lab)
-    finally:
-        reset_cli_context()
 
 
 async def _library_lab(lab: str, **kwargs: Any) -> LabFacts:
@@ -438,25 +437,20 @@ def test_otto_field_and_open_context_variant_field_build_the_same_lab(tmp_path, 
     """``otto --field --lab X`` and ``open_context(lab=X, variant="field")`` pick the same entry.
 
     The CLI side is the real ``entry()``, so the ``--field`` parse and the root
-    callback's ``set_cli_variant`` are in the loop; its lab is read off the
-    context ``ensure_lab_context`` installs. Sync, with the library side under
-    its own ``asyncio.run``, so ``entry()`` never runs inside a live loop.
+    callback's ``set_variant`` are in the loop; its lab is read off the context
+    ``ensure_lab_context`` installed, as Click's close resets it. Sync, with the
+    library side under its own ``asyncio.run``, so ``entry()`` never runs inside
+    a live loop.
     """
-    from otto import context
+    from tests._fixtures.contexts_at_close import record_contexts_at_close
 
     _install(monkeypatch, FIELD.build(tmp_path))
     library = asyncio.run(_library_lab(FIELD.lab, variant="field"))
-    installed: "list[LabFacts]" = []
-    real_set_cli_context = context.set_cli_context
-
-    def _spy(ctx: Any) -> None:
-        installed.append(_facts(ctx.lab))
-        real_set_cli_context(ctx)
-
-    monkeypatch.setattr("otto.context.set_cli_context", _spy)
+    # Installed after the library run: the recorder sees open_context's reset too.
+    installed = record_contexts_at_close(monkeypatch)
     run = _otto(monkeypatch, ["--field", "-n", "--lab", FIELD.lab, "cov", "clean"])
     assert run.code == 0, run
-    [cli] = installed
+    [cli] = [_facts(ctx.lab) for ctx in installed]
     assert cli == library
     FIELD.witness(library)
 

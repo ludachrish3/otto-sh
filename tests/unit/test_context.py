@@ -479,19 +479,6 @@ async def test_hostscope_sweep_drains_registered_hosts():
     assert h.close_calls == 1
 
 
-def test_set_and_reset_cli_context_pair():
-    from otto.context import reset_cli_context, set_cli_context
-
-    baseline = try_get_context()
-    ctx = OttoContext(lab=_lab_with())
-    set_cli_context(ctx)
-    assert try_get_context() is ctx
-    reset_cli_context()
-    assert try_get_context() is baseline
-    reset_cli_context()  # idempotent: second reset is a no-op
-    assert try_get_context() is baseline
-
-
 class _ScopedHost:
     """Standalone fake for ranked-sweep tests: records close order into a shared list."""
 

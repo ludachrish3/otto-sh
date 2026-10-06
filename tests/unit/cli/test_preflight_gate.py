@@ -327,9 +327,15 @@ class TestPreambleWiring:
         active OttoContext``. That is the whole reason the spec's placement and
         its ``active()`` requirement could not both be honoured.
         """
-        from otto.context import reset_cli_context, set_cli_context
+        from otto.context import reset_context, set_context
 
-        request.addfinalizer(reset_cli_context)
+        tokens: list = []
+
+        def _reset() -> None:
+            for token in reversed(tokens):
+                reset_context(token)
+
+        request.addfinalizer(_reset)
         repo = _repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")
         monkeypatch.setattr(
             "otto.bootstrap.bootstrap",
@@ -338,8 +344,12 @@ class TestPreambleWiring:
         monkeypatch.setattr(
             invoke,
             "ensure_lab_session",
-            lambda ctx, spec: set_cli_context(
-                types.SimpleNamespace(include_projects=(), exclude_projects=("repo4",), scopes={})  # ty: ignore[invalid-argument-type]
+            lambda ctx, spec: tokens.append(
+                set_context(
+                    types.SimpleNamespace(
+                        include_projects=(), exclude_projects=("repo4",), scopes={}
+                    )  # ty: ignore[invalid-argument-type]
+                )
             ),
         )
         spec = CommandSpec(name="run", loader=None, gate=False)

@@ -713,8 +713,8 @@ class RootOptions:
     field: bool = False
     """``--field``: the run installs each product's field variant (spec
     2026-10-03 §5); ``False`` is ``--debug``, the default. The root callback
-    also writes it to :func:`otto.context.set_cli_variant`, which is what the
-    registry and providers read."""
+    also sets it for the invocation with :func:`otto.context.set_variant`,
+    which is what the registry and providers read."""
     probe: bool = False
     """``--probe``: under a dry run, open a connection to each host the command
     names (spec §3). Defaults so a caller that predates the flag still builds;
@@ -835,9 +835,11 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     Builds the lab through :func:`otto.session.build_lab` (which enforces
     ``--lab``, aggregates the repos' sources, loads the lab and registers the
     declared docker placeholder hosts), resolves reservation state (stashed on
-    ``ctx.meta['otto_reservation']``), and installs an ``OttoContext`` via
-    ``set_cli_context``. Guarded by ``ctx.meta['_otto_lab_ready']`` so repeated calls
-    are cheap. No banner, no logging init, no output dir — those belong to
+    ``ctx.meta['otto_reservation']``), and installs an ``OttoContext`` with
+    :func:`~otto.context.set_context`, registering its reset on the root Click
+    context's ``call_on_close`` so it ends with the invocation. Guarded by
+    ``ctx.meta['_otto_lab_ready']`` so repeated calls are cheap and register once.
+    No banner, no logging init, no output dir — those belong to
     :func:`ensure_cli_session` / :func:`command_preamble`.
 
     Raises (never prints) :class:`~otto.session.LabBuildError` or
@@ -888,11 +890,14 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
 
     # Install the runtime context: lab + dry_run flag + the per-invocation
     # project switches (-I/-E), which every activation question reads back
-    # through otto.config.scope.active. Token kept module-side in otto.context;
-    # entry()'s finally calls reset_cli_context().
-    from ..context import OttoContext, set_cli_context
+    # through otto.config.scope.active. Its reset runs when Click closes this
+    # invocation's root context, before the variant's (the root callback
+    # registered that one first), so the context never outlives the invocation.
+    # Installed here, outside the command's event loop: the leaf's coroutine
+    # runs later under run_command, in a copy of this execution context.
+    from ..context import OttoContext, reset_context, set_context
 
-    set_cli_context(
+    token = set_context(
         OttoContext(
             lab=lab,
             dry_run=opts.dry_run,
@@ -900,6 +905,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
             exclude_projects=opts.exclude_projects,
         )
     )
+    ctx.find_root().call_on_close(lambda: reset_context(token))
     meta["_otto_lab_ready"] = True
     return get_context()
 

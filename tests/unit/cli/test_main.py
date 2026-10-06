@@ -15,7 +15,8 @@ from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
-from typer.testing import CliRunner
+import typer
+from typer.testing import CliRunner, Result
 
 from otto.cli.main import app
 from otto.cli.registry import register_cli_command
@@ -101,6 +102,25 @@ def _invoke(extra_args: list[str]):
     dispatches, so those tests observe only the lab load, as before.
     """
     return runner.invoke(app, ["--lab", "test_lab", *extra_args, "_main_probe"])
+
+
+def _entry_invoke(monkeypatch: pytest.MonkeyPatch, argv: "list[str]") -> Result:
+    """Run ``otto <argv>`` through the console-script ``entry()``; its argv is ``sys.argv``.
+
+    Through ``CliRunner.invoke`` on a one-command wrapper, as
+    ``test_session_differential._entry_command`` does, so the root conftest's
+    live-log capture guard covers the run.
+    """
+    wrapper = typer.Typer()
+
+    @wrapper.command()
+    def otto_entry() -> None:
+        from otto.cli.main import entry
+
+        entry()
+
+    monkeypatch.setattr("sys.argv", ["otto", *argv])
+    return runner.invoke(wrapper, [])
 
 
 # ── Eager / early-exit options ────────────────────────────────────────────────
@@ -564,23 +584,21 @@ class TestLabLoading:
       - lab2: host2, host3
     """
 
-    def test_single_lab_loads_correct_hosts(self, real_main_mocks):
+    def test_single_lab_loads_correct_hosts(self, real_main_mocks, contexts_at_close):
         result = _invoke([])
         assert result.exit_code == 0
-        from otto.config import get_lab
-
-        lab = get_lab()
+        [ctx] = contexts_at_close
+        lab = ctx.lab
         assert lab.name == "test_lab"
         # `local` is the built-in host injected into every lab by load_lab.
         assert set(lab.hosts.keys()) == {"host1", "host2", "local"}
 
-    def test_multiple_labs_combine_on_plus(self, real_main_mocks):
+    def test_multiple_labs_combine_on_plus(self, real_main_mocks, contexts_at_close):
         # Append the probe leaf so the lazy preamble loads the lab (Task 7).
         result = runner.invoke(app, ["--lab", "test_lab+lab2", "_main_probe"])
         assert result.exit_code == 0
-        from otto.config import get_lab
-
-        lab = get_lab()
+        [ctx] = contexts_at_close
+        lab = ctx.lab
         assert set(lab.hosts.keys()) == {"host1", "host2", "host3", "local"}
 
     def test_parse_lab_selection_accumulates_and_splits(self):
@@ -617,12 +635,12 @@ class TestLabLoading:
         if bad:
             assert repr(bad) in (result.output + (result.stderr or ""))
 
-    def test_lab_selection_from_env_var_splits_on_plus(self, real_main_mocks):
+    def test_lab_selection_from_env_var_splits_on_plus(self, real_main_mocks, contexts_at_close):
         result = runner.invoke(app, ["_main_probe"], env={"OTTO_LAB": "test_lab+lab2"})
         assert result.exit_code == 0
-        from otto.config import get_lab
-
-        assert set(get_lab().hosts.keys()) == {"host1", "host2", "host3", "local"}
+        [ctx] = contexts_at_close
+        lab = ctx.lab
+        assert set(lab.hosts.keys()) == {"host1", "host2", "host3", "local"}
 
     def test_empty_env_var_still_means_no_lab(self, real_main_mocks):
         """OTTO_LAB="" must still be treated as "no lab selected".
@@ -638,20 +656,18 @@ class TestLabLoading:
         assert result.exit_code == 2
         assert "--lab" in (result.output + (result.stderr or ""))
 
-    def test_multiple_lab_flags(self, real_main_mocks):
+    def test_multiple_lab_flags(self, real_main_mocks, contexts_at_close):
         # Append the probe leaf so the lazy preamble loads the lab (Task 7).
         result = runner.invoke(app, ["--lab", "test_lab", "--lab", "lab2", "_main_probe"])
         assert result.exit_code == 0
-        from otto.config import get_lab
-
-        lab = get_lab()
+        [ctx] = contexts_at_close
+        lab = ctx.lab
         assert set(lab.hosts.keys()) == {"host1", "host2", "host3", "local"}
 
-    def test_host_objects_have_correct_ip(self, real_main_mocks):
+    def test_host_objects_have_correct_ip(self, real_main_mocks, contexts_at_close):
         _invoke([])
-        from otto.config import get_lab
-
-        lab = get_lab()
+        [ctx] = contexts_at_close
+        lab = ctx.lab
         assert lab.hosts["host1"].ip == "10.0.0.1"
         assert lab.hosts["host2"].ip == "10.0.0.2"
 
@@ -720,12 +736,113 @@ class TestDryRunMode:
         result = _invoke(["-n"])
         assert result.exit_code == 0
 
-    def test_dry_run_sets_context_flag(self, main_mocks):
-        """--dry-run should enable dry_run on the active OttoContext."""
-        from otto.host.host import is_dry_run
+    def test_dry_run_sets_context_flag(self, main_mocks, contexts_at_close):
+        """--dry-run enables dry_run on the context the invocation installed.
 
-        _invoke(["--dry-run"])
-        assert is_dry_run() is True
+        Read as Click's close resets it: once the invocation returns, the context
+        it installed is gone. ``is_dry_run()`` reads exactly this field.
+        """
+        result = _invoke(["--dry-run"])
+        assert result.exit_code == 0, result.output
+        [ctx] = contexts_at_close
+        assert ctx.dry_run is True
+
+
+# ── Per-invocation resets ────────────────────────────────────────────────────
+
+
+class TestInvocationResets:
+    """An invocation resets the variant and context it installed when Click closes it.
+
+    Spec docs/superpowers/specs/2026-10-06-run-state-contracts-design.md §5. Each
+    test runs its invocations inside its own body and asserts between them, so
+    the root conftest's ``_reset_otto_context``, which restores only at
+    teardown, cannot hide a leak. The baseline is whatever was installed before
+    (the CLI conftest's stub context): an invocation must leave exactly that.
+    """
+
+    def test_two_clirunner_invocations_each_leave_the_state_they_found(
+        self, main_mocks, contexts_at_close
+    ):
+        from otto import context
+
+        baseline = context.try_get_context()
+        first = _invoke(["--field"])
+        assert first.exit_code == 0, first.output
+        assert (context.variant(), context.try_get_context()) == ("debug", baseline)
+        second = _invoke([])
+        assert second.exit_code == 0, second.output
+        assert (context.variant(), context.try_get_context()) == ("debug", baseline)
+        # Each invocation really installed one, and its reset ran on it.
+        assert len(contexts_at_close) == 2
+        assert all(ctx is not baseline for ctx in contexts_at_close)
+
+    def test_an_invocation_that_raises_still_resets(self, main_mocks, monkeypatch):
+        """A failure after the context and variant are installed still undoes both."""
+        from otto import context
+
+        def _fail(*_args: object) -> None:
+            raise RuntimeError("the leaf's value could not be rendered")
+
+        # Called after the leaf ran, so the context and the variant are both in place.
+        monkeypatch.setattr("otto.cli.invoke.render_leaf_value", _fail)
+        baseline = context.try_get_context()
+        result = _invoke(["--field"])
+        assert isinstance(result.exception, RuntimeError), result.output
+        assert (context.variant(), context.try_get_context()) == ("debug", baseline)
+
+    def test_two_entry_invocations_each_leave_the_state_they_found(
+        self, main_mocks, monkeypatch, contexts_at_close
+    ):
+        """The console-script path: ``entry()`` resets nothing itself; Click's close does."""
+        from otto import context
+
+        monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: bootstrap_stub([]))
+        baseline = context.try_get_context()
+        first = _entry_invoke(monkeypatch, ["--field", "--lab", "test_lab", "_main_probe"])
+        assert first.exit_code == 0, (first.output, first.exception)
+        assert (context.variant(), context.try_get_context()) == ("debug", baseline)
+        second = _entry_invoke(monkeypatch, ["--lab", "test_lab", "_main_probe"])
+        assert second.exit_code == 0, (second.output, second.exception)
+        assert (context.variant(), context.try_get_context()) == ("debug", baseline)
+        assert len(contexts_at_close) == 2
+
+    def test_the_context_resets_before_the_variant(self, main_mocks, monkeypatch):
+        """Spec 2 §5: the context resets before the variant (LIFO close)."""
+        import otto.context as context_mod
+
+        order: "list[str]" = []
+        real_reset_context = context_mod.reset_context
+        real_reset_variant = context_mod.reset_variant
+
+        def _context(token):
+            order.append("context")
+            real_reset_context(token)
+
+        def _variant(token):
+            order.append("variant")
+            real_reset_variant(token)
+
+        monkeypatch.setattr("otto.context.reset_context", _context)
+        monkeypatch.setattr("otto.context.reset_variant", _variant)
+        result = _invoke(["--field"])
+        assert result.exit_code == 0, result.output
+        assert order == ["context", "variant"]
+
+    def test_the_inline_lab_load_resets_too(self, real_main_mocks, contexts_at_close):
+        """The root callback's inline lab load (``--show-lab``) registers one reset.
+
+        ``real_main_mocks`` serves ``test_lab`` as ``TestLabLoading`` uses it;
+        ``_invoke`` already selects it. ``--field`` moves the variant off its
+        ``debug`` baseline, so a missing variant reset shows here too.
+        """
+        from otto import context
+
+        baseline = (context.variant(), context.try_get_context())
+        result = _invoke(["--field", "--show-lab"])
+        assert result.exit_code == 0, result.output
+        assert (context.variant(), context.try_get_context()) == baseline
+        assert len(contexts_at_close) == 1
 
 
 # ── --clear-autocomplete-cache (removed, 0.10.0 breaking) ────────────────────
@@ -791,20 +908,6 @@ class TestProjectSwitchWiring:
         monkeypatch.setattr("otto.cli.invoke.RootOptions", _SpyOptions)
         return captured
 
-    def _capture_context(self, monkeypatch):
-        """Spy set_cli_context, still installing the real context so get_context works."""
-        import otto.context as context_mod
-
-        captured: dict = {}
-        real_set = context_mod.set_cli_context
-
-        def _spy(ctx):
-            captured["ctx"] = ctx
-            return real_set(ctx)
-
-        monkeypatch.setattr("otto.context.set_cli_context", _spy)
-        return captured
-
     def test_switches_reach_root_options_normalized(self, main_mocks, monkeypatch):
         """`-I`/`-E` are parsed by the callback and stored PEP-503-normalized.
 
@@ -840,23 +943,23 @@ class TestProjectSwitchWiring:
         assert captured["opts"].include_projects == ()
         assert captured["opts"].exclude_projects == ()
 
-    def test_switches_reach_the_runtime_context(self, main_mocks, monkeypatch):
+    def test_switches_reach_the_runtime_context(self, main_mocks, contexts_at_close):
         """ensure_lab_context must thread both tuples onto the installed OttoContext.
 
         This is the seam where everything the parse layer produced actually
         meets ``otto.config.scope.active``. Dropping the two kwargs leaves every
         other test in the suite green.
         """
-        captured = self._capture_context(monkeypatch)
-
         result = _invoke(["-I", "Repo.A", "-E", "other_repo"])
 
         assert result.exit_code == 0, result.output
-        ctx = captured["ctx"]
+        [ctx] = contexts_at_close
         assert ctx.include_projects == ("repo-a",)
         assert ctx.exclude_projects == ("other-repo",)
 
-    def test_the_context_sees_the_switches_through_the_predicate(self, main_mocks, monkeypatch):
+    def test_the_context_sees_the_switches_through_the_predicate(
+        self, main_mocks, contexts_at_close
+    ):
         """End to end: a name typed at -E makes scope.active() say False.
 
         Asserts the CONSEQUENCE rather than the field, so the wiring is pinned
@@ -864,12 +967,10 @@ class TestProjectSwitchWiring:
         """
         from otto.config import scope
 
-        captured = self._capture_context(monkeypatch)
-
         result = _invoke(["-E", "other_repo"])
 
         assert result.exit_code == 0, result.output
-        ctx = captured["ctx"]
+        [ctx] = contexts_at_close
         assert scope.active("other-repo", ctx) is False
         assert scope.switched_off("other-repo", ctx) is True
         assert scope.active("some-other-repo", ctx) is True
