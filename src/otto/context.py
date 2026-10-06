@@ -295,6 +295,11 @@ def _flags_hiding_every_match(
     means the walk is not empty, so there is nothing to explain and no reason
     to keep classifying the rest.
 
+    Which flag holds a host out is ``otto.config.fleet._flag_holding_out``'s
+    answer: the same rule the walk's yield loop and
+    :func:`otto.config.fleet.fleet_of_interest` apply, so this prediction and
+    the loop cannot disagree about a host.
+
     Args:
         matched: The hosts the pattern fullmatched, taken from the same lab
             mapping the walk itself iterates.
@@ -307,17 +312,16 @@ def _flags_hiding_every_match(
         which is also what an empty *matched* returns: no matches is the OTHER
         failure, and it is already spoken for by the plain D6 message.
     """
-    from .host.docker_host import DockerContainerHost
-    from .host.local_host import LocalHost
+    from .config.fleet import _flag_holding_out
 
     hiding: set[str] = set()
     for host in matched:
-        if not include_containers and isinstance(host, DockerContainerHost):
-            hiding.add("include_containers")
-        elif not include_local and isinstance(host, LocalHost):
-            hiding.add("include_local")
-        else:
+        flag = _flag_holding_out(
+            host, include_containers=include_containers, include_local=include_local
+        )
+        if flag is None:
             return []
+        hiding.add(flag)
     return sorted(hiding)
 
 
@@ -877,10 +881,8 @@ class OttoContext:
             otto.bootstrap.ProjectScopeError: The base set is empty while some
                 repo declared a ``[project]`` scope.
         """
-        from .config.fleet import _apply_option_overrides
+        from .config.fleet import _apply_option_overrides, _flag_holding_out
         from .config.scope import EmptySelectionError
-        from .host.docker_host import DockerContainerHost
-        from .host.local_host import LocalHost
 
         # Computed here rather than in a wrapper: this is a generator, so the
         # body runs at first `next()` — which is when the walk actually happens
@@ -903,8 +905,9 @@ class OttoContext:
             # above cannot see: the pattern matched, and the membership flags
             # below then removed every match. Reading the survivors off
             # `self.lab.hosts.values()` — the SAME mapping the yield loop walks,
-            # in the same order — is what keeps this prediction and that loop
-            # from ever disagreeing about who is a fleet member.
+            # in the same order, through the same `_flag_holding_out` rule — is
+            # what keeps this prediction and that loop from ever disagreeing
+            # about who is a fleet member.
             hidden_by = _flags_hiding_every_match(
                 [host for host in self.lab.hosts.values() if host.id in matched],
                 include_containers=include_containers,
@@ -921,9 +924,10 @@ class OttoContext:
         for host in self.lab.hosts.values():
             if host.id not in selected:
                 continue
-            if not include_containers and isinstance(host, DockerContainerHost):
-                continue
-            if not include_local and isinstance(host, LocalHost):
+            held_out_by = _flag_holding_out(
+                host, include_containers=include_containers, include_local=include_local
+            )
+            if held_out_by is not None:
                 continue
             yield _apply_option_overrides(cast("Any", host), **overrides)
 

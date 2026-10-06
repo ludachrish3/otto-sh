@@ -26,6 +26,7 @@ if TYPE_CHECKING:
         UserlandOptions,
     )
     from ..host.remote_host import RemoteHost
+    from .repo import Repo
 
 T = TypeVar("T")
 
@@ -476,3 +477,171 @@ def is_builtin_host(host: object) -> bool:
     from ..host.builtin_hosts import is_builtin_host as _is_builtin_host
 
     return _is_builtin_host(host)
+
+
+def _flag_holding_out(
+    host: object, *, include_containers: bool, include_local: bool
+) -> "str | None":
+    """Name the membership flag that holds *host* out of a fleet, or ``None`` for a member.
+
+    THE one membership-flag rule. Container hosts and the built-in ``local``
+    host are not fleet members unless the caller's flag admits them: a sweep
+    must never silently reach the runner itself, or a container nobody asked
+    for. Three readers apply the rule and must agree host by host:
+    :meth:`otto.context.OttoContext.all_hosts` yields only members, its
+    empty-selection prediction (``otto.context._flags_hiding_every_match``)
+    names the flags that hid every match, and :func:`fleet_of_interest`
+    answers what the walk would yield. A second copy of the rule in any of
+    them would drift the first time one of them grew a case.
+
+    The host classes are imported here, not at module level: neither is needed
+    until a walk or a query runs, and ``LocalHost`` is heavy.
+
+    Args:
+        host: One lab host, of any family.
+        include_containers: The caller's container flag.
+        include_local: The caller's ``local`` flag.
+
+    Returns:
+        ``"include_containers"`` or ``"include_local"`` (the flag that would
+        admit *host*), or ``None`` when *host* is a fleet member as asked.
+    """
+    from ..host.docker_host import DockerContainerHost
+    from ..host.local_host import LocalHost
+
+    if not include_containers and isinstance(host, DockerContainerHost):
+        return "include_containers"
+    if not include_local and isinstance(host, LocalHost):
+        return "include_local"
+    return None
+
+
+_UNKNOWN_QUERY_OWNER = """\
+fleet_of_interest() was bound to repo '{owner}', but none of the repos it was
+given is named '{owner}'.
+
+    repos given: {known}
+
+Answering with the whole lab would be the silent widening project scoping
+exists to prevent. Pass the repo's name exactly as the repo declares it (owner
+is not normalized), or owner=None for the union of the declaring repos."""
+"""The query's unknown-owner refusal. Not the walk's message: the walk's speaks
+of "this run's resolved repos" and of a fallback, and a query has neither. It
+names what was passed, so a caller can tell a typo from a repo it forgot."""
+
+
+def fleet_of_interest(
+    lab: Lab,
+    repos: "list[Repo]",
+    *,
+    owner: str | None = None,
+    exclude_projects: list[str] | None = None,
+    include_containers: bool = False,
+    include_local: bool = False,
+) -> list[str]:
+    """Return the ids of the hosts a fleet walk would reach, without walking or connecting.
+
+    The question a reader asks before a run: which of this lab's hosts are the
+    project's fleet of interest. The answer is the ids
+    :meth:`otto.context.OttoContext.all_hosts` yields with the same flags, for
+    the same lab, repos and ``-E`` set, in the lab's order; with *owner* set,
+    the ids ``ctx.for_repo(owner).all_hosts()`` yields. It is the walk's own
+    computation, not a copy of it: the admissible set comes from
+    :func:`otto.config.scope.scoped_ids`, which the walk's base set
+    (:meth:`otto.context.OttoContext.admissible_ids`) reads too, and the
+    membership flags from the one rule the walk applies.
+
+    Three differences are deliberate:
+
+    * **An empty declared fleet** is an answer, ``[]``. The walk refuses it,
+      because a walk that touches nothing is a silent failure; a query that
+      returns an empty list is not silent.
+    * **An unknown owner** is refused even when *repos* is empty. A context
+      that could not reach its repos falls back to the whole lab; a caller
+      that passed *repos* has reached them, so the whole lab would widen.
+    * **The library sentinel lab** (``otto.context.LIBRARY_LAB_NAME``) gets no
+      special case. A context on it walks its whole lab; this function scopes
+      the lab it is given.
+
+    Pure: no I/O, no ``bootstrap()``, no lab loading, no read of the active
+    context. The caller passes the repos: usually ``get_repos()``, or a
+    hand-built ``[Repo(sut_dir=...)]``. When repo names are unique their order
+    does not matter; when two repos share a name the last one wins, as in the
+    walk. There is no ``pattern`` parameter: narrowing a list is the caller's
+    job.
+
+    Args:
+        lab: The loaded lab. Its ``hosts`` are read as they stand at the call.
+        repos: The repos whose ``[project]`` declarations scope the lab.
+        owner: A ``Repo.name`` exactly as declared (it is never normalized),
+            for that one repo's fleet. ``None`` (the default) answers the
+            union of the declaring repos, or the whole lab when none declares.
+        exclude_projects: Repo names switched off for the union, compared
+            PEP 503-normalized, as ``--exclude-projects`` is. Ignored when
+            *owner* is set, as in the walk. A name that matches no repo is
+            ignored: validating it is the CLI's job.
+        include_containers: Also answer the container hosts the scope admits.
+        include_local: Also answer the built-in ``local`` host when the scope
+            admits it. With no declaration it always does; under one it
+            depends on ``local``'s stamped ``source_lab``. The flag never adds
+            a host the scope excluded.
+
+    Returns:
+        The host ids, in the lab's order. Possibly empty.
+
+    Raises:
+        otto.bootstrap.ProjectScopeError: *owner* is not ``None`` and names no
+            repo in *repos*, including when *repos* is empty.
+
+    >>> import re
+    >>> import types
+    >>> from otto.config.fleet import fleet_of_interest
+    >>> from otto.config.lab import Lab
+    >>> from otto.config.scope import ProjectScopeConfig
+    >>> hosts = {
+    ...     "sensor-1": types.SimpleNamespace(source_lab="bench"),
+    ...     "gw-1": types.SimpleNamespace(source_lab="bench"),
+    ... }
+    >>> lab = Lab(name="bench", hosts=hosts)
+    >>> sensors = types.SimpleNamespace(  # only .name/.project_scope/.sut_dir are read
+    ...     name="sensors",
+    ...     sut_dir="/repos/sensors",
+    ...     project_scope=ProjectScopeConfig([re.compile("bench")], [re.compile("sensor-.*")]),
+    ... )
+    >>> fleet_of_interest(lab, [sensors])
+    ['sensor-1']
+    >>> fleet_of_interest(lab, [])  # nothing declared: the whole lab
+    ['sensor-1', 'gw-1']
+    """
+    from ..bootstrap import ProjectScopeError  # function-scope: keeps this module import-light
+    from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
+    from .scope import resolve_scopes, scoped_ids
+
+    # The verdicts the walk's context resolves (``OttoContext.scopes``), with
+    # the same ``local`` exclusion, so the two read identical data.
+    scopes = resolve_scopes(
+        repos,
+        lab.component_names,
+        lab.hosts,
+        exclude_ids=frozenset({BUILTIN_LOCAL_HOST_ID}),
+    )
+    if owner is not None and owner not in scopes:
+        # Checked here, before ``scoped_ids``: its own refusal stands down over
+        # empty scopes, a leniency for a context that could not reach its
+        # repos. This caller handed them over.
+        raise ProjectScopeError(
+            "",  # no repo, so no settings.toml to send the reader to
+            _UNKNOWN_QUERY_OWNER.format(owner=owner, known=", ".join(sorted(scopes)) or "(none)"),
+        )
+    admissible = scoped_ids(
+        lab.hosts, scopes, owner, exclude_projects=tuple(exclude_projects or ())
+    )
+    return [
+        host_id
+        for host_id, host in lab.hosts.items()
+        if host_id in admissible
+        and _flag_holding_out(
+            host, include_containers=include_containers, include_local=include_local
+        )
+        is None
+    ]

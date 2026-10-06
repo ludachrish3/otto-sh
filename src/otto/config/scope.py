@@ -704,7 +704,8 @@ def scoped_ids(
 
     The ambient universe of spec §6, in one place so both fleet surfaces
     (:meth:`otto.context.OttoContext.all_hosts` and the module-level
-    :func:`otto.config.fleet.all_hosts` that delegates to it) cannot disagree.
+    :func:`otto.config.fleet.all_hosts` that delegates to it) cannot disagree,
+    nor can the pure query :func:`otto.config.fleet.fleet_of_interest`.
     Membership is re-derived by calling :func:`repo_targets` against *hosts* as
     they stand at the call, so a docker container registered after the context
     was created is scoped correctly instead of frozen out — which is precisely
