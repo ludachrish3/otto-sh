@@ -71,7 +71,7 @@ the end of P0.
 
 Spec `docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md` §2, §9 and §10.
 
-- [ ] **Before P1:** commit 2, `feat(config)`: `fleet_of_interest` in `otto.config.fleet`, the
+- [x] ✅ **Before P1:** commit 2 (6c817717), `feat(config)`: `fleet_of_interest` in `otto.config.fleet`, the
   shared membership-flag helper (`OttoContext.all_hosts` refactored onto it), and the differential
   test (spec 4 §3, §8).
 - [ ] Fold `get_repos`, `get_ordered_repos` and `get_env` into `src/otto/bootstrap.py` (it already
@@ -119,7 +119,7 @@ Spec `docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md` §2, §
 
 Spec `docs/superpowers/specs/2026-10-06-run-state-contracts-design.md` §2, §5 and §6.
 
-- [ ] **Before P1:** commit 2, `fix(cli)`: the CLI's resets run on Click's `call_on_close`;
+- [x] ✅ **Before P1:** commit 2 (b0243c4d), `fix(cli)`: the CLI's resets run on Click's `call_on_close`;
   `_cli_token`, `_variant_token`, `set_cli_context`, `set_cli_variant` and `reset_cli_context`
   are deleted; the root conftest stops snapshotting them (spec 2 §5).
 - [ ] `otto.context`'s first `__all__`: the eleven names in appendix F (spec 2 §2). The footer notes
@@ -136,7 +136,7 @@ Spec `docs/superpowers/specs/2026-10-06-run-state-contracts-design.md` §2, §5 
 
 Spec `docs/superpowers/specs/2026-10-06-registry-catalog-design.md` §8 and §9.
 
-- [ ] **Before P1:** commit 2, `fix(host)`: #601. Embedded hosts build through the term registry;
+- [x] ✅ **Before P1:** commit 2 (708cd4c5), `fix(host)`: #601. Embedded hosts build through the term registry;
   `_connection_factory` and its teaching (`extending-backends.md:136`) are deleted, so P1's
   underscore-rename inventory (dump spec §7.4) no longer contains it. The golden is regenerated,
   with a mark only if the producer records the init keyword (spec 3a §5).
