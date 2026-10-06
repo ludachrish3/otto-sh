@@ -304,7 +304,7 @@ Their `__all__` stays (the lazy-package guard needs it); they produce no golden 
 - `otto.coverage.merge` — sub-package; LCOV merge internals, never taught
 - `otto.lifecycle` — process lifecycle plumbing
 - `otto.layout` — workspace layout plumbing
-- `otto.declared` — declared products/tools parsing (spec 3a for `KindBuilder`, 3b for declared-entry validation; `DeclaredEntry` is declared at `otto.host.product`)
+- `otto.declared` — declared products/tools parsing (spec 3a for `KindBuilder`; `DeclaredEntry` is declared at `otto.host.product`)
 
 ## E. Unresolved references
 
@@ -388,3 +388,15 @@ Spec 3a (`2026-10-06-registry-catalog-design.md` §8.1) deletes three functions 
 | `otto.inventory:get_inventory_backend_class` | the sentence is rewritten as above | docs/cookbook/extending/inventory-backends.md:103 |
 | `otto.creds:get_creds_backend_class` | the sentence is rewritten as above | docs/cookbook/extending/creds-backends.md:99 |
 | `otto.reservations:reset_half_ported_warnings` | none: it is untaught, and the diagnostic it reset is deleted | src/otto/reservations/__init__.py:130 |
+
+### G addendum: host specs re-homed by spec 3b
+
+Spec 3b (`2026-10-06-host-construction-design.md` §2.1, decision H-1) declares the host specs at `otto.host`. P1 drops them from `otto.models`'s `__all__`, typing exports and lazy bindings, adds them to `otto.host`'s, and lists each move in its footer. All three are untaught today (appendix C, row `otto.models`). The defining module stays `otto.models.host` until spec 5 moves it.
+
+| Path today | Declared path it moves to |
+|---|---|
+| `otto.models:HostSpec` | `otto.host:HostSpec` |
+| `otto.models:UnixHostSpec` | `otto.host:UnixHostSpec` |
+| `otto.models:EmbeddedHostSpec` | `otto.host:EmbeddedHostSpec` |
+
+P1 also adds the already-declared `otto.host:host_identity` to `otto.host`'s `__all__`.

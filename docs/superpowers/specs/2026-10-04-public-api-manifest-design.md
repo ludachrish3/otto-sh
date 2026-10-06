@@ -237,7 +237,10 @@ to the **same object**.
 
 **Pending seams.** Each is settled by the spec named here, **before P1**. Any path change it
 decides lands in P1, and its `api/public.toml` entry names that spec:
-- host construction (`HostSpec`, `to_host`, custom host fields): spec 3b;
+- host construction (`HostSpec`, `to_host`, custom host fields): spec 3b, **settled**
+  (`2026-10-06-host-construction-design.md`). The three host specs move from `otto.models` to
+  `otto.host` in P1, and `host_identity` joins `otto.host`'s `__all__`. `to_host` and custom fields
+  change contract after P1;
 - run state (`otto.context`): spec 2, **settled** (`2026-10-06-run-state-contracts-design.md`).
   `otto.context` stays the facade; `RunPolicy`, `HostResolver` and `ContextBinding` join it after
   P1, implemented in a leaf `otto.invocation` with no public path;

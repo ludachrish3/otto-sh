@@ -150,6 +150,18 @@ Spec `docs/superpowers/specs/2026-10-06-registry-catalog-design.md` §8 and §9.
   conformance and discovery suites, isolation through `instances()`), commits 5.1–5.13 (one per
   seam group), commit 6 (allowances and `origin=` deleted, `@final`, ast-grep rules on).
 
+## Spec 3b's P1 work (host construction)
+
+Spec `docs/superpowers/specs/2026-10-06-host-construction-design.md` §2 and §7.
+
+- [ ] `otto.host.__all__` gains `HostSpec`, `UnixHostSpec`, `EmbeddedHostSpec` and `host_identity`;
+  `otto.models.__all__`, its typing exports and lazy bindings drop the three specs (appendix G
+  addendum). Docs re-point.
+- [ ] **After P1**, each its own commit (spec 3b §7), marked except 3b-5: 3b-1 (structural gaps,
+  after 3a 5.1 and 5.8), 3b-2 (field kinds, coverage rule, profile-eligible inputs; after 3a 5.9),
+  3b-3 (the pipeline, readiness, power preparation; after 3a 5.12), 3b-4 (one stock builder),
+  3b-5 (`refactor`: the loader's duplicate validation goes).
+
 ## The dump's P1 work (dump spec)
 
 - [ ] **Producer-refusal triage.** Run `make api-surface-report` on the

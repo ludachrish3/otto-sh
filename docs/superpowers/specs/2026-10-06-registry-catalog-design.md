@@ -547,7 +547,9 @@ overwrite=False)`.
   string, a table of defaults) is checked at parse.
 - **Their meaning is checked after init (v2 ruling):**
   - is `base` a registered host class;
-  - is every defaults key a field of that class.
+  - is every defaults key a field of that class. From spec 3b's commit 3b-2 on, the vocabulary is
+    the class's spec's profile-eligible inputs instead (`2026-10-06-host-construction-design.md`
+    §4.5).
 
   Two places run this check: a post-loop bootstrap step, `check_data_profiles()`, next to G-12's;
   and the resolver, whenever it selects a data profile. So a data profile over a custom host class
@@ -726,7 +728,13 @@ def register_<seam>(name: str, *, config: type[C] | Ref,
 - refuses a `Prepared` from another registry, or from a stale entry generation, without calling the
   factory;
 - otherwise parses nothing, calls the factory once with `Configured(config, env)`, and checks the
-  result with the seam's `result` check.
+  result with the seam's `result` check. The `config` handed over is a per-call
+  `copy.deepcopy` of the parsed instance, so a factory that mutates it cannot change a later
+  build from the same `Prepared` (amended by spec 3b §10).
+  - A config model must therefore be deep-copyable; the extension docs for every configured seam
+    say so.
+  - A copy failure raises the seam's construction error with the cause chained, without calling
+    the factory.
 
 A publish bumps no generation (§2.2), so building one `Prepared` twice works. The reservation
 gate's `backend_factory` does exactly that (`reservations/factory.py:261-269`).
@@ -1217,9 +1225,9 @@ before/after table for `import_otto`, `bootstrap_repo`, `completion_repo_warm` a
 
 ## 11. Out of scope
 
-- **3b:** `HostSpec`, `to_host`, custom host fields, spec-time validation (including moving
-  power's `prepare` into `HostSpec` validation), and whether `register_host_class` fields must be
-  a subset of `HostSpec`'s.
+- **3b** (`2026-10-06-host-construction-design.md`): `HostSpec`, `to_host`, custom host fields,
+  spec-time validation (including moving power's `prepare` into spec validation), and the
+  class/spec field rule.
 - **#600:** the term-backend ABC and its conformance helper.
 - **#606:** refusing unequal same-name data profiles. It also removes a pre-existing
   order-sensitivity in persisted completion **(v5 ruling)**:
@@ -1250,8 +1258,8 @@ before/after table for `import_otto`, `bootstrap_repo`, `completion_repo_warm` a
   contract in spec 3a; ABC in #600".
 - **Appendix A** (`otto.registry`, `:35`) and **appendix B** (the `otto.registry` rows' pending
   column, `:163-166`): "registration-semantics spec (Q3)" becomes "spec 3a".
-- **Appendix D** (`otto.declared`, `:307`): "pending spec 3" becomes "spec 3a (`KindBuilder`) and
-  3b (declared-entry validation)".
+- **Appendix D** (`otto.declared`, `:307`): "pending spec 3" becomes "spec 3a (`KindBuilder`)".
+  Spec 3b §9 records that no declared-entry seam is pending.
 - **Appendix G:** an addendum retiring `get_inventory_backend_class`, `get_creds_backend_class`
   and `reset_half_ported_warnings`, naming this spec.
 - **The P1 checklist** (`todo/590-p1-public-surface-switch-on.md`) gains a "Spec 3a's P1 work"
