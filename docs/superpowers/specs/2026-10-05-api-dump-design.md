@@ -171,10 +171,21 @@ as a routine and earlier versions do not, so a binding is `callable` on every ve
 
 `call\t<key>\t<callkind>\t<params>` for `function`, `callable` and `class` bindings. For a class,
 the call is its constructor.
-- **`callkind`** is `sync`, `coroutine` or `asyncgen`. It is read from the object whose
-  signature is recorded, after following `__wrapped__` as `inspect.signature` does. For a callable
-  instance that is `type(obj).__call__`, and for a `functools.partial` the wrapped function. A
-  class is `sync`.
+- **`callkind`** is `sync`, `coroutine` or `asyncgen`, read from one resolved function, the
+  same one the params are read from. It is recorded only for a closed set of shapes:
+  - a class: always `sync`;
+  - a plain function, following `__wrapped__` links that are themselves plain functions;
+  - a bound method of such a function;
+  - a `functools.partial` with no `__wrapped__` or `__signature__` of its own, over one of the
+    above;
+  - a callable instance with no `__wrapped__` or `__signature__` of its own, whose class's
+    `__call__` (looked up statically) is such a function.
+
+  Any other callable (an explicit `__signature__`, `functools.partialmethod`, a function-like
+  object, a `__call__` descriptor, `update_wrapper` applied to an instance or a partial) is a
+  producer refusal. Re-deriving `inspect.signature`'s resolution order does not converge: it
+  varies across descriptor protocols and Python versions, and a wrong guess hides a sync →
+  async change.
 - **`params`** is a list of `<kind>:<name>:<default>` tokens. `kind` is one of `PO`, `PK`, `VP`,
   `KO` or `VK`. `default` is `-` for none, or an encoded value (§2.4).
 - **The receiver.** For a method or classmethod, the first parameter is dropped only when it is a
