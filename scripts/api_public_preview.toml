@@ -1,0 +1,203 @@
+# PREVIEW of api/public.toml. It is read only by `make api-surface-report`, which
+# measures P1's docs work. P1 (spec 2026-10-04 §7) git-mv's it to api/public.toml,
+# adds otto.lab and goes live. Until then nothing reads it as a declaration.
+
+[namespaces."otto"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.config"]
+tier = 1
+stability = "provisional"
+pending = "spec 4 (repo and scope inputs)"
+
+[namespaces."otto.host"]
+tier = 1
+stability = "provisional"
+pending = "spec 3 (host construction)"
+
+[namespaces."otto.labs"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.models"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.link"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.tunnel"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.docker"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.reservations"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.inventory"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.creds"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.monitor"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.coverage"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.suite"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.project"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.session"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.logger"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.testing"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.init"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.bootstrap"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.context"]
+tier = 1
+stability = "provisional"
+pending = "spec 2 (run state)"
+
+[namespaces."otto.instructions"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.result"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.errors"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.utils"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.registry"]
+tier = 1
+stability = "provisional"
+pending = "registration-semantics spec (Q3)"
+
+[namespaces."otto.params"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.tls"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.host.transfer"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.options"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.command_frame"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.login_proxy"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.session_setup"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.app_shell"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.embedded_filesystem"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.product"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.dev_tool"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.monitor.parsers"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.monitor.snmp"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.monitor.log_sourced"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.cli.registry"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.app_shell"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.lab_repository"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.login_proxy"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.monitor"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.options"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.reservations"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.reservations_cli"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.session_setup"]
+tier = 2
+stability = "provisional"

@@ -14,6 +14,7 @@ the user docs teach.
 
 import importlib.util
 
+from scripts import api_lines
 from tests._fixtures.paths import PROJECT_ROOT
 
 _MODULE_PATH = PROJECT_ROOT / "scripts" / "api_snapshot.py"
@@ -50,15 +51,69 @@ def test_surface_matches_the_committed_golden():
     )
 
 
-def test_every_golden_line_resolves():
-    """Each committed line must still import — a golden that can go stale is worthless."""
+def _unresolved(text: str) -> "list[str]":
+    """Return one message per golden entry of *text* that does not resolve.
+
+    A v1 golden is read line by line, ``<module>:<name>``. A v2 golden (the API
+    dump) is parsed whole; every ``name`` record's ``ns:dotted`` key must resolve
+    by ``getattr`` along the dots. A dump that does not parse is one message.
+    """
+    if api_lines.schema_of(text) == 2:
+        from scripts import api_records
+
+        try:
+            dump = api_records.parse_dump(text)
+        except api_records.DumpError as exc:
+            return [f"the dump does not parse: {exc}"]
+        unresolved = []
+        for key in sorted(dump.bindings):
+            module_name, _, name = key.partition(":")
+            error = mod._resolve(module_name, name)
+            if error is not None:
+                unresolved.append(f"{key}: {error}")
+        return unresolved
     unresolved = []
-    for line in mod.read_golden():
+    for line in api_lines.data_lines(text):
         module_name, _, name = line.partition(":")
         error = mod._resolve(module_name, name)
         if error is not None:
             unresolved.append(f"{line}: {error}")
+    return unresolved
+
+
+def test_every_golden_line_resolves():
+    """Each committed line must still import — a golden that can go stale is worthless."""
+    unresolved = _unresolved(mod.GOLDEN_PATH.read_text(encoding="utf-8"))
     assert not unresolved, unresolved
+
+
+V2_FIXTURE = (
+    "# api-snapshot v2\n"
+    "# producer-schema 1\n"
+    "name\totto.tls:os_trust_session\tfunction\n"
+    "call\totto.tls:os_trust_session\tsync\tKO:timeout:F:0x1.e000000000000p+4\n"
+)
+
+
+def test_v2_name_records_resolve_through_their_namespace():
+    """Spec §6: the every-entry-resolves guarantee carries over to the dump's ``name`` records."""
+    assert _unresolved(V2_FIXTURE) == []
+
+
+def test_v2_resolution_reports_a_dead_name_and_an_unparseable_dump():
+    dead = V2_FIXTURE + "name\totto.tls:NoSuchThingAtAll\tvalue\n"
+    (message,) = _unresolved(dead)
+    assert message.startswith("otto.tls:NoSuchThingAtAll: ")
+    (broken,) = _unresolved(V2_FIXTURE + "bogus\n")
+    assert broken.startswith("the dump does not parse: ")
+
+
+def test_v1_resolution_reads_a_module_name_pair():
+    expected = (
+        "not_a_module_at_all:: cannot import 'not_a_module_at_all': "
+        "No module named 'not_a_module_at_all'"
+    )
+    assert _unresolved("# v1\notto:CommandResult\nnot_a_module_at_all:\n") == [expected]
 
 
 def test_extractor_finds_a_known_documented_path():
@@ -384,3 +439,157 @@ def test_check_says_the_api_changed_and_names_what_callers_lose(monkeypatch, tmp
     assert f"  - {gone}" in out
     assert "GREW" not in out
     assert golden.read_bytes() == before
+
+
+def _tls_manifest(tmp_path):
+    manifest = tmp_path / "public.toml"
+    manifest.write_text(
+        '[namespaces."otto.tls"]\ntier = 1\nstability = "provisional"\n', encoding="utf-8"
+    )
+    return manifest
+
+
+def test_dump_mode_prints_the_dump_of_a_manifest(tmp_path, capsys):
+    exit_code = mod.main(["--manifest", str(_tls_manifest(tmp_path))])
+    out = capsys.readouterr().out.splitlines()
+    assert exit_code == 0
+    assert out[:2] == ["# api-snapshot v2", "# producer-schema 1"]
+    assert any(line.startswith("name\totto.tls:os_trust_session\t") for line in out)
+    assert not any(line.startswith("otto.host.host:Host.") for line in out)
+
+
+def test_dump_check_compares_against_the_given_golden(tmp_path, capsys):
+    manifest, golden = _tls_manifest(tmp_path), tmp_path / "golden.txt"
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--update"]) == 0
+    assert golden.read_text(encoding="utf-8").startswith("# api-snapshot v2\n# producer-schema 1\n")
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--check"]) == 0
+    golden.write_text(golden.read_text(encoding="utf-8") + "name\totto.tls:Ghost\tvalue\n")
+    capsys.readouterr()
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--check"]) == 1
+    out = capsys.readouterr().out
+    assert "public API CHANGED" in out
+    assert "Ghost: removed [otto.tls]" in out
+
+
+def test_dump_check_calls_a_resorted_golden_stale_but_not_a_change(tmp_path, capsys):
+    manifest, golden = _tls_manifest(tmp_path), tmp_path / "golden.txt"
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--update"]) == 0
+    header, schema, body = golden.read_text(encoding="utf-8").split("\n", 2)
+    records = body.splitlines(keepends=True)
+    assert len(records) > 1, (
+        "otto.tls must dump more than one record for a re-sort to mean anything"
+    )
+    golden.write_text(f"{header}\n{schema}\n" + "".join(reversed(records)), encoding="utf-8")
+    capsys.readouterr()
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--check"]) == 1
+    out = capsys.readouterr().out
+    assert "not in canonical order" in out
+    assert "CHANGED" not in out
+
+
+def test_dump_update_refuses_to_write_when_the_producer_refuses(tmp_path, capsys, monkeypatch):
+    from scripts import api_regen
+
+    monkeypatch.setattr(
+        api_regen,
+        "generate_worktree",
+        lambda repo, manifest, assume_dir=False: api_regen.Generated(
+            None, ["otto.x: has no __all__"]
+        ),
+    )
+    golden = tmp_path / "golden.txt"
+    argv = ["--manifest", str(_tls_manifest(tmp_path)), "--golden", str(golden), "--update"]
+    assert mod.main(argv) == 1
+    assert not golden.exists()
+    assert "FAIL otto.x: has no __all__" in capsys.readouterr().out
+
+
+def test_dump_report_always_exits_zero_and_counts_refusals(tmp_path, capsys, monkeypatch):
+    from scripts import api_regen
+
+    monkeypatch.setattr(
+        api_regen,
+        "generate_worktree",
+        lambda repo, manifest, assume_dir=False: api_regen.Generated(None, ["a", "b"]),
+    )
+    assert mod.main(["--manifest", str(_tls_manifest(tmp_path)), "--report", "--assume-dir"]) == 0
+    assert "api-dump-report: 2 producer refusal(s)" in capsys.readouterr().out
+
+
+def test_v2_check_says_ok_when_the_golden_matches(tmp_path, capsys):
+    manifest, golden = _tls_manifest(tmp_path), tmp_path / "golden.txt"
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--update"]) == 0
+    capsys.readouterr()
+
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--check"]) == 0
+    assert capsys.readouterr().out == "api snapshot: OK\n"
+
+
+def test_v2_check_calls_a_crlf_copy_of_a_fresh_golden_stale(tmp_path, capsys):
+    """``--check`` compares bytes, as check-breaking's freshness check does (dump spec §5.1)."""
+    manifest, golden = _tls_manifest(tmp_path), tmp_path / "golden.txt"
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--update"]) == 0
+    golden.write_bytes(golden.read_bytes().replace(b"\n", chr(13).encode() + b"\n"))
+    capsys.readouterr()
+
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--check"]) == 1
+    out = capsys.readouterr().out
+    assert "api snapshot: OK" not in out
+    assert "bytes differ" in out
+
+
+def test_v2_check_of_a_missing_golden_is_a_fail_line_not_a_traceback(tmp_path, capsys):
+    manifest, golden = _tls_manifest(tmp_path), tmp_path / "absent.txt"
+
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--check"]) == 1
+    (line,) = capsys.readouterr().out.splitlines()
+    assert line.startswith(f"FAIL cannot read the golden {golden}: ")
+
+
+def test_v2_a_failed_namespace_report_is_a_fail_line_not_a_traceback(tmp_path, capsys, monkeypatch):
+    from scripts import api_agreement
+
+    def broken(namespaces, repo):
+        raise api_agreement.AgreementError("the reporting child died")
+
+    monkeypatch.setattr(api_agreement, "namespace_reports", broken)
+    manifest = _tls_manifest(tmp_path)
+    for mode in ([], ["--check"], ["--update"]):
+        argv = ["--manifest", str(manifest), "--golden", str(tmp_path / "g.txt"), *mode]
+        assert mod.main(argv) == 1
+        assert capsys.readouterr().out == (
+            "FAIL cannot report the declared namespaces: the reporting child died\n"
+        )
+
+
+def test_v2_check_refuses_a_golden_without_the_v2_header(tmp_path, capsys):
+    """The checker reads a header-less golden as v1, so ``--check`` must not call it v2."""
+    manifest = tmp_path / "public.toml"
+    manifest.write_text(
+        '[namespaces."otto.tls"]\ntier = 1\nstability = "provisional"\n', encoding="utf-8"
+    )
+    golden = tmp_path / "golden.txt"
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--update"]) == 0
+    golden.write_text(
+        golden.read_text(encoding="utf-8").replace("# api-snapshot v2\n", ""), encoding="utf-8"
+    )
+    capsys.readouterr()
+
+    assert mod.main(["--manifest", str(manifest), "--golden", str(golden), "--check"]) == 1
+    assert "not an api-snapshot v2 golden" in capsys.readouterr().out
+
+
+def test_dump_report_prints_producer_refusals_not_agreement_failures(tmp_path, capsys, monkeypatch):
+    from scripts import api_agreement, api_regen
+
+    monkeypatch.setattr(
+        api_regen,
+        "generate_worktree",
+        lambda repo, manifest, assume_dir=False: api_regen.Generated(None, ["producer broke"]),
+    )
+    monkeypatch.setattr(api_agreement, "agreement_failures", lambda names, reports: ["not agreed"])
+    assert mod.main(["--manifest", str(_tls_manifest(tmp_path)), "--report"]) == 0
+    out = capsys.readouterr().out
+    assert "refusal: producer broke" in out
+    assert "not agreed" not in out
+    assert "api-dump-report: 1 producer refusal(s)" in out

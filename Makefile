@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot api-surface-report check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -1544,6 +1544,10 @@ api-snapshot: ## (Dev) Regenerate the public-API golden snapshot (otto.__all__ +
 check-api-snapshot: ## (Quality) Fail if the public-API golden no longer matches the live surface, or a documented import no longer resolves (`make api-snapshot` regenerates it)
 	@$(SAY) "checking public-API golden snapshot"
 	@uv run python scripts/api_snapshot.py --check
+
+api-surface-report: ## (Dev) Measure the public-surface cutover's docs work: validator findings + agreement failures + API-dump producer refusals against the PREVIEW declaration (scripts/api_public_preview.toml). Report-only, never gates; dormant until P1 (spec 2026-10-04-public-api-manifest-design.md §7)
+	@uv run python scripts/api_teaching.py --manifest scripts/api_public_preview.toml --report
+	@uv run python scripts/api_snapshot.py --manifest scripts/api_public_preview.toml --assume-dir --report
 
 check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; RANGE must end at HEAD) that deletes a public-API golden line without a `!`/`BREAKING CHANGE:` mark
 	@$(SAY) "check-breaking-marks: $(RANGE)"

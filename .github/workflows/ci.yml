@@ -422,9 +422,23 @@ jobs:
           enable-cache: true
       - run: uv python install 3.10
       - run: uv run nox -s lint
+      # A pull_request checks out GitHub's synthetic merge commit, which carries
+      # no breaking mark. Under a v2 golden merges are judged against their first
+      # parent, so a v2-era PR -- the golden at its base OR its head is v2, as in
+      # the checker (a missing golden is not v2) -- detaches to its own head
+      # first. A v1 PR keeps the merged tree: v1 skips merges and resolves
+      # documented paths against the checked-out tree, and those live decisions
+      # must not change.
+      # tests/unit/scripts/test_ci_breaking_marks_checkout.py pins both paths.
       - name: check-breaking-marks — a public-API golden deletion must be marked
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if git show "${{ github.event.pull_request.base.sha }}:tests/unit/api_snapshot/public_api.txt" 2>/dev/null \
+                | grep -qxE '[[:space:]]*# api-snapshot v2[[:space:]]*' \
+              || git show "${{ github.event.pull_request.head.sha }}:tests/unit/api_snapshot/public_api.txt" 2>/dev/null \
+                | grep -qxE '[[:space:]]*# api-snapshot v2[[:space:]]*'; then
+              git checkout -q --detach "${{ github.event.pull_request.head.sha }}"
+            fi
             RANGE="${{ github.event.pull_request.base.sha }}..HEAD"
           elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
             RANGE="${{ github.event.before }}..HEAD"

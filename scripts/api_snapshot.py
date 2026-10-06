@@ -35,6 +35,13 @@ Usage:
     python scripts/api_snapshot.py --check    # compare against the golden; exit
                                                # non-zero on drift or a documented
                                                # import that fails to resolve
+
+Dump mode (the API dump, spec ``docs/superpowers/specs/2026-10-05-api-dump-design.md``):
+    python scripts/api_snapshot.py --manifest M [--golden G]     # print the dump
+    python scripts/api_snapshot.py --manifest M [--golden G] --update | --check
+    python scripts/api_snapshot.py --manifest M --assume-dir --report
+                                               # print producer refusals and
+                                               # agreement failures; always exit 0
 """
 
 import argparse
@@ -46,27 +53,22 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+from scripts import api_lines  # noqa: E402 -- path set up above
+from scripts.api_docs_blocks import (  # noqa: E402 -- path set up above
+    markdown_blocks,
+    rst_blocks,
+)
+
 DOCS_ROOT = REPO_ROOT / "docs"
 GOLDEN_PATH = REPO_ROOT / "tests" / "unit" / "api_snapshot" / "public_api.txt"
+SCHEMA_V2 = 2
 
 # Archived specs/plans carry dead paths on purpose; the built site is an output.
 SKIP_PARTS = ("_build", "superpowers")
 
-# A fence delimiter is a run of 3+ backticks OR 3+ tildes (CommonMark allows
-# either), optionally indented (a fence nested in a list item's continuation,
-# e.g. docs/cookbook/sessions.md:116). ``\s*`` mirrors
-# scripts/lint_markdown_doctests.py:28 rather than requiring column 0.
-FENCE = re.compile(r"^\s*(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 CODE_FENCE_LANGS = {"python", "pycon", ""}
 DOCTEST_FENCE_LANG = "{doctest}"
-CODE_BLOCK_DIRECTIVE = "{code-block}"  # MyST: ```{code-block} python``` — lang is the 2nd token
-# Only an explicit "show the syntax as prose" label makes a fence opaque; any
-# other MyST directive (``{note}``, ``{tab-item}``, …) is a plain CONTAINER —
-# its own body isn't code, but a real code fence nested inside it still is,
-# and the fence stack below finds that fence regardless of relative nesting
-# depth or backtick count (MyST's own convention needs the container to use
-# MORE backticks than its contents, but a same-count nesting is handled too).
-DISPLAY_LANGS = {"markdown", "md"}
 
 # A candidate line, after stripping any doctest ">>> " prompt. `otto(?:\.\w+)*`
 # (not `otto[\w.]*`) so `otto_something` can never match: there is no dot
@@ -76,47 +78,6 @@ DISPLAY_LANGS = {"markdown", "md"}
 IMPORT_LINE = re.compile(
     r"^(from\s+otto(?:\.\w+)*(?!\w)\s+import\s+.+|import\s+otto(?:\.\w+)*(?!\w)(?:\s+as\s+\w+)?)"
 )
-
-
-_INDENT_CODE_BLOCK = 4  # CommonMark: a blank line then 4+ spaces of indent opens a code block
-
-
-def _indent(line: str) -> int:
-    return len(line) - len(line.lstrip(" "))
-
-
-def _fence_open(line: str) -> tuple[int, str, str] | None:
-    """If *line* opens a fence, return (tick_count, fence_char, info_string)."""
-    m = FENCE.match(line)
-    if not m:
-        return None
-    fence = m.group("fence")
-    return len(fence), fence[0], m.group("info").strip()
-
-
-def _fence_closes(line: str, ticks: int, char: str) -> bool:
-    """Return whether *line* closes a fence of *char*, >=*ticks* long, with no info string."""
-    m = FENCE.match(line)
-    if not m or m.group("info").strip():
-        return False
-    fence = m.group("fence")
-    return fence[0] == char and len(fence) >= ticks
-
-
-def _frame_lang(info: str) -> str:
-    """Return the effective code language for a fence's info string.
-
-    Unwraps MyST's ``{code-block} <lang>`` directive to its second token;
-    everything else (``python``, ``pycon``, ``{doctest}``, a bare fence's
-    ``""``, or a directive name like ``{note}``) is used as-is — the caller
-    decides what counts as "code" from that value.
-    """
-    if not info:
-        return ""
-    tokens = info.split()
-    if tokens[0] == CODE_BLOCK_DIRECTIVE:
-        return tokens[1] if len(tokens) > 1 else ""
-    return tokens[0]
 
 
 def _extract_lines(body: list[tuple[int, str]], *, prompted: bool) -> list[tuple[int, str]]:
@@ -161,6 +122,9 @@ def _extract_lines(body: list[tuple[int, str]], *, prompted: bool) -> list[tuple
     return out
 
 
+_SCANNED_MD_LANGS = {*CODE_FENCE_LANGS, DOCTEST_FENCE_LANG, "indented"}
+
+
 def _markdown_candidates(path: Path) -> list[tuple[int, str]]:
     """Candidate (line_no, code) pairs from a Markdown file's code examples.
 
@@ -182,70 +146,10 @@ def _markdown_candidates(path: Path) -> list[tuple[int, str]]:
     block correctly however many ``{note}``/``{tab-item}``/... containers it
     sits inside.
     """
-    lines = path.read_text(encoding="utf-8").splitlines()
     out: list[tuple[int, str]] = []
-    i, n = 0, len(lines)
-    prev_blank = True
-    stack: list[dict] = []  # innermost frame last: {ticks, char, lang, suppressed, body}
-    while i < n:
-        line = lines[i]
-        if stack:
-            top = stack[-1]
-            if _fence_closes(line, top["ticks"], top["char"]):
-                frame = stack.pop()
-                lang = frame["lang"]
-                if not frame["suppressed"] and lang in (*CODE_FENCE_LANGS, DOCTEST_FENCE_LANG):
-                    out.extend(_extract_lines(frame["body"], prompted=lang == DOCTEST_FENCE_LANG))
-                i += 1
-                prev_blank = False
-                continue
-            opened = _fence_open(line)
-            if opened is not None:
-                ticks, char, info = opened
-                lang = _frame_lang(info)
-                stack.append(
-                    {
-                        "ticks": ticks,
-                        "char": char,
-                        "lang": lang,
-                        "suppressed": top["suppressed"] or lang in DISPLAY_LANGS,
-                        "body": [],
-                    }
-                )
-                i += 1
-                prev_blank = False
-                continue
-            top["body"].append((i + 1, line))
-            prev_blank = False
-            i += 1
-            continue
-        opened = _fence_open(line)
-        if opened is not None:
-            ticks, char, info = opened
-            lang = _frame_lang(info)
-            stack.append(
-                {
-                    "ticks": ticks,
-                    "char": char,
-                    "lang": lang,
-                    "suppressed": lang in DISPLAY_LANGS,
-                    "body": [],
-                }
-            )
-            i += 1
-            prev_blank = False
-            continue
-        if prev_blank and line.strip() and _indent(line) >= _INDENT_CODE_BLOCK:
-            body = []
-            while i < n and (not lines[i].strip() or _indent(lines[i]) >= _INDENT_CODE_BLOCK):
-                if lines[i].strip():
-                    body.append((i + 1, lines[i]))
-                i += 1
-            out.extend(_extract_lines(body, prompted=False))
-            prev_blank = True
-            continue
-        prev_blank = not line.strip()
-        i += 1
+    for block in markdown_blocks(path):
+        if block.lang in _SCANNED_MD_LANGS:
+            out.extend(_extract_lines(block.lines, prompted=block.lang == DOCTEST_FENCE_LANG))
     return out
 
 
@@ -257,30 +161,9 @@ def _rst_candidates(path: Path) -> list[tuple[int, str]]:
     indented body following a line at some base indent, so both are handled
     by the same "consume while blank-or-more-indented" scan.
     """
-    lines = path.read_text(encoding="utf-8").splitlines()
     out: list[tuple[int, str]] = []
-    i, n = 0, len(lines)
-    while i < n:
-        line = lines[i]
-        stripped = line.rstrip()
-        code_block = re.match(r"^(\s*)\.\.\s+code-block::\s*(\S*)\s*$", stripped)
-        literal_marker = stripped.endswith("::") and not code_block
-        if not (code_block or literal_marker):
-            i += 1
-            continue
-        base_indent = _indent(line)
-        i += 1
-        while i < n and not lines[i].strip():
-            i += 1
-        if i >= n or _indent(lines[i]) <= base_indent:
-            continue  # the "::"/directive announced no indented body — not a code block
-        block_indent = _indent(lines[i])
-        body = []
-        while i < n and (not lines[i].strip() or _indent(lines[i]) >= block_indent):
-            if lines[i].strip():
-                body.append((i + 1, lines[i]))
-            i += 1
-        out.extend(_extract_lines(body, prompted=False))
+    for block in rst_blocks(path):
+        out.extend(_extract_lines(block.lines, prompted=False))
     return out
 
 
@@ -411,8 +294,7 @@ def host_protocol_lines() -> list[str]:
     for name, member in vars(Host).items():
         if name.startswith("_") or not callable(member):
             continue
-        params = ", ".join(_keyword_names(member))
-        lines.append(f"otto.host.host:Host.{name}({params})")
+        lines.append(api_lines.host_line(name, _keyword_names(member)))
     return sorted(lines)
 
 
@@ -465,8 +347,7 @@ def write_golden(lines: list[str]) -> None:
 
 def read_golden() -> list[str]:
     """Return the golden snapshot's data lines (its ``#`` header stripped)."""
-    text = GOLDEN_PATH.read_text(encoding="utf-8")
-    return [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
+    return api_lines.data_lines(GOLDEN_PATH.read_text(encoding="utf-8"))
 
 
 def describe_drift(golden: list[str], current: list[str]) -> str:
@@ -495,6 +376,119 @@ def describe_drift(golden: list[str], current: list[str]) -> str:
     )
 
 
+def describe_dump_drift(golden_text: str, current_text: str) -> str:
+    """Say how a stale dump differs: a breaking change, growth, or a re-sort.
+
+    Report-only, like :func:`describe_drift`. The findings are the checker's own
+    (``scripts/api_compat.py``), so what this says is what ``check-breaking`` will say.
+    """
+    from scripts import api_compat, api_records
+
+    try:
+        golden = api_records.parse_dump(golden_text)
+    except api_records.DumpError as exc:
+        return f"the golden does not parse ({exc}); regenerate it with `make api-snapshot`."
+    findings = api_compat.compare_dumps(golden, api_records.parse_dump(current_text))
+    if findings:
+        shown = "\n".join(f"  - {f}" for f in api_compat.group_findings(findings))
+        return (
+            f"public API CHANGED: {len(findings)} breaking finding(s):\n{shown}\n"
+            "If the change is intended, record it with `make api-snapshot`, commit the "
+            "golden, and mark the commit breaking (`!` or `BREAKING CHANGE:`)."
+        )
+    if sorted(golden_text.splitlines()) == sorted(current_text.splitlines()):
+        return "the golden is not in canonical order; regenerate it with `make api-snapshot`."
+    return (
+        "public API GREW (or changed without breaking anything): record it with "
+        "`make api-snapshot` and commit the golden."
+    )
+
+
+def _main_dump(args: argparse.Namespace) -> int:
+    """Run ``main`` in dump mode: the manifest's namespaces, as the API dump records them.
+
+    Every failure is a ``FAIL <reason>`` line and exit 1, never a traceback. With
+    ``--report`` it prints the producer's refusals, counts them, and exits 0: a
+    measurement before P1, never a gate.
+    """
+    from scripts import api_regen
+    from scripts.api_agreement import AgreementError, agreement_failures, namespace_reports
+    from scripts.api_manifest import ManifestError, load_manifest
+
+    try:
+        names = sorted(load_manifest(args.manifest))
+    except ManifestError as exc:
+        print(f"FAIL {exc}")
+        return 1
+    try:
+        reports = namespace_reports(names, REPO_ROOT)
+    except AgreementError as exc:
+        print(f"FAIL cannot report the declared namespaces: {exc}")
+        return 1
+    failures = agreement_failures(names, reports)
+    generated = api_regen.generate_worktree(REPO_ROOT, args.manifest, assume_dir=args.assume_dir)
+    problems = [*failures, *generated.refusals]
+    if args.report:
+        # Agreement failures are api_teaching.py --report's to list; only the
+        # producer's own refusals are this mode's.
+        for refusal in generated.refusals:
+            print(f"refusal: {refusal}")
+        print(f"api-dump-report: {len(generated.refusals)} producer refusal(s)")
+        return 0
+    for problem in problems:
+        print(f"FAIL {problem}")
+    golden = args.golden or GOLDEN_PATH
+    if args.update:
+        if problems or generated.text is None:
+            print("\nnot writing the golden: resolve the failures above first.")
+            return 1
+        golden.write_bytes(generated.text.encode("utf-8"))
+        return 0
+    if args.check:
+        return _check_dump(golden, generated.text, problems)
+    if generated.text is not None:
+        print(generated.text, end="")
+    return 1 if problems else 0
+
+
+def _check_dump(golden: Path, current: "str | None", problems: list[str]) -> int:
+    """Compare the committed dump *golden* with *current*; return the exit code.
+
+    The comparison is of BYTES, as ``check-breaking``'s freshness check makes it
+    (dump spec §5.1): a golden whose text matches but whose bytes do not (CRLF
+    line endings, say) is stale here exactly as it is there.
+    """
+    try:
+        data = golden.read_bytes()
+    except OSError as exc:
+        print(f"FAIL cannot read the golden {golden}: {exc}")
+        return 1
+    text = data.decode("utf-8", errors="replace")
+    if api_lines.schema_of(text) != SCHEMA_V2:
+        print(f"FAIL {golden} is not an api-snapshot v2 golden: no {api_lines.V2_HEADER!r} line")
+        return 1
+    if problems or current is None:
+        return 1
+    if data != current.encode("utf-8"):
+        if text.splitlines() == current.splitlines():
+            print(
+                "FAIL the golden's bytes differ from the dump's though every line matches "
+                "(line endings or encoding); regenerate it with `make api-snapshot`."
+            )
+            return 1
+        print(
+            "\n".join(
+                difflib.unified_diff(
+                    text.splitlines(), current.splitlines(), "golden", "current", lineterm=""
+                )
+            )
+        )
+        print(describe_dump_drift(text, current))
+        return 1
+    print("api snapshot: OK")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     """Print the current surface; optionally --update the golden or --check it."""
     ap = argparse.ArgumentParser(
@@ -506,7 +500,26 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="compare against the golden; exit non-zero on drift or an unresolved import",
     )
+    ap.add_argument(
+        "--manifest", type=Path, help="dump mode: declared namespaces (api/public.toml shape)"
+    )
+    ap.add_argument(
+        "--assume-dir",
+        action="store_true",
+        help="dump mode: a namespace with no __all__ exports its public globals (report only)",
+    )
+    ap.add_argument("--report", action="store_true", help="dump mode: print refusals and exit 0")
+    ap.add_argument(
+        "--golden", type=Path, default=None, help="golden path (default: the committed one)"
+    )
     args = ap.parse_args(argv)
+    if (args.golden is not None or args.assume_dir or args.report) and args.manifest is None:
+        # v1 always reads and writes the committed golden; ignoring --golden
+        # would let `--golden X --update` silently overwrite it.
+        ap.error("--golden, --assume-dir and --report require --manifest")
+
+    if args.manifest is not None:
+        return _main_dump(args)
 
     lines, failures = compute_surface()
     for failure in failures:

@@ -1,0 +1,158 @@
+# api-snapshot v2
+# producer-schema 1
+name	otto.sub:P	class
+mro	otto.sub:P	-
+call	otto.sub:P	sync	PK:x:- PK:y:I:0 PK:label:S:"na\u00efve\u0020\u2603\u0020tab\there" PK:tags:O
+member	otto.sub:P.__eq__	method	sync	PK:other:-
+member	otto.sub:P.label	field
+member	otto.sub:P.moved	method	sync	PO:dx:- PK:dy:I:0 KO:scale:F:0x1.0000000000000p+0
+member	otto.sub:P.tags	field
+member	otto.sub:P.x	field
+member	otto.sub:P.y	field
+abstract	otto.sub:P	-
+name	otto.sub:Perm	enum
+mro	otto.sub:Perm	-
+enum	otto.sub:Perm	NONE	I:0
+enum	otto.sub:Perm	R	I:1
+enum	otto.sub:Perm	W	I:2
+enum	otto.sub:Perm	X	I:4
+enum	otto.sub:Perm	RW	I:3
+name	otto.sub:compute	function
+call	otto.sub:compute	sync	PK:a:- PK:b:T:["I:1","S:\"two\"","N","F:0x1.4000000000000p+1"] VP:rest:- KO:flag:E:{otto.sub:Perm,otto:Perm}:*=I:5 VK:extra:-
+name	otto.sub:helper	function
+call	otto.sub:helper	sync	PO:p:- KO:mode:S:"fast" KO:perm:E:{otto.sub:Perm,otto:Perm}:*=I:5
+name	otto:Abs	class
+mro	otto:Abs	-
+call	otto:Abs	sync	-
+member	otto:Abs.alpha	method	sync	-
+member	otto:Abs.mid	method	sync	-
+member	otto:Abs.zeta	method	sync	-
+abstract	otto:Abs	alpha mid zeta
+name	otto:Bits	enum
+mro	otto:Bits	-
+enum	otto:Bits	A	I:1
+enum	otto:Bits	B	I:2
+enum	otto:Bits	E	I:16
+enum	otto:Bits	F	I:32
+name	otto:Boom	class
+mro	otto:Boom	@builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto:Boom	sync	@builtin:builtins.ValueError
+abstract	otto:Boom	-
+name	otto:Color	enum
+mro	otto:Color	-
+enum	otto:Color	RED	I:1
+enum	otto:Color	GREEN	I:2
+enum	otto:Color	CRIMSON	I:1
+name	otto:IntList	alias
+name	otto:IntOrNone	alias
+name	otto:Level	enum
+mro	otto:Level	@builtin:builtins.int
+enum	otto:Level	LOW	I:1
+enum	otto:Level	HIGH	I:2
+enum	otto:Level	BOTH	I:3
+enum	otto:Level	X	I:4
+name	otto:MAX	value
+name	otto:MaybeInt	alias
+name	otto:Model	model
+mro	otto:Model	-
+input	otto:Model	S:"level"	optional	E:{otto:Level}:BOTH=I:3	S:"level"
+input	otto:Model	S:"mixed"	optional	E:{otto:Level}:*=I:5	S:"mixed"
+input	otto:Model	S:"name"	optional	S:"x"	S:"Name" S:"name"
+input	otto:Model	S:"names"	optional	Z:["S:\"\\u00e9\"","S:\"a\\u0020c\"","S:\"b\""]	S:"names"
+input	otto:Model	S:"perms"	optional	E:{otto.sub:Perm,otto:Perm}:*=I:7	S:"perms"
+input	otto:Model	S:"ratio"	optional	F:inf	S:"ratio"
+input	otto:Model	S:"sizes"	optional	Z:["I:-7","I:1","I:2","I:3"]	S:"sizes"
+input	otto:Model	S:"tiny"	optional	F:0x1.999999999999ap-4	S:"tiny"
+member	otto:Model.level	field
+member	otto:Model.mixed	field
+member	otto:Model.model_config	attribute
+member	otto:Model.name	field
+member	otto:Model.names	field
+member	otto:Model.perms	field
+member	otto:Model.ratio	field
+member	otto:Model.sizes	field
+member	otto:Model.tiny	field
+abstract	otto:Model	-
+name	otto:Opts	typeddict
+input	otto:Opts	S:"count"	optional	-	S:"count"
+input	otto:Opts	S:"name"	optional	-	S:"name"
+name	otto:Outer	class
+mro	otto:Outer	-
+call	otto:Outer	sync	-
+member	otto:Outer.Inner	class
+member	otto:Outer.build	classmethod	sync	KO:colour:E:{otto:Color}:RED=I:1 KO:perm:E:{otto.sub:Perm,otto:Perm}:NONE=I:0
+member	otto:Outer.fetch	method	coroutine	PK:url:- PK:timeout:F:0x1.8000000000000p+0
+member	otto:Outer.make	staticmethod	sync	-
+member	otto:Outer.size	property:g--
+member	otto:Outer.stream	method	asyncgen	-
+abstract	otto:Outer	-
+name	otto:Outer.Inner	class
+mro	otto:Outer.Inner	-
+call	otto:Outer.Inner	sync	-
+member	otto:Outer.Inner.go	method	sync	VP:args:- VK:kwargs:-
+abstract	otto:Outer.Inner	-
+name	otto:Pair	class
+mro	otto:Pair	@builtin:builtins.tuple
+call	otto:Pair	sync	PK:left:- PK:right:I:2
+member	otto:Pair.left	field
+member	otto:Pair.right	field
+abstract	otto:Pair	-
+name	otto:Perm	enum
+mro	otto:Perm	-
+enum	otto:Perm	NONE	I:0
+enum	otto:Perm	R	I:1
+enum	otto:Perm	W	I:2
+enum	otto:Perm	X	I:4
+enum	otto:Perm	RW	I:3
+name	otto:Point	class
+mro	otto:Point	-
+call	otto:Point	sync	PK:x:- PK:y:I:0 PK:label:S:"na\u00efve\u0020\u2603\u0020tab\there" PK:tags:O
+member	otto:Point.__eq__	method	sync	PK:other:-
+member	otto:Point.label	field
+member	otto:Point.moved	method	sync	PO:dx:- PK:dy:I:0 KO:scale:F:0x1.0000000000000p+0
+member	otto:Point.tags	field
+member	otto:Point.x	field
+member	otto:Point.y	field
+abstract	otto:Point	-
+name	otto:PointAlias	class
+mro	otto:PointAlias	-
+call	otto:PointAlias	sync	PK:x:- PK:y:I:0 PK:label:S:"na\u00efve\u0020\u2603\u0020tab\there" PK:tags:O
+member	otto:PointAlias.__eq__	method	sync	PK:other:-
+member	otto:PointAlias.label	field
+member	otto:PointAlias.moved	method	sync	PO:dx:- PK:dy:I:0 KO:scale:F:0x1.0000000000000p+0
+member	otto:PointAlias.tags	field
+member	otto:PointAlias.x	field
+member	otto:PointAlias.y	field
+abstract	otto:PointAlias	-
+name	otto:Proto	protocol
+mro	otto:Proto	-
+member	otto:Proto.first	method	sync	-
+member	otto:Proto.second	method	sync	PK:x:-
+requires	otto:Proto	first second
+name	otto:Req	typeddict
+input	otto:Req	S:"mode"	optional	-	S:"mode"
+input	otto:Req	S:"path"	required	-	S:"path"
+name	otto:Step	enum
+mro	otto:Step	-
+enum	otto:Step	FIRST	I:1
+enum	otto:Step	SECOND	I:2
+enum	otto:Step	TENTH	I:10
+enum	otto:Step	ELEVENTH	I:11
+name	otto:Sub	class
+mro	otto:Sub	{otto.sub:P,otto:Point,otto:PointAlias}
+call	otto:Sub	sync	PK:x:- PK:y:I:0 PK:label:S:"na\u00efve\u0020\u2603\u0020tab\there" PK:tags:O
+member	otto:Sub.__eq__	method	sync	PK:other:-
+member	otto:Sub.label	field
+member	otto:Sub.moved	method	sync	PO:dx:- PK:dy:I:0 KO:scale:F:0x1.0000000000000p+0
+member	otto:Sub.tags	field
+member	otto:Sub.x	field
+member	otto:Sub.y	field
+abstract	otto:Sub	-
+name	otto:Text	class
+mro	otto:Text	-
+call	otto:Text	sync	@builtin:builtins.str
+abstract	otto:Text	-
+name	otto:bound	callable
+call	otto:bound	sync	PK:b:T:["I:1","S:\"two\"","N","F:0x1.4000000000000p+1"] VP:rest:- KO:flag:E:{otto.sub:Perm,otto:Perm}:*=I:5 VK:extra:-
+name	otto:compute	function
+call	otto:compute	sync	PK:a:- PK:b:T:["I:1","S:\"two\"","N","F:0x1.4000000000000p+1"] VP:rest:- KO:flag:E:{otto.sub:Perm,otto:Perm}:*=I:5 VK:extra:-

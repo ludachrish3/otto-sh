@@ -247,6 +247,47 @@ slice, and `stability-unit` across the Python matrix. Everything that needs
 a real host — `make chaos`, `stability-unix`, `stability-tunnel`,
 `stability-embedded` — runs when a human decides to run it.
 
+### The public-surface declaration (dormant)
+
+The declaration in spec 1 of
+[#590](https://github.com/ludachrish3/otto-sh/issues/590)
+(`docs/superpowers/specs/2026-10-04-public-api-manifest-design.md`) has
+its tooling built but not yet enforced:
+
+- `api/public.toml` (from P1) declares the public namespaces and the
+  versioned formats; `scripts/api_manifest.py` reads it.
+- `scripts/api_dump_child.py` imports the declared namespaces in a fresh
+  interpreter and writes the **API dump**: one tab-separated record per
+  binding, ancestry (`mro`), call, constructor input, member, obligation, enum member and
+  versioned format (`scripts/api_records.py` holds the grammar). The v2
+  golden is that dump, headed `# api-snapshot v2` and
+  `# producer-schema 1`. The live golden is still v1, whose line format
+  `scripts/api_lines.py` defines.
+- `scripts/api_compat.py` compares two dumps. A finding is a change an
+  existing caller, subclass or reader can observe: a removed name, a
+  narrowed call, a changed default, a new obligation, a dropped format
+  version. Each needs a `!` or a `BREAKING CHANGE:` footer.
+- `scripts/api_regen.py` regenerates any commit's dump from that commit
+  alone: its archive, its lock, its manifest. `check-breaking` refuses a
+  commit whose committed dump differs from its regeneration, marked or not.
+- `scripts/api_teaching.py` checks every otto name the docs and shipped
+  examples teach, including taught use of an otto class's underscore
+  members.
+- `scripts/api_agreement.py` proves each declared namespace's `__all__`
+  against a fresh interpreter.
+- `check-breaking` already applies the dump's rules (the comparison and
+  the freshness check), but only to a commit whose golden is v2, and the
+  live golden is still v1.
+
+What a golden is, and how a commit is marked breaking, is in
+[Branching and commits](../contributing.md#branching-and-commits).
+The rules are in the dump spec
+(`docs/superpowers/specs/2026-10-05-api-dump-design.md`).
+`make api-surface-report` measures the cutover's remaining work against
+a preview declaration: agreement failures, validator findings and the
+producer's refusals. It never gates. The steps that switch the
+declaration on are listed in `todo/590-p1-public-surface-switch-on.md`.
+
 ## Why this page exists
 
 This repo has run the experiment on itself, and the result is in the

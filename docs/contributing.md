@@ -350,7 +350,9 @@ enforced (a later schema-diff gate). A library line (`otto:<name>`, or a
 taught — a deep import path a page stopped teaching — needs none if the path
 still imports at `HEAD`, and the check reports it as "docs-only, still
 importable" instead. Because it resolves those paths by importing them from
-the checked-out tree, the range you pass must end at `HEAD`.
+the checked-out tree, the range you pass must end at `HEAD`. The tooling for the
+next, declared form of this surface is built but dormant; see
+[the public-surface declaration](architecture/quality-gates.md#the-public-surface-declaration-dormant).
 
 Before pushing, run `make all` locally — it mirrors CI
 (`clean-dist → typecheck → coverage → docs → build`).
