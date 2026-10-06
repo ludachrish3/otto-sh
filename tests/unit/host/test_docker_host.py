@@ -76,12 +76,14 @@ def _make_container(
 
 
 def _build_fake_ssh_remote_host():
-    """Construct a real UnixHost with an injected fake ConnectionManager.
+    """Construct a real UnixHost whose ``ssh`` term is a registered fake ConnectionManager.
 
     Real UnixHost is needed so `isinstance(parent, UnixHost)` passes in
-    `_make_session`; the fake ConnectionManager keeps the test offline.
+    `_make_session`; the fake ConnectionManager keeps the test offline. It is
+    registered over the built-in ``ssh``, which the root conftest's registry
+    isolation restores after the test.
     """
-    from otto.host.connections import ConnectionManager
+    from otto.host.connections import ConnectionManager, register_term_backend
     from otto.host.unix_host import UnixHost
 
     class FakeConnections(ConnectionManager):
@@ -97,12 +99,18 @@ def _build_fake_ssh_remote_host():
         async def ssh(self):
             return self._ssh_conn
 
+    register_term_backend(
+        "ssh",
+        FakeConnections,
+        host_families=frozenset({"unix"}),
+        authenticates=True,
+        overwrite=True,
+    )
     return UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="root", password="x")],
         element=Element("fake_ne"),
         term="ssh",
-        _connection_factory=FakeConnections,
     )
 
 
@@ -1965,7 +1973,7 @@ async def test_get_forwards_concurrent_to_the_staging_leg(tmp_path):
 @pytest.mark.asyncio
 async def test_login_rejects_non_ssh_parent():
     """telnet parent raises NotImplementedError (parent is UnixHost but term != ssh)."""
-    from otto.host.connections import ConnectionManager
+    from otto.host.connections import ConnectionManager, register_term_backend
     from otto.host.unix_host import UnixHost
 
     class FakeTelnetConnections(ConnectionManager):
@@ -1978,12 +1986,18 @@ async def test_login_rejects_non_ssh_parent():
             self._term = "telnet"
             self._hop = None
 
+    register_term_backend(
+        "telnet",
+        FakeTelnetConnections,
+        host_families=frozenset({"unix", "embedded"}),
+        authenticates=True,
+        overwrite=True,
+    )
     telnet_parent = UnixHost(
         ip="10.0.0.1",
         creds=[Cred(login="root", password="x")],
         element=Element("fake_ne"),
         term="telnet",
-        _connection_factory=FakeTelnetConnections,
     )
     h = _make_container(parent=telnet_parent)
     with pytest.raises(NotImplementedError):

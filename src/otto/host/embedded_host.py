@@ -61,7 +61,7 @@ from .binary_loader import BinaryLoader
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .command_frame import CommandFrame, ZephyrFrame
-from .connections import ConnectionManager
+from .connections import TermContext, build_term_backend
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .host import (
     CONCURRENT_HELP,
@@ -263,16 +263,24 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         rebuilt host is wired exactly as a new one.
         """
         hop_transport = self._build_hop_transport() if self.hop else None
-        factory = self._connection_factory or ConnectionManager
-        self._connections = factory(
-            ip=self.ip,
-            creds=self.creds,
-            term=self.term,
-            name=self.name,
-            hop=hop_transport,
-            telnet_options=replace(self.telnet_options, login=False, single_client_console=True),
-            console_options=replace(self.console_options, login=False),
-            console_endpoint=self.console_endpoint if self.term == "console" else None,
+        # Through the registry, as a unix host builds: a backend registered over
+        # `telnet` or `console` reaches this family too (#601). The embedded
+        # options are forced in the context, so every backend sees them: an RTOS
+        # shell has no login step, and its one console serves one client.
+        telnet_options = replace(self.telnet_options, login=False, single_client_console=True)
+        self._connections = build_term_backend(self.term).create(
+            TermContext(
+                ip=self.ip,
+                creds=self.creds,
+                term=self.term,
+                name=self.name,
+                hop=hop_transport,
+                telnet_options=telnet_options,
+                console_options=replace(self.console_options, login=False),
+                # The bound method, not its result: the server is looked up in
+                # the lab on the first console dial, never at construction.
+                console_endpoint=self.console_endpoint if self.term == "console" else None,
+            )
         )
         self._session_mgr = SessionManager(
             connections=self._connections,

@@ -131,11 +131,12 @@ backend overrides `create` and reads only the fields it needs:
 - an **embedded** transfer backend reads `exec_cmd` and `filesystem`.
 
 Selector validation runs before construction, so a backend never sees a ctx
-missing the fields its family supplies. The config-facing path is **always the
-registered string** — that is the only way lab data names a backend. Bare
-callables such as `UnixHost._connection_factory` are a code-only convenience for
-injecting a test double or a programmatic backend; they are never a config
-selector and never appear in `lab.json`.
+missing the fields its family supplies. The registered string is the **only**
+way to select a backend: unix and embedded hosts both build their term backend
+through `build_term_backend(term).create(ctx)`, so a replacement registered over
+a built-in name with `overwrite=True` reaches every host that selects that name,
+a test double included. The options an embedded host forces are listed on
+{class}`~otto.host.connections.TermContext`.
 
 ## `tftp` is reserved
 

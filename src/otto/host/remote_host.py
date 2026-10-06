@@ -322,10 +322,6 @@ class RemoteHost(BaseHost):
     """Back-reference to the owning Lab, wired by Lab.add_host. Lets hop
     resolution use self._lab.hosts[...] instead of ambient state."""
 
-    _connection_factory: "type[ConnectionManager] | None" = field(default=None, repr=False)
-    """Optional ConnectionManager subclass for dependency injection (e.g. test
-    doubles). When None, the real ConnectionManager is used."""
-
     _connections: "ConnectionManager" = field(init=False, repr=False)
     """Manages the raw transport connection(s) for this host; built by the
     family's ``__post_init__``."""

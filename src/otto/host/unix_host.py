@@ -535,9 +535,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     def _build_connections(self) -> ConnectionManager:
         """Construct the connection backend for the current ``term`` via the registry seam.
 
-        Honors the ``_connection_factory`` test override. Shared by ``__post_init__`` /
-        ``rebuild_connections`` (and the override-copy seam, via ``dataclasses.replace``) so a
-        custom term backend builds the right class.
+        Shared by ``__post_init__`` / ``rebuild_connections`` (and the override-copy seam, via
+        ``dataclasses.replace``) so a custom term backend builds the right class.
         """
         hop_transport = self._build_hop_transport() if self.hop else None
         term_ctx = TermContext(
@@ -555,8 +554,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             # the lab on the first console dial, never at construction.
             console_endpoint=self.console_endpoint if self.term == "console" else None,
         )
-        conn_cls = self._connection_factory or build_term_backend(self.term)
-        return conn_cls.create(term_ctx)
+        return build_term_backend(self.term).create(term_ctx)
 
     def _build_file_transfer(self, user: "str | None" = None) -> UnixFileTransfer:
         """Construct the transfer backend for the current ``transfer`` via the registry seam.

@@ -1,8 +1,8 @@
 """
 Tests for multi-hop connectivity (SSH tunneling through intermediate hosts).
 
-Unit tests use mock tunnel factories and the _connection_factory injection
-pattern to verify hop wiring without real SSH connections.
+Unit tests use mock tunnel factories and patch the transport entry points in
+``otto.host.connections`` to verify hop wiring without real SSH connections.
 """
 
 import asyncio

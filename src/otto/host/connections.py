@@ -17,8 +17,11 @@ connections are routed through the hop's SSH tunnel:
 - Netcat transfers use ``forward_port`` to reach the remote ``nc``
   listener through the tunnel (both PUT and GET directions).
 
-Inject a subclass via ``UnixHost._connection_factory`` to replace the real
-transport with a test double — no monkeypatching of library functions needed.
+Every host builds its manager through the term registry
+(``build_term_backend(term).create(ctx)``). To replace the real transport with a
+test double, register a subclass under the term's name with
+``register_term_backend(..., overwrite=True)`` — no monkeypatching of library
+functions needed.
 """
 
 import asyncio
@@ -83,10 +86,14 @@ class ConsoleEndpoint:
 
 @dataclass(frozen=True)
 class TermContext:
-    """Construction inputs a UnixHost provides to build its connection backend.
+    """Construction inputs a host provides to build its connection backend.
 
     The frozen public seam for custom term backends; carries only what the built-in already
-    receives at its call site (no new coupling).
+    receives at its call site (no new coupling). Unix and embedded hosts both build through
+    ``build_term_backend(term).create(ctx)``. An embedded host leaves the ssh, sftp and ftp
+    options ``None``, and forces ``login=False`` on its telnet and console options and
+    ``single_client_console=True`` on telnet: an RTOS shell has no login step, and its one
+    console serves one client.
     """
 
     ip: str
@@ -418,11 +425,11 @@ class ConnectionManager:
     connections are then routed through this tunnel rather than connecting
     directly to the target IP.
 
-    Subclass and inject via ``UnixHost._connection_factory`` to swap in test
-    doubles without monkeypatching library functions::
+    Subclass and register under a term's name to swap in test doubles without
+    monkeypatching library functions::
 
         class FakeConnections(ConnectionManager):
-            def __init__(self, ip, creds, term, name):
+            def __init__(self, *args, **kwargs):
                 self._ssh_conn = AsyncMock(spec=SSHClientConnection)
                 self._sftp_conn = None
                 self._ftp_conn = None
@@ -436,7 +443,21 @@ class ConnectionManager:
                 return self._ssh_conn
 
 
-        host = UnixHost(..., _connection_factory=FakeConnections)
+        register_term_backend(
+            "ssh",
+            FakeConnections,
+            host_families=frozenset({"unix"}),
+            authenticates=True,
+            overwrite=True,
+        )
+        host = UnixHost(..., term="ssh")
+
+    The built-in :meth:`create` passes every :class:`TermContext` field as a
+    keyword, so a double's ``__init__`` takes ``**kwargs``. Overwriting a
+    built-in is process-wide, so put the original back when the double is
+    done: register ``ConnectionManager`` under the same name again, with the
+    built-in's declarations and ``overwrite=True``. otto's own suite restores
+    every registry after each test.
     """
 
     def __init__(  # noqa: PLR0913 — one options slot per transport plus the console endpoint seam; TermContext is the grouped form callers use via create()
