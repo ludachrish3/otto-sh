@@ -39,6 +39,8 @@ host subclass and it appears in the `otto host` menu for that class's hosts with
 extra wiring:
 
 ```python
+from pathlib import Path
+
 from otto.result import Result
 from otto.utils import cli_exposed
 from otto.host import UnixHost
@@ -93,13 +95,14 @@ from typing import Annotated
 from otto.utils import Arg, Opt, Exclude, cli_exposed
 ```
 
-**`Arg(variadic=True, type=T)`** — make a union-typed (or otherwise
-Typer-incompatible) list a space-separated positional variadic.  `type`
-specifies the element type the CLI receives; the method gets a `list[T]`.
+**`Arg(variadic=True, elem_type=T)`** — make a union-typed (or otherwise
+Typer-incompatible) list a space-separated positional variadic.  `elem_type`
+specifies the element type each word is coerced to; the method gets a `list[T]`.
+`elem_type` also overrides the CLI type of a scalar union.
 Used by `put` (`src_files`) and `get` (`src_files`):
 
 ```python
-cmds: Annotated[str | Sequence[str], Arg(variadic=True, type=str)]
+src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path)]
 ```
 
 **`Arg()`** — keep a *defaulted* scalar positional (prevents it from becoming

@@ -112,6 +112,51 @@ def test_list_keys_raising_is_reported_not_escaped(tmp_path):
         assert_inventory_conforms(inv)
 
 
+def test_unsorted_list_keys_fails():
+    """``list_keys()`` is sorted, the same rule the creds helper checks."""
+
+    class Unsorted(_Good):
+        def lookup(self, key):
+            if key not in ("a", "b"):
+                raise InventoryKeyError(key, self.label)
+            return InventoryRecord(ip="10.0.0.1")
+
+        def list_keys(self):
+            return ["b", "a"]
+
+    class Sorted(Unsorted):
+        def list_keys(self):
+            return ["a", "b"]
+
+    assert_inventory_conforms(Sorted())
+    with pytest.raises(AssertionError, match=r"Inventory: list_keys\(\) must be sorted"):
+        assert_inventory_conforms(Unsorted())
+
+
+def test_fingerprint_raising_is_reported_not_escaped():
+    """A raising ``fingerprint()`` is one collected violation among the rest, never a raw raise.
+
+    ``Broken`` also leaks a field outside ``supplies``: both failures must
+    arrive in one report, which only happens if the raise joins the failures
+    already collected.
+    """
+
+    class Broken(_Good):
+        def lookup(self, key):
+            if key != "k":
+                raise InventoryKeyError(key, self.label)
+            return InventoryRecord(ip="10.0.0.1", site="x")
+
+        def fingerprint(self):
+            raise ConnectionError("cmdb unreachable")
+
+    with pytest.raises(AssertionError) as exc:
+        assert_inventory_conforms(Broken())
+    text = str(exc.value)
+    assert "Inventory: fingerprint() raised ConnectionError: cmdb unreachable" in text
+    assert "returned fields outside supplies: ['site']" in text
+
+
 def test_positive_control_needs_a_backend_that_honours_inventory(tmp_path):
     """The repository=/lab= arm: a backend that drops ``inventory=`` on the floor fails.
 

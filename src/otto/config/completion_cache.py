@@ -599,8 +599,9 @@ def _inventory_fingerprint(repos: list["Repo"]) -> "_InventoryDigest":
     ``except Exception``, and ``fingerprint()`` INSIDE the guard, for the
     reason :func:`_enumerate_host_summaries` gives: completion never crashes
     the shell. ``construct_inventory`` wraps only ``TypeError``/``ValueError``
-    from a third-party constructor, so a networked backend's freshness probe
-    (§11's own example) can raise anything at all — an HTTP timeout, say — and
+    from a third-party constructor, and a third-party ``fingerprint()`` —
+    local state only, by the protocol, but nothing makes it correct — can
+    still raise anything at all (an unreadable file, a plain bug), and
     this runs inside ``write_cache``, past ``otto.cli.main``'s
     ``suppress(OSError)``, which would traceback an otherwise-successful
     command AFTER its real work was done.

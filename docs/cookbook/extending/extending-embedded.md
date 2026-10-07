@@ -1,20 +1,22 @@
 # Extending otto for new embedded targets
 
 otto's embedded-host support is built to be extended from your own project —
-the same way you register instructions and options classes. Two seams matter when you
+the same way you register instructions and options classes. Three seams matter when you
 bring up a target otto doesn't ship support for:
 
 - a **command frame** — the shell *dialect*: how a command is wrapped to send
   and how its echoed output is parsed back into `(output, retcode)`;
 - an **embedded filesystem** — the on-device file API: where files live and
-  what shell commands read, write, and stat them.
+  what shell commands read, write, and stat them;
+- a **binary loader** — how a binary is loaded into the device's runtime (see
+  *Adding a binary loader* below).
 
-The two stories often pair (a new RTOS usually has both a new shell and a new
+The first two stories often pair (a new RTOS usually has both a new shell and a new
 filesystem), but they are independent — you can add one without the other.
-Both register from an `init` module listed in `.otto/settings.toml`, so the
+All three register from an `init` module listed in `.otto/settings.toml`, so the
 registration runs before any lab data loads. For the lab-data fields that
-select them (`command_frame`, `filesystem`), see {doc}`../../configuration/lab-config`; for the
-host class that carries them, see {doc}`../../configuration/os-profiles`.
+select them (`command_frame`, `filesystem`, `loader`), see {doc}`../../configuration/lab-config`; for the
+host class that carries them, see {doc}`custom-host-classes`.
 
 ## Adding a shell dialect (a `CommandFrame`)
 
@@ -106,8 +108,8 @@ register_command_frame("myshell", MyShellFrame)
 ```
 
 For a target that should carry the frame as its default (the way `ZephyrHost`
-defaults to `ZephyrFrame`), ship a host subclass instead — see *Custom host
-classes* in {doc}`../../configuration/os-profiles`.
+defaults to `ZephyrFrame`), ship a host subclass instead — see
+{doc}`custom-host-classes`.
 
 ### Bringing a new shell up
 
@@ -233,8 +235,35 @@ error before sending any shell command — no hang, no garbled response — and 
 disk parser yields nothing for it. Both behaviors are static, declared in lab
 data, not runtime-detected.
 
+## Adding a binary loader (a `BinaryLoader`)
+
+Loading a binary into a device's executable runtime (Zephyr's LLEXT
+`llext load_hex` is the built-in example, registered as `llext-hex`) is not a
+file transfer: there is no destination file, the binary goes straight into the
+target's loader. A {class}`~otto.host.binary_loader.BinaryLoader` is a small
+stateless ABC that only formats the device's commands and reads their output;
+the host runs them. Subclass it, set the lab-data string as `type_name`, and
+implement its abstract methods: `load_command`, `check_loaded`,
+`unload_command`, `is_fully_unloaded`, `list_command`, `is_loaded` and
+`call_command`. `reports_not_loaded` and `max_unload_rounds` are optional.
+
+Register it from an `init` module with
+{func}`~otto.host.binary_loader.register_binary_loader`, passing the same
+string as `type_name`. A mismatch with the class's `type_name` raises, as does
+a duplicate name unless you pass `overwrite=True`.
+
+A host selects its loader with the `loader` field, a string in lab data (or a
+`BinaryLoader` instance in code). The host resolves the string through the
+registry when it is constructed. A host with no `loader` fails loud, naming the
+missing field, when `load()` or `unload()` is called.
+
+```json
+{ "name": "mote", "labs": ["embedded"],
+  "hosts": [{ "ip": "192.0.2.7", "os_type": "zephyr", "loader": "my-loader" }] }
+```
+
 ## See also
 
 - {doc}`../../cli/host/embedded` — the embedded-host CLI page (selecting frames/filesystems)
-- {doc}`../../configuration/os-profiles` — registering a custom host class that bundles these
-- {doc}`../../configuration/lab-config` — the `command_frame` / `filesystem` lab-data fields
+- {doc}`custom-host-classes` — registering a custom host class that bundles these
+- {doc}`../../configuration/lab-config` — the `command_frame` / `filesystem` / `loader` lab-data fields

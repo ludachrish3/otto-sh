@@ -25,13 +25,24 @@ inside `otto test`'s pytest session, so they may register nothing
 | a shell dialect | `register_command_frame` | {doc}`../../cookbook/extending/extending-embedded` |
 | an embedded binary loader | `register_binary_loader` | {doc}`../../cookbook/extending/extending-embedded` |
 | an embedded filesystem type | `register_filesystem` | {doc}`../../cookbook/extending/extending-embedded` |
-| a power controller | `register_power_controller` | {doc}`../../cookbook/extending/extending-backends` |
+| a power controller | `register_power_controller` | {doc}`../../cli/host/capabilities/power` |
 | a session setup hook | `register_session_setup` | {doc}`../../cookbook/extending/extending-backends` |
-| products on hosts | `register_product_provider` | {doc}`../../cookbook/extending/cli-exposed-verbs` |
+| a login proxy | `register_login_proxy` | {doc}`../../cookbook/extending/extending-backends` |
+| a settings-declared product kind | `register_product_kind` | {doc}`../../configuration/declared-products-tools` |
+| a settings-declared dev-tool kind | `register_dev_tool_kind` | {doc}`../../configuration/declared-products-tools` |
+| dev tools on hosts | `register_dev_tool_provider` | {doc}`../../cookbook/extending/cli-exposed-verbs` |
+| products on hosts | `register_product_provider` | {doc}`../../cookbook/extending/product-providers` |
 | a host source (lab repository) | {func}`otto.labs.register_lab_repository` | {doc}`../../cookbook/extending/lab-source-backends` |
 | fast completion for a host source | optional {class}`~otto.labs.protocol.SupportsHostSummaries` on the repository | {doc}`../../cookbook/extending/lab-source-backends` |
+| an inventory backend | `register_inventory_backend` | {doc}`../../cookbook/extending/inventory-backends` |
 | a reservation backend | `register_reservation_backend` | {doc}`../../cookbook/extending/reservation-backends` |
+| a creds store | `register_creds_backend` | {doc}`../../cookbook/extending/creds-backends` |
+| a link impairer | `register_impairer` | {doc}`../../cookbook/network-api` |
+| a tunnel carrier | `register_carrier` | {doc}`../../cookbook/network-api` |
+| a compose adapter (per docker use case) | `register_compose_adapter` | {doc}`../../cli/docker/use-cases` |
+| a repo's `ProjectActions` (project instructions) | `register_project_actions` | {doc}`../../cookbook/authoring/writing-instructions` |
 | per-host monitor parsers | `register_host_parsers` | {doc}`../../cookbook/extending/custom-parsers` |
+| project-level monitor parsers | `register_parsers` | {doc}`../../cookbook/extending/custom-parsers` |
 | SNMP metric descriptors | `register_snmp_metric` | {doc}`../../cookbook/extending/custom-parsers` |
 
 Tests are not a seam either: they are plain pytest files in the repo's test
@@ -89,9 +100,10 @@ Each seam's user-facing how-to lives in the guide:
 
 - Connection & transfer backends — {doc}`../../cookbook/extending/extending-backends`
 - Embedded targets & command frames — {doc}`../../cookbook/extending/extending-embedded`
-- Host classes, OS profiles & host verbs — {doc}`../../configuration/os-profiles`,
+- Host classes, OS profiles & host verbs — {doc}`../../cookbook/extending/custom-host-classes`,
+  {doc}`../../configuration/os-profiles`,
   {doc}`../../cli/host/capabilities/index`
-- Power controllers & product providers — {doc}`../../cookbook/extending/extending-backends`,
+- Power controllers & product providers — {doc}`../../cli/host/capabilities/power`,
   {doc}`../../cli/host/capabilities/index`
 - Host sources — {doc}`../../configuration/host-sources`
 - Reservation backends — {doc}`../../cli/reservation/index`
@@ -108,7 +120,8 @@ Each seam's user-facing how-to lives in the guide:
 - {mod}`otto.cli.registry` — `register_cli_command` / `cli_command` for a
   top-level `otto` command
 - `otto.testing` — the `assert_*_conforms` conformance helpers, one per
-  contract-shaped seam
+  contract-shaped seam, plus `assert_host_registrable`, which asks what
+  `register_host_class` would refuse
 - `otto.examples` — copyable reference implementations otto's own suite
   keeps green
 - each remaining seam's `register_*` function lives beside the component it

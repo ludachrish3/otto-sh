@@ -8,6 +8,7 @@ violation):
     from otto.testing import (
         assert_creds_store_conforms,
         assert_host_conforms,
+        assert_host_registrable,
         assert_inventory_conforms,
         assert_lab_repository_conforms,
         assert_reservation_backend_conforms,
@@ -18,6 +19,9 @@ Every name is exported lazily (PEP 562), the shape every otto package shares:
 the host and transfer-backend suites (``.conformance_host``) load only when
 one of them is named. The resolver does not write a resolved name back into
 the module dict; see ``otto.config``'s ``__dir__`` for why.
+
+``assert_host_registrable`` is the one helper that is not a conformance suite:
+it raises what ``register_host_class`` would refuse, and registers nothing.
 """
 
 from typing import TYPE_CHECKING
@@ -30,6 +34,7 @@ if TYPE_CHECKING:
         assert_reservation_backend_conforms as assert_reservation_backend_conforms,
     )
     from .conformance_host import assert_host_conforms as assert_host_conforms
+    from .conformance_host import assert_host_registrable as assert_host_registrable
     from .conformance_host import (
         assert_transfer_backend_conforms as assert_transfer_backend_conforms,
     )
@@ -41,6 +46,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "assert_lab_repository_conforms": "otto.testing.conformance",
     "assert_reservation_backend_conforms": "otto.testing.conformance",
     "assert_host_conforms": "otto.testing.conformance_host",
+    "assert_host_registrable": "otto.testing.conformance_host",
     "assert_transfer_backend_conforms": "otto.testing.conformance_host",
 }
 
@@ -62,6 +68,7 @@ def __dir__() -> list[str]:
 __all__ = [
     "assert_creds_store_conforms",
     "assert_host_conforms",
+    "assert_host_registrable",
     "assert_inventory_conforms",
     "assert_lab_repository_conforms",
     "assert_reservation_backend_conforms",

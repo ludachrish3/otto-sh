@@ -62,7 +62,7 @@ def test_lookup_of_an_unknown_key_must_be_an_empty_list_not_none_and_not_raise()
         assert_creds_store_conforms(Raises({"k": [{"login": "u"}]}), known_key="k")
 
 
-def test_a_listed_key_that_resolves_empty_and_a_duplicate_login_are_violations():
+def test_a_listed_key_that_resolves_empty_and_a_duplicate_identity_are_violations():
     class ListsGhost(_Good):
         def list_keys(self):
             return ["ghost", *super().list_keys()]
@@ -71,10 +71,48 @@ def test_a_listed_key_that_resolves_empty_and_a_duplicate_login_are_violations()
         AssertionError, match=r"list_keys\(\) names 'ghost' but lookup\('ghost'\) is empty"
     ):
         assert_creds_store_conforms(ListsGhost({"k": [{"login": "u"}]}), known_key="k")
-    with pytest.raises(AssertionError, match=r"lookup\('k'\) repeats login 'u'"):
+    with pytest.raises(AssertionError, match=r"lookup\('k'\) repeats identity 'u'"):
         assert_creds_store_conforms(
             _Good({"k": [{"login": "u"}, {"login": "u", "password": "x"}]}), known_key="k"
         )
+
+
+def test_one_login_under_two_protocols_scopes_is_two_identities_and_conforms():
+    """Uniqueness keys on identity — login plus scope — as the json store's own rule does."""
+    store = _Good(
+        {
+            "k": [
+                {"login": "admin", "password": "unix"},
+                {"login": "admin", "password": "ftp", "protocols": ["ftp"]},
+            ]
+        }
+    )
+    assert_creds_store_conforms(store, known_key="k")
+
+
+def test_a_repeated_scoped_identity_is_a_violation_whatever_the_protocols_order():
+    """``["ssh", "telnet"]`` and ``["telnet", "ssh"]`` are one scope, so one identity."""
+    same_order = _Good(
+        {
+            "k": [
+                {"login": "admin", "protocols": ["ssh", "telnet"]},
+                {"login": "admin", "password": "x", "protocols": ["ssh", "telnet"]},
+            ]
+        }
+    )
+    reordered = _Good(
+        {
+            "k": [
+                {"login": "admin", "protocols": ["ssh", "telnet"]},
+                {"login": "admin", "password": "x", "protocols": ["telnet", "ssh"]},
+            ]
+        }
+    )
+    for store in [same_order, reordered]:
+        with pytest.raises(
+            AssertionError, match=r"lookup\('k'\) repeats identity 'admin \[ssh, telnet\]'"
+        ):
+            assert_creds_store_conforms(store, known_key="k")
 
 
 def test_known_key_must_resolve_and_appear_in_list_keys():

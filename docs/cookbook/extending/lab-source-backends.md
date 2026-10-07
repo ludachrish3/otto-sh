@@ -11,8 +11,10 @@ you register from your own repo. This page is that contract.
 A host source implements the [`LabRepository`](../../api/labs.rst) protocol —
 two read-only methods:
 
-`load_lab(name, preferences=None) -> Lab`
-: Build and return the named lab. Raises
+`load_lab(name, preferences=None, inventory=None) -> Lab`
+: Build and return the named lab. `inventory` is the process inventory that
+  referenced host entries resolve against; when it is `None`, a referenced
+  entry is an error. Raises
   [`LabNotFoundError`](../../api/labs.rst) if the name is unknown. Populate the
   reservation identifiers at every level your equipment uses: `Lab.resources`
   for what the lab reserves as a whole, and, on each host it builds,
@@ -22,6 +24,12 @@ two read-only methods:
   from the `Element` passed as `element=` and the host's own from the host
   dict's `resources` key. See {doc}`../../cli/reservation/index` for what
   the three levels mean.
+
+  Every host in the returned lab's `hosts` must be a
+  {class}`~otto.host.remote_host.RemoteHost`, stored under its own `id`.
+  `Lab.hosts` is typed more loosely than that, but the contract is not:
+  [`assert_lab_repository_conforms`](#verify-your-backend) fails a host of any
+  other type, and one keyed by anything but its `id`.
 
 `list_labs() -> list[str]`
 : The lab names this source **declares**. This is not a convenience listing:
@@ -107,7 +115,7 @@ reference with `resolve_host_entry(record, inventory, element)` (a
 pass-through when the record carries no `inventory` key), and builds real
 hosts with [`create_host_from_dict`](../../api/host/factory.rst) (`element=`
 that same `Element`, `inventory_ref=` the resolution's `ref`) so each becomes
-a `RemoteHost` keyed by its `id` — which is what the rest of otto expects.
+a `RemoteHost` keyed by its `id`, as [the interface](#the-interface) requires.
 Note where its resources live: a *second* mapping, lab name to
 resource set, mirroring `lab.json`'s `labs` table. That is the lab level
 only — the sample's routers are reserved as whole labs, so no host dict

@@ -50,7 +50,11 @@ class Inventory(Protocol):
     def fingerprint(self) -> "str | None":
         """Return a value that changes whenever the records may have.
 
-        ``None`` means "not cacheable".
+        ``None`` means "not cacheable". Answers from local state only (a
+        file's stat, a hash already on disk) and never fetches or probes the
+        network: otto calls it on every shell-completion cache check, a TAB
+        included. Must not raise: the conformance helper reports a raise as a
+        failure.
         """
         ...
 

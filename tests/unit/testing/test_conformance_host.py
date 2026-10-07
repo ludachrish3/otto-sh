@@ -16,7 +16,7 @@ for the same reason otto's own docker tests use one.
 import contextlib
 import inspect
 from abc import abstractmethod
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -29,12 +29,19 @@ from otto.host.embedded_host import ZephyrHost
 from otto.host.host import is_dry_run
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
+from otto.host.os_profile import HOST_CLASSES, OS_PROFILES, registered_host_specs
+from otto.host.remote_host import RemoteHost
 from otto.host.transfer import TRANSFER_BACKENDS
 from otto.host.transfer.base import BaseFileTransfer, ProgressGranularity
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
+from otto.models.host import UnixHostSpec
 from otto.result import CommandNotRunError, Result
-from otto.testing import assert_host_conforms, assert_transfer_backend_conforms
+from otto.testing import (
+    assert_host_conforms,
+    assert_host_registrable,
+    assert_transfer_backend_conforms,
+)
 from otto.testing.conformance_host import _probe_identity
 from otto.utils import Status
 
@@ -182,6 +189,104 @@ class TestTheStructuralRules:
 
         with pytest.raises(AssertionError, match=r"Host\.put: signature is unreadable"):
             assert_host_conforms(PutIsNotCallable)
+
+    def test_a_switch_user_that_is_not_async_is_refused(self):
+        class SyncSwitch(UnixHost):
+            def switch_user(self, user="", password=None):
+                return None
+
+        with pytest.raises(AssertionError, match=r"Host\.switch_user: must be an async def"):
+            assert_host_conforms(SyncSwitch)
+
+    @pytest.mark.parametrize("member", ["as_user", "app_shell"])
+    def test_a_context_member_written_as_a_coroutine_is_refused(self, member):
+        """``async with host.as_user(...)`` needs an async context manager, not a coroutine."""
+
+        async def coroutine(self, *args, **kwargs):
+            return None
+
+        coroutine_member = type("CoroutineMember", (UnixHost,), {member: coroutine})
+        with pytest.raises(
+            AssertionError,
+            match=rf"Host\.{member}: must return an async context manager",
+        ):
+            assert_host_conforms(coroutine_member)
+
+    def test_an_undecorated_async_generator_is_refused(self):
+        """The commonest slip: the generator without its ``@asynccontextmanager``."""
+
+        class BareGenerator(UnixHost):
+            async def app_shell(self, shell_cls, *, user=None, timeout=None):
+                yield None
+
+        with pytest.raises(
+            AssertionError, match=r"Host\.app_shell: must return an async context manager"
+        ):
+            assert_host_conforms(BareGenerator)
+
+    def test_an_as_user_missing_a_protocol_keyword_is_refused(self):
+        class NoPassword(UnixHost):
+            @contextlib.asynccontextmanager
+            async def as_user(self, user="root"):
+                yield self
+
+        with pytest.raises(
+            AssertionError, match=r"Host\.as_user: does not accept password by keyword"
+        ):
+            assert_host_conforms(NoPassword)
+
+    def test_a_switch_user_missing_a_protocol_keyword_is_refused(self):
+        class NoSwitchPassword(UnixHost):
+            async def switch_user(self, user=""):
+                return None
+
+        with pytest.raises(
+            AssertionError, match=r"Host\.switch_user: does not accept password by keyword"
+        ):
+            assert_host_conforms(NoSwitchPassword)
+
+    def test_an_app_shell_missing_a_protocol_keyword_is_refused(self):
+        class NoTimeout(UnixHost):
+            @contextlib.asynccontextmanager
+            async def app_shell(self, shell_cls, *, user=None):
+                yield None
+
+        with pytest.raises(
+            AssertionError, match=r"Host\.app_shell: does not accept timeout by keyword"
+        ):
+            assert_host_conforms(NoTimeout)
+
+    def test_a_current_user_that_is_not_a_property_is_refused(self):
+        class CallableUser(UnixHost):
+            def current_user(self):
+                return "root"
+
+        with pytest.raises(AssertionError, match=r"Host\.current_user: must be a property"):
+            assert_host_conforms(CallableUser)
+
+    def test_a_hand_written_async_context_manager_is_accepted(self):
+        """The positive control: any object with ``__aenter__``/``__aexit__`` will do.
+
+        The rule refuses the two shapes ``async with`` can never enter (a
+        coroutine function, a bare async generator function); it must not
+        demand ``@asynccontextmanager`` in particular.
+        """
+
+        class _Scope:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class HandWritten(UnixHost):
+            def as_user(self, user="root", password=None):
+                return _Scope()
+
+            def app_shell(self, shell_cls, *, user=None, timeout=None):
+                return _Scope()
+
+        assert_host_conforms(HandWritten)
 
     def test_the_expected_keywords_come_from_the_protocol_itself(self):
         """Pin the derivation, not the list: a protocol parameter added later is asked for."""
@@ -433,6 +538,86 @@ class TestCalledFromTheWrongKindOfTest:
         assert_host_conforms(LocalHost)
 
 
+@dataclass(slots=True, kw_only=True)
+class _AddsAField(RemoteHost):
+    """A ``RemoteHost`` subclass with a field of its own and no registered ancestor."""
+
+    capabilities = UnixHost.capabilities
+    widget: str = "sprocket"
+
+
+class _AddsAFieldSpec(UnixHostSpec):
+    """The boundary spec that declares ``_AddsAField``'s extra field."""
+
+    widget: str = "sprocket"
+
+
+def _registry_snapshot() -> "list[object]":
+    """Everything ``register_host_class`` writes, read through the registries' own API."""
+    return [
+        HOST_CLASSES.items(),
+        [(name, HOST_CLASSES.origin(name)) for name in HOST_CLASSES.names()],
+        registered_host_specs(),
+        OS_PROFILES.items(),
+        [(name, OS_PROFILES.origin(name)) for name in OS_PROFILES.names()],
+    ]
+
+
+class TestHostRegistrability:
+    """``assert_host_registrable`` asks what ``register_host_class`` asks, and registers nothing.
+
+    Conformance and registrability differ on purpose: ``LocalHost`` conforms
+    to the ``Host`` contract, but only a ``RemoteHost`` with a resolvable
+    ``HostSpec`` can be selected from lab data.
+    """
+
+    def test_a_remote_host_subclass_with_an_inherited_spec_is_registrable(self):
+        class MyUnix(UnixHost):
+            pass
+
+        assert_host_registrable(MyUnix)
+
+    def test_an_added_field_with_its_own_spec_is_registrable(self):
+        assert_host_registrable(_AddsAField, spec=_AddsAFieldSpec)
+
+    def test_a_conforming_local_host_is_not_registrable(self):
+        """The two checks part ways exactly here."""
+        assert_host_conforms(LocalHost)
+        with pytest.raises(AssertionError, match=r"cls must be a RemoteHost subclass"):
+            assert_host_registrable(LocalHost)
+
+    def test_an_added_field_without_a_resolvable_spec_is_refused(self):
+        with pytest.raises(AssertionError, match=r"no spec given .* Pass spec="):
+            assert_host_registrable(_AddsAField)
+
+    def test_a_spec_that_is_not_a_host_spec_is_refused(self):
+        with pytest.raises(AssertionError, match=r"spec must be a HostSpec subclass"):
+            assert_host_registrable(_AddsAField, spec=dict)  # type: ignore[arg-type]
+
+    def test_a_class_declaring_no_capabilities_is_refused(self):
+        class Undeclared(UnixHost):
+            capabilities = "everything"
+
+        with pytest.raises(AssertionError, match=r"cls\.capabilities is missing"):
+            assert_host_registrable(Undeclared)
+
+    def test_every_refusal_is_reported_at_once(self):
+        """Not a RemoteHost AND no spec: both, in one AssertionError, like its siblings."""
+        with pytest.raises(AssertionError) as caught:
+            assert_host_registrable(LocalHost)
+        assert "cls must be a RemoteHost subclass" in str(caught.value)
+        assert "Pass spec=" in str(caught.value)
+
+    def test_the_check_registers_nothing(self):
+        before = _registry_snapshot()
+        assert_host_registrable(_AddsAField, spec=_AddsAFieldSpec)
+        with pytest.raises(AssertionError):
+            assert_host_registrable(_AddsAField)
+        assert _registry_snapshot() == before
+        assert _AddsAField not in dict(HOST_CLASSES.items()).values()
+        assert _AddsAFieldSpec not in registered_host_specs().values()
+
+
 class TestEveryRegisteredTransferBackendConforms:
     @pytest.mark.parametrize("name", sorted(TRANSFER_BACKENDS.names()))
     def test_backend_conforms(self, name):
@@ -512,6 +697,64 @@ class TestTheTransferBackendRules:
 
         with pytest.raises(AssertionError, match=r"leaves _run_get abstract"):
             assert_transfer_backend_conforms(StillAbstract)
+
+    def test_an_authenticates_that_is_not_a_bool_is_refused(self):
+        class Truthy(_Conforming):
+            authenticates = "yes"  # type: ignore[assignment]
+
+        with pytest.raises(AssertionError, match="authenticates must be a bool"):
+            assert_transfer_backend_conforms(Truthy)
+
+    def test_a_backend_that_logs_in_itself_conforms(self):
+        """``True`` is a declaration like ``False``; only a non-bool is refused."""
+
+        class LogsIn(_Conforming):
+            authenticates = True
+
+        assert_transfer_backend_conforms(LogsIn)
+
+    def test_supports_mode_without_an_apply_mode_is_refused(self):
+        """The base's ``_apply_mode`` raises, so the promise could never be kept."""
+
+        class PromisesModes(_Conforming):
+            supports_mode = True
+
+        with pytest.raises(
+            AssertionError,
+            match=r"supports_mode is True, so _apply_mode must be overridden",
+        ):
+            assert_transfer_backend_conforms(PromisesModes)
+
+    def test_supports_mode_with_an_apply_mode_conforms(self):
+        class AppliesModes(_Conforming):
+            supports_mode = True
+
+            async def _apply_mode(self, dest_paths, mode):
+                return Result(Status.Success)
+
+        assert_transfer_backend_conforms(AppliesModes)
+
+    def test_supports_mode_with_a_synchronous_apply_mode_is_refused(self):
+        class SyncApply(_Conforming):
+            supports_mode = True
+
+            def _apply_mode(self, dest_paths, mode):
+                return Result(Status.Success)
+
+        with pytest.raises(
+            AssertionError, match=r"BaseFileTransfer\._apply_mode: must be an async def"
+        ):
+            assert_transfer_backend_conforms(SyncApply)
+
+    def test_an_apply_mode_without_supports_mode_is_not_refused(self):
+        """One direction only: an unused override promises nothing and breaks nothing."""
+
+        class UnusedApply(_Conforming):
+            async def _apply_mode(self, dest_paths, mode):
+                return Result(Status.Success)
+
+        assert not UnusedApply.supports_mode
+        assert_transfer_backend_conforms(UnusedApply)
 
     def test_a_backend_that_swallows_every_keyword_is_accepted(self):
         """``**kwargs`` genuinely accepts what production passes; the rule must not cry wolf."""

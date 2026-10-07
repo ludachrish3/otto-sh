@@ -1,7 +1,9 @@
 """Reusable conformance suites for otto's pluggable backend interfaces.
 
-Four of :mod:`otto.testing`'s six helpers — one per interface — assert that a
-backend satisfies otto's contract; the two host-side ones live in
+Four of :mod:`otto.testing`'s seven helpers — one per interface — assert that
+a backend satisfies otto's contract; the three host-side ones (two more
+conformance suites and the registrability check
+:func:`~otto.testing.assert_host_registrable`) live in
 :mod:`otto.testing.conformance_host` and are re-exported alongside these.
 Each runs every rule as a non-fatal ``expect()`` on a single
 :class:`~otto.suite.expect.ExpectCollector`, then raises once with *all*
@@ -12,7 +14,8 @@ Structural/type rules always run. Behavioral round-trip rules run only when the
 caller supplies known ground truth (so a SUT author can leverage their own
 fixtures).
 
-Usage::
+Usage, importing the six conformance suites (the registrability check is
+imported the same way)::
 
     from otto.testing import (
         assert_creds_store_conforms,
@@ -865,10 +868,13 @@ def assert_inventory_conforms(
 
     (spec §14.) Structural rules always run: protocol satisfied, ``label`` a
     string, ``supplies`` a subset of the record fields containing ``"ip"``,
-    ``list_keys()`` a list of strings each of which resolves, ``lookup``
+    ``list_keys()`` a sorted list of strings each of which resolves, ``lookup``
     idempotent (an equal record on a second call) and never returning a field
     outside ``supplies`` (keys and ``extra`` excepted), an unknown key raising
-    :class:`~otto.inventory.errors.InventoryKeyError`, ``fingerprint()`` ``str | None``.
+    :class:`~otto.inventory.errors.InventoryKeyError`, ``fingerprint()``
+    ``str | None`` and never raising. The protocol also requires
+    ``fingerprint()`` to answer from local state and never fetch or probe the
+    network; that rule is the backend author's, and this helper does not check it.
     With *expected_keys*, each must resolve AND appear in ``list_keys()``. With
     *repository* AND *lab*, the positive control: *lab* must FAIL to load
     without the inventory and LOAD with it, and at least one host must carry
@@ -902,6 +908,8 @@ def assert_inventory_conforms(
         keys = None
     keys_ok = isinstance(keys, list) and all(isinstance(k, str) for k in keys)
     c.expect(keys_ok, f"Inventory: list_keys() must return list[str], got {keys!r}")
+    if keys_ok:
+        c.expect(keys == sorted(keys), "Inventory: list_keys() must be sorted")
     if expected_keys is not None:
         listed = set(keys) if keys_ok else set()
         for key in expected_keys:
@@ -948,11 +956,14 @@ def assert_inventory_conforms(
                 not leaked,
                 f"Inventory: lookup({key!r}) returned fields outside supplies: {leaked}",
             )
-    fp = inventory.fingerprint() if callable(getattr(inventory, "fingerprint", None)) else 0
-    c.expect(
-        fp is None or isinstance(fp, str),
-        f"Inventory: fingerprint() must be str | None, got {type(fp).__name__}",
-    )
+    try:
+        fp = inventory.fingerprint() if callable(getattr(inventory, "fingerprint", None)) else 0
+        c.expect(
+            fp is None or isinstance(fp, str),
+            f"Inventory: fingerprint() must be str | None, got {type(fp).__name__}",
+        )
+    except Exception as e:  # noqa: BLE001 — conformance check
+        c.expect(False, f"Inventory: fingerprint() raised {type(e).__name__}: {e}")
     if repository is not None and lab is not None:
         try:
             repository.load_lab(lab)
@@ -995,9 +1006,10 @@ def assert_creds_store_conforms(
     satisfied, ``label`` a non-empty str, ``lookup`` of an unknown key ``[]``
     (never ``None``, never a raise), ``list_keys()`` a sorted ``list[str]`` or
     ``None``, ``fingerprint()`` ``str | None``. Every listed key must resolve
-    to a non-empty ``list[CredSpec]`` with unique logins, idempotently. With
-    *known_key*, that key must resolve non-empty and — when the store
-    enumerates — appear in ``list_keys()``.
+    to a non-empty ``list[CredSpec]`` that repeats no identity (login plus
+    ``protocols`` scope, :func:`~otto.host.login_proxy.cred_identity`),
+    idempotently. With *known_key*, that key must resolve non-empty and — when
+    the store enumerates — appear in ``list_keys()``.
     """
     c = ExpectCollector()
     c.expect(
@@ -1059,7 +1071,7 @@ def assert_creds_store_conforms(
         elif not first:
             c.expect(False, f"CredsStore: list_keys() names {key!r} but lookup({key!r}) is empty")
         c.expect(first == second, f"CredsStore: lookup({key!r}) must be idempotent")
-        logins = [e.login for e in first]
-        for login in sorted({x for x in logins if logins.count(x) > 1}):
-            c.expect(False, f"CredsStore: lookup({key!r}) repeats login {login!r}")
+        identities = [e.identity for e in first]
+        for identity in sorted({x for x in identities if identities.count(x) > 1}):
+            c.expect(False, f"CredsStore: lookup({key!r}) repeats identity {identity!r}")
     c.raise_if_failures()

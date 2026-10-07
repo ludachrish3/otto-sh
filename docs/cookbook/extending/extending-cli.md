@@ -182,8 +182,11 @@ it always blocks *execution*.
 
 ## Metadata
 
-`register_cli_command()` and `@cli_command()` share the same keyword-only
-metadata, mirrored on {class}`~otto.cli.registry.CommandSpec`:
+`register_cli_command()` takes keyword-only metadata, mirrored on
+{class}`~otto.cli.registry.CommandSpec`. `@cli_command()` accepts `lab_free`,
+`output_dir`, `gate` and `dry_run_preview`, but not `async_leaves` or
+`origin`, which only `register_cli_command()` takes. The table covers the three
+that most commands set:
 
 | Keyword      | Default | Effect                                                                                                                                   |
 |--------------|---------|-------------------------------------------------------------------------------------------------------------------------------------------|

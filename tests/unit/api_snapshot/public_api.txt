@@ -161,6 +161,7 @@ otto.link:repair_link
 otto.logger:install
 otto.logger:reset
 otto.models.host:CredSpec
+otto.models.host:UnixHostSpec
 otto.monitor.collector:MonitorTarget
 otto.monitor.log_sourced:CsvMetricParser
 otto.monitor.log_sourced:RegexLogEventParser
@@ -193,6 +194,7 @@ otto.suite:UnknownSelectionError
 otto.suite:run_tests
 otto.testing:assert_creds_store_conforms
 otto.testing:assert_host_conforms
+otto.testing:assert_host_registrable
 otto.testing:assert_inventory_conforms
 otto.testing:assert_lab_repository_conforms
 otto.testing:assert_reservation_backend_conforms

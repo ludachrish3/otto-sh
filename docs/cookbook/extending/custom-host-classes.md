@@ -82,6 +82,55 @@ inherits theirs; redeclare only where yours differs.
 re-declares `os_type`, `os_name`, and `command_frame` as class-level field
 defaults and is registered under `"zephyr"` at module load.
 
+### Fields of your own need a `HostSpec`
+
+A `lab.json` entry reaches your class through a boundary spec, a
+{class}`~otto.models.host.HostSpec` subclass that validates the entry and
+refuses any key it does not declare.  `register_host_class` takes it as
+`spec=`.  Left out, it is the spec registered for the nearest registered
+ancestor — {class}`~otto.models.host.UnixHostSpec` under `UnixHost`,
+{class}`~otto.models.host.EmbeddedHostSpec` under `EmbeddedHost` and
+`ZephyrHost` — so a class that only re-declares inherited fields, like
+`MyRtosHost` above, needs none.
+
+A class that **adds** a field needs its own spec: subclass the inherited one,
+declare the field, and hand it on in `to_host`.  Without that, registration
+succeeds but every lab entry that sets the field is refused at load:
+
+```python
+from dataclasses import dataclass
+
+from otto.host.os_profile import register_host_class
+from otto.host.unix_host import UnixHost
+from otto.models.host import UnixHostSpec
+
+
+@dataclass(slots=True, kw_only=True)
+class GadgetHost(UnixHost):
+    widget: str = "sprocket"
+
+
+class GadgetHostSpec(UnixHostSpec):
+    widget: str = "sprocket"
+
+    def to_host(self, cls=GadgetHost, *, element, preferences=None):
+        host = super().to_host(cls, element=element, preferences=preferences)
+        host.widget = self.widget
+        return host
+
+
+register_host_class("gadget", GadgetHost, spec=GadgetHostSpec)
+```
+
+If the field you add is a runtime object rather than a JSON scalar, convert it
+in `to_host` the way `UnixHostSpec.to_host` converts its option tables
+(`getattr(self, n).to_runtime()`, in `otto.models.host`).
+
+A class with no registered ancestor — a direct
+{class}`~otto.host.remote_host.RemoteHost` subclass — has no spec to inherit,
+so `register_host_class` refuses it unless you pass `spec=`, whatever its
+fields.
+
 ### What you inherit, and what you may re-declare
 
 {class}`~otto.host.host.BaseHost` and {class}`~otto.host.remote_host.RemoteHost`
@@ -89,7 +138,8 @@ are `@dataclass(kw_only=True)` bases, and each shared field — its type, its
 docstring, its default — is declared there exactly once.  `BaseHost` holds what
 all five families answer; `RemoteHost` holds what the networked families add.
 A subclass inherits the lot with its defaults already in place, whether it
-subclasses `EmbeddedHost`, `UnixHost`, or `RemoteHost`/`BaseHost` directly:
+subclasses `EmbeddedHost`, `UnixHost`, or `RemoteHost`/`BaseHost` directly
+(a direct `BaseHost` subclass conforms but cannot be registered):
 there is nothing to copy, and no field you must re-declare to make it exist.
 The field-by-field reference is on {class}`~otto.host.host.BaseHost` and
 {class}`~otto.host.remote_host.RemoteHost` in the API pages.
@@ -112,7 +162,12 @@ Three things moved when the bases became dataclasses:
 - **The `Host` protocol names four more members** — `app_shell`, `as_user`,
   `switch_user` and the `current_user` property.  They were always there on
   `BaseHost`; now the contract says so, and
-  {func}`~otto.testing.assert_host_conforms` asks your class for them.
+  {func}`~otto.testing.assert_host_conforms` checks each by its shape:
+  `switch_user` must be an `async def`; `as_user` and `app_shell` may not be
+  a coroutine function or an undecorated async generator, the two shapes
+  `async with` can never enter (an `@asynccontextmanager` method is the usual
+  form); all three must accept the protocol's keywords; and `current_user`
+  must be a property.
   `BaseHost.as_user`'s refusal is an async context manager that raises
   `NotImplementedError` on `__aenter__`, so a family that cannot switch
   identity refuses at `async with host.as_user(...)`, not at the call.
@@ -121,11 +176,15 @@ Three things moved when the bases became dataclasses:
 
 ```python
 from otto.host.element import Element
-from otto.testing import assert_host_conforms
+from otto.testing import assert_host_conforms, assert_host_registrable
 
 
 def test_my_rtos_host_conforms():
     assert_host_conforms(MyRtosHost, instance=MyRtosHost(ip="192.0.2.1", element=Element("dev")))
+
+
+def test_my_rtos_host_registers():
+    assert_host_registrable(MyRtosHost)
 ```
 
 {func}`~otto.testing.assert_host_conforms` checks the call shapes production
@@ -135,7 +194,9 @@ probes each verb against what your `capabilities` promise for it: a verb
 declared `refused` must raise `NotImplementedError`, and one declared anything
 else must not.  The probes run inside a dry-run context, so nothing connects and
 no bytes move; what each value means is in {doc}`../../cli/host/families`.  Call
-it from a synchronous test — the probes drive their own event loop.
+it from a synchronous test — the probes drive their own event loop — and
+close the `instance` afterwards (`asyncio.run(instance.close())`): the helper
+leaves that to the caller.
 
 Your `capabilities` are read per **class**, while behaviour can depend on the
 **instance**: there is no dimension in the declaration for a host's own
@@ -143,6 +204,16 @@ configuration.  A class whose answer varies that way conforms on one instance
 and reports a violation on another, both truthfully.  Probe the configuration
 your declaration speaks for, and put the conditions in your row's `note` so a
 reader of {doc}`../../cli/host/families` sees them too.
+
+The second test asks a different question.  **Conformance** is whether a class
+keeps the `Host` contract, and any {class}`~otto.host.host.BaseHost` can:
+`LocalHost` and `DockerContainerHost` conform, yet neither can be registered.
+**Registrability** is whether `register_host_class` would accept the class: a
+`RemoteHost` subclass declaring `capabilities`, with a spec it can resolve.
+{func}`~otto.testing.assert_host_registrable` runs `register_host_class`'s own
+checks and registers nothing; pass it the `spec=` you pass to
+`register_host_class`.  It cannot tell whether that spec declares your added
+fields — only a lab entry that sets one can.
 
 ## Composition
 

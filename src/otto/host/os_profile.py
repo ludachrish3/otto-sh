@@ -229,20 +229,7 @@ def register_host_class(
     # Checked before the spec lookup, which walks cls's MRO and so needs a
     # host class; HOST_CLASSES.register below runs the same pure check again.
     _validate_host_class(name, cls)
-    if spec is None:
-        spec = _nearest_registered_spec(cls)
-        if spec is None:
-            raise ValueError(
-                f"register_host_class({name!r}): no spec given and no base "
-                f"class of {cls.__name__} has a registered spec. Pass spec=."
-            )
-    else:
-        from ..models.host import HostSpec
-
-        if not (isinstance(spec, type) and issubclass(spec, HostSpec)):
-            raise ValueError(
-                f"register_host_class({name!r}): spec must be a HostSpec subclass, got {spec!r}"
-            )
+    spec = _resolve_host_spec(name, cls, spec)
     if name in _BUILTIN_NAMES and (name in HOST_CLASSES or name in OS_PROFILES):
         logger.warning(f"register_host_class: overriding built-in host class {name!r}")
     # Last-writer-wins by design (see docstring) — always overwrite rather
@@ -258,6 +245,35 @@ def register_host_class(
     OS_PROFILES.register(
         name, OsProfile(name=name, base=name, defaults={}), overwrite=True, origin=caller_module()
     )
+
+
+def _resolve_host_spec(name: str, cls: type, spec: "type[HostSpec] | None") -> "type[HostSpec]":
+    """Return the spec :func:`register_host_class` would store for *cls*, or raise its refusal.
+
+    An explicit *spec* must be a :class:`~otto.models.host.HostSpec`
+    subclass; without one, the nearest base of *cls* with a registered spec
+    supplies it. Registers nothing, so ``otto.testing.assert_host_registrable``
+    asks the same question without registering.
+
+    Raises:
+        ValueError: *spec* is not a ``HostSpec`` subclass, or it is ``None``
+            and no base class of *cls* has a registered spec.
+    """
+    if spec is None:
+        inherited = _nearest_registered_spec(cls)
+        if inherited is None:
+            raise ValueError(
+                f"register_host_class({name!r}): no spec given and no base "
+                f"class of {cls.__name__} has a registered spec. Pass spec=."
+            )
+        return inherited
+    from ..models.host import HostSpec
+
+    if not (isinstance(spec, type) and issubclass(spec, HostSpec)):
+        raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see _validate_host_class)
+            f"register_host_class({name!r}): spec must be a HostSpec subclass, got {spec!r}"
+        )
+    return spec
 
 
 def _host_spec(name: str) -> "type[HostSpec]":

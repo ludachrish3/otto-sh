@@ -39,7 +39,7 @@ MonitorTarget(
 `ctx` (a {class}`~otto.monitor.parsers.ParseContext`) carries tick-local
 input such as the current collection timestamp; most parsers ignore it.  See
 {mod}`otto.monitor.parsers` for the built-in parsers and the
-{class}`~otto.monitor.parsers.MetricParser` protocol.
+{class}`~otto.monitor.parsers.MetricParser` abstract base class.
 
 ### Per-host parsers
 

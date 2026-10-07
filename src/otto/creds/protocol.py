@@ -35,5 +35,9 @@ class CredsStore(Protocol):
         ...
 
     def fingerprint(self) -> "str | None":
-        """Return a value that changes whenever the entries may have; ``None`` = not cacheable."""
+        """Return a value that changes whenever the entries may have; ``None`` = not cacheable.
+
+        Answers from local state only and never fetches or probes the network:
+        it is folded into the inventory's own ``fingerprint()``, which must not.
+        """
         ...

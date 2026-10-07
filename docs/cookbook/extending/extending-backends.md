@@ -19,7 +19,7 @@ registration runs before any lab data loads. The two seams are:
   (plus the reserved `tftp`).
 
 For the lab-data fields that select them (`term`, `transfer`), see
-{doc}`../../configuration/lab-config`; for the host classes that carry them, see {doc}`../../configuration/os-profiles`.
+{doc}`../../configuration/lab-config`; for the host classes that carry them, see {doc}`custom-host-classes`.
 
 ## Registration errors and replacing a built-in
 
@@ -106,12 +106,40 @@ this is the class attribute {class}`~otto.host.transfer.BaseFileTransfer`'s
 `authenticates` (default `False`); for a term backend it is the required
 `authenticates` keyword on
 {func}`~otto.host.connections.register_term_backend`, beside `host_families`.
-`ssh`, `telnet` and `ftp` declare `True`; `scp`, `sftp`, `nc`, `shell` and
-`console` ride a term session and inherit its identity, so they stay `False`.
+`ssh`, `telnet` and `ftp` declare `True`; the `scp`, `sftp`, `nc`, `shell`
+and `console` *transfer* backends ride a term session and inherit its
+identity, so they stay `False`. (The `console` *term* backend is a different
+registration and declares `True`.)
 
 The declaration has one consumer: a cred's `protocols` scope
 ({ref}`cred-protocols`) may only name an authenticating backend. Both
-registration functions refuse a non-bool.
+registration functions refuse a non-bool. A transfer backend that does not
+log in has nothing to write: the inherited `False` is its declaration.
+
+## `supports_mode` — whether the backend can set permission bits
+
+A transfer backend states whether it can apply a permission `mode` to the
+files it uploads: {class}`~otto.host.transfer.BaseFileTransfer`'s
+`supports_mode` (default `False`). `put_files` reads it before any byte moves
+and refuses a `mode` the backend could never honour. A backend that declares
+`True` overrides `_apply_mode`:
+
+```python
+async def _apply_mode(self, dest_paths: list[Path], mode: int) -> Result: ...
+```
+
+`put_files` calls it once, after the transfer and only when the caller gave a
+mode. `dest_paths` holds the destination paths of the files that landed —
+never a file that failed or was skipped — and the call is skipped when none
+landed. `mode` is already parsed to an `int`. Apply it in one batched
+operation ({func}`~otto.host.transfer.chmod_command` builds one `chmod` for the
+whole list) and run it through the `exec_cmd` your `create` captured from the
+context, then return a `Result`: on failure, every landed file's entry
+becomes an `Error` that keeps `value=dest_path`, because its bytes did land.
+The unix backends share one implementation, a single `chmod` over the host's
+shell; the embedded backends leave `supports_mode` `False`, since a Zephyr
+filesystem has no permission bits. The base `_apply_mode` raises, so a backend
+that declares `True` without overriding it fails every put given a mode.
 
 ## The `create(ctx)` construction contract
 
@@ -148,7 +176,8 @@ cleanly in lab data. Its transfer body, however, raises `NotImplementedError`
 
 A custom transfer backend subclasses
 {class}`~otto.host.transfer.BaseFileTransfer`, declares its `host_families`
-and its `progress_granularity`, overrides `create`, and implements the two
+and its `progress_granularity` (XMODEM logs in to nothing, so it keeps the
+inherited `authenticates = False`), overrides `create`, and implements the two
 abstract halves `_run_put` / `_run_get` (each must call `progress_factory()`
 once per source file so the transfer reports progress, in steps no larger than
 the granularity it declared).
@@ -176,6 +205,8 @@ class XmodemTransfer(BaseFileTransfer):
     host_families = frozenset({"unix", "embedded"})
     # XMODEM moves 128-byte data blocks; this backend reports one per block.
     progress_granularity = ProgressGranularity(put=128, get=128)
+    # authenticates and supports_mode are declarations too: this backend makes them
+    # by inheriting BaseFileTransfer's defaults (False, False).
 
     @classmethod
     def create(cls, ctx: TransferContext) -> "XmodemTransfer":
@@ -262,11 +293,13 @@ def test_xmodem_conforms():
 ```
 
 {func}`~otto.testing.assert_transfer_backend_conforms` runs every rule above:
-the two declarations `register_transfer_backend` demands, an overriding
-`create`, nothing left abstract, and the call shapes the host and the base
-class rely on — read off `BaseFileTransfer`'s own definitions, so a keyword
-added there is asked of your backend rather than silently skipped.  It raises
-once, listing every violation.
+the three declarations `register_transfer_backend` demands (`host_families`,
+`progress_granularity` and `authenticates`), an async `_apply_mode` override
+when `supports_mode` is `True`, an overriding `create`, nothing left abstract,
+and the call shapes the host and the base class rely on — read off
+`BaseFileTransfer`'s own definitions, so a keyword added there is asked of
+your backend rather than silently skipped.  It raises once, listing every
+violation.
 
 ## Login proxies
 
@@ -532,7 +565,7 @@ a host that sets either key itself wins over the profile, field by field.
 ## See also
 
 - {doc}`extending-embedded` — custom command frames and embedded filesystems
-- {doc}`../../configuration/os-profiles` — registering a custom host class that bundles these
+- {doc}`custom-host-classes` — registering a custom host class that bundles these
 - {doc}`../../configuration/lab-config` — the `term` / `transfer` lab-data fields
 - {doc}`../../configuration/host-sources` — the `creds` field reference and login-proxy ownership
   consequences

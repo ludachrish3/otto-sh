@@ -1,15 +1,17 @@
 """Conformance suites for otto's two host-side extension points.
 
-Two of :mod:`otto.testing`'s six helpers live here rather than beside the other
-four in :mod:`otto.testing.conformance`, because a host class and a transfer
-backend are the only two interfaces whose contract is a CALL SHAPE plus a
-DECLARATION — :func:`assert_host_conforms` is the one surface in otto that
-reads :class:`~otto.host.capability_grid.HostCapabilities` back against the
-behaviour it promises. Everything they need (the ``Host`` protocol, the
-capability grid, the dry-run context) is host machinery the other four never
-import.
+Three of :mod:`otto.testing`'s seven helpers live here rather than beside the
+other four in :mod:`otto.testing.conformance`, because a host class and a
+transfer backend are the only two interfaces whose contract is a CALL SHAPE
+plus a DECLARATION — :func:`assert_host_conforms` is the one surface in otto
+that reads :class:`~otto.host.capability_grid.HostCapabilities` back against
+the behaviour it promises. Everything they need (the ``Host`` protocol, the
+capability grid, the dry-run context, the host-class registry) is host
+machinery the other four never import. The third,
+:func:`assert_host_registrable`, asks what
+:func:`~otto.host.os_profile.register_host_class` asks beyond conformance.
 
-Both helpers collect every violation on one
+All three collect every violation on one
 :class:`~otto.suite.expect.ExpectCollector` and raise a single
 ``AssertionError``, exactly as the other four do.
 """
@@ -19,15 +21,19 @@ import inspect
 from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config.lab import Lab
 from ..context import OttoContext, reset_context, set_context
 from ..host.capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from ..host.host import BaseHost, Host
+from ..host.os_profile import _resolve_host_spec, _validate_host_class
 from ..host.transfer.base import BaseFileTransfer, ProgressGranularity
 from ..result import CommandNotRunError
 from ..suite.expect import ExpectCollector
+
+if TYPE_CHECKING:
+    from ..models.host import HostSpec
 
 _PROBE_USER = "__otto_conformance_probe_user__"
 """The ``user=`` every behavioural probe passes.
@@ -58,6 +64,10 @@ has no promise to probe."""
 
 _HOST_VERBS = ("run", "exec", "put", "get", "open_session", "login")
 """The verbs whose call shape production depends on, checked structurally."""
+
+_CONTEXT_MEMBERS = ("as_user", "app_shell")
+"""The two members production enters with ``async with``, so each must RETURN
+an async context manager rather than be a coroutine function itself."""
 
 
 @contextmanager
@@ -218,10 +228,15 @@ def assert_host_conforms(cls: type, *, instance: "Host | None" = None) -> None:
     :class:`~otto.host.host.BaseHost` subclass carrying a
     :class:`~otto.host.capability_grid.HostCapabilities` declaration (which
     :func:`~otto.host.os_profile.register_host_class` also demands), and its
-    ``run``/``exec``/``put``/``get``/``open_session``/``login`` accept, by
-    keyword, every parameter the ``Host`` protocol names — read off the
-    protocol's own signatures at call time, so adding a parameter there asks
-    every conforming class for it rather than silently exempting them.
+    ``run``/``exec``/``put``/``get``/``open_session``/``login`` are async and
+    accept, by keyword, every parameter the ``Host`` protocol names — read off
+    the protocol's own signatures at call time, so adding a parameter there
+    asks every conforming class for it rather than silently exempting them.
+    The protocol's other four members are checked by their own shapes:
+    ``switch_user`` is async; ``as_user`` and ``app_shell`` are neither a
+    coroutine function nor an undecorated async generator, the two shapes
+    ``async with`` can never enter; the same keyword rule applies to all
+    three; and ``current_user`` is a property.
 
     Behavioural rules run when *instance* is supplied, and they are the point:
     they check the DECLARATION against what the class does. Each verb is called
@@ -286,9 +301,93 @@ def assert_host_conforms(cls: type, *, instance: "Host | None" = None) -> None:
             f"Host.{verb}: must be an async def — production awaits it",
         )
         _check_signature(c, f"Host.{verb}", getattr(Host, verb), actual)
+    _expect_identity_members(c, cls)
     if instance is not None and declared:
         _expect_declaration_holds(c, capabilities, instance)
     c.raise_if_failures()
+
+
+def assert_host_registrable(cls: type, *, spec: "type[HostSpec] | None" = None) -> None:
+    """Assert :func:`~otto.host.os_profile.register_host_class` would accept *cls*.
+
+    Registration asks more than :func:`assert_host_conforms` does. Conformance
+    holds for any :class:`~otto.host.host.BaseHost`; ``LocalHost`` and
+    ``DockerContainerHost`` conform without being selectable from lab data.
+    Registration additionally demands:
+
+    * a :class:`~otto.host.remote_host.RemoteHost` subclass carrying a
+      :class:`~otto.host.capability_grid.HostCapabilities` declaration;
+    * a boundary :class:`~otto.models.host.HostSpec` — *spec* when given (it
+      must be a ``HostSpec`` subclass), otherwise the spec registered for the
+      nearest base of *cls*. A class that adds fields passes the ``HostSpec``
+      subclass declaring them as *spec*, exactly as it would to
+      ``register_host_class``.
+
+    Both rules are the registry's own functions, called here without
+    registering anything: no host class, spec or ``os_type`` profile is
+    written. Pass the *spec* you will pass to ``register_host_class``.
+
+    Raises:
+        AssertionError: once, listing every refusal ``register_host_class``
+            would raise.
+    """
+    c = ExpectCollector()
+    label = f"<{getattr(cls, '__name__', repr(cls))}>"
+    try:
+        _validate_host_class(label, cls)
+    except ValueError as e:
+        c.expect(False, f"Host registration: {e}")
+    if isinstance(cls, type):
+        try:
+            _resolve_host_spec(label, cls, spec)
+        except ValueError as e:
+            c.expect(False, f"Host registration: {e}")
+    c.raise_if_failures()
+
+
+def _expect_identity_members(c: ExpectCollector, cls: type) -> None:
+    """Check ``switch_user``, ``as_user``, ``app_shell`` and ``current_user`` by shape.
+
+    Each has its own shape, so none joins the coroutine loop over
+    :data:`_HOST_VERBS`: ``switch_user`` is awaited; ``as_user`` and
+    ``app_shell`` are entered with ``async with``; ``current_user`` is read as
+    an attribute.
+
+    For the two context members only the shapes ``async with`` can never enter
+    are refused — a coroutine function and an undecorated async generator
+    function. Whether a plain method's return value is a context manager is
+    not knowable without calling it, so any plain callable passes here; the
+    behavioural probe, when it runs, enters ``as_user`` for real.
+    """
+    switch = getattr(cls, "switch_user", None)
+    if switch is None:
+        c.expect(False, "Host.switch_user: missing")
+    else:
+        c.expect(
+            inspect.iscoroutinefunction(switch),
+            "Host.switch_user: must be an async def — production awaits it",
+        )
+        _check_signature(c, "Host.switch_user", Host.switch_user, switch)
+    for name in _CONTEXT_MEMBERS:
+        actual = getattr(cls, name, None)
+        if actual is None:
+            c.expect(False, f"Host.{name}: missing")
+            continue
+        c.expect(
+            callable(actual)
+            and not inspect.iscoroutinefunction(actual)
+            and not inspect.isasyncgenfunction(actual),
+            f"Host.{name}: must return an async context manager (an "
+            f"@asynccontextmanager method, say) — production enters it with "
+            f"`async with`, which a coroutine or a bare async generator cannot serve",
+        )
+        _check_signature(c, f"Host.{name}", getattr(Host, name), actual)
+    current_user = inspect.getattr_static(cls, "current_user", None)
+    c.expect(
+        isinstance(current_user, property),
+        f"Host.current_user: must be a property — production reads "
+        f"`host.current_user` as an attribute, got {current_user!r}",
+    )
 
 
 def _expect_declaration_holds(
@@ -382,6 +481,14 @@ def assert_transfer_backend_conforms(cls: "type[BaseFileTransfer]") -> None:
       applicable to no family can never validate against a host;
     * a :class:`~otto.host.transfer.base.ProgressGranularity` in
       :attr:`~otto.host.transfer.BaseFileTransfer.progress_granularity`;
+    * a ``bool`` in
+      :attr:`~otto.host.transfer.BaseFileTransfer.authenticates` — the
+      inherited ``False`` counts;
+    * ``_apply_mode`` overridden, as an ``async def``, when
+      :attr:`~otto.host.transfer.BaseFileTransfer.supports_mode` is true —
+      the base's raises, so a backend promising modes without one fails every
+      ``put`` that asks for a mode. A backend that does not support modes may
+      leave it alone, or override it unused;
     * ``put_files``/``get_files`` (what the host calls) and
       ``_run_put``/``_run_get`` (what the base class calls) accepting every
       keyword ``BaseFileTransfer``'s own definitions name, read off those
@@ -413,6 +520,28 @@ def assert_transfer_backend_conforms(cls: "type[BaseFileTransfer]") -> None:
         f"BaseFileTransfer: progress_granularity must be a ProgressGranularity saying what "
         f"this backend promises the progress bar, got {granularity!r}",
     )
+    authenticates = getattr(cls, "authenticates", None)
+    c.expect(
+        isinstance(authenticates, bool),
+        f"BaseFileTransfer: authenticates must be a bool saying whether this backend "
+        f"performs its own login, got {authenticates!r}",
+    )
+    if getattr(cls, "supports_mode", False):
+        # Static lookups on both sides: the question is WHICH class defines
+        # the attribute, not what binding it produces.
+        apply_mode = inspect.getattr_static(cls, "_apply_mode", None)
+        overridden = apply_mode is not vars(BaseFileTransfer)["_apply_mode"]
+        c.expect(
+            overridden,
+            "BaseFileTransfer._apply_mode: supports_mode is True, so _apply_mode must be "
+            "overridden — the base implementation raises NotImplementedError, so every "
+            "put given a mode would fail after its bytes landed",
+        )
+        if overridden:
+            c.expect(
+                inspect.iscoroutinefunction(apply_mode),
+                "BaseFileTransfer._apply_mode: must be an async def — the base class awaits it",
+            )
     for meth in ("put_files", "get_files", "_run_put", "_run_get"):
         actual = getattr(cls, meth, None)
         if actual is None:

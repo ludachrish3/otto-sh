@@ -87,14 +87,27 @@ true, and only `b.ends > window_start` can exclude an entry.
 
 ## Writing the class
 
-The base class is the recommended starting point, not a requirement: what
-otto actually checks is the [`ReservationBackend`](../../api/reservations.rst)
-Protocol, satisfied by any class with the two methods. Inheriting buys you a
-`TypeError` naming any method you forgot the moment the class is
-instantiated, the cached `reservations` member every consumer reads (and the
-conformance helper requires), and a constructor that already accepts the three
-keyword arguments otto passes — `url` (when the setting is present),
-`repo_dir` (always) and `username` (always). Declare your own
+The base class is the recommended starting point, not a requirement. Two
+checks apply to your class, and they are not the same size:
+
+- **At startup**, otto checks the
+  [`ReservationBackend`](../../api/reservations.rst) Protocol, which any class
+  with the two methods satisfies. It deliberately leaves out the `reservations`
+  member: `isinstance()` against a runtime-checkable Protocol evaluates a
+  non-method member, so declaring it there would make every type check query
+  the scheduler.
+- **The contract** — what
+  [the conformance helper](#verify-your-backend) checks — also requires that
+  `reservations` member, holding the invoking user's active rows.
+
+So satisfying the Protocol does **not** make a backend conforming. A class
+with the two methods and no `reservations` starts cleanly, then fails at gate
+time with "has no 'reservations' attribute", and the conformance helper fails
+it too. Inheriting closes that gap: it buys you a `TypeError` naming any
+method you forgot the moment the class is instantiated, the cached
+`reservations` member every consumer reads, and a constructor that already
+accepts the three keyword arguments otto passes — `url` (when the setting is
+present), `repo_dir` (always) and `username` (always). Declare your own
 `[reservations.<name>]` settings as further keyword parameters and forward the
 otto-owned ones to `super().__init__`:
 
@@ -443,13 +456,15 @@ not the plan.
 The checklist:
 
 1. Rename `who_reserved` to `holders` and return `Reservation` rows instead of
-   usernames. Add a test asserting
-   `isinstance(backend, SupportsResourceHolders)` — the conformance helper
-   will not catch its absence.
+   usernames. Then pass `expect_holders=True` to the conformance helper
+   ([Assert the capability you mean to keep](#assert-the-capability-you-mean-to-keep)).
+   By default the helper skips the holder rules for a backend without
+   `holders`, so a call without `expect_holders=True` passes a backend that
+   lost the method. With it, a missing `holders` is a named failure.
 2. Collapse `get_reserved_resources` and `get_reservation_windows` into one
    `fetch_reservations`, honouring [the window predicate](#the-query-window).
 3. **Inherit `ReservationBackendBase` now, or provide `reservations`
-   yourself.** A 0.10 backend that satisfied the contract *structurally* — the
+   yourself.** A 0.10 backend that matched the Protocol structurally — the
    right methods, no base class — has no `super().__init__` to add `username`
    to in step 4 and no `reservations` member at all. Nothing refuses it at
    startup: it fails later, at gate time, with "has no 'reservations'
@@ -458,8 +473,8 @@ The checklist:
    itself.
 4. Add `username` to the constructor and forward it to `super().__init__`.
 5. Replace any sentinel dates with `None`.
-6. Re-run `assert_reservation_backend_conforms` plus your own capability
-   assertion.
+6. Re-run `assert_reservation_backend_conforms`, with `expect_holders=True`
+   from step 1.
 
 ## Using the reservation library in your own CLI
 

@@ -24,7 +24,7 @@ inventory.
 | `supplies` | A `frozenset` of the record fields this instance supplies. Always contains `"ip"`. Fixed at construction from configuration — never discovered from records. |
 | `lookup(key)` | The {class}`~otto.models.inventory.InventoryRecord` for `key`. Raises {class}`~otto.inventory.errors.InventoryKeyError` when this inventory does not hold it, and {class}`~otto.inventory.errors.InventoryError` for anything that stopped it answering. Must be idempotent — an equal record on a second call. |
 | `list_keys()` | Every key this inventory holds, sorted. Everything it lists must resolve. |
-| `fingerprint()` | A value that changes whenever the records may have; `None` means "not cacheable". |
+| `fingerprint()` | A value that changes whenever the records may have; `None` means "not cacheable". Answers from local state and never fetches or probes the network ({ref}`below <inventory-fingerprint-contract>`). Must not raise: the conformance helper counts a raise as a violation. |
 
 Two rules that are easy to miss:
 
@@ -119,16 +119,19 @@ then overrides the store for the logins it names. A backend whose
 `supplies` includes `creds` is never snapshot-cached (below). Writing a store
 of your own is {doc}`creds-backends`.
 
+(inventory-fingerprint-contract)=
+
 ## Opting into the snapshot cache
 
-`fingerprint()` is otto's freshness question, and the answer decides whether a
-remote backend gets a snapshot cache for free:
+`fingerprint()` is otto's freshness question. Otto asks it whenever it
+validates or writes the shell-completion cache — on a TAB, on root
+`otto --help`, and in the commands that record into it — so it must answer from
+local state (a file's stat, a hash already on disk) and never fetch or probe the
+network. The answer decides whether a remote backend gets a snapshot cache for
+free:
 
 - Return a **string** and you have opted out. You are saying you can report
-  freshness yourself — cheaply, and without a network round trip. Otto calls
-  this whenever it validates or writes the shell-completion cache — on a TAB,
-  on root `otto --help`, and in the commands that record into it — so it must
-  never fetch.
+  freshness yourself, from local state.
 - Return **`None`** and otto wraps you in
   {class}`~otto.inventory.cache.SnapshotCache` whenever `cache_ttl` is greater
   than zero. A snapshot younger than the TTL is served without calling you at

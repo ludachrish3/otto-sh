@@ -63,11 +63,16 @@ def register_transfer_backend(
     """Make a custom transfer backend available to lab data under *name*.
 
     Call from an init module listed in ``.otto/settings.toml``. The backend
-    must declare a non-empty :attr:`BaseFileTransfer.host_families` -- otherwise
-    it could never validate against any host -- and a
-    :class:`~otto.host.transfer.base.ProgressGranularity` in
-    :attr:`BaseFileTransfer.progress_granularity`, so what it promises the
-    progress bar is stated rather than inferred. Both are rejected here.
+    makes three declarations, and a missing or malformed one is rejected here:
+
+    * a non-empty :attr:`BaseFileTransfer.host_families` -- otherwise it could
+      never validate against any host;
+    * a :class:`~otto.host.transfer.base.ProgressGranularity` in
+      :attr:`BaseFileTransfer.progress_granularity`, so what it promises the
+      progress bar is stated rather than inferred;
+    * a ``bool`` in :attr:`BaseFileTransfer.authenticates`, saying whether it
+      performs its own login. The inherited ``False`` is a declaration; only
+      a backend that logs in sets ``True``.
 
     *overwrite* replaces an existing registration under *name* deliberately
     (e.g. a built-in); by default a duplicate name raises.

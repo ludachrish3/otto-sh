@@ -566,8 +566,11 @@ come from a real load — and cost only speed:
 - The inventory reports `fingerprint()` as `None` with no snapshot cache in
   front of it to supply one — the case when `cache_ttl = "0"` turns the cache
   off.
-- The freshness probe **raises** — a networked backend's `fingerprint()` timing
-  out, say. Otto never lets that reach your shell, and nothing is cached.
+- The inventory's `fingerprint()` **raises** — a broken backend. A
+  `fingerprint()` answers from local state and never touches the network
+  ({ref}`the contract <inventory-fingerprint-contract>`), so a raise is a bug in
+  the backend, not an outage. Otto never lets it reach your shell, and nothing
+  is cached.
 
 ## Adoption path
 

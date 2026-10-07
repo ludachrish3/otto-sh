@@ -143,10 +143,9 @@ def _maybe_cached(inventory: Inventory, compiled: CompiledInventory) -> Inventor
     - ``fingerprint()`` is ``None``, the backend's own statement that it cannot
       report freshness. NetBox says so unconditionally; a third-party backend
       that returns a string opts OUT of the cache by design, because it has a
-      better answer than a timestamp. A third-party backend that probes the
-      network inside ``fingerprint()`` pays for it here — the protocol says
-      that method changes when the records may have, not that it is free, and
-      the two built-ins both answer from local state.
+      better answer than a timestamp. Asking is cheap because the protocol
+      requires ``fingerprint()`` to answer from local state and never fetch
+      or probe the network, as both built-ins do.
 
     A backend that passes all three and ALSO supplies ``creds`` is refused
     rather than wrapped. A snapshot never holds credentials by construction
