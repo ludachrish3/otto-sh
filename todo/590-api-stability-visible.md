@@ -213,7 +213,7 @@ it. Annotations stay a review rule: the dump does not record them (dump spec
   deprecated-path warnings in the lazy `__getattr__`; then the consumer-operation
   tests.
 - [ ] **Docs:** the Sphinx hook, the stability page, the site-wide notice, the
-  badges, and the built-site docs test.
+  badges, and the built-site docs test. ✅ in P1 (14caec5b): the Sphinx hooks (scripts/docs_api_reference.py, wired in docs/conf.py), the stability page, the site-wide notice, the module banners, and the built-site check (scripts/check_docs_api_marks.py), which gates both docs lanes: make docs locally and nox -s docs in CI. Left: the mixed-tier and per-symbol work, which waits for the first module whose symbols differ in tier: a badge at each non-stable or deprecated symbol's anchor, and the built-site check's per-anchor rule for it.
 - [ ] **Review checklist** in `docs/contributing.md`:
   - no experimental type in a stable or provisional signature (annotations,
     bases, defaults, field types, return types);
