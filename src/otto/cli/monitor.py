@@ -156,7 +156,7 @@ def monitor(
 
     try:
         if source is not None:
-            from ..config import get_repos
+            from ..bootstrap import get_repos
             from ..monitor.review import serve_review
             from .invoke import ensure_cli_session
 

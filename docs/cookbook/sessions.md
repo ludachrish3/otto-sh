@@ -8,6 +8,7 @@ preserving shell state in each stream, use
 {meth}`~otto.host.host.Host.open_session`:
 
 ```{doctest}
+>>> from otto.host import LocalHost
 >>> host = LocalHost()
 >>> async def parallel_sessions():
 ...     s1 = await host.open_session("worker1")
@@ -78,6 +79,7 @@ the launch command and the prompt once, then call
 ```{doctest}
 >>> import re
 >>> from otto import AppShell
+>>> from otto.host import LocalHost
 >>> class PyRepl(AppShell):
 ...     """The stock CPython REPL as an AppShell."""
 ...     launch = "python3 -u -i"

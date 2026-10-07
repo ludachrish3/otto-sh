@@ -131,7 +131,7 @@ class TestGetMarkersPanel:
 class TestListMarkers:
     def test_a_repo_with_no_tests_shows_the_placeholder(self, tmp_path):
         sut = _make_sut(tmp_path)
-        with patch("otto.config.bootstrapped.get_repos", return_value=[Repo(sut_dir=sut)]):
+        with patch("otto.bootstrap.get_repos", return_value=[Repo(sut_dir=sut)]):
             result = runner.invoke(_test_app(), ["--list-markers"])
         assert result.exit_code == 0
         assert "no markers found" in result.stdout
@@ -139,7 +139,7 @@ class TestListMarkers:
     def test_list_markers_includes_otto_builtins(self, tmp_path):
         """`ensure` and `retry` are otto's, not the repo's — they get their own panel."""
         sut = _make_sut(tmp_path)
-        with patch("otto.config.bootstrapped.get_repos", return_value=[Repo(sut_dir=sut)]):
+        with patch("otto.bootstrap.get_repos", return_value=[Repo(sut_dir=sut)]):
             result = runner.invoke(_test_app(), ["--list-markers"])
         assert result.exit_code == 0
         assert "ensure(*steps)" in result.stdout
@@ -237,7 +237,7 @@ class TestListTests:
 
     def test_list_tests_lists_all_and_exits(self, tmp_path: Path) -> None:
         repo = self._repo_with_tests(tmp_path)
-        with patch("otto.config.bootstrapped.get_repos", return_value=[repo]):
+        with patch("otto.bootstrap.get_repos", return_value=[repo]):
             result = runner.invoke(_test_app(), ["--list-tests"])
         assert result.exit_code == 0
         assert "test_alpha" in result.stdout
@@ -245,7 +245,7 @@ class TestListTests:
 
     def test_list_tests_filters_by_marker(self, tmp_path: Path) -> None:
         repo = self._repo_with_tests(tmp_path)
-        with patch("otto.config.bootstrapped.get_repos", return_value=[repo]):
+        with patch("otto.bootstrap.get_repos", return_value=[repo]):
             result = runner.invoke(_test_app(), ["--list-tests", "--markers", "slow"])
         assert result.exit_code == 0
         assert "test_beta" in result.stdout

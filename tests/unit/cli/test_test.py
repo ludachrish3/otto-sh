@@ -53,9 +53,7 @@ class TestRulesAreTheLibrarys:
     def test_the_cli_hands_run_tests_what_the_class_implies(
         self, capture_cov, tmp_path, flags, expected, monkeypatch
     ):
-        monkeypatch.setattr(
-            "otto.config.bootstrapped.get_repos", lambda: [_repo_with_tickets_configured()]
-        )
+        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [_repo_with_tickets_configured()])
         args = [f.format(tmp=tmp_path) for f in flags]
         exit_code, run_options, output = capture_cov(args)
         assert exit_code == 0, output
@@ -571,9 +569,7 @@ class TestCovTicketsJsonOption:
         assert ctx_obj["cov_tickets_json"] is None
 
     def test_cov_tickets_json_recorded(self, capture_cov, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "otto.config.bootstrapped.get_repos", lambda: [_repo_with_tickets_configured()]
-        )
+        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [_repo_with_tickets_configured()])
         target = tmp_path / "tickets.json"
         exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
         assert exit_code == 0, f"output={output!r}"
@@ -583,9 +579,7 @@ class TestCovTicketsJsonOption:
         """Mirrors --cov-report-dir: naming a tickets export with no other
         --cov-report flag still implies --cov-report (and --cov) — a bare
         --cov-tickets-json PATH must not silently do nothing."""
-        monkeypatch.setattr(
-            "otto.config.bootstrapped.get_repos", lambda: [_repo_with_tickets_configured()]
-        )
+        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [_repo_with_tickets_configured()])
         target = tmp_path / "tickets.json"
         exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
         assert exit_code == 0, f"output={output!r}"
@@ -599,7 +593,7 @@ class TestCovTicketsJsonOption:
         fail BEFORE the (possibly long) test run starts, not silently
         warn-and-skip after it finishes — otherwise a CI pipeline wiring
         --cov-tickets-json gets exit 0, no file, and a warning nobody reads."""
-        monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
+        monkeypatch.setattr("otto.bootstrap.get_repos", list)
         target = tmp_path / "tickets.json"
         exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
         assert exit_code == 2
@@ -614,7 +608,7 @@ class TestCovTicketsJsonOption:
         all."""
         repo = MagicMock()
         repo.settings = {"coverage": {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}}
-        monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
+        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
         target = tmp_path / "tickets.json"
         exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
         assert exit_code != 0

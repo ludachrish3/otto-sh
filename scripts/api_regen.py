@@ -434,8 +434,14 @@ def generate_at_commit(repo: Path, sha: str, manifest_rel: str, env: "DepsEnv") 
         return _generated(report)
 
 
-def generate_worktree(repo: Path, manifest: Path, *, assume_dir: bool = False) -> Generated:
-    """Generate the working tree's dump in this interpreter: the developer loop (§5.1)."""
+def generate_worktree(
+    repo: Path, manifest: Path, *, assume_dir: bool = False, seed: str = GATE_HASH_SEED
+) -> Generated:
+    """Generate the working tree's dump in this interpreter: the developer loop (§5.1).
+
+    *seed* is the child's ``PYTHONHASHSEED``: the gate's fixed one by default, a
+    different one per interpreter on the version-invariance lane (dump spec §6).
+    """
     try:
         namespaces = sorted(load_manifest(manifest))
         formats = list(load_formats(manifest).values())
@@ -446,6 +452,7 @@ def generate_worktree(repo: Path, manifest: Path, *, assume_dir: bool = False) -
             Path(sys.executable),
             Path(repo) / "src",
             namespaces,
+            seed=seed,
             assume_dir=assume_dir,
             formats=formats,
         )

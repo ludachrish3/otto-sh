@@ -11,6 +11,7 @@ List available sessions:
 """
 
 import os
+import shutil
 from pathlib import Path
 
 import nox
@@ -655,6 +656,28 @@ def typecheck(session: nox.Session) -> None:
     session.run("ty", "check")
 
 
+@nox_uv.session(python=PYTHON_VERSIONS, uv_no_install_project=True)
+def api_dump_invariance(session: nox.Session) -> None:
+    """Regenerate the API dump under this Python and compare it with the golden (dump spec §6).
+
+    One leg per interpreter, each under its own PYTHONHASHSEED (the version's
+    digits, so never the gate's fixed 0): the committed golden must be
+    byte-identical to all five. Runtime dependencies only, and otto is not
+    installed, as `check-breaking` regenerates a commit (dump spec §5.2): the
+    dump child puts `src` first on its own path.
+    """
+    seed = str(session.python).replace(".", "")
+    session.run(
+        "python",
+        "scripts/api_snapshot.py",
+        "--manifest",
+        "api/public.toml",
+        "--check",
+        "--hash-seed",
+        seed,
+    )
+
+
 @nox_uv.session(uv_groups=["dev"])
 def docs(session: nox.Session) -> None:
     """Build HTML docs (warnings as errors) and run Sphinx doctests."""
@@ -666,7 +689,13 @@ def docs(session: nox.Session) -> None:
     session.run("python", "scripts/check_docs_wheel_matrix.py")
     session.run("python", "scripts/refresh_docs_captures.py", "--check", "--labless")
     # -E (fresh env) + -a (write all) so the build matches a clean checkout.
+    # -a deletes no page, so the tree goes first: a page a moved .rst left
+    # behind would reach the built-site check below.
+    shutil.rmtree("docs/_build/html", ignore_errors=True)
     session.run("sphinx-build", "-E", "-a", "-W", "-b", "html", "docs/", "docs/_build/html")
+    # The built site's stability marks and pre-1.0 notice, read from the HTML
+    # and objects.inv rather than from the hooks that wrote them.
+    session.run("python", "scripts/check_docs_api_marks.py", "docs/_build/html")
     session.run("sphinx-build", "-E", "-b", "doctest", "docs/", "docs/_build/doctest")
     # `-p no:tach` re-stated: the override drops pyproject's addopts whole, and
     # only an addopts/CLI `-p` protects plugin load (issue #193). Pinned by

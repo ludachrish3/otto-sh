@@ -43,7 +43,7 @@ as the default ``command_frame`` (along with ``os_type='zephyr'`` and
 File transfer (``get``/``put``) is delegated to
 :class:`~otto.host.transfer.EmbeddedFileTransfer`, which speaks the
 device shell only (the ``console`` backend uses Zephyr's ``fs`` commands).
-The interactive bridge (``_login``) currently raises
+The interactive bridge (``run_login``) currently raises
 :class:`NotImplementedError`.
 """
 
@@ -332,13 +332,13 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     ####################
 
     @override
-    async def _login(self, user: str | None = None, force: bool = False) -> None:
+    async def run_login(self, user: str | None = None, force: bool = False) -> None:
         """Open an interactive shell bridged to the local terminal.
 
         Not yet implemented for embedded hosts — the telnet bridge for a
         login-less RTOS shell lands in a later phase. ``user`` and ``force``
         are accepted for signature parity with
-        :meth:`~otto.host.host.BaseHost._login` but embedded hosts have no
+        :meth:`~otto.host.host.BaseHost.run_login` but embedded hosts have no
         login-proxy chain to replay and no login to reset.
         """
         raise NotImplementedError(
@@ -353,7 +353,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             )
 
     @override
-    async def _logout(self) -> Result:
+    async def run_logout(self) -> Result:
         """Report that there is nothing to reset: an RTOS console has no login step.
 
         The console term forces ``console_options.login`` off for an embedded

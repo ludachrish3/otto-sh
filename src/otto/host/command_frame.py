@@ -48,6 +48,16 @@ from typing_extensions import override
 from ..registry import Ref, Registry, caller_module
 from .errors import RawLandingError
 
+__all__ = [
+    "FRAME_CLASSES",
+    "BashFrame",
+    "CommandFrame",
+    "RawFrame",
+    "SessionMarkers",
+    "ZephyrFrame",
+    "register_command_frame",
+]
+
 
 @dataclass(frozen=True)
 class SessionMarkers:
@@ -552,7 +562,7 @@ class ZephyrFrame(CommandFrame):
         END marker. Take the last such line in the region preceding END.
         Returns ``-1`` if no integer is found.
         """
-        for line in reversed(self._region_before_end(buffer, m)):
+        for line in reversed(self.region_before_end(buffer, m)):
             stripped = line.strip()
             if re.fullmatch(r"-?\d+", stripped):
                 return int(stripped)
@@ -567,7 +577,7 @@ class ZephyrFrame(CommandFrame):
         of the two executed lines: the rejected BEGIN, then the command). Drop
         the bracketing prompt lines.
         """
-        lines = self._region_before_end(buffer, m)
+        lines = self.region_before_end(buffer, m)
 
         # The BEGIN block: BEGIN is an unknown command, so the shell emits
         # `<token>: command not found`. The last line carrying the token is it.
@@ -588,12 +598,16 @@ class ZephyrFrame(CommandFrame):
         output = block[1:-1] if len(block) >= 2 else []  # noqa: PLR2004 — block needs ≥2 lines for [1:-1] slice to yield non-empty output
         return "\n".join(output).strip()
 
-    def _region_before_end(self, buffer: str, m: SessionMarkers) -> list[str]:
+    def region_before_end(self, buffer: str, m: SessionMarkers) -> list[str]:
         r"""Return the buffer's lines up to (not including) the END token.
 
         ANSI terminal sequences and the carriage returns from telnet ``\r\n``
         line endings are stripped from each line. The END token's own line and
         anything after it are excluded.
+
+        A helper for a subclass that parses the framed response itself (the
+        Zephyr 2.7 frame in the getting-started example does). Subclasses call
+        it; they do not override it.
         """
         clean = _ANSI_RE.sub("", buffer)
         end_idx = clean.find(m.end_prefix)
@@ -726,6 +740,7 @@ FRAME_CLASSES: Registry[type[CommandFrame]] = Registry(
     register_hint="otto.host.command_frame.register_command_frame()",
     validate=_validate_command_frame,
 )
+"""The command-frame classes lab data can name, keyed by dialect name."""
 
 
 def register_command_frame(

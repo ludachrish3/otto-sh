@@ -407,7 +407,7 @@ def _loaded_repos() -> "tuple[list[Any], set[str | None]] | None":
     """
     try:
         # function-scope: config's init boots the app
-        from .config import get_ordered_repos, get_repos, is_bootstrapped
+        from .bootstrap import get_ordered_repos, get_repos, is_bootstrapped
 
         if not is_bootstrapped():
             return None
@@ -448,7 +448,7 @@ def declared_for_host(host: Any, seam_attr: str) -> list[DeclaredEntry]:
     lazy so a bare-library caller (``create_host_from_dict`` in an ``otto
     init``/unit-test process, say) never pays discovery's cost or runs repo
     init imports unless something else needed them. So collection PROBES
-    ``otto.config.is_bootstrapped()`` first and returns ``[]`` without calling
+    ``otto.bootstrap.is_bootstrapped()`` first and returns ``[]`` without calling
     ``get_repos()`` at all when bootstrap has not already happened — a process
     that has not composed the root has no entries loaded yet, which is the
     same true empty answer as any other unreachable-config case.

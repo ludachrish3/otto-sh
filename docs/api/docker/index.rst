@@ -26,24 +26,3 @@ return are imported from the package::
     )
 
 .. automodule:: otto.docker
-   :exclude-members: model_config, DockerVerbError
-
-..
-   DockerVerbError is excluded above because it is documented at its
-   defining module (observe.rst) -- indexing it again here under
-   ``otto.docker.DockerVerbError`` gave ``DockerVerbError`` two targets,
-   which made any bare ``DockerVerbError`` xref elsewhere (e.g. a type
-   annotation in invoke.py) ambiguous and -W-fatal.
-
-.. toctree::
-
-   adapter
-   build
-   build_verbs
-   compose
-   deployment
-   mounts
-   observe
-   reports
-   resolve
-   staging

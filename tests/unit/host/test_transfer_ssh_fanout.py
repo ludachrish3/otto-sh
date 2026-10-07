@@ -2,7 +2,7 @@
 
 Both backends used to open every file with an unbounded ``asyncio.gather``,
 capped only by whatever ``sshd``'s ``MaxSessions`` refused mid-flight. They now
-hand one call per file to :meth:`~otto.host.transfer.base.BaseFileTransfer._dispatch_per_file`,
+hand one call per file to :meth:`~otto.host.transfer.base.BaseFileTransfer.dispatch_per_file`,
 sized from ``scp_options.max_concurrent_transfers`` /
 ``sftp_options.max_concurrent_transfers`` (or the derived
 :data:`~otto.host.transfer.base.DEFAULT_SESSION_TRANSFER_LIMIT` when unset).

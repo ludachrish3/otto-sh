@@ -54,6 +54,8 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from otto.errors import OttoError
 
+__all__ = ["Ref", "RegistrationRefused", "Registry", "registering_repo"]
+
 T = TypeVar("T")
 """Type variable for the entry type stored in a :class:`Registry`."""
 

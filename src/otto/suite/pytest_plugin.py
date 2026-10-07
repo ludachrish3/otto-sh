@@ -129,6 +129,12 @@ class OttoFixturesPlugin:
         async def test_something(ctx, test_dir, expect) -> None:
             opts = ctx.options(DeviceOptions)
             expect(opts.device_type == "router")
+
+    Each fixture is defined on a private method (like ``_otto_ensure``) and
+    published under its fixture name (``@pytest.fixture(name=...)``): a
+    fixture is pytest's to call, never a method of this class, and the API
+    dump records only public members, none of which may be a fixture
+    definition (API dump spec §3.4).
     """
 
     __name__ = "otto-fixtures"
@@ -136,8 +142,8 @@ class OttoFixturesPlugin:
     def __init__(self, *, layout: ArtifactLayout) -> None:
         self._layout = layout
 
-    @pytest.fixture(scope="session")
-    def ctx(self) -> Any:
+    @pytest.fixture(scope="session", name="ctx")
+    def _ctx(self) -> Any:
         """Return the active OttoContext for this invocation.
 
         One object for the whole run — session-scoped so suite-wide fixtures
@@ -149,9 +155,9 @@ class OttoFixturesPlugin:
 
     # ── artifact directories (spec §5.3) ─────────────────────────────────────
 
-    @pytest.fixture(scope="module")
+    @pytest.fixture(scope="module", name="module_dir")
     @staticmethod
-    def module_dir(request: pytest.FixtureRequest) -> Path:
+    def _module_dir(request: pytest.FixtureRequest) -> Path:
         """Return this module's artifact directory, shared by every test in it. Created on request.
 
         ``<run output dir>/<module's path relative to its repo's test root,
@@ -174,9 +180,9 @@ class OttoFixturesPlugin:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    @pytest.fixture
-    def test_dir(self, request: pytest.FixtureRequest) -> Path:
-        """This test's artifact directory; one ``iteration_N`` level more in stability runs.
+    @pytest.fixture(name="test_dir")
+    def _test_dir(self, request: pytest.FixtureRequest) -> Path:
+        """Return this test's artifact directory; one ``iteration_N`` level more in stability runs.
 
         ``module_dir/<Class>/.../<sanitized test name>`` — see
         :meth:`~otto.suite.layout.ArtifactLayout.test_dir`. Parametrized tests
@@ -196,8 +202,8 @@ class OttoFixturesPlugin:
 
     # ── expect (spec §5.4) ───────────────────────────────────────────────────
 
-    @pytest.fixture
-    def expect(self, request: pytest.FixtureRequest) -> ExpectCollector:
+    @pytest.fixture(name="expect")
+    def _expect(self, request: pytest.FixtureRequest) -> ExpectCollector:
         """Return a callable :class:`~otto.suite.expect.ExpectCollector` for non-fatal checks.
 
         ``expect(condition, msg)`` records a failure and keeps the test running;
@@ -211,8 +217,8 @@ class OttoFixturesPlugin:
 
     # ── monitor ──────────────────────────────────────────────────────────────
 
-    @pytest.fixture
-    def monitor(self, request: pytest.FixtureRequest) -> "Iterator[MonitorHandle]":
+    @pytest.fixture(name="monitor")
+    def _monitor(self, request: pytest.FixtureRequest) -> "Iterator[MonitorHandle]":
         """Start a per-test metrics monitor on demand; stopped for you at teardown.
 
         ``runner_for(request)`` is resolved here, before the ``yield`` — as a

@@ -42,6 +42,8 @@ if TYPE_CHECKING:
     from ..declared import DeclaredEntry
     from .host import Host
 
+__all__ = ["DevTool", "register_dev_tool_kind", "register_dev_tool_provider"]
+
 logger = logging.getLogger(__name__)
 
 

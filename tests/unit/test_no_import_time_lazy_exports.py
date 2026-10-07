@@ -1,22 +1,26 @@
-"""No otto module binds a lazily exported function at import time.
+"""No otto module binds a process-wide getter or a lazily exported function at import time.
 
-Three packages declare a ``_LAZY_EXPORTS`` table: ``otto``, ``otto.config`` and
-``otto.logger``. Their function entries are the process-wide getters
-(``get_repos``, ``get_lab``, ``get_completion_names``, ``get_context``, ...)
-and the registrars and loaders beside them (``register_options``, ``load_lab``,
-...), and tests fake them by patching the module that DEFINES each one
-(``otto.config.bootstrapped.get_repos``). That patch reaches every caller that
-looks the name up when it runs. It does not reach a module that bound the name
-at import, by either spelling:
+Tests fake the process-wide getters (``get_repos``, ``get_lab``,
+``get_completion_names``, ``get_context``, ...) and the registrars and loaders
+beside them (``register_options``, ``load_lab``, ...) by patching the module
+that DEFINES each one (``otto.bootstrap.get_repos``). That patch reaches every
+caller that looks the name up when it runs. It does not reach a module that
+bound the name at import, by either spelling:
 
-- ``from otto.config import get_repos`` (the package re-export), or
-- ``from otto.config.bootstrapped import get_repos`` (the defining module).
+- ``from otto.config import load_user_settings`` (a package re-export), or
+- ``from otto.bootstrap import get_repos`` (the defining module).
 
 Either one binds the real function once, and the module keeps calling it under
 a patch every other caller sees. This test parses ``src/otto`` and fails on
-both spellings at module level, for each entry of the three tables that is a
-function once the table chain is followed to its defining module. The tables
-are re-derived from source so this test imports no otto module;
+both spellings at module level, for two sets of names:
+
+- each entry of the ``_LAZY_EXPORTS`` tables of ``otto``, ``otto.config`` and
+  ``otto.logger``, and of the ``_LAZY_ATTRS`` table of ``otto.lab``, that is a
+  function once the table chain is followed to its defining module;
+- ``PROCESS_WIDE_GETTERS``: getters no lazy table exports, because their
+  defining module is their public home (``otto.bootstrap``'s accessors).
+
+The tables are re-derived from source so this test imports no otto module;
 ``tests/_fixtures/_lazy_exports.py`` does the same derivation at run time, by
 importing the packages. Classes (``Repo``, ``OttoContext``) are not checked:
 binding a class at import defeats no patch a test makes. Imports under
@@ -25,7 +29,7 @@ bodies and each package's own ``__init__``. A table entry that names a
 submodule rather than an attribute (``otto.logger``'s ``management``) is not a
 binding of a function and is not checked.
 
-The packages with a ``_LAZY_ATTRS`` table are deliberately out of scope. A
+The other packages with a ``_LAZY_ATTRS`` table are deliberately out of scope. A
 module-level ``from ..link import find_link`` there is patched on the
 CONSUMER (``otto.cli.link.find_link``), which is correct and leaks nothing;
 the only forbidden patch target is the lazy package's own namespace, which
@@ -45,6 +49,26 @@ from tests._fixtures.paths import PROJECT_ROOT
 SRC_ROOT = PROJECT_ROOT / "src" / "otto"
 
 GUARDED_PACKAGES = ["otto", "otto.config", "otto.logger"]
+
+# Facades whose _LAZY_ATTRS table (name -> defining module) exports process-wide
+# getters; the getters themselves are guarded at their defining modules.
+GUARDED_ATTRS_PACKAGES = ["otto.lab"]
+
+# Getters that no lazy table exports, because their defining module is their
+# public home: patched there, read at call time, never bound at import (spec
+# 2026-10-06 repo-and-scope-inputs §9, the lazy-getter guard).
+PROCESS_WIDE_GETTERS: dict[str, frozenset[str]] = {
+    "otto.bootstrap": frozenset(
+        {
+            "bootstrap",
+            "get_repos",
+            "get_ordered_repos",
+            "get_env",
+            "is_bootstrapped",
+            "get_completion_names",
+        }
+    ),
+}
 
 # A site that genuinely cannot read the name at call time, keyed on its path
 # under src/otto, with the reason. Only a decorator, a default argument or a
@@ -72,15 +96,15 @@ def _module_of(path: Path) -> str:
     return ".".join(["otto", *path.relative_to(SRC_ROOT).with_suffix("").parts])
 
 
-def _lazy_exports_table(package: str) -> dict:
-    """*package*'s ``_LAZY_EXPORTS`` literal, read from its source without importing it."""
+def _table_literal(package: str, table: str) -> dict:
+    """*package*'s *table* literal, read from its source without importing it."""
     for node in ast.parse(_source_of(package).read_text(encoding="utf-8")).body:
         target = node.target if isinstance(node, ast.AnnAssign) else None
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
-        if isinstance(target, ast.Name) and target.id == "_LAZY_EXPORTS":
+        if isinstance(target, ast.Name) and target.id == table:
             return ast.literal_eval(node.value)
-    raise AssertionError(f"{package} declares no _LAZY_EXPORTS literal")
+    raise AssertionError(f"{package} declares no {table} literal")
 
 
 def _is_function(module: str, name: str) -> bool:
@@ -97,19 +121,28 @@ def guarded_names() -> dict[str, frozenset[str]]:
     """Module -> the functions no other otto module may bind from it at import time.
 
     Each entry of a guarded package's table is followed through the tables to
-    the module that finally defines it: ``otto.get_lab`` names
-    ``otto.config.get_lab``, which names ``otto.config.fleet.get_lab``. When
-    that definition is a function, the package maps to the entry's name and
-    the defining module to the function's name; a class maps to nothing.
+    the module that finally defines it: ``otto.lab.get_lab`` names
+    ``otto.config.fleet.get_lab``. When that definition is a function, the
+    package maps to the entry's name and the defining module to the
+    function's name; a class maps to nothing.
     """
     tables = {
         package: {
             name: tuple(target)
-            for name, target in _lazy_exports_table(package).items()
+            for name, target in _table_literal(package, "_LAZY_EXPORTS").items()
             if not isinstance(target, str)  # a str value names a submodule
         }
         for package in GUARDED_PACKAGES
     }
+    tables.update(
+        {
+            package: {
+                name: (module, name)
+                for name, module in _table_literal(package, "_LAZY_ATTRS").items()
+            }
+            for package in GUARDED_ATTRS_PACKAGES
+        }
+    )
     guarded: dict[str, set[str]] = {package: set() for package in tables}
     for package, table in tables.items():
         for name, target in table.items():
@@ -119,6 +152,10 @@ def guarded_names() -> dict[str, frozenset[str]]:
             if _is_function(module, attr):
                 guarded[package].add(name)
                 guarded.setdefault(module, set()).add(attr)
+    for module, names in PROCESS_WIDE_GETTERS.items():
+        not_functions = sorted(name for name in names if not _is_function(module, name))
+        assert not not_functions, f"PROCESS_WIDE_GETTERS: {module} defines no {not_functions}"
+        guarded.setdefault(module, set()).update(names)
     return {module: frozenset(names) for module, names in guarded.items()}
 
 
@@ -180,50 +217,59 @@ def import_time_bindings(
 def test_the_scan_knows_the_names_it_guards():
     """A table read that came back short would let every check below pass vacuously."""
     guarded = guarded_names()
-    assert set(GUARDED_PACKAGES) <= guarded.keys()
-    assert {"get_repos", "get_lab", "get_completion_names"} <= guarded["otto.config"]
+    assert set(GUARDED_PACKAGES + GUARDED_ATTRS_PACKAGES) <= guarded.keys()
+    assert {"load_user_settings", "user_settings_path"} <= guarded["otto.config"]
     assert {"get_context", "options", "get_lab", "register_options"} <= guarded["otto"]
     assert "Repo" not in guarded["otto.config"]  # a class, not a function
     assert "OttoContext" not in guarded["otto"]
     assert "management" not in guarded["otto.logger"]  # names a submodule
-    assert {"get_repos", "get_completion_names"} <= guarded["otto.config.bootstrapped"]
+    assert {
+        "bootstrap",
+        "get_repos",
+        "get_ordered_repos",
+        "get_env",
+        "is_bootstrapped",
+        "get_completion_names",
+    } <= guarded["otto.bootstrap"]
     assert {"get_lab", "do_for_all_hosts"} <= guarded["otto.config.fleet"]
+    assert {"get_lab", "do_for_all_hosts", "fleet_of_interest"} <= guarded["otto.lab"]
+    assert {"Lab", "EmptySelectionError"}.isdisjoint(guarded["otto.lab"])  # classes
     assert "get_context" in guarded["otto.context"]
     assert "Repo" not in guarded.get("otto.config.repo", frozenset())
 
 
 def test_the_scan_flags_only_bindings_made_at_import_time():
     guarded = {
-        "otto.config": frozenset({"get_repos"}),
-        "otto.config.bootstrapped": frozenset({"get_repos"}),
+        "otto.config": frozenset({"load_user_settings"}),
+        "otto.bootstrap": frozenset({"get_repos"}),
     }
     source = (
         "import typing\n"
         "from typing import TYPE_CHECKING\n"
-        "from ..config import get_repos\n"  # line 3: flagged, relative package
-        "from otto.config import get_repos as repos\n"  # line 4: flagged, aliased
-        "from ..config.bootstrapped import get_repos\n"  # line 5: flagged, defining module
+        "from ..config import load_user_settings\n"  # line 3: flagged, relative package
+        "from otto.config import load_user_settings as load\n"  # line 4: flagged, aliased
+        "from ..bootstrap import get_repos\n"  # line 5: flagged, defining module
         "from ..config import Unrelated\n"
         "if TYPE_CHECKING:\n"
-        "    from ..config import get_repos\n"
+        "    from ..config import load_user_settings\n"
         "else:\n"
-        "    from ..config import get_repos\n"  # line 10: flagged, runs at import
+        "    from ..config import load_user_settings\n"  # line 10: flagged, runs at import
         "if typing.TYPE_CHECKING:\n"
-        "    from ..config.bootstrapped import get_repos\n"
+        "    from ..bootstrap import get_repos\n"
         "def f():\n"
-        "    from ..config import get_repos\n"
+        "    from ..config import load_user_settings\n"
         "async def g():\n"
-        "    from ..config.bootstrapped import get_repos\n"
+        "    from ..bootstrap import get_repos\n"
         "class C:\n"
-        "    from ..config import get_repos\n"  # line 18: a class body runs at import
+        "    from ..config import load_user_settings\n"  # line 18: a class body runs at import
     )
     found = import_time_bindings(source, "otto.cli.main", guarded)
     assert found == [
-        (3, "otto.config", "get_repos"),
-        (4, "otto.config", "get_repos"),
-        (5, "otto.config.bootstrapped", "get_repos"),
-        (10, "otto.config", "get_repos"),
-        (18, "otto.config", "get_repos"),
+        (3, "otto.config", "load_user_settings"),
+        (4, "otto.config", "load_user_settings"),
+        (5, "otto.bootstrap", "get_repos"),
+        (10, "otto.config", "load_user_settings"),
+        (18, "otto.config", "load_user_settings"),
     ]
 
 
@@ -242,8 +288,8 @@ def test_no_otto_module_binds_a_lazily_exported_function_at_import_time():
                 f"src/otto/{rel}:{line} {name} -> import it inside the function that uses it"
             )
     assert not offenders, (
-        "a module-level import binds a lazily exported function, so a patch where it is "
-        "defined never reaches this caller:\n  " + "\n  ".join(offenders)
+        "a module-level import binds a process-wide getter or a lazily exported function, "
+        "so a patch where it is defined never reaches this caller:\n  " + "\n  ".join(offenders)
     )
     stale = sorted(f"src/otto/{rel} {name}" for rel, name in ALLOWED.keys() - allowed_seen)
     assert not stale, "ALLOWED entries that no longer bind anything; drop them:\n  " + (

@@ -25,9 +25,9 @@ def _lines(output: str) -> list[str]:
 
 
 def _the_repo():
-    import otto.config
+    import otto.bootstrap
 
-    [only] = otto.config.get_repos()
+    [only] = otto.bootstrap.get_repos()
     return only
 
 

@@ -322,7 +322,7 @@ class ShellSession(ABC):
     """Abstract base for persistent shell sessions.
 
     A session is **transport + dialect**. Subclasses implement the I/O
-    primitives (_write, _read_until_pattern, _open, close) — that is the
+    primitives (write_transport, read_transport_until, open_transport, close) — that is the
     transport (SSH, telnet, local subprocess). The *dialect* — how a command is
     wrapped in sentinels and how output/retcode are parsed back — is composed
     in as a :class:`~otto.host.command_frame.CommandFrame` (default
@@ -434,20 +434,36 @@ class ShellSession(ABC):
         return f"{type(self).__name__}@{self._session_id}"
 
     # --- Abstract I/O primitives (implemented by subclasses) ---
+    # Their docstrings qualify every role: SshSession, TelnetSession and
+    # LocalSession override them without docstrings, so autodoc renders this text
+    # under each subclass, where a bare role does not resolve.
 
     @abstractmethod
-    async def _open(self) -> None:
-        """Open the underlying transport (SSH process, telnet stream, etc.)."""
+    async def open_transport(self) -> None:
+        """Open the underlying transport (SSH process, telnet stream, etc.).
+
+        A hook: a transport implements it, and the session calls it to bring the
+        transport up before its handshake. Callers never do.
+        """
         ...
 
     @abstractmethod
-    async def _write(self, data: str) -> None:
-        """Write raw text to the session's stdin."""
+    async def write_transport(self, data: str) -> None:
+        """Write raw text to the transport's stdin.
+
+        A hook: a transport implements it, and callers use
+        :meth:`~otto.host.session.ShellSession.send`, which checks the session is
+        alive first and marks it for recovery if the write is cancelled.
+        """
         ...
 
     @abstractmethod
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
-        """Read from stdout until pattern matches. Returns data including the match."""
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
+        """Read the transport until *pattern* matches; return the data, match included.
+
+        A hook: a transport implements it, and callers use
+        :meth:`~otto.host.session.ShellSession.expect`.
+        """
         ...
 
     async def _quiesce(self) -> None:  # noqa: B027 — a concrete no-op default hook, not abstract: subclasses opt in
@@ -533,14 +549,14 @@ class ShellSession(ABC):
     async def _ensure_initialized(self) -> None:
         """Open the transport, then run the dialect handshake. Idempotent.
 
-        Two halves, split so the second can be run again on its own: :meth:`_open`
+        Two halves, split so the second can be run again on its own: :meth:`open_transport`
         brings the transport up, and :meth:`_handshake` confirms the shell that
         answers on it is at a prompt (the marker handshake, and what bounds it,
         are documented there).
         """
         if self._initialized:
             return
-        await self._open()
+        await self.open_transport()
         await self._handshake()
 
     @property
@@ -599,8 +615,8 @@ class ShellSession(ABC):
         confirmed = False
         with suppress(asyncio.IncompleteReadError):
             confirmed = await confirm_live(
-                self._write,
-                lambda pat, t: asyncio.wait_for(self._read_until_pattern(pat), t),
+                self.write_transport,
+                lambda pat, t: asyncio.wait_for(self.read_transport_until(pat), t),
                 self._handshake_payload,
                 ready_pattern,
                 lambda: self._markers,
@@ -628,7 +644,7 @@ class ShellSession(ABC):
         landing set may have an unread READY reply still in the stream, which
         must not confirm anything), the new frame and its end pattern, any
         pending recovery cleared (the handshake supersedes it), then
-        ``_handshake()`` — never ``_open()``, so the transport and the
+        ``_handshake()`` — never ``open_transport()``, so the transport and the
         shell the hook reached are kept. Every call runs the handshake; the
         manager calls it once more after the hook unconditionally, and that
         repeat IS the post-hook confirmation.
@@ -669,7 +685,7 @@ class ShellSession(ABC):
 
         The message must not accuse the device of being down (issue #260).
         This method is reachable ONLY from :meth:`_handshake`, which runs only
-        after :meth:`_open` has already returned — and for telnet the transport
+        after :meth:`open_transport` has already returned — and for telnet the transport
         is established before the session object even exists. So the transport
         is up EVERY time this raises, and the old wording ("the device is
         unresponsive or login failed") was never true of the first clause. It
@@ -749,7 +765,7 @@ class ShellSession(ABC):
         await self._ensure_ready()
         self._require_alive()
         try:
-            await self._write(text)
+            await self.write_transport(text)
         except asyncio.CancelledError:
             self._needs_recovery = True
             raise
@@ -770,7 +786,7 @@ class ShellSession(ABC):
         compiled = re.compile(pattern) if isinstance(pattern, str) else pattern
         try:
             return await asyncio.wait_for(
-                self._read_until_pattern(compiled),
+                self.read_transport_until(compiled),
                 timeout=timeout,
             )
         except tuple(self._connection_lost_errors()):
@@ -929,12 +945,12 @@ class ShellSession(ABC):
             logger.debug(f"{self._log_tag}: framed write cmd={cmd!r} payload={shown!r}")
         self._write_progress = write_progress
         try:
-            await self._write(framed)
+            await self.write_transport(framed)
         finally:
             self._write_progress = None
 
         # Build regex that matches any expect pattern OR the end sentinel OR
-        # a newline.  The newline alternative causes _read_until_pattern to
+        # a newline.  The newline alternative causes read_transport_until to
         # return after every line, enabling incremental output streaming.
         combined = self._build_combined_pattern(expects)
 
@@ -942,7 +958,7 @@ class ShellSession(ABC):
         buffer = ""
         seen_begin = False
         while True:
-            data = await self._read_until_pattern(combined)
+            data = await self.read_transport_until(combined)
             buffer += data
 
             # Check if the end sentinel was matched
@@ -962,7 +978,7 @@ class ShellSession(ABC):
                 for pat_str, response in expects:
                     pat = re.compile(pat_str) if isinstance(pat_str, str) else pat_str
                     if pat.search(data):
-                        await self._write(response)
+                        await self.write_transport(response)
                         logger.debug(
                             f"{self._log_tag}: expect matched "
                             f"pattern={getattr(pat, 'pattern', pat)!r} "
@@ -1021,7 +1037,7 @@ class ShellSession(ABC):
         r"""Build a combined regex: expect patterns | end sentinel | newline.
 
         The ``\\n`` alternative (lowest priority) causes
-        ``_read_until_pattern`` to return after every line, enabling
+        ``read_transport_until`` to return after every line, enabling
         incremental output streaming.
         """
         parts: list[str] = []
@@ -1068,7 +1084,7 @@ class ShellSession(ABC):
 
         logger.debug(f"{self._log_tag}: recover_session entry marker={self._recover_marker!r}")
         try:
-            await self._write("\x03")
+            await self.write_transport("\x03")
         except tuple(self._connection_lost_errors()):
             # This entry write is its OWN choke point, upstream of
             # _confirm_recovered's: a dead-but-idle channel (e.g. a docker
@@ -1119,12 +1135,12 @@ class ShellSession(ABC):
 
         async def _expect(pat: re.Pattern[str], t: float) -> str:
             nonlocal captured
-            captured = await asyncio.wait_for(self._read_until_pattern(pat), t)
+            captured = await asyncio.wait_for(self.read_transport_until(pat), t)
             return captured
 
         try:
             confirmed = await confirm_live(
-                self._write,
+                self.write_transport,
                 _expect,
                 self._frame.recover,
                 self._frame.recover_pattern,
@@ -1140,7 +1156,7 @@ class ShellSession(ABC):
             # being re-confirmed after a prior cancellation) -- or the
             # confirm-live probe write itself lands on a channel that already
             # died while idle (BrokenPipeError; the confirm_live() call above
-            # writes via self._write, so a dead-but-idle channel surfaces
+            # writes via self.write_transport, so a dead-but-idle channel surfaces
             # here too, not just as a read failure). This is the choke point
             # every recovery caller's CONFIRM leg funnels through -- the
             # post-timeout leg in run_cmd, the pre-flight leg in _ensure_ready
@@ -1189,7 +1205,7 @@ class SshSession(ShellSession):
         )
         self._conn = conn
         self._process: Any = None
-        # When set by a subclass, _open passes this as the command to
+        # When set by a subclass, open_transport passes this as the command to
         # create_process() instead of opening the channel's default shell.
         self._open_cmd: str | None = None
 
@@ -1200,10 +1216,10 @@ class SshSession(ShellSession):
         return [*super()._connection_lost_errors(), asyncssh.ConnectionLost]
 
     @override
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         import asyncssh
 
-        assert self._conn is not None, "SshSession._conn must be set before _open()"  # noqa: S101 — internal invariant: _conn set by subclass before _open()
+        assert self._conn is not None, "SshSession._conn must be set before open_transport()"  # noqa: S101 — internal invariant: _conn set by subclass before open_transport()
         if self._open_cmd is not None:
             self._process = await self._conn.create_process(
                 self._open_cmd,
@@ -1217,13 +1233,13 @@ class SshSession(ShellSession):
             )
 
     @override
-    async def _write(self, data: str) -> None:
-        assert self._process is not None  # noqa: S101 — internal invariant: _open() must run before _write()
+    async def write_transport(self, data: str) -> None:
+        assert self._process is not None  # noqa: S101 — internal invariant: open_transport() must run before write_transport()
         self._process.stdin.write(data)
 
     @override
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
-        assert self._process is not None  # noqa: S101 — internal invariant: _open() must run before _read_until_pattern()
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
+        assert self._process is not None  # noqa: S101 — internal invariant: open_transport() must run before read_transport_until()
         return await self._process.stdout.readuntil(pattern, _MAX_SEPARATOR_LEN)
 
     @override
@@ -1278,12 +1294,12 @@ class TelnetSession(ShellSession):
         self._write_chunk_delay = write_chunk_delay
 
     @override
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         # Transport already established by TelnetClient login — nothing to open
         pass
 
     @override
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         # Use CR (\r) as the sole line terminator. Sending \r\n causes two
         # inputs: the \r executes the command in readline raw mode, and the
         # trailing \n triggers an extra empty prompt (e.g. an extra ">>> " in
@@ -1308,7 +1324,7 @@ class TelnetSession(ShellSession):
                 self._write_progress(total, total)
 
     @override
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         # telnetlib3 operates in bytes mode — compile a bytes version of the pattern
         bytes_pattern = re.compile(pattern.pattern.encode())
         raw: bytes = await self._reader.readuntil_pattern(bytes_pattern)  # type: ignore[attr-defined]  # ty: ignore[unsound-assignment] — asyncssh attaches readuntil_pattern dynamically; returns Any
@@ -1418,7 +1434,7 @@ class LocalSession(ShellSession):
         self._pid: int | None = None
 
     @override
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         # Drive loop.subprocess_exec() directly (rather than the higher-level
         # asyncio.create_subprocess_exec) so that we hold an explicit reference
         # to the transport. close() uses it to release the pipe fds without
@@ -1445,16 +1461,16 @@ class LocalSession(ShellSession):
         self._pid = self._process.pid
 
     @override
-    async def _write(self, data: str) -> None:
-        assert self._process is not None  # noqa: S101 — internal invariant: process created in _open() before _write()
-        assert self._process.stdin is not None  # noqa: S101 — internal invariant: process created in _open() before _write()
+    async def write_transport(self, data: str) -> None:
+        assert self._process is not None  # noqa: S101 — internal invariant: process created in open_transport() before write_transport()
+        assert self._process.stdin is not None  # noqa: S101 — internal invariant: process created in open_transport() before write_transport()
         self._process.stdin.write(data.encode())
         await self._process.stdin.drain()
 
     @override
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
-        assert self._process is not None  # noqa: S101 — internal invariant: process created in _open() before _read_until_pattern()
-        assert self._process.stdout is not None  # noqa: S101 — internal invariant: process created in _open() before _read_until_pattern()
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
+        assert self._process is not None  # noqa: S101 — internal invariant: process created in open_transport() before read_transport_until()
+        assert self._process.stdout is not None  # noqa: S101 — internal invariant: process created in open_transport() before read_transport_until()
         buf = ""
         while True:
             chunk = await self._process.stdout.read(1)
@@ -1583,7 +1599,7 @@ class _DockerSshSession(SshSession):
         self._on_open = on_open
 
     @override
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         import shlex
 
         self._conn = await self._conn_provider()
@@ -1596,7 +1612,7 @@ class _DockerSshSession(SshSession):
         opened_as = self._user_getter() if self._user_getter is not None else None
         u = f" -u {shlex.quote(opened_as)}" if opened_as is not None else ""
         self._open_cmd = f"docker exec -it{u} {shlex.quote(cid)} sh"
-        await super()._open()
+        await super().open_transport()
         # AFTER the transport is up, never before: an open that raises must
         # leave the host's bind record untouched.
         if self._on_open is not None:
@@ -2074,15 +2090,15 @@ class _NoTransport(ShellSession):
         self._host_id = host_id
 
     @override
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         raise CommandNotRunError("open a shell session", self._host_id)
 
     @override
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         raise CommandNotRunError(data, self._host_id)
 
     @override
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         raise CommandNotRunError(f"read until {pattern.pattern!r}", self._host_id)
 
     @override

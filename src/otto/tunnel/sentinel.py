@@ -19,14 +19,29 @@ ones parseable. (The ``otto-link:v1`` era predates users and is deleted.)
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote
 
 from ..host.daemon import dec, enc, encode_token, split_token
-from .model import Direction, Role, Tunnel, TunnelHop
+from .model import (
+    TUNNEL_SENTINEL_READ_VERSIONS,
+    TUNNEL_SENTINEL_WRITE_VERSIONS,
+    Direction,
+    Role,
+    Tunnel,
+    TunnelHop,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 SENTINEL_PREFIX = "otto-tunnel"
-SENTINEL_VERSION = "v1"
-_PAYLOAD_SEGMENTS = 9
+[SENTINEL_VERSION] = TUNNEL_SENTINEL_WRITE_VERSIONS
+"""The one declared write version, which :func:`encode_sentinel` writes.
+
+Unpacked from ``TUNNEL_SENTINEL_WRITE_VERSIONS`` (``otto.tunnel.model``), so a
+second write version fails at import until the writer chooses."""
+_PAYLOAD_SEGMENTS_V1 = 9
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,11 +93,7 @@ def encode_sentinel(
     return encode_token(SENTINEL_PREFIX, SENTINEL_VERSION, payload)
 
 
-def parse_sentinel(token: str) -> ParsedSentinel | None:
-    """Parse one wire token; ``None`` for non-otto / other-version / malformed."""
-    payload = split_token(token, SENTINEL_PREFIX, SENTINEL_VERSION, _PAYLOAD_SEGMENTS)
-    if payload is None:
-        return None
+def _decode_v1(payload: list[str]) -> "ParsedSentinel | None":
     tunnel_id, proto = dec(payload[0]), dec(payload[1])
     if not tunnel_id or not proto:
         return None
@@ -111,3 +122,19 @@ def parse_sentinel(token: str) -> ParsedSentinel | None:
         hop_index=hop_index,
         carrier_port=carrier_port,
     )
+
+
+_DECODERS: "dict[str, tuple[int, Callable[[list[str]], ParsedSentinel | None]]]" = {
+    "v1": (_PAYLOAD_SEGMENTS_V1, _decode_v1),
+}
+"""Each readable version's payload segment count and decoder; keys equal the declared reads."""
+
+
+def parse_sentinel(token: str) -> ParsedSentinel | None:
+    """Parse one wire token; ``None`` for non-otto / undeclared-version / malformed."""
+    for version in TUNNEL_SENTINEL_READ_VERSIONS:
+        segments, decode = _DECODERS[version]
+        payload = split_token(token, SENTINEL_PREFIX, version, segments)
+        if payload is not None:
+            return decode(payload)
+    return None

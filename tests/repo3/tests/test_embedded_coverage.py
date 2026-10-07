@@ -36,7 +36,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.config import get_repos
+from otto.bootstrap import get_repos
 from otto.config.fleet import all_hosts
 from otto.coverage import clean_coverage
 from otto.coverage.fetcher.embedded import decode_cov_dump

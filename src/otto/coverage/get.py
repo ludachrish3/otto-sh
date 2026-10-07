@@ -94,13 +94,14 @@ async def get_coverage(
     cleared afterwards; a failed reset does not raise — the captures are
     written — it makes the report not ok.
     """
-    from ..config import all_hosts, get_repos
+    from ..bootstrap import get_repos
     from ..config.coverage_settings import (
         CoverageConfigError,
         get_cov_config,
         get_cov_repo,
         load_hosts_pattern,
     )
+    from ..config.fleet import all_hosts
     from ..context import try_get_context
     from . import collect
     from .capture.gitio import head_commit

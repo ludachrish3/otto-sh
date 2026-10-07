@@ -46,6 +46,19 @@ _RATE_RE = re.compile(rf"^(?P<num>\d+(?:\.\d+)?)(?P<unit>{_RATE_UNIT_ALT})$")
 _TIME_TO_MS = {"us": 0.001, "ms": 1.0, "s": 1000.0, None: 1.0}
 _MAX_PERCENT = 100.0
 
+IMPAIR_SENTINEL_READ_VERSIONS: list[str] = ["v1", "v2", "v3"]
+"""``otto-impair`` expire-timer sentinel versions :mod:`otto.link.sentinel` decodes (dump spec §13).
+
+``v2`` comes from older otto: it is read so repair cancels its timers, never
+written. The lists live here, not in the sentinel module, because this module
+imports only the standard library and every sentinel reader already imports
+it; a module of their own would add an import to ``otto link`` help."""
+
+IMPAIR_SENTINEL_WRITE_VERSIONS: list[str] = ["v1", "v3"]
+"""``otto-impair`` sentinel versions otto launches timers under.
+
+``v1`` tags a whole-link timer and ``v3`` a per-selector one."""
+
 
 def parse_time_ms(text: str, *, option: str) -> float:
     """Parse a time value in milliseconds; a bare number means ms (spec §3.1)."""

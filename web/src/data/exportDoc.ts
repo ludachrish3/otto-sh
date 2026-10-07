@@ -15,6 +15,7 @@ import type {
   TabSpecRecord,
   TunnelRecord,
 } from "../api/export.gen";
+import { EXPORT_FORMAT, MONITOR_EXPORT_READ_VERSIONS } from "./exportFormat";
 import { buildIndex, type SeriesIndex, sliceSeries } from "./seriesIndex";
 import { parseTs } from "./time";
 
@@ -276,13 +277,13 @@ function sessionToRecord(session: NormalizedSession): SessionRecord {
   };
 }
 
-/** Rebuilds a whole `format:1` export document from the store's live
- * `sessions[]` — see `sessionToRecord`'s header for why this, not the raw
+/** Rebuilds a whole export document stamped `EXPORT_FORMAT` from the store's
+ * live `sessions[]` — see `sessionToRecord`'s header for why this, not the raw
  * boot-time document, is what a live export must serialize. */
 export function documentFromSessions(
   sessions: NormalizedSession[],
 ): MonitorHistoricalExportDocument {
-  return { format: 1, sessions: sessions.map(sessionToRecord) };
+  return { format: EXPORT_FORMAT, sessions: sessions.map(sessionToRecord) };
 }
 
 export function parseExportDocument(text: string): ParseResult {
@@ -302,7 +303,7 @@ export function parseExportDocument(text: string): ParseResult {
         "Re-export from a current otto run.",
     );
   }
-  if (record["format"] !== 1) {
+  if (!(MONITOR_EXPORT_READ_VERSIONS as readonly unknown[]).includes(record["format"])) {
     throw new ExportParseError(`Unsupported export format ${String(record["format"])}.`);
   }
   if (!Array.isArray(record["sessions"])) {

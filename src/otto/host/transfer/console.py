@@ -79,7 +79,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
     Subclasses :class:`~otto.host.transfer.EmbeddedFileTransfer`, inheriting
     its ``put_files`` / ``get_files`` API (filename-length validation,
     shared Rich progress acquisition). Implements the abstract
-    ``_run_put`` / ``_run_get`` against the device's ``fs`` shell. The
+    ``run_put`` / ``run_get`` against the device's ``fs`` shell. The
     shell command runner is injected as ``exec_cmd`` so the class is
     testable against a fake shell with no real connection.
     """
@@ -130,7 +130,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
     # ------------------------------------------------------------------
 
     @override
-    async def _run_get(
+    async def run_get(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -156,10 +156,10 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
             handler = progress_factory() if progress_factory is not None else None
             return await self._console_get_one(src, dest_dir, handler)
 
-        return await self._dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
 
     @override
-    async def _run_put(
+    async def run_put(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -173,7 +173,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         the handler is invoked after each chunk for genuine per-byte
         progress — much finer than asyncssh's 256 KB SCP block, fitting the
         slowness of console transfer. One console means ``concurrent=True``
-        is a no-op here, exactly as in :meth:`_run_get`; every file is
+        is a no-op here, exactly as in :meth:`run_get`; every file is
         attempted; a failure is its own entry.
         """
         if not self._filesystem.supports_transfer:
@@ -184,7 +184,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
             handler = progress_factory() if progress_factory is not None else None
             return await self._console_put_one(src, dest_dir, handler)
 
-        return await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, _put_one, concurrent=concurrent)
 
     # ------------------------------------------------------------------
     # console backend — get

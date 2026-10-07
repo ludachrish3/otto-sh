@@ -10,9 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from otto.inventory import InventoryError, InventoryKeyError, get_inventory_backend_class
+from otto.inventory import InventoryError, InventoryKeyError
 from otto.inventory.config import CompiledInventory, construct_inventory
 from otto.inventory.netbox import NATIVE_SUPPLIES, NetBoxInventory
+from otto.inventory.registry import get_inventory_backend_class
 from otto.testing import assert_inventory_conforms
 
 from .netbox_stub import TOKEN, NetBoxStub, device, self_signed_cert

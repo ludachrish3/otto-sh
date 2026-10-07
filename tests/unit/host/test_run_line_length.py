@@ -68,10 +68,10 @@ class _StubSession(ShellSession):
         super().__init__(*args, **kwargs)
         self.ran: list[str] = []
 
-    async def _open(self) -> None: ...
-    async def _write(self, data: str) -> None: ...
+    async def open_transport(self) -> None: ...
+    async def write_transport(self, data: str) -> None: ...
 
-    async def _read_until_pattern(self, pattern):  # pragma: no cover - never reads
+    async def read_transport_until(self, pattern):  # pragma: no cover - never reads
         raise AssertionError("stub does not read")
 
     async def close(self) -> None:

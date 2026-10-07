@@ -1,4 +1,0 @@
-snmp
-====
-
-.. automodule:: otto.snmp

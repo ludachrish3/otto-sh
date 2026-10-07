@@ -6,12 +6,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import otto.kmodcov.formats as kmodcov_formats
 from otto.declared import DeclaredEntry
 from otto.host import kmod_tool_kind  # noqa: F401 — import registers the kinds
 from otto.host.dev_tool import DEV_TOOL_KINDS
 from otto.host.kmod_tool_kind import KmodTool
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.paths import TESTS_ROOT
 
 
 def _entry(kind="kmod", **params):
@@ -131,6 +133,7 @@ from otto.host.kmod_tool_kind import (
     KMODCOV_MODULE_NAME,
     KmodcovTool,
     check_kmodcov_bindings,
+    interface_problem,
     kmodcov_tool_for,
 )
 
@@ -370,3 +373,24 @@ def test_dev_tool_kinds_refuse_the_retired_dest_dir_key(kind):
 def test_dev_tool_kinds_refuse_a_relative_stage_dir(kind):
     with pytest.raises(ValueError, match="absolute"):
         _build(kind=kind, stage_dir="mods")
+
+
+_KMODCOV_SAMPLES = TESTS_ROOT / "_fixtures" / "formats" / "kmodcov-interface"
+
+
+@pytest.mark.parametrize("version", kmodcov_formats.KMODCOV_INTERFACE_READ_VERSIONS)
+def test_kmodcov_accepts_each_declared_interface_sample(version, tmp_path: Path):
+    ko = tmp_path / "otto_kmodcov.ko"
+    ko.write_bytes((_KMODCOV_SAMPLES / f"{version}.modinfo").read_bytes())
+    tool = _kmodcov(artifact=str(ko))
+    assert interface_problem(tool) is None
+    assert kmodcov.interface_of(kmodcov.modinfo_version(ko)) == version
+
+
+def test_kmodcov_accepts_only_the_declared_interfaces(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(kmodcov_formats, "KMODCOV_INTERFACE_READ_VERSIONS", [3])
+    ko = _fake_ko(tmp_path, version="1.6.0+kmodcov2")
+    with pytest.raises(
+        ValueError, match=r"\(interface kmodcov2\), but this otto drives interface kmodcov3"
+    ):
+        _kmodcov(artifact=str(ko))

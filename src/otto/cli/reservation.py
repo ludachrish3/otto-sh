@@ -67,7 +67,7 @@ def _reservation_gate(ctx: typer.Context) -> ReservationGate | None:
     if opts is None:
         return None
 
-    from ..config import get_repos
+    from ..bootstrap import get_repos
 
     try:
         gate = build_reservation_gate(
@@ -126,7 +126,7 @@ def check(ctx: typer.Context) -> None:
     # refusing -- the fleet-shaped abort is a fleet WALK's, and this walks
     # nothing. The `"none"` backend answers no `held` verdict, so its rows read
     # `n/a`.
-    from ..config import get_lab
+    from ..config.fleet import get_lab
 
     # The group is lab_free (whoami needs no lab); check is the one subcommand
     # that does — the lab defines the required-resource list — so load it here,

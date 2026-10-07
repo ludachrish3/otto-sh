@@ -460,8 +460,8 @@ class NcFileTransfer(UnixFileTransfer):
 
     Inherits ``put_files`` / ``get_files`` from :class:`BaseFileTransfer` and
     unix scaffolding (``_connections``, ``_exec_cmd``, ``_warmup_for_transfer``)
-    from :class:`UnixFileTransfer`; implements the abstract ``_run_put`` /
-    ``_run_get`` as direct calls to ``_put_files_nc`` / ``_get_files_nc``.
+    from :class:`UnixFileTransfer`; implements the abstract ``run_put`` /
+    ``run_get`` as direct calls to ``_put_files_nc`` / ``_get_files_nc``.
     """
 
     host_families = frozenset({"unix"})
@@ -748,7 +748,7 @@ class NcFileTransfer(UnixFileTransfer):
     # ------------------------------------------------------------------
 
     @override
-    async def _run_get(
+    async def run_get(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -761,7 +761,7 @@ class NcFileTransfer(UnixFileTransfer):
         )
 
     @override
-    async def _run_put(
+    async def run_put(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -1433,7 +1433,7 @@ class NcFileTransfer(UnixFileTransfer):
                 server.close()
                 await server.wait_closed()
 
-        return await self._dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
 
     async def _get_files_nc_tunneled(
         self,
@@ -1616,7 +1616,7 @@ class NcFileTransfer(UnixFileTransfer):
                     # arm would trade a named failure for a stranded process.
                     # It cannot strand the CALLER either — this path resolves
                     # no future, so a close that raised would still reach
-                    # `_dispatch_per_file` as this file's Error rather than as a
+                    # `dispatch_per_file` as this file's Error rather than as a
                     # wait nobody ends.
                     await self._close_writer_bounded(writer)
 
@@ -1730,7 +1730,7 @@ class NcFileTransfer(UnixFileTransfer):
                 result = await _attempt(src, dst)
             return result
 
-        return await self._dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
 
     async def _reap_nc_listener(self, port: int) -> None:
         """Best-effort: make a lingering remote ``nc -l`` exit immediately.
@@ -1887,7 +1887,7 @@ class NcFileTransfer(UnixFileTransfer):
                 # which on telnet hosts serializes probes onto one warm
                 # pooled session instead of paying a fresh handshake each.
                 #
-                # Caught HERE, not left to `_dispatch_per_file`'s per-file
+                # Caught HERE, not left to `dispatch_per_file`'s per-file
                 # wrapper: an exception out of `_attempt` folds into the file's
                 # Error without passing `_put_one`, whose fresh-port retry is
                 # the whole answer to a port another process shares.
@@ -2046,7 +2046,7 @@ class NcFileTransfer(UnixFileTransfer):
                 result = await _attempt(src, dst)
             return result
 
-        per_file = await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
+        per_file = await self.dispatch_per_file(src_files, _put_one, concurrent=concurrent)
         if all(r.is_ok for r in per_file.values()):
             _logger.debug("Finished nc transfers")
         return per_file

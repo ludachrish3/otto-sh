@@ -302,7 +302,7 @@ class TestTransferContract:
 # ---------------------------------------------------------------------------
 # Progress contract: every backend must emit at least one completion event
 # per src file. Enforced first at the type-system level (BaseFileTransfer's
-# ``_run_put`` / ``_run_get`` are abstract — see
+# ``run_put`` / ``run_get`` are abstract — see
 # tests/unit/host/test_transfer_progress.py) and again here at runtime so a
 # backend that accepts the factory but forgets to invoke it still fails.
 # ---------------------------------------------------------------------------
@@ -356,8 +356,7 @@ class TestTransferProgressContract:
             )
         assert put_result.status == Status.Success, f"put failed: {put_result.msg}"
         assert events, (
-            "backend produced no progress events — "
-            "`_run_put` ignored the progress_factory parameter"
+            "backend produced no progress events — `run_put` ignored the progress_factory parameter"
         )
         # At least one event marks file completion (done == total > 0).
         completions = [(d, t) for _, _, d, t in events if d == t > 0]
@@ -412,7 +411,7 @@ class TestTransferProgressContract:
         assert get_result.status == Status.Success, f"get failed: {get_result.msg}"
         assert events, (
             "backend produced no progress events on get — "
-            "`_run_get` ignored the progress_factory parameter"
+            "`run_get` ignored the progress_factory parameter"
         )
         completions = [(d, t) for _, _, d, t in events if d == t > 0]
         assert completions, f"backend never emitted a get completion event. Events: {events}"

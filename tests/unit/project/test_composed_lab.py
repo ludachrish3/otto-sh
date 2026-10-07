@@ -204,10 +204,10 @@ def _wire_lab(monkeypatch, tmp_path, repo_names, hosts, *, declarations=None):
         fake_repo(name, project_scope=(declarations or {}).get(name), sut_dir=tmp_path / name)
         for name in repo_names
     ]
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: ordered)
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: ordered)
     driving = repo_names[-1] if repo_names else None
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_repos",
+        "otto.bootstrap.get_repos",
         lambda: (
             [repo for repo in ordered if repo.name == driving]
             + [repo for repo in ordered if repo.name != driving]

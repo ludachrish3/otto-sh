@@ -66,7 +66,7 @@ async def test_ssh_connection_lost_is_still_reported():
 
     A REAL ``SshSession``, not a stand-in: its transport is
     ``self._process.stdin.write``/``self._process.stdout.readuntil`` (see
-    ``SshSession._write``/``_read_until_pattern``), so a ``MagicMock``
+    ``SshSession.write_transport``/``read_transport_until``), so a ``MagicMock``
     connection whose ``create_process()`` returns a process with a scripted
     ``stdout.readuntil`` — the ready marker once (satisfies the handshake),
     then a real ``asyncssh.ConnectionLost`` (satisfies the framed command's

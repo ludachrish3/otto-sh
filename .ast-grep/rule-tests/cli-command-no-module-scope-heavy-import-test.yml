@@ -35,8 +35,11 @@ valid:
   from rich import print as rprint
   from rich.markup import escape
 
-  from ..config import get_repos
+  from ..config import load_otto_env
   from ..models import MIN_INTERVAL_SECONDS
+# otto.lab's error class loads only otto.config.scope, which is not denylisted.
+- |
+  from ..lab import EmptySelectionError
 invalid:
 # The edges this rule exists for, each re-added at module scope.
 - |
@@ -48,9 +51,9 @@ invalid:
 - |
   from rich.table import Table
 - |
-  from ..config import Repo, get_repos
+  from ..config import Repo
 - |
-  from ..config import get_repos, get_lab
+  from ..lab import EmptySelectionError, get_lab
 - |
   from ..config.fleet import _apply_option_overrides
 - |
@@ -62,9 +65,14 @@ invalid:
 - |
   from ..context import get_context
 # A lazy re-export that resolves into a denylisted module (otto.coverage's
-# CoverageReporter lives in otto.coverage.reporter).
+# CoverageReporter and run_coverage_report live in otto.coverage.reporter;
+# otto.host's SessionSetupError in otto.host.errors).
 - |
   from ..coverage import CoverageReporter
+- |
+  from ..coverage import run_coverage_report
+- |
+  from ..host import SessionSetupError
 # A deeper relative spelling, as a module in a package under src/otto/cli/
 # would write it.
 - |

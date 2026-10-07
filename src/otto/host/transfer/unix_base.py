@@ -57,7 +57,7 @@ class UnixFileTransfer(BaseFileTransfer):
         return
 
     @override
-    async def _apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
+    async def apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
         """Chmod the transferred files in one batched command over the host shell.
 
         Uses the same ``exec_cmd`` seam the backends already hold, so the cost

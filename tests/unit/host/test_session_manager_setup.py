@@ -350,12 +350,12 @@ def _open_counting_transport(events: list[str]) -> type:
             super().__init__(command_frame=kw.get("command_frame"))
             events.append("built")
 
-        async def _open(self) -> None:
+        async def open_transport(self) -> None:
             events.append("open")
 
-        async def _write(self, data: str) -> None: ...
+        async def write_transport(self, data: str) -> None: ...
 
-        async def _read_until_pattern(self, pattern):
+        async def read_transport_until(self, pattern):
             raise AssertionError("a dry run must not reach a handshake")
 
         async def close(self) -> None:
@@ -371,7 +371,7 @@ async def test_a_dry_run_on_a_hooked_host_opens_nothing_and_never_calls_the_hook
 
     The decline happens at the HOST, above the manager, so the hook is
     unreachable rather than skipped — which is why the transport double here
-    counts construction as well as ``_open``: a manager that got as far as
+    counts construction as well as ``open_transport``: a manager that got as far as
     building a session has already lost this property.
     """
     calls: list[str] = []
@@ -533,11 +533,11 @@ def _recording_transport(built: list) -> type:
             self.handed_frame = kw.get("command_frame")
             built.append(self)
 
-        async def _open(self) -> None: ...
+        async def open_transport(self) -> None: ...
 
-        async def _write(self, data: str) -> None: ...
+        async def write_transport(self, data: str) -> None: ...
 
-        async def _read_until_pattern(self, pattern):
+        async def read_transport_until(self, pattern):
             raise AssertionError("the build-site test must not reach a handshake")
 
         async def close(self) -> None:

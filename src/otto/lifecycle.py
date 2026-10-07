@@ -880,7 +880,7 @@ class _CommandRun:
 def _resolve_teardown_deadline() -> float:
     """``OTTO_TEARDOWN_DEADLINE`` via the typed env settings, else the default."""
     try:
-        from .config import get_env
+        from .bootstrap import get_env
 
         return get_env().teardown_deadline
     except Exception:  # noqa: BLE001 — discovery unavailable (bare library use): fall back

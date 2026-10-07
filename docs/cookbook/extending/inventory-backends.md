@@ -100,8 +100,8 @@ wraps it into an error naming the settings file and the backend, which the raw
 
 {func}`~otto.inventory.register_inventory_backend` refuses a duplicate name
 unless you pass `overwrite=True`, which is how you deliberately replace a
-built-in. {func}`~otto.inventory.get_inventory_backend_class` resolves a name,
-and an unregistered one raises an error listing the registered names. This is
+built-in. A name nobody registered raises when otto builds the inventory, and the
+error lists the registered names. This is
 the same named-registry mechanism otto uses for host sources, reservation
 backends, term/transfer backends and host classes — see
 {doc}`Extension points <../../architecture/subsystems/extension-points>`.

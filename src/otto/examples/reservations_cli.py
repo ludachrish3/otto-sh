@@ -22,7 +22,7 @@ Nothing here decides a reservation question itself.
 The helpers take a gate, so a test can hand them one around an in-memory
 backend. The commands build theirs from settings:
 
->>> from otto.config.lab import Lab
+>>> from otto.lab import Lab
 >>> from otto.examples.reservations import ExampleReservationBackend
 >>> from otto.examples.reservations_cli import check_report, translate
 >>> from otto.reservations import ReservationGate, resolve_username
@@ -54,7 +54,7 @@ from typing import Annotated, cast
 
 import typer
 
-from otto.config.lab import Lab
+from otto.lab import Lab
 from otto.reservations import (
     MissingReservationError,
     ReservationBackendError,
@@ -62,7 +62,10 @@ from otto.reservations import (
     gate_from_settings,
 )
 
+__all__ = ["check_report", "translate"]
+
 app = typer.Typer(add_completion=False, help="Third-party reservation-gate demo.")
+"""The demo's command-line application; running the module as a script runs it."""
 
 
 @dataclass(frozen=True)

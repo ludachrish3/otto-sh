@@ -20,6 +20,18 @@ if TYPE_CHECKING:
     import pydantic
     from _typeshed import DataclassInstance
 
+__all__ = [
+    "OPTIONS",
+    "OptionsCollisionError",
+    "OptionsNotAvailableError",
+    "OptionsRegistrationError",
+    "OptionsValidationError",
+    "options",
+    "options_key",
+    "register_options",
+    "verbs_for",
+]
+
 
 def build_options(opts_cls: type, kwargs: dict[str, Any]) -> Any:
     """Construct an Options instance; convert pydantic ``ValidationError`` to a clean library error.
@@ -372,6 +384,7 @@ OPTIONS: "Registry[OptionsEntry]" = Registry(
     "options class",
     register_hint="@otto.options(verbs=[...]) in an init module",
 )
+"""The registered options classes, keyed by class path, with the verbs each serves."""
 
 
 def options_key(cls_or_path: "type | str | Ref") -> str:

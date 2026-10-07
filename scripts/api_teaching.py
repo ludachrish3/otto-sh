@@ -60,10 +60,12 @@ The finding kinds:
 """
 
 import ast
+import io
 import keyword
 import re
 import sys
 import textwrap
+import tokenize
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -642,17 +644,80 @@ def _class_scope_statements(body: "list[ast.stmt]") -> "list[ast.stmt]":
     return out
 
 
+# An f-string (3.12+) or t-string (3.14+) arrives as start/middle/end tokens, not one STRING.
+_STRING_OPENERS = frozenset(
+    getattr(tokenize, name)
+    for name in ("FSTRING_START", "TSTRING_START")
+    if hasattr(tokenize, name)
+)
+_STRING_CLOSERS = frozenset(
+    getattr(tokenize, name) for name in ("FSTRING_END", "TSTRING_END") if hasattr(tokenize, name)
+)
+
+
+def _string_rows(body: "list[str]") -> "set[int]":
+    """Return the 0-based rows of *body* that sit inside a string literal opened on an earlier row.
+
+    Read with :mod:`tokenize`, which never needs the block to parse: ``>>>``
+    is two operators to it. A block it cannot tokenize (an unterminated
+    string, a dedent to no enclosing level) has no such rows, so it is read
+    as a REPL transcript, as every block with a prompt was before.
+    """
+    rows: set[int] = set()
+    opened: list[int] = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO("\n".join(body) + "\n").readline):
+            if tok.type in _STRING_OPENERS:
+                opened.append(tok.start[0])
+            elif tok.type in _STRING_CLOSERS and opened:
+                rows.update(range(opened.pop(), tok.end[0]))
+            elif tok.type == tokenize.STRING and tok.end[0] > tok.start[0]:
+                rows.update(range(tok.start[0], tok.end[0]))
+    except (tokenize.TokenError, SyntaxError):
+        return set()
+    return rows
+
+
+def _doctest_runs(lines: "list[tuple[int, str]]") -> "tuple[list[str], list[int]]":
+    """Return the doctest runs in *lines*, prompts removed, and the line number of each line.
+
+    A run opens on a ``>>> `` line and continues through the ``... `` lines
+    after it, as a docstring's doctest is read (``scripts/api_docs_blocks.py``):
+    prose that merely starts with ``...`` opens nothing.
+    """
+    src: list[str] = []
+    nums: list[int] = []
+    in_run = False
+    for no, line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith(">>> ") or stripped == ">>>":
+            in_run = True
+        elif not (in_run and (stripped.startswith("... ") or stripped == "...")):
+            in_run = False
+            continue
+        src.append(stripped[4:])
+        nums.append(no)
+    return src, nums
+
+
 def _block_source(block: blocks.Block) -> tuple[str, list[int]]:
     """Return the block's Python source and the file line number of each source line.
 
     A doctest block (``{doctest}``, ``pycon``, ``py-doctest``) keeps only its
     ``>>> ``/``... `` lines, prompts removed; its expected output is not
-    code. Any other block reads as code up to its first ``>>> `` line and as
-    a doctest from there on: a REPL transcript shown in a ``python`` fence
-    starts at its first line, while a ``def`` whose docstring holds a
-    doctest keeps the ``def`` and everything above it. A ``py-file`` block
-    is never doctest-shaped: its ``>>>`` lines sit inside docstrings, which
-    arrive as their own ``py-doctest`` blocks.
+    code. A ``py-file`` block is never doctest-shaped: its ``>>>`` lines sit
+    inside docstrings, which arrive as their own ``py-doctest`` blocks.
+
+    Any other block is one of two shapes, told apart by where its first
+    ``>>> `` line sits:
+
+    * inside a string literal opened above it: a ``def`` whose docstring
+      holds a doctest. Every line is code, as written, so what follows the
+      closed docstring (a ``return``, an import) is checked. The doctest runs
+      inside the block's strings follow, prompts removed, so the doctest is
+      checked too;
+    * anywhere else: a REPL transcript. It reads as code up to its first
+      ``>>> `` line and as a doctest from there on.
     """
     nums = [no for no, _ in block.lines]
     # split("\n"), not splitlines(): a trailing blank fence line must keep its slot in ``nums``.
@@ -665,6 +730,11 @@ def _block_source(block: blocks.Block) -> tuple[str, list[int]]:
         first_prompt = next(
             (i for i, ln in enumerate(body) if ln.lstrip().startswith(">>> ")), len(body)
         )
+        in_strings = _string_rows(body) if first_prompt < len(body) else set()
+        if first_prompt in in_strings:
+            numbered = list(zip(nums, body, strict=True))
+            doctest, doctest_nums = _doctest_runs([numbered[i] for i in sorted(in_strings)])
+            return "\n".join([*body, *doctest]), [*nums, *doctest_nums]
     src: list[str] = []
     src_nums: list[int] = []
     for i, (no, line) in enumerate(zip(nums, body, strict=True)):
@@ -925,13 +995,24 @@ def check_corpus(repo_root: Path, decl: Declaration, setup_names: set[str]) -> l
 
 
 def main(argv: list[str]) -> int:
-    """Report agreement failures and validator findings for a manifest (dormant until P1)."""
+    """Report agreement failures, validator findings and producer refusals for a manifest.
+
+    Exit 1 if there is any, else 0; ``--report`` exits 0 either way. A manifest
+    that cannot be read, or namespaces that cannot be reported, is a
+    ``FAIL <reason>`` line and exit 1 in both modes, never a traceback, as
+    ``scripts/api_snapshot.py`` reports them.
+    """
     import argparse
     from collections import Counter
 
     from scripts import api_regen
-    from scripts.api_agreement import agreement_failures, declaration_from, namespace_reports
-    from scripts.api_manifest import load_manifest
+    from scripts.api_agreement import (
+        AgreementError,
+        agreement_failures,
+        declaration_from,
+        namespace_reports,
+    )
+    from scripts.api_manifest import ManifestError, load_manifest
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--manifest", type=Path, required=True)
@@ -945,8 +1026,16 @@ def main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    names = sorted(load_manifest(args.manifest))
-    reports = namespace_reports(names, args.root)
+    try:
+        names = sorted(load_manifest(args.manifest))
+    except ManifestError as exc:
+        print(f"FAIL {exc}")
+        return 1
+    try:
+        reports = namespace_reports(names, args.root)
+    except AgreementError as exc:
+        print(f"FAIL cannot report the declared namespaces: {exc}")
+        return 1
     failures = agreement_failures(names, reports)
     generated = api_regen.generate_worktree(args.root, args.manifest, assume_dir=args.report)
     refusals = list(generated.refusals)

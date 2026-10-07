@@ -37,15 +37,27 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from .. import layout
-from ..declared import KindRegistry, declared_for_host
+from ..declared import DeclaredEntry, KindRegistry, declared_for_host
 from ..registry import Ref, caller_module, get_registering_repo, refuse_during_test_load
 from ..result import Result
 from ..utils import Status
 from .log_haul import haul_globs
 
 if TYPE_CHECKING:
-    from ..declared import DeclaredEntry
     from .host import Host
+
+__all__ = [
+    "DeclaredEntry",
+    "Product",
+    "ProductPlan",
+    "ShellProduct",
+    "planned_stage_dir",
+    "put_line",
+    "register_product_kind",
+    "register_product_provider",
+    "sudo_line",
+    "unplanned",
+]
 
 logger = logging.getLogger(__name__)
 

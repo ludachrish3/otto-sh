@@ -158,6 +158,8 @@ depends_on = [
     "otto.host",
     "otto._webassets",
     "otto.config",
+    # S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
+    "otto.bootstrap",
     "otto.version",
     "otto.errors",
     "otto.models",
@@ -187,6 +189,8 @@ depends_on = [
     "otto.lifecycle",
     "otto.utils",
     "otto.config",
+    # S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
+    "otto.bootstrap",
     "otto.result",
     # UseCaseResolutionError roots on OttoError, because the repo's
     # `test_every_public_exception_in_src_is_ottoerror_rooted` guard requires
@@ -214,7 +218,7 @@ path = "otto.examples"
 # otto.inventory: the reference LabRepository resolves each record through
 # `resolve_host_entry` — the sample IS the documentation of how a backend
 # honours `inventory=` (spec 2026-08-28 host-inventory §6).
-depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "otto.config", "otto.inventory"]
+depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "otto.inventory"]
 
 [[modules]]
 path = "otto.filesystem"
@@ -280,13 +284,16 @@ depends_on = [
     # at module scope (context.py:178 documents the workaround).
     "otto.context",
     "otto.config",
+    # S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
+    "otto.bootstrap",
     "otto.registry",
     "otto.errors",
-    # otto.kmodcov: kmod_tool_kind.py's interface_problem() reads INTERFACE /
-    # modinfo_version / interface_of to check a built otto_kmodcov .ko against
-    # this otto's interface number. Function-local (inside interface_problem),
-    # same import-budget reason as otto.cli's otto.kmodcov edge above — the
-    # host package must not pull the kmodcov package in at module import time.
+    # otto.kmodcov: kmod_tool_kind.py's interface_problem() reads
+    # modinfo_version / interface_of / KMODCOV_INTERFACE_READ_VERSIONS to check
+    # a built otto_kmodcov .ko against the interface numbers this otto reads.
+    # Function-local (inside interface_problem), same import-budget reason as
+    # otto.cli's otto.kmodcov edge above — the host package must not pull the
+    # kmodcov package in at module import time.
     "otto.kmodcov",
 ]
 
@@ -365,7 +372,8 @@ path = "otto.lifecycle"
 # otto.logger: sync_phase resolves shutdown_listener EAGERLY at entry so the
 # forced exit path (os._exit skips atexit) can flush the queue listener
 # without importing inside a signal handler.
-depends_on = ["otto.config", "otto.context", "otto.logger"]
+# S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
+depends_on = ["otto.bootstrap", "otto.context", "otto.logger"]
 
 [[modules]]
 path = "otto.link"
@@ -420,7 +428,8 @@ path = "otto.monitor.live"
 # The lab-aware layer above the monitor engine: it reads the active lab, the
 # repos, the driving repo's scope and full-lab tunnel discovery, and hands them
 # to the engine, which keeps its injected-dependencies rule (see otto.monitor).
-depends_on = ["otto.monitor", "otto.config", "otto.context", "otto.tunnel", "otto.utils"]
+# S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
+depends_on = ["otto.monitor", "otto.bootstrap", "otto.config", "otto.context", "otto.tunnel", "otto.utils"]
 
 [[modules]]
 path = "otto.params"
@@ -483,6 +492,8 @@ depends_on = [
     "otto.utils",
     "otto.host",
     "otto.config",
+    # S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
+    "otto.bootstrap",
     "otto.context",
     "otto.link",
     "otto.tunnel",
@@ -530,7 +541,8 @@ path = "otto.suite"
 # "installed" means.
 #
 # No loop: otto.project no longer imports otto.cli (thin-CLI item 1).
-depends_on = ["otto.context", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.monitor.live", "otto.utils"]
+# S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
+depends_on = ["otto.context", "otto.bootstrap", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.monitor.live", "otto.utils"]
 
 [[modules]]
 path = "otto.testing"

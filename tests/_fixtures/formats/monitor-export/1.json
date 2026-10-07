@@ -1,0 +1,43 @@
+{
+  "format": 1,
+  "sessions": [
+    {
+      "id": "2026-07-01T08-00-00-sample",
+      "label": "conformance sample",
+      "note": "frozen monitor-export v1 sample",
+      "start": "2026-07-01T08:00:00Z",
+      "end": "2026-07-01T08:01:00Z",
+      "lab": {
+        "elements": [{"id": "rack1", "type": "physical", "description": "rack one"}],
+        "hosts": [
+          {"id": "rack1-a", "element": "rack1", "name": "a", "os_type": "unix", "os_name": "Linux", "ip": "10.0.0.1", "interfaces": {"eth0": "10.0.0.1"}, "labs": ["sample"]},
+          {"id": "rack1-b", "element": "rack1", "name": "b", "os_type": "unix", "ip": "10.0.0.2", "interfaces": {"eth0": "10.0.0.2"}, "labs": ["sample"], "is_virtual": true}
+        ],
+        "links": [
+          {"id": "rack1-a.eth0--rack1-b.eth0", "endpoints": [{"host": "rack1-a", "interface": "eth0", "ip": "10.0.0.1"}, {"host": "rack1-b", "interface": "eth0", "ip": "10.0.0.2"}], "protocol": "tcp", "provenance": "declared", "name": "a-b"}
+        ]
+      },
+      "meta": {
+        "interval": 30.0,
+        "charts": [{"label": "CPU %", "y_title": "CPU %", "unit": "%", "command": "sample:cpu", "chart": "cpu", "interval": 30.0, "max_series": 8}],
+        "tabs": [{"id": "overview", "label": "Overview", "metrics": ["CPU %"], "kind": "charts"}]
+      },
+      "metrics": [
+        {"timestamp": "2026-07-01T08:00:00Z", "host": "rack1-a", "label": "CPU %", "value": 12.5},
+        {"timestamp": "2026-07-01T08:00:30Z", "host": "rack1-a", "label": "CPU %", "value": 25.0},
+        {"timestamp": "2026-07-01T08:00:30Z", "host": "rack1-b", "label": "CPU %", "value": 50.0, "source": "sample"}
+      ],
+      "events": [
+        {"id": 1, "timestamp": "2026-07-01T08:00:10Z", "label": "deploy", "source": "manual", "color": "#888888", "dash": "dash"},
+        {"id": 2, "timestamp": "2026-07-01T08:00:20Z", "end_timestamp": "2026-07-01T08:00:40Z", "label": "outage", "source": "auto", "color": "#ff0000", "dash": "solid"}
+      ],
+      "log_events": [
+        {"timestamp": "2026-07-01T08:00:15Z", "host": "rack1-a", "tab": "logs", "fields": {"level": "error", "message": "link flap"}}
+      ],
+      "chart_map": {"CPU %": "cpu"},
+      "tunnels": [
+        {"id": "tun-000000000001-5000", "protocol": "udp", "service_port": 5000, "hops": ["rack1-a", "rack1-b"], "status": "ok", "carriers_present": 1, "carriers_expected": 1}
+      ]
+    }
+  ]
+}

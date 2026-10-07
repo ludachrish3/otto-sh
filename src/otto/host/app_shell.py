@@ -46,6 +46,8 @@ from .host import DEFAULT_COMMAND_TIMEOUT
 if TYPE_CHECKING:
     from .session import HostSession
 
+__all__ = ["AppShell", "AppShellActiveError", "Parsed", "apply_parse", "parse_one"]
+
 
 class ParseMismatch(OttoError, ValueError):  # noqa: N818 — spec-mandated public name; an `Error` suffix would break the documented AppShell API
     """Output did not match the model's pattern (or the callable raised)."""

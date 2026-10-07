@@ -162,7 +162,7 @@ async def test_a_put_without_progress_writes_the_file_the_caller_asked_for(tmp_p
     dest_dir = Path("/remote/dest")
 
     client = _RecordingFtpClient()
-    result = await _backend(client)._run_put([src], dest_dir, None)
+    result = await _backend(client).run_put([src], dest_dir, None)
 
     assert result[src].status is Status.Success, result[src].msg
     assert len(client.uploads) == 1, client.uploads
@@ -190,10 +190,10 @@ async def test_both_put_arms_agree_on_where_the_file_lands(tmp_path: Path) -> No
     dest_dir = Path("/remote/dest")
 
     without = _RecordingFtpClient()
-    await _backend(without)._run_put([src], dest_dir, None)
+    await _backend(without).run_put([src], dest_dir, None)
 
     with_progress = _RecordingFtpClient()
-    await _backend(with_progress)._run_put([src], dest_dir, lambda: lambda *_a: None)
+    await _backend(with_progress).run_put([src], dest_dir, lambda: lambda *_a: None)
 
     assert len(with_progress.stream_destinations) == 1, with_progress.stream_destinations
     streamed = PurePosixPath(with_progress.stream_destinations[0])
@@ -223,7 +223,7 @@ async def test_the_no_progress_arm_never_creates_a_directory_named_after_the_fil
     dest_dir = Path("/remote/dest")
 
     client = _RecordingFtpClient()
-    await _backend(client)._run_put([src], dest_dir, None)
+    await _backend(client).run_put([src], dest_dir, None)
 
     created = _effective_destination(client.uploads[0]).parent
     assert created == PurePosixPath("/remote/dest"), (
@@ -249,7 +249,7 @@ async def test_a_refused_upload_is_its_own_error_and_the_next_file_still_lands(
     dest_dir = Path("/remote/dest")
 
     client = _RecordingFtpClient(fail_for="a.bin")
-    result = await _backend(client)._run_put([first, second], dest_dir, None, concurrent=False)
+    result = await _backend(client).run_put([first, second], dest_dir, None, concurrent=False)
 
     assert result[first].status is Status.Error
     assert "550" in (result[first].msg or ""), result[first].msg
@@ -331,7 +331,7 @@ async def test_a_get_without_progress_leaves_a_readable_file_at_the_result_path(
     src = PurePosixPath("/remote/src/payload.bin")
 
     client = _LocalWritingFtpClient(payload)
-    result = await _get_backend(client)._run_get([Path(src)], dest_dir, None)
+    result = await _get_backend(client).run_get([Path(src)], dest_dir, None)
 
     landed = result[Path(src)]
     assert landed.status is Status.Success, landed.msg
@@ -358,7 +358,7 @@ async def test_a_get_creates_no_directory_named_after_the_file(tmp_path: Path) -
     src = PurePosixPath("/remote/src/payload.bin")
 
     client = _LocalWritingFtpClient(b"x" * 32)
-    await _get_backend(client)._run_get([Path(src)], dest_dir, None)
+    await _get_backend(client).run_get([Path(src)], dest_dir, None)
 
     strays = [p for p in dest_dir.iterdir() if p.is_dir()]
     assert strays == [], (
@@ -381,7 +381,7 @@ async def test_both_get_arms_agree_on_where_the_file_lands(tmp_path: Path) -> No
     src = PurePosixPath("/remote/src/payload.bin")
 
     client = _LocalWritingFtpClient(b"y" * 16)
-    await _get_backend(client)._run_get([Path(src)], dest_dir, None)
+    await _get_backend(client).run_get([Path(src)], dest_dir, None)
 
     resolved = _effective_destination(client.downloads[0])
     assert resolved == PurePosixPath(dest_dir / "payload.bin"), (

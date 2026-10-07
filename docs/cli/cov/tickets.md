@@ -277,7 +277,9 @@ whether a declared entry still contributes a mark (see
 ### Compatibility policy
 
 - **`format` is its own integer, versioned independently of
-  `store.json`'s `STORE_FORMAT_VERSION`**, and changes only when the
+  `store.json`'s format version** (the versions otto writes are listed in
+  `otto.coverage.formats`: `TICKETS_WRITE_VERSIONS` here,
+  `STORE_WRITE_VERSIONS` for the store), and changes only when the
   exported shape itself changes.
   **`format` 2** (up from 1) added each ticket's `asserted` map and the
   payload's `overrides_active` flag, and changed the **content** (not the

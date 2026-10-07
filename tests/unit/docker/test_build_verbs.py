@@ -65,7 +65,7 @@ def install(lab):
         with (
             patch("otto.config.fleet.get_lab", lambda: lab),
             patch.multiple(
-                "otto.config.bootstrapped",
+                "otto.bootstrap",
                 get_repos=lambda: list(repos),
                 get_ordered_repos=lambda: list(ordered or repos),
             ),

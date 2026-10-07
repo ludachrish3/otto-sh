@@ -10,8 +10,8 @@ with the ordering those sites actually mean: "the session has WRITTEN its
 next command and is therefore about to read output."
 
 Baseline capture is EAGER (in the plain, synchronous outer call), which is
-load-bearing: ``run_cmd()`` executes synchronously through ``_write()`` until
-it blocks in ``_read_until_pattern``, so a feeder task's body only starts
+load-bearing: ``run_cmd()`` executes synchronously through ``write_transport()`` until
+it blocks in ``read_transport_until``, so a feeder task's body only starts
 running AFTER the write has happened. A baseline read inside the coroutine
 would already include the write it means to wait for, and the wait would
 never fire. Calling ``feed_after_write(...)`` BEFORE ``run_cmd()`` (the

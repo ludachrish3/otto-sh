@@ -158,7 +158,7 @@ def probe_targets(references: "list[LabReference]") -> "list[ProbeTarget]":
 
 async def _probe_one(target: ProbeTarget) -> ProbeResult:
     """Ask one host whether it is reachable, and never ask it anything else."""
-    from ..config import get_host
+    from ..config.fleet import get_host
     from ..host.remote_host import RemoteHost
 
     try:

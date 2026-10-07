@@ -2,24 +2,13 @@ monitor
 =======
 
 The monitor package collects live performance metrics from remote hosts
-and serves an interactive web dashboard.
+and serves an interactive web dashboard. Its parsers, SNMP metrics and
+log-sourced metrics are extension namespaces with pages of their own.
 
 .. toctree::
 
-   broadcast
-   collector
-   db
-   errors
-   events
-   export
-   factory
-   live
-   log_sourced
    parsers
-   rates
-   review
-   server
-   session
    snmp
-   store
-   tls
+   log_sourced
+
+.. automodule:: otto.monitor

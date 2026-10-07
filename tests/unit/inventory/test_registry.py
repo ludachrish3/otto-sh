@@ -7,8 +7,8 @@ the "unknown name" case carries the anti-vacuity weight for now.
 
 import pytest
 
-from otto.inventory import get_inventory_backend_class, register_inventory_backend
-from otto.inventory.registry import INVENTORY_BACKENDS
+from otto.inventory import register_inventory_backend
+from otto.inventory.registry import INVENTORY_BACKENDS, get_inventory_backend_class
 
 
 class _Fake:

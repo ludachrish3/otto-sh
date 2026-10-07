@@ -122,10 +122,15 @@ A transfer backend states whether it can apply a permission `mode` to the
 files it uploads: {class}`~otto.host.transfer.BaseFileTransfer`'s
 `supports_mode` (default `False`). `put_files` reads it before any byte moves
 and refuses a `mode` the backend could never honour. A backend that declares
-`True` overrides `_apply_mode`:
+`True` overrides {meth}`~otto.host.transfer.BaseFileTransfer.apply_mode`:
 
 ```python
-async def _apply_mode(self, dest_paths: list[Path], mode: int) -> Result: ...
+from pathlib import Path
+
+from otto.result import Result
+
+
+async def apply_mode(self, dest_paths: list[Path], mode: int) -> Result: ...
 ```
 
 `put_files` calls it once, after the transfer and only when the caller gave a
@@ -138,7 +143,7 @@ context, then return a `Result`: on failure, every landed file's entry
 becomes an `Error` that keeps `value=dest_path`, because its bytes did land.
 The unix backends share one implementation, a single `chmod` over the host's
 shell; the embedded backends leave `supports_mode` `False`, since a Zephyr
-filesystem has no permission bits. The base `_apply_mode` raises, so a backend
+filesystem has no permission bits. The base `apply_mode` raises, so a backend
 that declares `True` without overriding it fails every put given a mode.
 
 ## The `create(ctx)` construction contract
@@ -178,11 +183,13 @@ A custom transfer backend subclasses
 {class}`~otto.host.transfer.BaseFileTransfer`, declares its `host_families`
 and its `progress_granularity` (XMODEM logs in to nothing, so it keeps the
 inherited `authenticates = False`), overrides `create`, and implements the two
-abstract halves `_run_put` / `_run_get` (each must call `progress_factory()`
-once per source file so the transfer reports progress, in steps no larger than
-the granularity it declared).
+abstract hooks {meth}`~otto.host.transfer.BaseFileTransfer.run_put` /
+{meth}`~otto.host.transfer.BaseFileTransfer.run_get` (each must call
+`progress_factory()` once per source file so the transfer reports progress, in
+steps no larger than the granularity it declared). otto calls them from
+`put_files`/`get_files`; nothing else should.
 
-`_run_put`/`_run_get` return `dict[Path, Result]` — one entry per source
+`run_put`/`run_get` return `dict[Path, Result]` — one entry per source
 file, keyed exactly as passed (no resolution). The public `put`/`get`
 methods fold that mapping into an aggregate `Result` via
 {func}`~otto.host.transfer.aggregate_transfer`: `value=dest_path` on a
@@ -212,27 +219,28 @@ class XmodemTransfer(BaseFileTransfer):
     def create(cls, ctx: TransferContext) -> "XmodemTransfer":
         return cls(name=ctx.host_name, max_filename_len=ctx.max_filename_len)
 
-    async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent: bool = True):
+    async def run_put(self, src_files, dest_dir, progress_factory, *, concurrent: bool = True):
         async def _put_one(src: Path) -> Result:
             progress = progress_factory() if progress_factory is not None else None
             ...  # send src over XMODEM; drive `progress` as bytes move
             return Result(Status.Success, value=dest_dir / src.name)
 
-        return await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, _put_one, concurrent=concurrent)
 
-    # same shape as _run_put, reading from the device instead
-    async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent: bool = True):
+    # same shape as run_put, reading from the device instead
+    async def run_get(self, src_files, dest_dir, progress_factory, *, concurrent: bool = True):
         async def _get_one(src: Path) -> Result:
             ...  # receive src over XMODEM
             return Result(Status.Success, value=dest_dir / src.name)
 
-        return await self._dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
 
 
 register_transfer_backend("xmodem", XmodemTransfer)
 ```
 
-Both hooks hand one per-file coroutine to the base's `_dispatch_per_file`
+Both hooks hand one per-file coroutine to the base's
+{meth}`~otto.host.transfer.BaseFileTransfer.dispatch_per_file`
 rather than writing the loop themselves: it honours `concurrent` and the
 instance's `concurrency_limit`, and an exception out of `_put_one` becomes
 that file's own `Error` entry while its siblings keep moving.
@@ -294,7 +302,7 @@ def test_xmodem_conforms():
 
 {func}`~otto.testing.assert_transfer_backend_conforms` runs every rule above:
 the three declarations `register_transfer_backend` demands (`host_families`,
-`progress_granularity` and `authenticates`), an async `_apply_mode` override
+`progress_granularity` and `authenticates`), an async `apply_mode` override
 when `supports_mode` is `True`, an overriding `create`, nothing left abstract,
 and the call shapes the host and the base class rely on — read off
 `BaseFileTransfer`'s own definitions, so a keyword added there is asked of
@@ -461,7 +469,7 @@ session lock held while the hook runs and would deadlock.
 import shlex
 
 from otto import SetupContext, register_session_setup
-from otto.host.session import HostSession
+from otto.host import HostSession
 
 
 async def provision_app(session: HostSession, ctx: SetupContext) -> None:

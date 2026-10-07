@@ -2470,7 +2470,7 @@ def _reset_half_ported_warnings():
     the ROOT conftest per the process-global-state rule: the set belongs to
     the module, not to any one test directory.
     """
-    from otto.reservations import reset_half_ported_warnings
+    from otto.reservations.factory import reset_half_ported_warnings
 
     reset_half_ported_warnings()
     yield

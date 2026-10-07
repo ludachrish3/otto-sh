@@ -124,7 +124,7 @@ Three pieces of per-session state matter architecturally:
   `command_frame`'s own handshake, run after every hook unconditionally, so
   a hook that manoeuvred the console into an application hands over a shell
   that has been confirmed in that application's dialect.
-  `ShellSession._open()` and `ShellSession._handshake()` are the two halves;
+  `ShellSession.open_transport()` and `ShellSession._handshake()` are the two halves;
   frame entry re-runs only the second.
 
 Every Unix shell otto opens also suppresses its own shell history

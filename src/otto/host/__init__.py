@@ -23,8 +23,14 @@ The resolver does not write a resolved name back into the module dict; see
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from ..models.host import EmbeddedHostSpec as EmbeddedHostSpec
+    from ..models.host import HostSpec as HostSpec
+    from ..models.host import UnixHostSpec as UnixHostSpec
     from ..result import CommandResult as CommandResult
     from ..result import Results as Results
+    from .capability_grid import HostCapabilities as HostCapabilities
+    from .capability_grid import SessionIdentity as SessionIdentity
+    from .capability_grid import UserSupport as UserSupport
     from .command_frame import BashFrame as BashFrame
     from .command_frame import CommandFrame as CommandFrame
     from .command_frame import RawFrame as RawFrame
@@ -33,6 +39,7 @@ if TYPE_CHECKING:
     from .command_frame import build_command_frame as build_command_frame
     from .command_frame import register_command_frame as register_command_frame
     from .connections import ConnectionManager as ConnectionManager
+    from .connections import TermContext as TermContext
     from .connections import build_term_backend as build_term_backend
     from .connections import register_term_backend as register_term_backend
     from .declared_product import DeclaredProduct as DeclaredProduct
@@ -41,17 +48,26 @@ if TYPE_CHECKING:
     from .dev_tool import register_dev_tool_provider as register_dev_tool_provider
     from .dev_tool import registered_dev_tool_providers as registered_dev_tool_providers
     from .docker_host import DockerContainerHost as DockerContainerHost
+    from .element import Element as Element
     from .embedded_host import EmbeddedHost as EmbeddedHost
     from .embedded_host import ZephyrHost as ZephyrHost
+    from .errors import MountNotFoundError as MountNotFoundError
+    from .errors import RawLandingError as RawLandingError
+    from .errors import SessionSetupError as SessionSetupError
     from .factory import create_host_from_dict as create_host_from_dict
+    from .factory import host_identity as host_identity
     from .factory import validate_host_dict as validate_host_dict
     from .file_ops import PosixFileOps as PosixFileOps
+    from .host import BaseHost as BaseHost
     from .host import Host as Host
     from .host import HostFilter as HostFilter
     from .host import ShellCommand as ShellCommand
     from .host import SuppressCommandOutput as SuppressCommandOutput
     from .host import is_dry_run as is_dry_run
     from .local_host import LocalHost as LocalHost
+    from .loop_owner import HostLoopError as HostLoopError
+    from .mount import Mount as Mount
+    from .mount import mount_for as mount_for
     from .os_profile import OsProfile as OsProfile
     from .os_profile import build_host_class as build_host_class
     from .os_profile import build_os_profile as build_os_profile
@@ -93,9 +109,13 @@ if TYPE_CHECKING:
     from .transport import HopTransport as HopTransport
     from .transport import SshHopTransport as SshHopTransport
     from .unix_host import UnixHost as UnixHost
+    from .userland import Userland as Userland
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
+    "HostCapabilities": "otto.host.capability_grid",
+    "SessionIdentity": "otto.host.capability_grid",
+    "UserSupport": "otto.host.capability_grid",
     "BashFrame": "otto.host.command_frame",
     "CommandFrame": "otto.host.command_frame",
     "RawFrame": "otto.host.command_frame",
@@ -104,6 +124,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "build_command_frame": "otto.host.command_frame",
     "register_command_frame": "otto.host.command_frame",
     "ConnectionManager": "otto.host.connections",
+    "TermContext": "otto.host.connections",
     "build_term_backend": "otto.host.connections",
     "register_term_backend": "otto.host.connections",
     "DeclaredProduct": "otto.host.declared_product",
@@ -112,17 +133,26 @@ _LAZY_ATTRS: dict[str, str] = {
     "register_dev_tool_provider": "otto.host.dev_tool",
     "registered_dev_tool_providers": "otto.host.dev_tool",
     "DockerContainerHost": "otto.host.docker_host",
+    "Element": "otto.host.element",
     "EmbeddedHost": "otto.host.embedded_host",
     "ZephyrHost": "otto.host.embedded_host",
+    "MountNotFoundError": "otto.host.errors",
+    "RawLandingError": "otto.host.errors",
+    "SessionSetupError": "otto.host.errors",
     "create_host_from_dict": "otto.host.factory",
+    "host_identity": "otto.host.factory",
     "validate_host_dict": "otto.host.factory",
     "PosixFileOps": "otto.host.file_ops",
+    "BaseHost": "otto.host.host",
     "Host": "otto.host.host",
     "HostFilter": "otto.host.host",
     "ShellCommand": "otto.host.host",
     "SuppressCommandOutput": "otto.host.host",
     "is_dry_run": "otto.host.host",
     "LocalHost": "otto.host.local_host",
+    "HostLoopError": "otto.host.loop_owner",
+    "Mount": "otto.host.mount",
+    "mount_for": "otto.host.mount",
     "OsProfile": "otto.host.os_profile",
     "build_host_class": "otto.host.os_profile",
     "build_os_profile": "otto.host.os_profile",
@@ -164,8 +194,14 @@ _LAZY_ATTRS: dict[str, str] = {
     "HopTransport": "otto.host.transport",
     "SshHopTransport": "otto.host.transport",
     "UnixHost": "otto.host.unix_host",
+    "Userland": "otto.host.userland",
     "CommandResult": "otto.result",
     "Results": "otto.result",
+    # The defining module stays otto.models.host until the host specs' module
+    # move (host construction spec §2.1).
+    "EmbeddedHostSpec": "otto.models.host",
+    "HostSpec": "otto.models.host",
+    "UnixHostSpec": "otto.models.host",
 }
 
 
@@ -184,6 +220,7 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "BaseHost",
     "BashFrame",
     "CommandFrame",
     "CommandPowerController",
@@ -193,15 +230,22 @@ __all__ = [
     "DevTool",
     "DevToolProvider",
     "DockerContainerHost",
+    "Element",
     "EmbeddedFileTransfer",
     "EmbeddedHost",
+    "EmbeddedHostSpec",
     "Expect",
     "HopTransport",
     "Host",
+    "HostCapabilities",
     "HostFilter",
+    "HostLoopError",
     "HostSession",
+    "HostSpec",
     "LocalHost",
     "LocalSession",
+    "Mount",
+    "MountNotFoundError",
     "NcListenerCheck",
     "NcPortStrategy",
     "OsProfile",
@@ -213,20 +257,27 @@ __all__ = [
     "Product",
     "ProductProvider",
     "RawFrame",
+    "RawLandingError",
     "RemoteHost",
     "Results",
+    "SessionIdentity",
     "SessionManager",
     "SessionMarkers",
+    "SessionSetupError",
     "ShellCommand",
     "ShellProduct",
     "ShellSession",
     "SshHopTransport",
     "SuppressCommandOutput",
     "TelnetSession",
+    "TermContext",
     "Toolchain",
     "ToolchainTool",
     "TransferProgressHandler",
     "UnixHost",
+    "UnixHostSpec",
+    "UserSupport",
+    "Userland",
     "ZephyrFrame",
     "ZephyrHost",
     "build_command_frame",
@@ -239,9 +290,11 @@ __all__ = [
     "create_host_from_dict",
     "get_host_class",
     "get_os_profile",
+    "host_identity",
     "is_dry_run",
     "make_rich_progress_handler",
     "make_transfer_progress",
+    "mount_for",
     "power_control_from_spec",
     "register_command_frame",
     "register_dev_tool_provider",

@@ -23,8 +23,8 @@ import pytest
 import pytest_asyncio
 from repo1_common.options import RepoOptions
 
-from otto.config import all_hosts
 from otto.host.unix_host import UnixHost
+from otto.lab import all_hosts
 from otto.utils import Status
 
 logger = logging.getLogger(__name__)

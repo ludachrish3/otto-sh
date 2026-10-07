@@ -44,6 +44,7 @@ from otto.models import (
     TabSpecRecord,
     TunnelRecord,
 )
+from otto.monitor.export import EXPORT_FORMAT
 
 BASE = datetime(2026, 7, 1, 8, 0, 0, tzinfo=timezone.utc)
 """Fixed session-start epoch — never wall clock (determinism)."""
@@ -450,7 +451,7 @@ def kitchen_sink() -> MonitorExport:
             ),
         ],
     )
-    return MonitorExport(format=1, sessions=[session])
+    return MonitorExport(format=EXPORT_FORMAT, sessions=[session])
 
 
 def minimal() -> MonitorExport:
@@ -487,7 +488,7 @@ def minimal() -> MonitorExport:
         metrics=metrics,
         chart_map=_chart_map(meta),
     )
-    return MonitorExport(format=1, sessions=[session])
+    return MonitorExport(format=EXPORT_FORMAT, sessions=[session])
 
 
 def cascade() -> MonitorExport:
@@ -551,7 +552,7 @@ def cascade() -> MonitorExport:
         chart_map=_chart_map(meta),
         metrics=metrics,
     )
-    return MonitorExport(format=1, sessions=[session])
+    return MonitorExport(format=EXPORT_FORMAT, sessions=[session])
 
 
 def sprawl() -> MonitorExport:
@@ -734,7 +735,7 @@ def sprawl() -> MonitorExport:
             ),
         ],
     )
-    return MonitorExport(format=1, sessions=[session])
+    return MonitorExport(format=EXPORT_FORMAT, sessions=[session])
 
 
 def isp_core() -> MonitorExport:
@@ -1042,7 +1043,7 @@ def isp_core() -> MonitorExport:
             ),
         ],
     )
-    return MonitorExport(format=1, sessions=[session])
+    return MonitorExport(format=EXPORT_FORMAT, sessions=[session])
 
 
 def drift() -> MonitorExport:
@@ -1149,7 +1150,7 @@ def drift() -> MonitorExport:
                 chart_map=_chart_map(meta),
             )
         )
-    return MonitorExport(format=1, sessions=sessions)
+    return MonitorExport(format=EXPORT_FORMAT, sessions=sessions)
 
 
 # --- output ----------------------------------------------------------------------

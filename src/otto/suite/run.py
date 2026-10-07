@@ -438,7 +438,7 @@ def prepare_run(opts: RunOptions, *, dry_run: bool = False) -> None:
     if opts.cov_tickets_json is not None:
         # Knowable now, unlike "the git walk matched nothing", which stays a
         # post-run warning in _post_run_coverage.
-        from ..config import get_repos
+        from ..bootstrap import get_repos
         from ..config.coverage_settings import get_cov_config
         from ..coverage.tickets import load_ticket_spec
         from ..params import OptionsValidationError
@@ -1658,7 +1658,7 @@ def run_tests(
 
     import pytest
 
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..config.home import workspace_home
     from ..params import flatten_option_instances
     from .layout import ArtifactLayout
@@ -1841,7 +1841,7 @@ def selected_tests(names: list[str], *, markers: str = "") -> Listing:
         otto.registry.RegistrationRefused: a test file or conftest
             registered something while loading.
     """
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..config.home import workspace_home
 
     names = [n.strip() for n in names if n.strip()]

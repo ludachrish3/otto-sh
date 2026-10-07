@@ -32,7 +32,7 @@ from otto.context import LIBRARY_LAB_NAME, OttoContext, set_context
 from otto.models.dependencies import normalize_name
 from tests._fixtures.fleet import _lab, _repo, add_builtin_local, install_scoped_context
 
-_REPO_READ = "otto.config.bootstrapped.get_ordered_repos"
+_REPO_READ = "otto.bootstrap.get_ordered_repos"
 """The repo read ``OttoContext.scopes`` makes, patched at its defining module.
 
 The fold of the accessors into ``otto.bootstrap`` re-points this target, and
@@ -381,7 +381,7 @@ def test_the_query_reads_nothing_but_its_arguments(world, monkeypatch):
     assert got == ["h1", "h1.r1.api"]
 
     # The injection is live: the read the walk makes does reach the refusal.
-    from otto.config.bootstrapped import get_ordered_repos
+    from otto.bootstrap import get_ordered_repos
 
     with pytest.raises(AssertionError, match="read the composition root"):
         get_ordered_repos()

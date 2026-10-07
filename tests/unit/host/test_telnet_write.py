@@ -1,4 +1,4 @@
-"""Unit tests for TelnetSession._write byte-level chunking.
+"""Unit tests for TelnetSession.write_transport byte-level chunking.
 
 An embedded RTOS shell behind a slow/UART-backed telnet link (e.g. a Zephyr
 QEMU `-serial telnet:` bridge) overruns its console RX FIFO when a multi-KB
@@ -30,7 +30,7 @@ async def test_write_unchunked_by_default() -> None:
     """Default (write_chunk_size=0) sends the whole payload in one write."""
     w = _FakeWriter()
     sess = TelnetSession(reader=None, writer=w)
-    await sess._write("x" * 200)
+    await sess.write_transport("x" * 200)
     assert w.writes == [b"x" * 200]
 
 
@@ -39,7 +39,7 @@ async def test_write_splits_into_chunks() -> None:
     """A payload larger than the chunk size is split into <=chunk-size writes."""
     w = _FakeWriter()
     sess = TelnetSession(reader=None, writer=w, write_chunk_size=64, write_chunk_delay=0.0)
-    await sess._write("x" * 200)
+    await sess.write_transport("x" * 200)
     assert [len(c) for c in w.writes] == [64, 64, 64, 8]
     assert b"".join(w.writes) == b"x" * 200
 
@@ -49,7 +49,7 @@ async def test_write_smaller_than_chunk_is_single_write() -> None:
     """A payload at or below the chunk size is one write."""
     w = _FakeWriter()
     sess = TelnetSession(reader=None, writer=w, write_chunk_size=64, write_chunk_delay=0.0)
-    await sess._write("abc")
+    await sess.write_transport("abc")
     assert w.writes == [b"abc"]
 
 
@@ -60,5 +60,5 @@ async def test_chunking_preserves_crlf_to_cr_substitution() -> None:
     """
     w = _FakeWriter()
     sess = TelnetSession(reader=None, writer=w, write_chunk_size=4, write_chunk_delay=0.0)
-    await sess._write("ab\r\ncd\nef")
+    await sess.write_transport("ab\r\ncd\nef")
     assert b"".join(w.writes) == b"ab\rcd\ref"

@@ -190,7 +190,7 @@ in its signature. They work the same in a test class and in a test function.
   [monitoring recipe](../test-recipes.md#monitoring-from-a-test).
 
 Hosts don't come from `ctx`: a test or fixture calls `get_host(id)`
-(`from otto.config import get_host`) with the id of a host in the lab, as in
+(`from otto.lab import get_host`) with the id of a host in the lab, as in
 the fixtures below. {doc}`../host-scopes` covers how widely one connection
 is shared.
 
@@ -256,7 +256,7 @@ import logging
 import pytest
 import pytest_asyncio
 
-from otto.config import get_host
+from otto.lab import get_host
 
 logger = logging.getLogger(__name__)
 

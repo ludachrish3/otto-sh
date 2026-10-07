@@ -12,12 +12,6 @@ implementation — shipped ones, or your own class selected by registered name i
 For narrative setup, configuration, and writing a custom backend, see
 the :doc:`CLI reference <../cli/reservation/index>`.
 
-Package summary
----------------
-
-.. automodule:: otto.reservations
-   :no-members:
-
 The backend contract
 --------------------
 
@@ -29,9 +23,6 @@ state.  The recommended way to satisfy it is to inherit
 methods as abstract, adds the cached ``reservations`` member every consumer
 reads, and spells out the constructor the factory calls.
 
-.. autoclass:: otto.reservations.ReservationBackendBase
-   :members:
-
 ``fetch_reservations`` answers in :class:`~otto.reservations.protocol.Reservation`
 records (``backend_name`` returns a plain ``str``), so every backend reports
 *when* a booking runs.  The rules those times obey — the window predicate, and
@@ -40,9 +31,6 @@ under "The query window" in :doc:`../cookbook/extending/reservation-backends`.  
 backend written for otto 0.10 is covered in the same page's "Migrating from
 0.10".
 
-.. autoclass:: otto.reservations.Reservation
-   :no-index:
-
 Two optional capabilities sit alongside the contract: a backend that can
 enumerate its users implements ``list_usernames``, and one that can answer the
 inverted "who holds this resource, and until when?" query implements
@@ -50,91 +38,6 @@ inverted "who holds this resource, and until when?" query implements
 the method or don't.  Omitting ``holders`` degrades only the refusal message,
 which then reports the holders as unknown;
 :doc:`../cookbook/extending/reservation-backends` is the implementer's guide to both.
-
-.. autoclass:: otto.reservations.SupportsUsernameCompletion
-
-.. autoclass:: otto.reservations.SupportsResourceHolders
-
-.. automodule:: otto.reservations.protocol
-
-Exceptions
-----------
-
-Two exceptions classify the two failure modes a caller cares about:
-*the user doesn't hold something* versus *we couldn't ask*.  They are
-surfaced differently in the CLI — see
-:ref:`skip-flag-hint-policy` below.
-
-.. autoexception:: otto.reservations.check.ReservationBackendError
-   :no-index:
-
-:class:`~otto.reservations.check.MissingReservationError` is documented
-under :ref:`the check <the-check>` below.
-
-.. _the-check:
-
-The check
----------
-
-.. automodule:: otto.reservations.check
-
-The report
-~~~~~~~~~~
-
-.. automodule:: otto.reservations.report
-
-.. _skip-flag-hint-policy:
-
-Skip-flag hint policy
-~~~~~~~~~~~~~~~~~~~~~
-
-Only :class:`~otto.reservations.check.ReservationBackendError` surfaces
-a suggestion to pass ``--skip-reservation-check`` / ``-R`` — because
-with a broken backend the user has no other way to proceed.
-:class:`~otto.reservations.check.MissingReservationError` deliberately
-does *not* mention the flag, since offering it on every contention
-failure trains users to reach for the bypass instead of fixing the
-underlying reservation.
-
-Identity resolution
--------------------
-
-.. automodule:: otto.reservations.identity
-
-Bundled backends
-----------------
-
-JSON backend
-~~~~~~~~~~~~
-
-Reference implementation and test double — also a perfectly usable
-production backend for small teams that don't have a scheduler yet.
-See the :doc:`CLI reference <../cli/reservation/index>` for the file format.
-
-.. automodule:: otto.reservations.json_backend
-
-Null backend
-~~~~~~~~~~~~
-
-Selected when no ``[reservations]`` section is configured at all, or when
-``backend = "none"`` is set.
-:func:`~otto.reservations.report.build_report` recognizes this
-type and makes no query.
-
-.. automodule:: otto.reservations.null_backend
-
-Backend factory
----------------
-
-.. autofunction:: otto.reservations.build_backend
-
-.. autofunction:: otto.reservations.register_reservation_backend
-
-.. autofunction:: otto.reservations.build_reservation_gate
-
-.. autofunction:: otto.reservations.gate_from_settings
-
-.. automodule:: otto.reservations.registry
 
 Extension points for implementers
 ---------------------------------
@@ -173,3 +76,8 @@ See :doc:`../getting-started/reservations` for a worked example — a small
 backend, its ``init`` module registration, its ``[reservations]`` table, and
 the conformance test that proves it — and
 :doc:`../cookbook/extending/reservation-backends` for the full implementer's contract.
+
+The package
+-----------
+
+.. automodule:: otto.reservations

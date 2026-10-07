@@ -206,7 +206,7 @@ def list_instructions_callback(value: bool) -> None:
         return
     from rich.table import Table
 
-    from ..config import get_repos  # lazy import — avoids circular dependency
+    from ..bootstrap import get_repos  # lazy import — avoids circular dependency
 
     panels = [repo.get_instructions_panel() for repo in get_repos()]
     # Ahead of the repos: these are the verbs every lab has, and the ones a

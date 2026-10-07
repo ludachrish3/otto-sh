@@ -5,9 +5,11 @@ import enum
 import json
 
 from ..version import get_version
+from .formats import CHECK_REPORT_WRITE_VERSIONS
 from .proven import load_proven_range
 
-REPORT_SCHEMA = "otto-check/1"
+[REPORT_SCHEMA] = CHECK_REPORT_WRITE_VERSIONS
+"""The one declared write version, which :func:`report_to_json` stamps as ``schema``."""
 
 
 def _default(value: object) -> object:

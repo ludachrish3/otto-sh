@@ -124,7 +124,7 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
     """
     if name not in PREVIEWABLE_INSTRUCTIONS:
         raise ValueError(f"{name!r} has no install preview")
-    from ..config import get_ordered_repos
+    from ..bootstrap import get_ordered_repos
 
     source = OptionsSource.from_kwargs(kwargs)
     install = source.build(InstallOptions) if name == "install" else None

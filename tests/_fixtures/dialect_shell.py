@@ -201,13 +201,13 @@ class DialectSession(ShellSession):
         self.opens = 0
         self.closed = False
 
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         self.opens += 1
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         self.shell.wrote(data)
 
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         reply = self.shell.reply()
         if reply is None or pattern.search(reply) is None:
             raise asyncio.TimeoutError("the console has nothing matching to say")

@@ -3,6 +3,9 @@
 import json
 from dataclasses import dataclass, field
 
+import pytest
+
+import otto.check.formats as check_formats
 from otto.check import FeatureResult, UnmeasuredReason, Verdict
 from otto.check.report import REPORT_SCHEMA, report_to_json
 
@@ -29,3 +32,8 @@ def test_envelope_and_enum_values() -> None:
     assert doc["result"]["link_id"] == "edge"
     assert doc["result"]["results"][0]["verdict"] == "pass"
     assert doc["result"]["results"][1]["reason"] == "missing-tool"
+
+
+@pytest.mark.parametrize("version", check_formats.CHECK_REPORT_WRITE_VERSIONS)
+def test_the_report_stamps_each_declared_write_version(version):
+    assert json.loads(report_to_json(_Result("edge"), kind="link"))["schema"] == version

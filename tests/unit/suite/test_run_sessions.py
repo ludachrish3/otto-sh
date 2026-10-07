@@ -76,7 +76,7 @@ def sessions(monkeypatch) -> list:
 
 
 def _the_repo():
-    from otto.config import get_repos
+    from otto.bootstrap import get_repos
 
     [only] = get_repos()
     return only
@@ -304,7 +304,7 @@ def test_a_run_records_what_it_collected(repo, tmp_path, sessions):
 
     run_tests(["TestA"], output_dir=tmp_path / "out")
 
-    from otto.config import get_repos
+    from otto.bootstrap import get_repos
 
     [the_repo] = get_repos()
     table = read_table(the_repo)
@@ -326,7 +326,7 @@ def test_a_named_run_keeps_the_markers_every_conftest_registers(repo, tmp_path, 
 
     run_tests(["TestA"], output_dir=tmp_path / "out")
 
-    from otto.config import get_repos
+    from otto.bootstrap import get_repos
 
     assert sessions == [None]
     table = read_table(get_repos()[0])
@@ -813,8 +813,8 @@ def _claim(repo_dir: Path, rel: str, name: str) -> None:
     """
     import dataclasses
 
+    from otto.bootstrap import get_repos
     from otto.config import collected_tests as tr
-    from otto.config import get_repos
 
     [repo] = [r for r in get_repos() if r.sut_dir == repo_dir]
     table = tr.read_table(repo)
@@ -1264,7 +1264,7 @@ def test_a_sourceless_library_is_followed_through_its_pyc(
     """
     import py_compile
 
-    import otto.config
+    import otto.bootstrap
     from otto.config import collected_tests as tr
 
     shell = _Repo(tmp_path / "sut")
@@ -1296,7 +1296,7 @@ def test_a_sourceless_library_is_followed_through_its_pyc(
     warm, cold = _warm_then_cold(shell, tmp_path, monkeypatch, sessions, edit)
 
     assert warm == cold == ["TestD::test_y", "test_y"]
-    [the_repo] = otto.config.get_repos()
+    [the_repo] = otto.bootstrap.get_repos()
     table = tr.read_table(the_repo)
     assert table is not None
     assert list(table.deps) == [str(lib / "pycbase.pyc")]

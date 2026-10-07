@@ -9,11 +9,14 @@ import otto.suite
 
 def test_the_suite_api_is_exactly_the_documented_one():
     assert sorted(otto.suite.__all__) == [
+        "ExpectCollector",
+        "MonitorHandle",
         "NoTestsMatchedError",
         "OttoFixturesPlugin",
         "RunOptions",
         "SuiteRunResult",
         "UnknownSelectionError",
+        "prepare_run",
         "run_tests",
     ]
 

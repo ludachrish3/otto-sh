@@ -16,7 +16,7 @@ def _ctx(host_id: str | None) -> SimpleNamespace:
 
 def test_cached_map_resolves_the_class_without_a_lab(monkeypatch):
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_completion_names",
+        "otto.bootstrap.get_completion_names",
         lambda: {"host_classes_by_id": {"z1": "zephyr"}},
     )
     assert cached_host_class_for_id("z1") is ZephyrHost
@@ -24,7 +24,7 @@ def test_cached_map_resolves_the_class_without_a_lab(monkeypatch):
 
 def test_unknown_id_or_unregistered_name_yields_none(monkeypatch):
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_completion_names",
+        "otto.bootstrap.get_completion_names",
         lambda: {"host_classes_by_id": {"z1": "nosuch"}},
     )
     assert cached_host_class_for_id("z1") is None
@@ -37,10 +37,10 @@ def test_falls_back_to_discovery_when_the_cache_is_cold(monkeypatch):
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
-    monkeypatch.setattr("otto.config.bootstrapped.get_completion_names", lambda: None)
+    monkeypatch.setattr("otto.bootstrap.get_completion_names", lambda: None)
     monkeypatch.setattr(bs, "discover", lambda: SimpleNamespace(repos=["discovered"]))
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_repos",
+        "otto.bootstrap.get_repos",
         lambda: pytest.fail("get_repos() must not run during completion"),
     )
     monkeypatch.setattr(
@@ -58,7 +58,7 @@ def test_cold_cache_collector_runs_once_per_process(monkeypatch):
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
-    monkeypatch.setattr("otto.config.bootstrapped.get_completion_names", lambda: None)
+    monkeypatch.setattr("otto.bootstrap.get_completion_names", lambda: None)
     monkeypatch.setattr(bs, "discover", lambda: SimpleNamespace(repos=["discovered"]))
     calls: list[list[str]] = []
 
@@ -79,7 +79,7 @@ def test_non_dict_mapping_falls_back_to_discovery_without_raising(monkeypatch):
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_completion_names",
+        "otto.bootstrap.get_completion_names",
         lambda: {"host_classes_by_id": ["not", "a", "dict"]},
     )
     monkeypatch.setattr(bs, "discover", lambda: SimpleNamespace(repos=["discovered"]))
@@ -102,11 +102,11 @@ def test_non_str_class_name_yields_none(monkeypatch):
     are asserted so the guard is proven load-bearing, not just documented.
     """
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_completion_names", lambda: {"host_classes_by_id": {"z1": 123}}
+        "otto.bootstrap.get_completion_names", lambda: {"host_classes_by_id": {"z1": 123}}
     )
     assert cached_host_class_for_id("z1") is None
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_completion_names",
+        "otto.bootstrap.get_completion_names",
         lambda: {"host_classes_by_id": {"z1": ["nested"]}},
     )
     assert cached_host_class_for_id("z1") is None
@@ -114,7 +114,7 @@ def test_non_str_class_name_yields_none(monkeypatch):
 
 def test_resilient_menu_is_scoped_to_the_cached_class(monkeypatch):
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_completion_names",
+        "otto.bootstrap.get_completion_names",
         lambda: {"host_classes_by_id": {"z1": "zephyr"}},
     )
     group = HostGroup(name="host")
@@ -128,8 +128,6 @@ def test_resilient_menu_is_scoped_to_the_cached_class(monkeypatch):
 
 
 def test_resilient_menu_is_the_union_for_an_unknown_id(monkeypatch):
-    monkeypatch.setattr(
-        "otto.config.bootstrapped.get_completion_names", lambda: {"host_classes_by_id": {}}
-    )
+    monkeypatch.setattr("otto.bootstrap.get_completion_names", lambda: {"host_classes_by_id": {}})
     group = HostGroup(name="host")
     assert set(group.list_commands(_ctx("ghost"))) == set(group.list_commands(_ctx(None)))

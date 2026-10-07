@@ -514,6 +514,10 @@ class MonitorExport(RowModel):
     an empty modern one. ``Literal[1]`` rejects future formats loud too.
     """
 
+    # The Literal's arguments are MONITOR_EXPORT_READ_VERSIONS (otto.models.formats,
+    # dump spec §13.1), spelled again: this module loads on budgeted CLI surfaces
+    # and must not import the list. tests/unit/models/test_declared_version_fields.py
+    # holds the two equal; add or drop a version in both places.
     format: Literal[1]
     sessions: list[SessionRecord]
 

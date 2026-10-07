@@ -1,0 +1,1 @@
+  777 01:05 otto-check:v1:a1b2c3:tun-000000000001-5000:tcp:fwd-echo:rack1-a socat TCP4-LISTEN:7000 -

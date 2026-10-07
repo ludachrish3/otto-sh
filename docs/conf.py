@@ -1,14 +1,20 @@
+import functools
 import importlib.metadata
 import pathlib
 import sys
+import types
 import typing
 
+from sphinx.errors import PycodeError
+from sphinx.ext.autodoc import AttributeDocumenter, DataDocumenter, ModuleDocumenter
+from sphinx.pycode import ModuleAnalyzer
 from sphinx.util import inspect as sphinx_inspect
+from typing_extensions import override
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
-from scripts import docs_build_stamp
+from scripts import docs_api_reference, docs_build_stamp
 
 project = "otto"
 author = "otto contributors"
@@ -27,6 +33,7 @@ templates_path = ["_templates"]
 html_context = {
     "otto_dev_banner_text": docs_build_stamp.dev_banner_text(_BUILD_STAMP),
     "otto_stable_docs_url": docs_build_stamp.STABLE_DOCS_URL,
+    "otto_api_notice": docs_api_reference.provisional_notice(release),
 }
 # Otto version numbers in prose and code fences are never hand-written — pages
 # use the %OTTO_VERSION% token and this source-read hook replaces it with the
@@ -188,15 +195,11 @@ intersphinx_mapping = {
 # this map. If a mapped name is renamed or removed upstream, intersphinx will
 # fail to resolve it and nitpicky will correctly flag genuine doc rot.
 #
-# WHICH path to qualify an internal name with: the one the .rst directive that
-# documents it typed, because autodoc registers an object under the directive's
-# path, not under the object's real __module__. Both spellings are in use and
-# neither is wrong: `otto.reservations.ReservationBackendBase` is right because
-# an `autoclass` names the re-export, while `otto.reservations.protocol.Reservation`
-# is right because that page's `autoclass` for the re-export carries `:no-index:`
-# (two indexed targets would make every bare `Reservation` annotation ambiguous)
-# and the `automodule` for the defining module holds the only entry. Grep the
-# api/ page for the symbol before writing the reference.
+# WHICH path to qualify an internal name with: its public path when it has one
+# (``otto.reservations.ReservationBackendBase``), else its defining module's.
+# Each public object is documented once, at the home scripts/docs_api_reference.py
+# picks; a reference to its defining-module path resolves there too
+# (_resolve_public_home), so either spelling links.
 _SHORT_TYPE_ALIASES = {
     # stdlib
     "Path": "pathlib.Path",
@@ -336,6 +339,7 @@ def _resolve_internal_aliases(app, env, node, contnode):
     full = _INTERNAL_ALIASES.get(node.get("reftarget"))
     if not full:
         return None
+    full = docs_api_reference.public_target(_api_reference(), full) or full
     pydom = env.get_domain("py")
     results = pydom.resolve_any_xref(
         env,
@@ -375,22 +379,21 @@ _EXTERNAL_DOC_LINKS = {
     # annotated-types ships no Sphinx docs / objects.inv (README-only project).
     # LinkSpec.endpoints (models/link.py) uses ``Field(min_length=2,
     # max_length=2)``, which pydantic renders in the signature as
-    # ``Annotated[..., MinLen(...), MaxLen(...)]``; autodoc's annotation
-    # stringifier turns each metadata class into a py:class xref attempt once
-    # there are 2+ metadata args (a single-constraint field like
-    # ``UnixHostSpec.creds`` renders as opaque text and never attempts one).
+    # ``Annotated[..., MinLen(...), MaxLen(...)]``; in any signature Sphinx can
+    # parse as Python, each metadata class becomes a py:class xref attempt.
     "annotated_types.MinLen": "https://github.com/annotated-types/annotated-types#minlen-maxlen-len",
     "annotated_types.MaxLen": "https://github.com/annotated-types/annotated-types#minlen-maxlen-len",
     # Same stringifier behavior for range constraints: CoverageReportSpec
     # (models/settings.py) uses ``Field(ge=0, le=100)``, rendering as
-    # ``Annotated[float, Ge(0), Le(100)]`` — two metadata args, so each
-    # constraint class becomes a py:class xref attempt.
+    # ``Annotated[float, Ge(0), Le(100)]``, and ConsoleOptionsSpec
+    # (models/options.py) ``login_timeout``'s ``Field(gt=0)`` as ``Gt(gt=0)``.
     # _typeshed.DataclassInstance is a stub-only protocol (it exists in
     # typeshed, never at runtime), so no inventory can serve it; it is the
     # annotation on ``otto.params.options_params``'s options-class parameter.
     "DataclassInstance": "https://github.com/python/typeshed/blob/main/stdlib/_typeshed/__init__.pyi",
     "annotated_types.Ge": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
     "annotated_types.Le": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
+    "annotated_types.Gt": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
 }
 
 
@@ -490,6 +493,100 @@ def _drop_privately_typed_params(
     return ("(" + ", ".join(kept) + ")", return_annotation)
 
 
+def _drop_cli_metadata(
+    app,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    what,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    name,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    obj,
+    options,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    signature,
+    return_annotation,
+):
+    """Render ``Annotated[T, <CLI metadata>]`` as ``T`` in a signature and its return annotation.
+
+    ``otto.utils.Arg``, ``Opt`` and ``Exclude`` tell the CLI how to expose a
+    verb parameter; a Python caller passes a plain ``T``. Autodoc would print
+    each one's repr: ``Exclude``'s names a private class and a memory address
+    that changes every build, and an ``Arg``/``Opt`` prints its help text
+    unquoted, which is not Python, so Sphinx cannot parse the signature and
+    shows it as raw text (``docs_api_reference.drop_annotated_markers``).
+    """
+    from otto.utils import Arg, Exclude, Opt
+
+    markers = [repr(Exclude)]
+    try:
+        sig = sphinx_inspect.signature(obj)
+    except (TypeError, ValueError):
+        sig = None
+    if sig is not None:
+        annotations = [p.annotation for p in sig.parameters.values()] + [sig.return_annotation]
+        for meta in docs_api_reference.annotated_metadata(annotations):
+            if meta is Exclude or isinstance(meta, (Arg, Opt)):
+                markers.extend(docs_api_reference.annotated_metadata_text(meta))
+    rewritten = tuple(
+        docs_api_reference.drop_annotated_markers(text, markers) if text else text
+        for text in (signature, return_annotation)
+    )
+    return None if rewritten == (signature, return_annotation) else rewritten
+
+
+def _python_valid_defaults(
+    app,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    what,
+    name,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    obj,
+    options,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    signature,
+    return_annotation,
+):
+    """Show each default whose repr is not Python as Python.
+
+    A ``default_factory`` field shows ``<factory>``, a class default
+    ``<class 'otto.host.unix_host.UnixHost'>`` and a function default
+    ``<function SessionManager.<lambda>>``. One such default makes Sphinx's
+    parser give up on the whole signature: it falls back to splitting the raw
+    text on commas, so no annotation links anywhere and every ``~otto.`` prefix
+    shows. ``docs_api_reference.python_defaults`` says what each shows
+    instead. Only the default's text changes, never the parameter.
+    """
+    if what not in {"function", "method", "class"} or not signature:
+        return None
+    try:
+        params = sphinx_inspect.signature(obj).parameters
+    except (TypeError, ValueError):
+        return None
+    factories = docs_api_reference.field_factories(obj) if what == "class" else {}
+    defaults = docs_api_reference.python_defaults(params, factories)
+    rewritten = docs_api_reference.replace_defaults(signature, defaults)
+    return None if rewritten == signature else (rewritten, return_annotation)
+
+
+#: CLI metadata goes first: its help text is unquoted and may hold commas and
+#: brackets, which would split the parameter list at the wrong place for the
+#: rewrites after it.
+_SIGNATURE_REWRITES = (
+    _strip_inherited_pydantic_signature,
+    _drop_cli_metadata,
+    _drop_privately_typed_params,
+    _python_valid_defaults,
+)
+
+
+def _process_signature(app, what, name, obj, options, signature, return_annotation):
+    """Apply every signature rewrite in turn.
+
+    Autodoc keeps only the first handler's result for this event, so the
+    rewrites are chained here, each seeing the one before it.
+    """
+    changed = False
+    for rewrite in _SIGNATURE_REWRITES:
+        result = rewrite(app, what, name, obj, options, signature, return_annotation)
+        if result is not None:
+            signature, return_annotation = result
+            changed = True
+    return (signature, return_annotation) if changed else None
+
+
 # -- build-time GUI media + terminal blocks ------------------------------------
 # Screenshots and termynal terminal blocks are PRODUCTS OF THE BUILD, never
 # committed: scripts/capture_docs_media.py serves the real dashboard (via the
@@ -581,15 +678,140 @@ def _generate_rendered_pages(app):  # noqa: ARG001 — Sphinx event signature
             )
 
 
+@functools.cache
+def _api_reference() -> docs_api_reference.Reference:
+    """Every public object's documented home, read once per build from the declaration."""
+    return docs_api_reference.build_reference(docs_api_reference.load_namespaces())
+
+
+def _api_skip_member(app, what, name, obj, skip, options):  # noqa: ARG001 — Sphinx event signature
+    """Index each public object once: at its home, never again on another page."""
+    return docs_api_reference.skip_member(
+        _api_reference(), app.env.temp_data.get("autodoc:module"), what, obj, options
+    )
+
+
+def _api_docstring(app, what, name, obj, options, lines):  # noqa: ARG001 — Sphinx event signature
+    """Mark module docstrings; spell out a re-homed docstring's relative roles."""
+    reference = _api_reference()
+    if what == "module":
+        docs_api_reference.module_docstring(reference, name, options, lines)
+        return
+    documented_in = docs_api_reference.documenting_module(name)
+    defined_in = docs_api_reference.defining_module(obj)
+    if defined_in is None and what == "attribute":
+        defined_in = docs_api_reference.owner_module(name)
+    if defined_in is None and what == "data" and documented_in:
+        sources = docs_api_reference.data_sources(documented_in, name.rpartition(".")[2])
+        defined_in = sources[0] if sources else None
+    if documented_in and defined_in:
+        lines[:] = docs_api_reference.qualify_relative_roles(lines, documented_in, defined_in)
+
+
+def _resolve_public_home(app, env, node, contnode):
+    """Resolve a reference written against an object's defining module to where it is documented."""
+    if node.get("refdomain") != "py":
+        return None
+    target = docs_api_reference.public_target(
+        _api_reference(), node.get("reftarget", ""), node.get("py:module")
+    )
+    if target is None:
+        return None
+    results = env.get_domain("py").resolve_any_xref(
+        env, node.get("refdoc", ""), app.builder, target, node, contnode
+    )
+    return results[0][1] if results else None
+
+
+class _DataDocumenter(DataDocumenter):
+    """Render module data, with no value for one whose repr is the default one.
+
+    It replaces the stock ``DataDocumenter``, so every data entry on the API
+    pages leaves out a ``<otto.registry.Registry object>`` value, which says
+    nothing the name and docstring do not (``docs_api_reference.shows_value``).
+    """
+
+    @override
+    def should_suppress_value_header(self) -> bool:
+        return not docs_api_reference.shows_value(self.object) or (
+            super().should_suppress_value_header()
+        )
+
+
+class _AttributeDocumenter(AttributeDocumenter):
+    """Render class attributes, with no value for one whose repr is the default one.
+
+    It replaces the stock ``AttributeDocumenter`` by the rule
+    :class:`_DataDocumenter` applies to module data.
+    """
+
+    @override
+    def should_suppress_value_header(self) -> bool:
+        return not docs_api_reference.shows_value(self.object) or (
+            super().should_suppress_value_header()
+        )
+
+
+class _ReexportedDataDocumenter(_DataDocumenter):
+    """Render module data a lazy package lists in ``__all__`` but binds elsewhere.
+
+    ``DataDocumenter`` renders module data only when the documented module's
+    own source gives it an attribute docstring, and a lazy package's
+    ``__init__`` binds none, so a public constant such as ``otto.init.AREA_NAMES``
+    would have no anchor at all. This renders it on the package's page, with
+    the docstring the module that binds it gives it, and the value rule
+    :class:`_DataDocumenter` applies.
+    """
+
+    objtype = "reexporteddata"
+    directivetype = "data"
+    priority = DataDocumenter.priority + 1
+
+    @override
+    @classmethod
+    def can_document_member(cls, member, membername, isattr, parent):
+        return (
+            isinstance(parent, ModuleDocumenter)
+            and not parent.options.ignore_module_all
+            and not isattr
+            and membername in (getattr(parent.object, "__all__", None) or [])
+            and not isinstance(member, types.ModuleType)
+            and docs_api_reference.defining_module(member) is None
+        )
+
+    @override
+    def get_module_comment(self, attrname):
+        for module in docs_api_reference.data_sources(self.modname, attrname):
+            try:
+                analyzer = ModuleAnalyzer.for_module(module)
+                analyzer.analyze()
+            except PycodeError:
+                continue
+            comment = analyzer.attr_docs.get(("", attrname))
+            if comment:
+                return list(comment)
+        return None
+
+    @override
+    def get_doc(self):
+        comment = self.get_module_comment(self.objpath[-1])
+        return [comment] if comment else []
+
+
 def setup(app):
+    app.add_autodocumenter(_DataDocumenter, override=True)
+    app.add_autodocumenter(_AttributeDocumenter, override=True)
+    app.add_autodocumenter(_ReexportedDataDocumenter)
     app.connect("source-read", _substitute_version_token)
     app.connect("builder-inited", _generate_docs_media)
     app.connect("builder-inited", _generate_rendered_pages)
     app.connect("missing-reference", _resolve_short_types)
     app.connect("missing-reference", _resolve_internal_aliases)
+    app.connect("missing-reference", _resolve_public_home)
+    app.connect("autodoc-skip-member", _api_skip_member)
+    app.connect("autodoc-process-docstring", _api_docstring)
     app.connect("missing-reference", _resolve_external_doc_links)
-    app.connect("autodoc-process-signature", _strip_inherited_pydantic_signature)
-    app.connect("autodoc-process-signature", _drop_privately_typed_params)
+    app.connect("autodoc-process-signature", _process_signature)
 
 
 # -- napoleon -----------------------------------------------------------------

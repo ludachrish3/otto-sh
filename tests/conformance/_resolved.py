@@ -75,7 +75,7 @@ class ResolvedCell:
     :class:`~otto.host.embedded_filesystem.EmbeddedFileSystem` reports
     ``supports_transfer`` False -- the same property
     ``otto.host.transfer.console.ConsoleFileTransfer`` short-circuits both
-    ``_run_put`` and ``_run_get`` on. A contract that needs a remote directory
+    ``run_put`` and ``run_get`` on. A contract that needs a remote directory
     declares that domain and parametrizes over the cells that have one; see
     ``tests/conformance/test_transfer_contract.py``. Excluding the cell from a
     CONTRACT is not excluding it from the SPACE: a Zephyr guest reports a

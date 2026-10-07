@@ -32,7 +32,7 @@ regardless of which fake is used -- the difference between the two is only
 whether the *remote* command is actually executed by a real shell
 (``_ShellExecutingExec``) or answered from a script (``_RecordingExec``).
 The exception is ``TestShellGetRefusal``'s two tests: both raise
-``UnsupportedOnUserlandError`` out of ``_run_get`` before the per-file loop
+``UnsupportedOnUserlandError`` out of ``run_get`` before the per-file loop
 (and therefore ``_get_one``) is ever reached, so no local file is created or
 written for either.
 
@@ -559,7 +559,7 @@ class TestShellPutOrdering:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert per_file[src].value == dest_dir / "payload.bin"
@@ -606,7 +606,7 @@ class TestShellPutOrdering:
         exec_cmd = _RecordingExec()
         ft = _make_ft(exec_cmd)
 
-        await ft._run_put([src], dest_dir, None)
+        await ft.run_put([src], dest_dir, None)
 
         write_calls = [c for c in exec_cmd.calls if c.startswith("printf ")]
         assert write_calls
@@ -638,7 +638,7 @@ class TestShellPutFileArrivesAtDest:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
         result = per_file[src]
 
         assert result.status is Status.Success, result.msg
@@ -693,7 +693,7 @@ class TestShellPutRefusal:
         )
 
         with pytest.raises(UnsupportedOnUserlandError) as exc_info:
-            await ft._run_put([src], dest_dir, None)
+            await ft.run_put([src], dest_dir, None)
 
         assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
         assert "test2" in str(exc_info.value)
@@ -713,7 +713,7 @@ class TestShellPutRefusal:
         exec_cmd = _RecordingExec(answer_when=_size_answer(5))
         ft = _make_ft(exec_cmd, base64_flag="absent")
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert any(cmd.startswith("uudecode -o ") for cmd in exec_cmd.calls), (
@@ -776,7 +776,7 @@ class TestShellPutChunkStructure:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         write_calls = exec_cmd.calls[:-2]  # everything but the size-verify and the final mv
@@ -798,7 +798,7 @@ class TestShellPutChunkStructure:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         write_calls = exec_cmd.calls[:-2]  # everything but the size-verify and the final mv
@@ -855,7 +855,7 @@ class TestShellChunkLineLength:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         write_calls = [c for c in exec_cmd.calls if c.startswith("printf ")]
@@ -919,7 +919,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
         ft = _make_ft(exec_cmd, line_budget=budget)
 
-        per_file = await ft._run_put([src], Path("/dest"), None)
+        per_file = await ft.run_put([src], Path("/dest"), None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
@@ -951,7 +951,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
         ft = _make_ft(exec_cmd, line_budget=budget)
 
-        per_file = await ft._run_put([src], Path("/dest"), None)
+        per_file = await ft.run_put([src], Path("/dest"), None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
@@ -981,7 +981,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], Path("/dest"), None)
+        per_file = await ft.run_put([src], Path("/dest"), None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
@@ -1007,7 +1007,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         for dest_dir in (Path("/d"), Path("/" + "deep/" * 20)):
             exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
             ft = _make_ft(exec_cmd, line_budget=budget)
-            per_file = await ft._run_put([src], dest_dir, None)
+            per_file = await ft.run_put([src], dest_dir, None)
             assert per_file[src].status is Status.Success, per_file[src].msg
             writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
             assert max(len(c) for c in writes) <= budget, (
@@ -1041,7 +1041,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         exec_cmd = _RecordingExec(answer_when=_size_answer(100))
         ft = _make_ft(exec_cmd, line_budget=20)
 
-        per_file = await ft._run_put([src], Path("/dest"), None)
+        per_file = await ft.run_put([src], Path("/dest"), None)
 
         assert per_file[src].status is Status.Error
         msg = per_file[src].msg or ""
@@ -1074,7 +1074,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         for budget in range(20, 140):
             exec_cmd = _RecordingExec(answer_when=_size_answer(100))
             ft = _make_ft(exec_cmd, line_budget=budget)
-            result = (await ft._run_put([src], Path("/dest"), None))[src]
+            result = (await ft.run_put([src], Path("/dest"), None))[src]
             writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
             if result.status is Status.Success:
                 assert max(len(c) for c in writes) <= budget, (
@@ -1111,7 +1111,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         exec_cmd = _ShellExecutingExec(cwd=tmp_path)
         ft = _make_ft(exec_cmd, line_budget=budget)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         writes = [c for c in exec_cmd.calls if c.startswith("printf ")]
@@ -1136,7 +1136,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
         ft = _make_ft(exec_cmd, line_budget=typed_line_budget(BashFrame()))
 
-        per_file = await ft._run_get([Path("/remote/f.bin")], tmp_path, None)
+        per_file = await ft.run_get([Path("/remote/f.bin")], tmp_path, None)
         assert per_file[Path("/remote/f.bin")].status is Status.Success
 
         reads = [_parse_get_chunk_cmd(c) for c in exec_cmd.calls if c.startswith("dd ")]
@@ -1237,7 +1237,7 @@ class TestShellPutContentIntegrity:
         exec_cmd = _ShellExecutingExec(cwd=tmp_path)
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         landed = dest_dir / "payload.bin"
@@ -1270,7 +1270,7 @@ class TestShellPutContentIntegrity:
         exec_cmd = _ShellExecutingExec(cwd=tmp_path)
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert "INJECTED" not in "".join(exec_cmd.outputs), exec_cmd.outputs
@@ -1316,7 +1316,7 @@ class TestShellPutContentIntegrity:
         exec_cmd = _ShellExecutingExec(cwd=tmp_path, fail_when=fail_second_write)
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error
         real_dest = dest_dir / "payload.bin"
@@ -1348,7 +1348,7 @@ class TestShellPutDecodeFlagVerbatim:
         exec_cmd = _RecordingExec()
         ft = _make_ft(exec_cmd, base64_flag=flag)
 
-        await ft._run_put([src], dest_dir, None)
+        await ft.run_put([src], dest_dir, None)
 
         write_calls = [c for c in exec_cmd.calls if c.startswith("printf ")]
         assert write_calls
@@ -1417,7 +1417,7 @@ class TestShellPutPerFileFailure:
         )
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src1, src2], dest_dir, None, concurrent=False)
+        per_file = await ft.run_put([src1, src2], dest_dir, None, concurrent=False)
 
         assert per_file[src1].status is Status.Error
         assert per_file[src2].is_ok, "the second file must still be attempted after the first fails"
@@ -1442,7 +1442,7 @@ class TestShellPutPerFileFailure:
         )
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error
         assert "moving" in per_file[src].msg, (
@@ -1469,7 +1469,7 @@ class TestShellPutPerFileFailure:
         exec_cmd = _RecordingExec(fail_when=lambda c: c.startswith(": >"))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error
         rm_calls = [c for c in exec_cmd.calls if c.startswith("rm ")]
@@ -1508,7 +1508,7 @@ class _ParkingExec(_ShellExecutingExec):
     *release*, when given, un-parks a parked command and lets it run for real
     afterwards; without it the park ends only in a cancellation. One event
     for all parks is enough here because these tests never have two parked at
-    once -- ``_run_put`` is sequential and each park is cancelled or released
+    once -- ``run_put`` is sequential and each park is cancelled or released
     before the next command is issued.
 
     *raise_when* makes a command RAISE instead of returning a failing
@@ -1623,7 +1623,7 @@ class TestShellPutInterruptRemovesTheStagedTemp:
         exec_cmd = _ParkingExec(cwd=tmp_path, park_when=_after_the_first("printf "))
         ft = _make_ft(exec_cmd)
 
-        task = asyncio.create_task(ft._run_put([src], dest_dir, None))
+        task = asyncio.create_task(ft.run_put([src], dest_dir, None))
         await _wait_parked(exec_cmd, "the chunk loop never reached its second chunk")
 
         staged = list(dest_dir.glob("payload.bin.otto-*"))
@@ -1683,7 +1683,7 @@ class TestShellPutInterruptRemovesTheStagedTemp:
         ft = _make_ft(exec_cmd)
 
         with patch.object(shell_module, "_INTERRUPTED_CLEANUP_TIMEOUT", 30.0):
-            task = asyncio.create_task(ft._run_put([src], dest_dir, None))
+            task = asyncio.create_task(ft.run_put([src], dest_dir, None))
             await _wait_parked(exec_cmd, "the transfer never reached its final mv")
             assert list(dest_dir.glob("payload.bin.otto-*")), "nothing was staged to clean up"
             exec_cmd.parked.clear()
@@ -1738,7 +1738,7 @@ class TestShellPutInterruptRemovesTheStagedTemp:
         )
         ft = _make_ft(exec_cmd)
 
-        task = asyncio.create_task(ft._run_put([src], dest_dir, None))
+        task = asyncio.create_task(ft.run_put([src], dest_dir, None))
         await _wait_parked(exec_cmd, "the chunk loop never reached its second chunk")
 
         task.cancel()
@@ -1781,7 +1781,7 @@ class TestShellPutInterruptRemovesTheStagedTemp:
             patch.object(shell_module, "_INTERRUPTED_CLEANUP_TIMEOUT", 0.05),
             caplog.at_level("WARNING", logger="otto.lifecycle"),
         ):
-            task = asyncio.create_task(ft._run_put([src], dest_dir, None))
+            task = asyncio.create_task(ft.run_put([src], dest_dir, None))
             await _wait_parked(exec_cmd, "the transfer never reached its final mv")
             task.cancel()
             # Runaway guard, not a measurement: an unbounded cleanup parks
@@ -1819,7 +1819,7 @@ class TestShellPutEmptyFile:
         exec_cmd = _RecordingExec(answer_when=_size_answer(0))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert per_file[src].value == dest_dir / "empty.bin"
@@ -1862,7 +1862,7 @@ class TestShellPutProgress:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
         ft = _make_ft(exec_cmd)
 
-        result = await ft._run_put([src], dest_dir, lambda: handler)
+        result = await ft.run_put([src], dest_dir, lambda: handler)
 
         assert result[src].status is Status.Success, result[src].msg
         assert seen, "progress handler was never invoked"
@@ -1934,7 +1934,7 @@ class TestShellPutIntegrityVerification:
         )
         ft = _make_ft(exec_cmd, checksum="md5sum")
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         write_calls = [c for c in exec_cmd.calls if c.startswith("printf ")]
@@ -1974,7 +1974,7 @@ class TestShellPutIntegrityVerification:
         )
         ft = _make_ft(exec_cmd, checksum="md5sum")
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error
         assert "md5sum mismatch" in per_file[src].msg, per_file[src].msg
@@ -2008,7 +2008,7 @@ class TestShellPutIntegrityVerification:
         )
         ft = _make_ft(exec_cmd, checksum="md5sum")
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
 
@@ -2035,7 +2035,7 @@ class TestShellPutIntegrityVerification:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
         ft = _make_ft(exec_cmd, checksum="absent")
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert not any(c.startswith("md5sum") for c in exec_cmd.calls), (
@@ -2066,7 +2066,7 @@ class TestShellPutIntegrityVerification:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload) - 1))
         ft = _make_ft(exec_cmd, checksum="absent")
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error
         assert "size mismatch" in per_file[src].msg, per_file[src].msg
@@ -2091,7 +2091,7 @@ class TestShellPutIntegrityVerification:
         ft = _make_ft(exec_cmd, checksum="absent", stat_size="absent")
 
         with pytest.raises(UnsupportedOnUserlandError) as exc_info:
-            await ft._run_put([src], dest_dir, None)
+            await ft.run_put([src], dest_dir, None)
 
         assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
         assert "test2" in str(exc_info.value)
@@ -2137,7 +2137,7 @@ class TestShellGetRefusal:
         )
 
         with pytest.raises(UnsupportedOnUserlandError) as exc_info:
-            await ft._run_get([src], dest_dir, None)
+            await ft.run_get([src], dest_dir, None)
 
         assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
         assert "test2" in str(exc_info.value)
@@ -2154,7 +2154,7 @@ class TestShellGetRefusal:
         ft = _make_ft(exec_cmd, base64_flag="-d", stat_size="absent")
 
         with pytest.raises(UnsupportedOnUserlandError) as exc_info:
-            await ft._run_get([src], dest_dir, None)
+            await ft.run_get([src], dest_dir, None)
 
         assert exec_cmd.calls == [], f"refusal must precede every command, got {exec_cmd.calls}"
         assert "test2" in str(exc_info.value)
@@ -2185,7 +2185,7 @@ class TestShellGetSizeQuery:
         exec_cmd = _RecordingExec(outputs=["0"])
         ft = _make_ft(exec_cmd, stat_size="stat")
 
-        await ft._run_get([src], dest_dir, None)
+        await ft.run_get([src], dest_dir, None)
 
         assert exec_cmd.calls == [f"stat -c %s -- {src}"], exec_cmd.calls
 
@@ -2198,7 +2198,7 @@ class TestShellGetSizeQuery:
         exec_cmd = _RecordingExec(outputs=["0"])
         ft = _make_ft(exec_cmd, stat_size="wc")
 
-        await ft._run_get([src], dest_dir, None)
+        await ft.run_get([src], dest_dir, None)
 
         assert exec_cmd.calls == [f"wc -c < {src}"], exec_cmd.calls
 
@@ -2235,7 +2235,7 @@ class TestShellGetChunkStructure:
         exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         size_call, chunk_calls = exec_cmd.calls[0], exec_cmd.calls[1:]
@@ -2258,7 +2258,7 @@ class TestShellGetChunkStructure:
         exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         chunk_calls = exec_cmd.calls[1:]
@@ -2284,7 +2284,7 @@ class TestShellGetChunkStructure:
         exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         chunk_calls = exec_cmd.calls[1:]
@@ -2345,7 +2345,7 @@ class TestShellGetStaging:
         exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, lambda: handler)
+        per_file = await ft.run_get([src], dest_dir, lambda: handler)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert seen_calls == 3, seen_calls
@@ -2390,7 +2390,7 @@ class TestShellGetStaging:
         exec_cmd = _RecordingExec(outputs=[str(total), *_get_chunk_outputs(total)])
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, lambda: handler)
+        per_file = await ft.run_get([src], dest_dir, lambda: handler)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert seen_calls == 1, seen_calls
@@ -2433,7 +2433,7 @@ class TestShellGetContentIntegrity:
         exec_cmd = _ShellExecutingExec(cwd=tmp_path)
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, (per_file[src].msg, exec_cmd.calls)
         landed = dest_dir / "payload.bin"
@@ -2451,7 +2451,7 @@ class TestShellGetContentIntegrity:
         exec_cmd = _ShellExecutingExec(cwd=tmp_path)
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, (per_file[src].msg, exec_cmd.calls)
         landed = dest_dir / "payload.bin"
@@ -2479,7 +2479,7 @@ class TestShellGetContentIntegrity:
         exec_cmd = _ShellExecutingExec(cwd=tmp_path)
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         # The DISCRIMINATING assertion goes first, deliberately. Verified by
         # mutation (dropping shlex.quote on `dd`'s if= argument): the
@@ -2551,7 +2551,7 @@ class TestShellGetWrappedAndValidatedDecode:
         exec_cmd = _RecordingExec(outputs=[str(len(payload)), wrapped])
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         landed = dest_dir / "wrapped.bin"
@@ -2583,7 +2583,7 @@ class TestShellGetWrappedAndValidatedDecode:
         exec_cmd = _RecordingExec(outputs=[str(len(payload)), corrupted])
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error, (
             f"a stray non-alphabet byte mid-chunk must fail the transfer, not silently "
@@ -2641,7 +2641,7 @@ class TestShellGetPerFileFailure:
         exec_cmd = _ShellExecutingExec(cwd=tmp_path, fail_when=lambda c: c.startswith("stat "))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error
         assert not any(c.startswith("dd ") for c in exec_cmd.calls), exec_cmd.calls
@@ -2693,7 +2693,7 @@ class TestShellGetPerFileFailure:
         )
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error
         real_dest = dest_dir / "payload.bin"
@@ -2728,7 +2728,7 @@ class TestShellGetPerFileFailure:
         _make_the_staged_temps_close_fail(monkeypatch)
         ft = _make_ft(_ShellExecutingExec(cwd=tmp_path))
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error
         assert "local write failed" in (per_file[src].msg or ""), per_file[src].msg
@@ -2755,7 +2755,7 @@ class TestShellGetPerFileFailure:
         )
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src1, src2], dest_dir, None, concurrent=False)
+        per_file = await ft.run_get([src1, src2], dest_dir, None, concurrent=False)
 
         assert per_file[src1].status is Status.Error
         assert per_file[src2].is_ok, "the second file must still be attempted after the first fails"
@@ -2801,7 +2801,7 @@ class TestShellGetInterruptRemovesTheLocalTemp:
         exec_cmd = _ParkingExec(cwd=tmp_path, park_when=_after_the_first("dd "))
         ft = _make_ft(exec_cmd)
 
-        task = asyncio.create_task(ft._run_get([src], dest_dir, None))
+        task = asyncio.create_task(ft.run_get([src], dest_dir, None))
         await _wait_parked(exec_cmd, "the chunk loop never reached its second chunk read")
 
         staged = list(dest_dir.glob("payload.bin.otto-*"))
@@ -2858,7 +2858,7 @@ class TestShellGetInterruptRemovesTheLocalTemp:
         exec_cmd = _ParkingExec(cwd=tmp_path, park_when=_after_the_first("dd "))
         ft = _make_ft(exec_cmd)
 
-        task = asyncio.create_task(ft._run_get([src], dest_dir, None))
+        task = asyncio.create_task(ft.run_get([src], dest_dir, None))
         await _wait_parked(exec_cmd, "the chunk loop never reached its second chunk read")
         assert list(dest_dir.glob("payload.bin.otto-*")), "nothing was staged to fail on"
 
@@ -2894,7 +2894,7 @@ class TestShellGetEmptyFile:
         exec_cmd = _RecordingExec(outputs=["0"])
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, lambda: handler)
+        per_file = await ft.run_get([src], dest_dir, lambda: handler)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert per_file[src].value == dest_dir / "empty.bin"
@@ -2935,7 +2935,7 @@ class TestShellGetProgress:
         exec_cmd = _ShellExecutingExec(cwd=tmp_path)
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([src], dest_dir, lambda: handler)
+        per_file = await ft.run_get([src], dest_dir, lambda: handler)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert seen, "progress handler was never invoked"
@@ -2991,7 +2991,7 @@ class TestShellGetIntegrityVerification:
         )
         ft = _make_ft(exec_cmd, checksum="md5sum")
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         md5sum_calls = [c for c in exec_cmd.calls if c.startswith("md5sum")]
@@ -3051,7 +3051,7 @@ class TestShellGetIntegrityVerification:
         )
         ft = _make_ft(exec_cmd, checksum="md5sum")
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error
         assert "md5sum mismatch" in per_file[src].msg, per_file[src].msg
@@ -3084,7 +3084,7 @@ class TestShellGetIntegrityVerification:
         exec_cmd = _RecordingExec(outputs=[str(len(payload)), chunk])
         ft = _make_ft(exec_cmd, checksum="absent")
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         stat_calls = [c for c in exec_cmd.calls if _SIZE_QUERY_RE.match(c)]
@@ -3109,7 +3109,7 @@ class TestShellGetIntegrityVerification:
         exec_cmd = _RecordingExec(outputs=[str(len(payload)), short_chunk])
         ft = _make_ft(exec_cmd, checksum="absent")
 
-        per_file = await ft._run_get([src], dest_dir, None)
+        per_file = await ft.run_get([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error
         assert "size mismatch" in per_file[src].msg, per_file[src].msg
@@ -3505,7 +3505,7 @@ class TestEmittedCommandLinesArePinned:
         # `TestShellChunkLineLength` gives: `_put_one` never touches it
         # locally, and `tmp_path`'s name is run-dependent, so interpolating it
         # would make these literals unpinnable.
-        per_file = await ft._run_put([src], Path("/dest"), None)
+        per_file = await ft.run_put([src], Path("/dest"), None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         assert exec_cmd.calls == [
@@ -3531,7 +3531,7 @@ class TestEmittedCommandLinesArePinned:
         exec_cmd = _RecordingExec(answer_when=_size_answer(0))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], Path("/dest"), None)
+        per_file = await ft.run_put([src], Path("/dest"), None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         assert exec_cmd.calls == [
@@ -3556,7 +3556,7 @@ class TestEmittedCommandLinesArePinned:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], Path("/dest"), None)
+        per_file = await ft.run_put([src], Path("/dest"), None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         first_blob = base64.b64encode(payload[:_SHELL_CHUNK_BYTES]).decode("ascii")
@@ -3589,7 +3589,7 @@ class TestEmittedCommandLinesArePinned:
         exec_cmd = _RecordingExec(outputs=outputs)
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([remote], tmp_path, None)
+        per_file = await ft.run_get([remote], tmp_path, None)
         assert per_file[remote].status is Status.Success, per_file[remote].msg
         assert (tmp_path / "stored.bin").read_bytes() == _PINNED_PAYLOAD
 
@@ -3617,7 +3617,7 @@ class TestEmittedCommandLinesArePinned:
         exec_cmd = _RecordingExec(outputs=outputs)
         ft = _make_ft(exec_cmd, stat_size="wc", checksum="md5sum")
 
-        per_file = await ft._run_get([remote], tmp_path, None)
+        per_file = await ft.run_get([remote], tmp_path, None)
         assert per_file[remote].status is Status.Success, per_file[remote].msg
 
         assert exec_cmd.calls == [
@@ -3643,7 +3643,7 @@ class TestEmittedCommandLinesArePinned:
         exec_cmd = _RecordingExec(fail_when=lambda c: c.startswith("printf "))
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_put([src], Path("/dest"), None)
+        per_file = await ft.run_put([src], Path("/dest"), None)
 
         assert per_file[src].status is Status.Error
         assert per_file[src].msg == (
@@ -3664,7 +3664,7 @@ class TestEmittedCommandLinesArePinned:
         )
         ft = _make_ft(exec_cmd)
 
-        per_file = await ft._run_get([remote], tmp_path, None)
+        per_file = await ft.run_get([remote], tmp_path, None)
 
         assert per_file[remote].status is Status.Error
         assert per_file[remote].msg == (
@@ -3790,7 +3790,7 @@ def _uu_applet_shims(tmp_path: Path) -> Path:
 
 
 async def _resolved_ft(exec_cmd: "Callable[..., object]", **kwargs: object) -> ShellFileTransfer:
-    """A transfer whose userland has been resolved, as ``_run_put``/``_run_get`` leave it.
+    """A transfer whose userland has been resolved, as ``run_put``/``run_get`` leave it.
 
     ``_select_codec`` reads capabilities, and ``Userland`` refuses to be read
     before ``resolve()`` -- deliberately, so nothing consumes a value that was
@@ -3836,7 +3836,7 @@ class TestCodecSelection:
       ``test_an_unsettled_applet_attempts_uu_rather_than_refusing``;
     - dropping the applet check altogether, so a codec-less device gets uu,
       reds 4 -- this class's neither-codec and direction tests plus both
-      ``_run_put``/``_run_get`` refusal tests;
+      ``run_put``/``run_get`` refusal tests;
     - having GET read ``uudecode`` reds exactly 1,
       ``TestShellGetRefusal::test_neither_codec_raises_before_any_command``,
       which is the one place a device with only ``uudecode`` is put in front
@@ -4043,7 +4043,7 @@ class TestUuencodeEmittedCommands:
         exec_cmd = _RecordingExec(answer_when=_size_answer(len(_PINNED_PAYLOAD)))
         ft = _make_ft(exec_cmd, base64_flag="absent")
 
-        per_file = await ft._run_put([src], Path("/dest"), None)
+        per_file = await ft.run_put([src], Path("/dest"), None)
         assert per_file[src].status is Status.Success, per_file[src].msg
 
         temp = "/dest/stored.bin.otto-0f1e2d3c"
@@ -4076,7 +4076,7 @@ class TestUuencodeEmittedCommands:
         exec_cmd = _RecordingExec(answer_when=_size_answer(_SHELL_CHUNK_BYTES + 1))
         ft = _make_ft(exec_cmd, base64_flag="absent")
 
-        await ft._run_put([src], Path("/dest"), None)
+        await ft.run_put([src], Path("/dest"), None)
 
         temp = "/dest/payload.bin.otto-0f1e2d3c"
         scratch = f"{temp}.otto-5a6b7c8d"
@@ -4146,7 +4146,7 @@ class TestUuencodeEmittedCommands:
             src.write_bytes(payload)
             exec_cmd = _RecordingExec(answer_when=_size_answer(len(payload)))
             ft = _make_ft(exec_cmd, base64_flag="absent")
-            await ft._run_put([src], Path("/dest"), None)
+            await ft.run_put([src], Path("/dest"), None)
             # The LONGEST command emitted, not the one whose prefix says
             # "uudecode": a form that escaped the frame would change that
             # prefix too, and a filter keyed on it would fail with an empty
@@ -4175,7 +4175,7 @@ class TestUuencodeEmittedCommands:
         exec_cmd = _RecordingExec(outputs=[str(len(_PINNED_PAYLOAD)), frame])
         ft = _make_ft(exec_cmd, base64_flag="absent", checksum="absent")
 
-        per_file = await ft._run_get([remote], tmp_path, None)
+        per_file = await ft.run_get([remote], tmp_path, None)
         assert per_file[remote].status is Status.Success, per_file[remote].msg
 
         assert exec_cmd.calls == [
@@ -4202,7 +4202,7 @@ class TestUuencodeEmittedCommands:
         exec_cmd = _RecordingExec(fail_when=lambda c: c.startswith("uudecode "))
         ft = _make_ft(exec_cmd, base64_flag="absent")
 
-        per_file = await ft._run_put([src], Path("/dest"), None)
+        per_file = await ft.run_put([src], Path("/dest"), None)
 
         temp = "/dest/stored.bin.otto-0f1e2d3c"
         scratch = f"{temp}.otto-5a6b7c8d"
@@ -4238,7 +4238,7 @@ class TestUuencodeThroughARealShell:
         exec_cmd = _ShellExecutingExec(tmp_path, path_prefix=_uu_applet_shims(tmp_path))
         ft = _make_ft(exec_cmd, base64_flag="absent", checksum="absent")
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Success, per_file[src].msg
         assert (dest_dir / "payload.bin").read_bytes() == payload
@@ -4299,7 +4299,7 @@ class TestUuencodeThroughARealShell:
         exec_cmd = _ShellExecutingExec(tmp_path, path_prefix=_uu_applet_shims(tmp_path))
         ft = _make_ft(exec_cmd, base64_flag="absent", checksum="absent")
 
-        await ft._run_put([src], dest_dir, None)
+        await ft.run_put([src], dest_dir, None)
 
         assert sorted(p.name for p in dest_dir.iterdir()) == ["payload.bin"], (
             f"a completed uu PUT left something beside the destination: "
@@ -4337,7 +4337,7 @@ class TestUuencodeThroughARealShell:
         exec_cmd = _CorruptingExec(tmp_path, path_prefix=shims)
         ft = _make_ft(exec_cmd, base64_flag="absent", checksum="absent")
 
-        per_file = await ft._run_put([src], dest_dir, None)
+        per_file = await ft.run_put([src], dest_dir, None)
 
         assert per_file[src].status is Status.Error
         assert list(dest_dir.iterdir()) == [], (
@@ -4358,7 +4358,7 @@ class TestUuencodeThroughARealShell:
         exec_cmd = _ShellExecutingExec(tmp_path, path_prefix=_uu_applet_shims(tmp_path))
         ft = _make_ft(exec_cmd, base64_flag="absent", checksum="absent")
 
-        per_file = await ft._run_get([remote], landing, None)
+        per_file = await ft.run_get([remote], landing, None)
 
         assert per_file[remote].status is Status.Success, per_file[remote].msg
         assert (landing / "payload.bin").read_bytes() == _UU_SWEEP_PAYLOAD

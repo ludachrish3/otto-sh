@@ -1,0 +1,12 @@
+{
+  "format": 8,
+  "tier_order": ["system", "manual"],
+  "files": [{"path": "/work/src/app.c", "lines": {"1": {"hits": {"system": 3}, "branches": [], "state": null, "run": {"0": 3}, "ticket": ["PROJ-1"]}, "2": {"hits": {"manual": 1}, "branches": [{"block": 0, "branch": 0, "hits": {"system": 1}, "reachable": {"system": true}}, {"block": 0, "branch": 1, "hits": {}, "reachable": {"system": false}}], "state": null, "run": {"1": 1}, "asserted": {"manual": [0]}}, "3": {"hits": {}, "branches": [], "state": null}}, "excluded_lines": [4], "branch_excluded_lines": [5], "functions": [{"name": "main", "start_line": 1, "end_line": 3, "hits": {"system": 1}}]}],
+  "runs": [{"id": 0, "tier": "system", "label": "board1", "board": "board1", "host": "board1", "product": "app", "labs": ["lab1"], "captured_at": "2026-07-01T08:00:00Z", "tester": null, "ticket": null, "note": null, "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "dirty_remap": false, "aging": false}, {"id": 1, "tier": "manual", "label": "bench", "board": "board1", "host": "board1", "product": "app", "labs": [], "captured_at": "", "tester": {"name": "Ada"}, "ticket": "PROJ-1", "note": "by hand", "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "dirty_remap": false, "aging": false}],
+  "tier_colors": {},
+  "thresholds": {"high": 80.0, "medium": 70.0},
+  "stat_types": ["line", "branch", "decision"],
+  "tickets": {"PROJ-1": {"id": "PROJ-1", "url": "https://t.example/PROJ-1", "commits": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}},
+  "overrides": [{"id": 0, "tier": "manual", "key": "line:src/app.c:2", "reason": "bench", "as_of": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
+  "overrides_file_active": true
+}

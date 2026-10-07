@@ -1086,7 +1086,7 @@ def test_no_panel_when_otto_registered_nothing():
 def test_list_instructions_shows_the_defaults_with_no_repos_configured(registered):
     from unittest.mock import patch
 
-    with patch("otto.config.bootstrapped.get_repos", return_value=[]):
+    with patch("otto.bootstrap.get_repos", return_value=[]):
         result = runner.invoke(run_app, ["--list-instructions"])
 
     assert result.exit_code == 0, result.output
@@ -1123,7 +1123,7 @@ def test_list_instructions_puts_the_defaults_ahead_of_the_repo_panels(registered
     from unittest.mock import patch
 
     repos = [_PanelRepo("first-repo 1.0"), _PanelRepo("second-repo 1.0")]
-    with patch("otto.config.bootstrapped.get_repos", return_value=repos):
+    with patch("otto.bootstrap.get_repos", return_value=repos):
         result = runner.invoke(run_app, ["--list-instructions"])
 
     assert result.exit_code == 0, result.output
@@ -1498,7 +1498,7 @@ class TestProjectInstructionOwnOptionValidation:
         never a narrowing.
         """
         monkeypatch.setattr(
-            "otto.config.bootstrapped.get_ordered_repos",
+            "otto.bootstrap.get_ordered_repos",
             lambda: [fake_repo("guarded", project_scope=None, sut_dir="/tmp/guarded")],
         )
 
@@ -1549,8 +1549,8 @@ def _wire_widget_lab(monkeypatch, seen: list, names=("widget", "dormant")) -> No
 
     publish_project_instructions()
     repos = [fake_repo(n, project_scope=None, sut_dir=f"/tmp/{n}") for n in names]
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: repos)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: repos)
 
 
 def _install_skips(caplog) -> list[str]:

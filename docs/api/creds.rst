@@ -12,33 +12,3 @@ For configuration and the merge rules see
 :doc:`../cookbook/extending/creds-backends`.
 
 .. automodule:: otto.creds
-   :no-members:
-
-.. autofunction:: otto.creds.register_creds_backend
-
-.. autofunction:: otto.creds.get_creds_backend_class
-
-The store contract
-------------------
-
-.. automodule:: otto.creds.protocol
-
-Configuration
--------------
-
-.. automodule:: otto.creds.config
-
-The json store
---------------
-
-.. automodule:: otto.creds.json_store
-
-Backend registry
-----------------
-
-.. automodule:: otto.creds.registry
-
-Exceptions
-----------
-
-.. automodule:: otto.creds.errors

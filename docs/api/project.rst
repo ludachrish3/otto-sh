@@ -12,11 +12,6 @@ inherits (``InstallOptions`` and its five siblings) are exported from
 ``otto.project``. :doc:`../cli/run/defaults` is the guide-level
 treatment, flag tables and all.
 
-.. automodule:: otto.project
-   :no-members:
-
-.. automodule:: otto.project.actions
-
 .. Each field's rendered annotation is ``Annotated[bool, <OptionInfo object
    at 0x...>]`` -- an address-bearing repr no cross-reference can
    resolve, so the fields are excluded here; every flag's documentation home
@@ -25,17 +20,7 @@ treatment, flag tables and all.
    repr and fails the docs gate under -W, in a build whose error names an
    address rather than the field that was added.
 
-.. automodule:: otto.project.options
+.. automodule:: otto.project
    :exclude-members: ensure, recover_partial, product_logs, debug_logs,
                      reset_impairments, remove_tunnels, require_product_logs,
                      dev, toolchain, full
-
-.. automodule:: otto.project.orchestrator
-
-.. automodule:: otto.project.commands
-
-.. automodule:: otto.project.plan
-
-.. automodule:: otto.project.render
-
-.. automodule:: otto.project.state

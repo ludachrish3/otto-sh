@@ -3,7 +3,7 @@
 import pytest
 
 from otto import bootstrap as bs
-from otto.config import get_ordered_repos
+from otto.bootstrap import get_ordered_repos
 from tests._fixtures.sutrepo import make_sut_repo
 
 

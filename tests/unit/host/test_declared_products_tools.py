@@ -312,9 +312,9 @@ def _factory_world(monkeypatch):
         declared_products=[product_entry],
         declared_dev_tools=[dev_tool_entry],
     )
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: [repo])
-    monkeypatch.setattr("otto.config.bootstrapped.is_bootstrapped", lambda: True)
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.is_bootstrapped", lambda: True)
 
 
 def _factory_host():

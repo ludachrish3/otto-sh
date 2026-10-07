@@ -20,13 +20,16 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config.coverage_settings import CoverageConfigError as CoverageConfigError
+    from .capture.gitio import GitUnavailableError as GitUnavailableError
     from .collect import CollectResult as CollectResult
     from .collect import clean_coverage as clean_coverage
     from .collect import collect_coverage as collect_coverage
     from .config import DestinationError as DestinationError
     from .errors import CoverageCleanError as CoverageCleanError
+    from .errors import CoverageDataMismatchError as CoverageDataMismatchError
     from .errors import CoverageInputError as CoverageInputError
     from .errors import CoverageNotInstrumentedError as CoverageNotInstrumentedError
+    from .errors import CoverageToolVersionError as CoverageToolVersionError
     from .errors import NoCoverageDataError as NoCoverageDataError
     from .errors import NoCoverageHostsError as NoCoverageHostsError
     from .fetcher.remote import GcdaFetcher as GcdaFetcher
@@ -34,10 +37,13 @@ if TYPE_CHECKING:
     from .report_inputs import ReportInputs as ReportInputs
     from .report_inputs import resolve_report_inputs as resolve_report_inputs
     from .reporter import CoverageReporter as CoverageReporter
+    from .reporter import run_coverage_report as run_coverage_report
     from .reports import CleanReport as CleanReport
     from .reports import FailedReset as FailedReset
     from .reports import GetReport as GetReport
     from .store.model import CoverageStore as CoverageStore
+    from .tiers import TierConfig as TierConfig
+    from .tiers import resolve_get_tier as resolve_get_tier
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
@@ -45,21 +51,27 @@ _LAZY_ATTRS: dict[str, str] = {
     "CollectResult": "otto.coverage.collect",
     "CoverageCleanError": "otto.coverage.errors",
     "CoverageConfigError": "otto.config.coverage_settings",
+    "CoverageDataMismatchError": "otto.coverage.errors",
     "CoverageInputError": "otto.coverage.errors",
     "CoverageNotInstrumentedError": "otto.coverage.errors",
     "CoverageReporter": "otto.coverage.reporter",
     "CoverageStore": "otto.coverage.store.model",
+    "CoverageToolVersionError": "otto.coverage.errors",
     "DestinationError": "otto.coverage.config",
     "FailedReset": "otto.coverage.reports",
     "GcdaFetcher": "otto.coverage.fetcher.remote",
     "GetReport": "otto.coverage.reports",
+    "GitUnavailableError": "otto.coverage.capture.gitio",
     "NoCoverageDataError": "otto.coverage.errors",
     "NoCoverageHostsError": "otto.coverage.errors",
     "ReportInputs": "otto.coverage.report_inputs",
+    "TierConfig": "otto.coverage.tiers",
     "clean_coverage": "otto.coverage.collect",
     "collect_coverage": "otto.coverage.collect",
     "get_coverage": "otto.coverage.get",
+    "resolve_get_tier": "otto.coverage.tiers",
     "resolve_report_inputs": "otto.coverage.report_inputs",
+    "run_coverage_report": "otto.coverage.reporter",
 }
 
 
@@ -82,19 +94,25 @@ __all__ = [
     "CollectResult",
     "CoverageCleanError",
     "CoverageConfigError",
+    "CoverageDataMismatchError",
     "CoverageInputError",
     "CoverageNotInstrumentedError",
     "CoverageReporter",
     "CoverageStore",
+    "CoverageToolVersionError",
     "DestinationError",
     "FailedReset",
     "GcdaFetcher",
     "GetReport",
+    "GitUnavailableError",
     "NoCoverageDataError",
     "NoCoverageHostsError",
     "ReportInputs",
+    "TierConfig",
     "clean_coverage",
     "collect_coverage",
     "get_coverage",
+    "resolve_get_tier",
     "resolve_report_inputs",
+    "run_coverage_report",
 ]

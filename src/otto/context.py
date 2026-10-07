@@ -2,7 +2,7 @@
 
 Owns the active Lab, the per-invocation runtime flags, and one host scope per
 event loop. Propagated via a ContextVar so the bare module accessors
-(otto.config.all_hosts/get_host) can stay zero-argument, while explicit
+(otto.lab.all_hosts/get_host) can stay zero-argument, while explicit
 passing (OttoContext methods, open_context) is first-class.
 """
 
@@ -29,6 +29,20 @@ if TYPE_CHECKING:
     from .host.host import BaseHost
     from .host.remote_host import RemoteHost
     from .params import OptionsSource
+
+__all__ = [
+    "OttoContext",
+    "ProjectContextView",
+    "Variant",
+    "get_context",
+    "open_context",
+    "reset_context",
+    "reset_variant",
+    "set_context",
+    "set_variant",
+    "try_get_context",
+    "variant",
+]
 
 T = TypeVar("T")
 
@@ -195,6 +209,8 @@ def set_context(ctx: "OttoContext") -> "Token[OttoContext | None]":
 
 
 Variant = Literal["debug", "field"]
+"""The product variant a run selects, ``"debug"`` or ``"field"``."""
+
 VARIANTS: tuple[Variant, ...] = ("debug", "field")
 """The two product variants a run can select (``--field``/``--debug``)."""
 
@@ -460,7 +476,7 @@ class OttoContext:
         if self.lab.name == LIBRARY_LAB_NAME:
             return False
         try:
-            from .config import get_repos
+            from .bootstrap import get_repos
 
             repos = get_repos()
         except Exception as exc:  # noqa: BLE001 — no repos reachable ⇒ no [coverage] ⇒ off
@@ -673,7 +689,7 @@ class OttoContext:
         if self.lab.name == LIBRARY_LAB_NAME:
             return {}
         try:
-            from .config import get_ordered_repos
+            from .bootstrap import get_ordered_repos
 
             repos = get_ordered_repos()
         except Exception as exc:  # noqa: BLE001 — no repos reachable ⇒ no declarations ⇒ fallback
@@ -1243,8 +1259,7 @@ async def open_context(
     # First, so an invalid value refuses before anything needs undoing.
     variant_token = None if variant is None else set_variant(variant)
     try:
-        from .bootstrap import bootstrap
-        from .config import get_env
+        from .bootstrap import bootstrap, get_env
         from .config.lab import Lab, split_lab_names
         from .session import build_lab, check_dependencies, check_repos, select_projects
 

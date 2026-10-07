@@ -111,7 +111,7 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     Otto's answer, not this suite's: ``remote_scratch`` is ``None`` for exactly
     the hosts whose filesystem reports ``supports_transfer`` False -- the flag
     :class:`~otto.host.transfer.console.ConsoleFileTransfer` short-circuits both
-    ``_run_put`` and ``_run_get`` on. A device with no transfer has no transfer
+    ``run_put`` and ``run_get`` on. A device with no transfer has no transfer
     whose progress could be watched, which is a property of the device rather
     than a defect. See ``test_transfer_contract.applicable_cell`` for the full
     account of why this is a declared domain and not a skip.

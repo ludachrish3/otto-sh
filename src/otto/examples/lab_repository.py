@@ -38,14 +38,15 @@ Direct usage:
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..config.lab import Lab
-from ..host.element import Element
-from ..host.factory import create_host_from_dict, host_identity
+from ..host import Element, create_host_from_dict, host_identity
 from ..inventory import InventoryError, resolve_host_entry
+from ..lab import Lab
 from ..labs import HostSummary, LabNotFoundError, logins_of_host_data
 
 if TYPE_CHECKING:
     from ..inventory import Inventory
+
+__all__ = ["ExampleLabRepository"]
 
 # A tiny built-in dataset so the sample works out of the box (doctests +
 # conformance). Each value is a list of ELEMENT dicts, each carrying the host

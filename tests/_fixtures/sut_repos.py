@@ -2,7 +2,7 @@
 
 Shared by ``tests/unit/suite`` and ``tests/unit/cli``: each conftest imports
 the fixtures it uses from here, so both directories build repos, wire
-``otto.config.get_repos`` and evict generated modules one way. The repo
+``otto.bootstrap.get_repos`` and evict generated modules one way. The repo
 double (:func:`repo_double`) is for the tests that stub the pytest session
 itself and only need a repo with a test directory.
 """
@@ -77,7 +77,7 @@ def one_repo_double(tmp_path, monkeypatch) -> MagicMock:
     """Make a :func:`repo_double` the lab's only repo; return it."""
 
     repo = repo_double(tmp_path)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
     return repo
 
 
@@ -106,11 +106,11 @@ def _generated_modules_evicted(tmp_path, monkeypatch):
 
 
 def _wire_repos(monkeypatch, sut_dirs):
-    """Make ``otto.config.get_repos`` answer real ``Repo`` objects for *sut_dirs*."""
+    """Make ``otto.bootstrap.get_repos`` answer real ``Repo`` objects for *sut_dirs*."""
     from otto.config.repo import Repo
 
     repos = [Repo(sut_dir=d) for d in sut_dirs]
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: repos)
     return repos
 
 

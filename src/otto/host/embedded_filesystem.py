@@ -40,6 +40,8 @@ from typing import ClassVar
 
 from ..registry import Ref, Registry, caller_module
 
+__all__ = ["EmbeddedFileSystem", "register_filesystem"]
+
 
 class EmbeddedFileSystem(ABC):
     """Abstract base for on-device filesystem variants.

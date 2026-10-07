@@ -90,7 +90,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         *last* match is the real command's. ``-1`` if none is found (e.g. an
         unpatched 2.7 build — a clear signal the firmware patch is missing).
         """
-        lines = self._region_before_end(buffer, m)
+        lines = self.region_before_end(buffer, m)
         begin = self._begin_line(lines, m)
         for ln in reversed(lines[begin + 1 :]):
             match = _RETCODE_RE.search(ln)
@@ -116,7 +116,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         the first line the shell prints after BEGIN's code, so this never reads
         or hard-codes the prompt text.
         """
-        lines = self._region_before_end(buffer, m)
+        lines = self.region_before_end(buffer, m)
         begin = self._begin_line(lines, m)
         rc_idx = [i for i in range(begin + 1, len(lines)) if _RETCODE_RE.search(lines[i])]
         if len(rc_idx) < 2:

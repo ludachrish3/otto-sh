@@ -174,6 +174,14 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     # typer is otto.params's only heavy import, and it's function-local (see
     # _default_hidden) -- importing the module alone must never load it.
     "import otto.params": ["typer"],
+    # --- Library facades. ---
+    # The composition root's accessors cost nothing until called: importing
+    # otto.bootstrap loads neither the settings parsers nor the host classes.
+    "import otto.bootstrap": ["otto.config", "otto.host"],
+    # The lab facade is lazy: a bare import loads no implementation, and its
+    # lightest name, the error class, loads only the scope module.
+    "import otto.lab": ["otto.config", "otto.host"],
+    "from otto.lab import EmptySelectionError": ["otto.config.fleet", "otto.host"],
 }
 
 # The positive control, for a row whose forbidden list alone could pass by
@@ -182,6 +190,7 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
 # the host package's hosts (its row above).
 IMPORT_MUST_LOAD: dict[str, list[str]] = {
     "from otto.host import LocalHost": ["otto.host.local_host"],
+    "from otto.lab import fleet_of_interest": ["otto.config.fleet"],
 }
 
 # Runs in the child. It records, for each watched module, the frames that

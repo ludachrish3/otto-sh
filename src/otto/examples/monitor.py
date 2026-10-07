@@ -24,6 +24,8 @@ from typing_extensions import override
 
 from ..monitor.parsers import MetricDataPoint, MetricParser, ParseContext
 
+__all__ = ["UptimeParser"]
+
 
 class UptimeParser(MetricParser):
     """Chart host uptime in seconds from ``cat /proc/uptime``.

@@ -250,7 +250,7 @@ chains required) and the session protocol's expect/send primitives
 become available inside containers.
 
 The session is implemented as `_DockerSshSession`, a thin subclass of
-`SshSession` that overrides only `_open` to splice
+`SshSession` that overrides only `open_transport` to splice
 `docker exec -it <cid> sh` in front of the channel's default shell.
 The sentinel-wrapped command execution, expect handling, line-by-line
 output streaming, and `\x03`-based timeout recovery all come from the

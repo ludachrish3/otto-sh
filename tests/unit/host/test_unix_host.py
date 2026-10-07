@@ -3462,7 +3462,7 @@ class TestInteractiveTelnetTeardown:
             caplog.at_level("WARNING", logger="otto.host.connections"),
             pytest.raises(RuntimeError, match="telnet connect refused"),
         ):
-            await telnet_host._login()
+            await telnet_host.run_login()
 
         client = _FakeInteractiveTelnetClient.last
         assert client is not None
@@ -3479,7 +3479,7 @@ class TestInteractiveTelnetTeardown:
         _FakeInteractiveTelnetClient.close_error = OSError("close blew up")
 
         with caplog.at_level("WARNING", logger="otto.host.connections"):
-            await telnet_host._login()
+            await telnet_host.run_login()
 
         assert any(
             "interactive telnet client close teardown failed" in r.message for r in caplog.records

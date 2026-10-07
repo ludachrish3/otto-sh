@@ -484,13 +484,13 @@ def assert_transfer_backend_conforms(cls: "type[BaseFileTransfer]") -> None:
     * a ``bool`` in
       :attr:`~otto.host.transfer.BaseFileTransfer.authenticates` — the
       inherited ``False`` counts;
-    * ``_apply_mode`` overridden, as an ``async def``, when
+    * ``apply_mode`` overridden, as an ``async def``, when
       :attr:`~otto.host.transfer.BaseFileTransfer.supports_mode` is true —
       the base's raises, so a backend promising modes without one fails every
       ``put`` that asks for a mode. A backend that does not support modes may
       leave it alone, or override it unused;
     * ``put_files``/``get_files`` (what the host calls) and
-      ``_run_put``/``_run_get`` (what the base class calls) accepting every
+      ``run_put``/``run_get`` (what the base class calls) accepting every
       keyword ``BaseFileTransfer``'s own definitions name, read off those
       definitions rather than retyped here;
     * an overriding ``create`` classmethod — the base's raises, so a backend
@@ -529,20 +529,20 @@ def assert_transfer_backend_conforms(cls: "type[BaseFileTransfer]") -> None:
     if getattr(cls, "supports_mode", False):
         # Static lookups on both sides: the question is WHICH class defines
         # the attribute, not what binding it produces.
-        apply_mode = inspect.getattr_static(cls, "_apply_mode", None)
-        overridden = apply_mode is not vars(BaseFileTransfer)["_apply_mode"]
+        apply_mode = inspect.getattr_static(cls, "apply_mode", None)
+        overridden = apply_mode is not vars(BaseFileTransfer)["apply_mode"]
         c.expect(
             overridden,
-            "BaseFileTransfer._apply_mode: supports_mode is True, so _apply_mode must be "
+            "BaseFileTransfer.apply_mode: supports_mode is True, so apply_mode must be "
             "overridden — the base implementation raises NotImplementedError, so every "
             "put given a mode would fail after its bytes landed",
         )
         if overridden:
             c.expect(
                 inspect.iscoroutinefunction(apply_mode),
-                "BaseFileTransfer._apply_mode: must be an async def — the base class awaits it",
+                "BaseFileTransfer.apply_mode: must be an async def — the base class awaits it",
             )
-    for meth in ("put_files", "get_files", "_run_put", "_run_get"):
+    for meth in ("put_files", "get_files", "run_put", "run_get"):
         actual = getattr(cls, meth, None)
         if actual is None:
             c.expect(False, f"BaseFileTransfer.{meth}: missing")

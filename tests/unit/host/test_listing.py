@@ -138,9 +138,9 @@ def ingest(monkeypatch):
 
     def go(repos, hosts):
 
-        monkeypatch.setattr("otto.config.bootstrapped.is_bootstrapped", lambda: True)
-        monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: list(repos))
-        monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: list(repos))
+        monkeypatch.setattr("otto.bootstrap.is_bootstrapped", lambda: True)
+        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: list(repos))
+        monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: list(repos))
         for host in hosts:
             apply_providers(host)
         return SimpleNamespace(name="labA", hosts={h.id: h for h in hosts})

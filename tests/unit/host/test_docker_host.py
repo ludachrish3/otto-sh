@@ -416,7 +416,7 @@ def _stubbed_docker_channel():
     """Run the REAL channel machinery with only the transport stubbed.
 
     The bind seam is made of the session factory (which wires ``user_getter``
-    and ``on_open``), ``_DockerSshSession._open`` (which builds the command
+    and ``on_open``), ``_DockerSshSession.open_transport`` (which builds the command
     and fires the callback), and ``alive``. All of those run for real here;
     what is replaced is the ssh channel underneath and the marker handshake.
     Tests therefore enter at ``host.run``/``host.send``/``host.open_session``
@@ -435,7 +435,7 @@ def _stubbed_docker_channel():
     async def _fake_init(self):
         if self._initialized:
             return
-        await self._open()  # the real _DockerSshSession._open
+        await self.open_transport()  # the real _DockerSshSession.open_transport
         self._initialized = True
         self._alive = True
         opened.append(self)
@@ -454,7 +454,7 @@ def _stubbed_docker_channel():
         self._initialized = False
 
     with (
-        patch.object(SshSession, "_open", new=_fake_transport_open),
+        patch.object(SshSession, "open_transport", new=_fake_transport_open),
         patch.object(SshSession, "close", new=_fake_close),
         patch.object(ShellSession, "_ensure_initialized", new=_fake_init),
         patch.object(ShellSession, "run_cmd", new=_fake_run_cmd),
@@ -621,7 +621,7 @@ async def test_an_open_that_raises_leaves_no_bind():
     with _stubbed_docker_channel() as opened:
         with (
             patch.object(
-                SshSession, "_open", new=AsyncMock(side_effect=RuntimeError("no channel"))
+                SshSession, "open_transport", new=AsyncMock(side_effect=RuntimeError("no channel"))
             ),
             pytest.raises(RuntimeError, match="no channel"),
         ):
@@ -671,7 +671,7 @@ async def test_a_transport_failure_inside_run_cmd_leaves_no_pending_user():
     with _stubbed_docker_channel() as opened:
         with (
             patch.object(
-                SshSession, "_open", new=AsyncMock(side_effect=RuntimeError("no channel"))
+                SshSession, "open_transport", new=AsyncMock(side_effect=RuntimeError("no channel"))
             ),
             pytest.raises(RuntimeError, match="no channel"),
         ):
@@ -705,7 +705,7 @@ async def test_a_handshake_that_fails_after_the_open_leaves_no_live_bind():
     with _stubbed_docker_channel() as opened:
 
         async def _open_then_fail(self):
-            await self._open()  # fires the on-open callback for real
+            await self.open_transport()  # fires the on-open callback for real
             raise RuntimeError("handshake failed")
 
         with (
@@ -891,7 +891,7 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     result = await h.exec("echo hi")
@@ -913,7 +913,7 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
 async def test_placeholder_no_repo_raises(monkeypatch):
     """No configured repo to auto-start -> clear 'not running' error."""
     h = _make_container(container_id="")
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: _mock_repos(repo_name=None))
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: _mock_repos(repo_name=None))
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
         await h.exec("echo hi")
@@ -925,7 +925,7 @@ async def test_placeholder_auto_up_failure_raises(monkeypatch):
     h = _make_container(container_id="")
     compose_up = AsyncMock(side_effect=RuntimeError("compose boom"))
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
         await h.exec("echo hi")
@@ -959,7 +959,7 @@ async def test_placeholder_use_case_project_auto_starts_via_deploy(monkeypatch):
     compose_up = AsyncMock()
     monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [uc_repo])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [uc_repo])
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     result = await h.exec("echo hi")
@@ -1008,7 +1008,7 @@ async def test_use_case_auto_up_picks_the_container_of_its_own_parent(monkeypatc
     )
     deploy = AsyncMock(return_value=stack)
     monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _uc_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _uc_repos)
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     await h.exec("echo hi")
@@ -1037,7 +1037,7 @@ async def test_use_case_auto_up_hands_a_decline_back_unwrapped(monkeypatch):
         raise declined
 
     monkeypatch.setattr("otto.docker.deployment.deploy", declining_deploy)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _uc_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _uc_repos)
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(CommandNotRunError) as exc:
@@ -1065,7 +1065,7 @@ async def test_use_case_auto_up_wraps_a_real_deploy_failure(monkeypatch):
         raise HostCommandError("docker compose up failed: no such image")
 
     monkeypatch.setattr("otto.docker.deployment.deploy", failing_deploy)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _uc_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _uc_repos)
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(RuntimeError, match="not running, and auto-start failed") as exc:
@@ -1092,7 +1092,7 @@ async def test_use_case_auto_up_no_container_for_service_is_refused(monkeypatch)
     stack = SimpleNamespace(hosts={}, by_host={})
     deploy = AsyncMock(return_value=stack)
     monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _uc_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _uc_repos)
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(
@@ -1111,7 +1111,7 @@ async def test_legacy_auto_up_with_no_repo_names_the_building_remedy(monkeypatch
     """No repo named ``repo1`` is configured: the remedy builds, because an
     unbuilt image is the usual reason a bring-up is needed at all."""
     h = _make_container(container_id="")
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: _mock_repos(None))
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: _mock_repos(None))
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(RuntimeError, match="no repo named 'repo1'") as exc:
@@ -1129,7 +1129,7 @@ async def test_legacy_auto_up_wide_arm_names_the_building_remedy(monkeypatch):
         raise HostCommandError("docker compose up failed: no such image")
 
     monkeypatch.setattr("otto.docker.compose.compose_up", failing_compose_up)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(RuntimeError, match="auto-start failed") as exc:
@@ -1143,7 +1143,7 @@ async def test_legacy_auto_up_with_no_service_container_names_the_building_remed
     """``compose_up`` succeeds but never produced this service's container."""
     h = _make_container(container_id="")
     monkeypatch.setattr("otto.docker.compose.compose_up", AsyncMock(return_value={}))
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(RuntimeError, match="did not produce a container") as exc:
@@ -1163,7 +1163,7 @@ async def test_concurrent_access_triggers_single_auto_up(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     await asyncio.gather(h.exec("echo a"), h.exec("echo b"))
@@ -1231,7 +1231,7 @@ async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     status, _ = _sm(await h.put([f], Path("/tmp")))
@@ -1523,7 +1523,7 @@ async def test_login_dry_run_validates_user_before_declining():
     folded into a harmless preview."""
     h = _make_container()
     with (
-        patch.object(h, "_login", new_callable=AsyncMock) as mock,
+        patch.object(h, "run_login", new_callable=AsyncMock) as mock,
         active_context(dry_run=True),
         pytest.raises(ValueError, match="non-empty string with no whitespace"),
     ):
@@ -1541,7 +1541,7 @@ async def test_login_requires_remote_ssh_parent():
     # Parent is a MagicMock, NOT a UnixHost — the isinstance check should reject it.
     h = _make_container()
     with pytest.raises(NotImplementedError, match="SSH-based parent"):
-        await h._login()
+        await h.run_login()
 
 
 @pytest.mark.asyncio
@@ -1966,7 +1966,7 @@ async def test_get_forwards_concurrent_to_the_staging_leg(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _login — non-ssh parent rejection + ssh happy path
+# run_login — non-ssh parent rejection + ssh happy path
 # ---------------------------------------------------------------------------
 
 
@@ -2001,17 +2001,17 @@ async def test_login_rejects_non_ssh_parent():
     )
     h = _make_container(parent=telnet_parent)
     with pytest.raises(NotImplementedError):
-        await h._login()
+        await h.run_login()
 
 
 @pytest.mark.asyncio
 async def test_login_ssh_runs_docker_exec():
-    """SSH parent: _login calls run_ssh_login with docker exec -it command."""
+    """SSH parent: run_login calls run_ssh_login with docker exec -it command."""
     parent = _build_fake_ssh_remote_host()
     h = _make_container(parent=parent, container_id="mycontainer123")
 
     with patch("otto.host.interact.run_ssh_login", new_callable=AsyncMock) as mock_login:
-        await h._login()
+        await h.run_login()
 
     mock_login.assert_awaited_once()
     call_kwargs = mock_login.call_args.kwargs
@@ -2031,8 +2031,8 @@ async def test_login_ssh_runs_docker_exec():
     ],
 )
 async def test_docker_login_carries_effective_user(declared, per_call, expected_u):
-    """``_login`` threads the effective user into ``docker exec -u`` — enter
-    through ``host._login()`` itself (not by composing ``_effective_user``
+    """``run_login`` threads the effective user into ``docker exec -u`` — enter
+    through ``host.run_login()`` itself (not by composing ``_effective_user``
     separately) so a broken hop in the real method shows up here.
 
     Pins the FULL command string, not a substring: ``-u`` must land BEFORE
@@ -2046,7 +2046,7 @@ async def test_docker_login_carries_effective_user(declared, per_call, expected_
     h = _make_container(parent, user=declared)
 
     with patch("otto.host.interact.run_ssh_login", new_callable=AsyncMock) as mock_login:
-        await h._login(per_call)
+        await h.run_login(per_call)
 
     cmd = mock_login.call_args.kwargs["command"]
     quoted_cid = shlex.quote(h.container_id)

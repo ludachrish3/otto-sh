@@ -85,7 +85,7 @@ def install_scoped_context(monkeypatch, lab, repos, *, exclude_projects=()):
 
     *exclude_projects* is the run's ``-E`` list, as the CLI would set it.
 
-    ``OttoContext.scopes`` reads ``otto.config.get_ordered_repos`` lazily, so
+    ``OttoContext.scopes`` reads ``otto.bootstrap.get_ordered_repos`` lazily, so
     patching that one seam is what lets a unit test declare a fleet of interest
     without standing up a bootstrap. An empty *repos* list is the whole-lab
     fallback — no declaration, no narrowing.
@@ -96,7 +96,7 @@ def install_scoped_context(monkeypatch, lab, repos, *, exclude_projects=()):
     run their body in a COPY of the context, so the token is from a different
     Context object and ``ContextVar.reset`` raises.
     """
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: list(repos))
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: list(repos))
     ctx = OttoContext(lab=lab, exclude_projects=tuple(exclude_projects))
     set_context(ctx)
     return ctx

@@ -16,7 +16,7 @@ from typing import Annotated
 import typer
 
 from otto.instructions import instruction
-from otto.config import all_hosts
+from otto.lab import all_hosts
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +64,12 @@ the registry machinery behind this and every other way otto can be extended.
 
 ## Accessing hosts
 
-Inside an instruction body, pull hosts out of the lab with the config
-module helpers:
+Inside an instruction body, pull hosts out of the lab with the
+{mod}`otto.lab` helpers:
 
 ```python
 import re
-from otto.config import all_hosts, get_host
+from otto.lab import all_hosts, get_host
 
 # Iterate (optionally narrowed by a regex FULLY matched against host ID)
 for host in all_hosts():
@@ -86,7 +86,7 @@ result = await router.run("show version")
 `pattern` is `re.fullmatch`, never `re.search`: `router` selects the host whose
 id is exactly `router`, so write `router.*` to match by prefix.  A pattern that
 matches none of the hosts the run may walk raises
-{class}`~otto.config.scope.EmptySelectionError` rather than iterating nothing.
+{class}`otto.lab.EmptySelectionError <otto.config.scope.EmptySelectionError>` rather than iterating nothing.
 
 `all_hosts()` walks the run's **fleet of interest** — the hosts the active
 repos' `[project]` declarations admit — which is the whole loaded lab when no
@@ -515,7 +515,7 @@ can also be done inside instructions and tests:
 
 ```{doctest}
 >>> from asyncio import run
->>> from otto.host.local_host import LocalHost
+>>> from otto.host import LocalHost
 >>> host = LocalHost()
 >>> result = run(host.run(["echo hello", "echo world"]))
 >>> result.status

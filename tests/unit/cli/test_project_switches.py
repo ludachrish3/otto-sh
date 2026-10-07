@@ -95,7 +95,7 @@ class TestProjectCompleter:
             raise AssertionError("completion ran phase 2 (user code)")
 
         monkeypatch.setattr("otto.bootstrap.bootstrap", _forbidden)
-        monkeypatch.setattr("otto.config.bootstrapped.get_repos", _forbidden)
+        monkeypatch.setattr("otto.bootstrap.get_repos", _forbidden)
 
         assert _project_completer(None, "repo") == ["repo1"]
 

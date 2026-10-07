@@ -13,12 +13,13 @@ from pathlib import Path
 from pydantic import ConfigDict, Field
 
 from ...models.base import OttoModel
+from ..formats import CAPTURE_READ_VERSIONS, CAPTURE_WRITE_VERSIONS
 from . import gitio
 from .remap import LineRemapper, parse_u0_hunks
 
 logger = logging.getLogger(__name__)
 
-CAPTURE_FORMAT_VERSION = 3
+[CAPTURE_FORMAT_VERSION] = CAPTURE_WRITE_VERSIONS
 """``capture.json`` schema version, bumped on breaking on-disk changes.
 
 Version 3 adds the required ``product`` field: a capture is one
@@ -74,7 +75,7 @@ class Capture(OttoModel):
 
         Raises:
             ValueError: The file's ``"schema"`` key does not match
-                :data:`CAPTURE_FORMAT_VERSION` (including files with no
+                one of ``CAPTURE_READ_VERSIONS`` (including files with no
                 ``"schema"`` key at all — everything predating this
                 capture-format version). There is no migration shim; the
                 message tells the caller to re-capture.
@@ -82,7 +83,7 @@ class Capture(OttoModel):
         raw_text = path.read_text()
         raw = json.loads(raw_text)
         found_format = raw.get("schema") if isinstance(raw, dict) else None
-        if found_format != CAPTURE_FORMAT_VERSION:
+        if found_format not in CAPTURE_READ_VERSIONS:
             # Distinguish "no schema key at all" from "a schema key was
             # present but isn't the int we expect" (e.g. a hand-edited
             # capture.json with "schema": "2") — see the identical fix in
@@ -94,7 +95,7 @@ class Capture(OttoModel):
             else:
                 found_label = f"{found_format!r} (expected an int)"
             raise ValueError(
-                f"capture format v{CAPTURE_FORMAT_VERSION} required; "
+                f"capture format {' or '.join(f'v{v}' for v in CAPTURE_READ_VERSIONS)} required; "
                 f"found {found_label} — re-capture with otto cov get"
             )
         return cls.model_validate_json(raw_text)

@@ -277,7 +277,7 @@ def gate_env(monkeypatch, tmp_path):
     main.parent.mkdir(parents=True)
     monkeypatch.setattr("otto.config.completion_cache._cache_path", lambda: main)
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_repos",
+        "otto.bootstrap.get_repos",
         lambda: [fake_repo(settings={"reservations": {"backend": "json"}})],
     )
     monkeypatch.setattr(
@@ -326,7 +326,7 @@ class _Backend:
 
 
 def test_gate_no_reservation_config_allows(monkeypatch, gate_env):
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [fake_repo()])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [fake_repo()])
     _install_backend(monkeypatch, _Backend([]))  # would refuse if it were ever consulted
     assert rc._reservation_allows(_chain()) is True
 
@@ -470,8 +470,8 @@ def test_required_for_is_scoped_to_the_fleet_of_interest(monkeypatch, tmp_path):
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",))) == {"slot-1"}
@@ -493,8 +493,8 @@ def test_required_for_drops_the_hosts_of_an_excluded_project(monkeypatch, tmp_pa
         _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"]),
         _repo(tmp_path, "r2", labs=["rig"], hosts=["slot2"]),
     ]
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: repos)
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: repos)
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="")) == {"slot-1", "slot-2"}
@@ -521,8 +521,8 @@ def test_required_for_adds_the_targeted_host_when_it_is_outside_the_fleet(monkey
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="slot2")) == {"slot-1", "slot-2"}
@@ -546,8 +546,8 @@ def test_required_for_ignores_a_target_the_lab_does_not_hold(monkeypatch, tmp_pa
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="typo9")) == {"slot-1"}
@@ -570,8 +570,8 @@ def test_required_for_adds_the_hop_when_it_is_outside_the_fleet(monkeypatch, tmp
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     chain = rc._ChainParams(host_id="slot1", hop="slot2", term=None, labs=["rig"], holder="carol")
@@ -598,8 +598,8 @@ def test_required_for_under_an_empty_declared_fleet_returns_the_lab_level_set(
     lab.resources = {"rack-1"}
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",))) == {"rack-1"}

@@ -192,7 +192,7 @@ id is registered.
 ```python
 from pathlib import Path
 
-from otto.docker.compose import get_container_host
+from otto.docker import get_container_host
 
 ctr = get_container_host("test3.integration.api")
 parent_log = ctr.parent_path("/var/log/app/run.log")  # -> PosixPath on test3

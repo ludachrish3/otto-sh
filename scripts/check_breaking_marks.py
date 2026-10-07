@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
-"""Refuse a commit that deletes a golden line from the public-API surface unmarked.
+"""Refuse a commit that breaks otto's public API without a breaking mark.
 
-``scripts/api_snapshot.py`` pins otto's public-API surface -- ``otto.__all__``,
-every deep import the docs teach, and every ``Host`` protocol method's
-parameter names -- to ``tests/unit/api_snapshot/public_api.txt``. Deleting a
-line from that golden is, by construction, a public-API break: a caller who
-used the removed name or passed the removed parameter now has nothing to
-call. ``make release``'s version comes from git-cliff's conventional-commit
-census (``scripts/release_bump.py``), which can only see what a commit
-SUBJECT and BODY say -- an unmarked break still ships as a patch bump. This
-script closes that gap: for every commit in a range, a golden-line deletion
-that the commit didn't mark is refused. A mark is what git-cliff's census
-counts, read by the release event model ``scripts/release_events.py`` that
-``scripts/release_bump.py`` and ``cliff.toml`` share: ``type(scope)!:`` in
-the subject, or a ``BREAKING CHANGE:``/``BREAKING-CHANGE:`` footer, on a
-commit whose type the changelog keeps. A ``BREAKING CHANGE:`` inside a prose
-paragraph, or a ``test(api)!:`` the changelog drops, bumps nothing, so it
-marks nothing here either.
+``tests/unit/api_snapshot/public_api.txt`` is otto's public-API golden. Since
+the cutover (#590) it is the API dump of every namespace ``api/public.toml``
+declares (``scripts/api_snapshot.py``; dump spec
+``docs/superpowers/specs/2026-10-05-api-dump-design.md``). ``make release``'s
+version comes from git-cliff's conventional-commit census
+(``scripts/release_bump.py``), which sees only what a commit's subject and body
+say, so an unmarked break would ship as a patch bump. This script closes that
+gap. It walks a range commit by commit, oldest first, and judges each commit
+against its first parent. A mark is what git-cliff's census counts, read by the
+release event model ``scripts/release_events.py`` that ``scripts/release_bump.py``
+and ``cliff.toml`` share: ``type(scope)!:`` in the subject, or a
+``BREAKING CHANGE:``/``BREAKING-CHANGE:`` footer, on a commit whose type the
+changelog keeps. A ``BREAKING CHANGE:`` inside a prose paragraph, or a
+``test(api)!:`` the changelog drops, bumps nothing, so it marks nothing here
+either.
 
 The same model validates CORRECTIONS: a marked commit with a ``Corrects: <full
 sha> <original subject>`` footer repairs a mark an earlier commit lacked, once
@@ -25,67 +24,49 @@ range is checked by the rules in ``scripts/release_events.py``; a refused one
 is a violation no mark can excuse. A correction never excuses an unmarked
 commit in the same range: an unpublished commit is amended, not corrected.
 
-RULE: a commit that deletes or renames a public symbol or a ``Host`` protocol
-parameter must be marked breaking, regardless of how small it looks. A
-rename is a deletion plus an addition; under this rule that is still a `!`
-commit -- there is no "it's just a rename" escape hatch. Additions never
-fail this check on their own. The one exception: a ``Host`` protocol line
-whose old parameter list survives, verbatim and in order, as a strict
-PREFIX of a new one for the same method is a WIDENING, not a break -- a
-caller that only ever passed the old keywords still resolves against the
-new signature -- so a trailing parameter addition needs no mark; a reorder,
-rename, or shortened list still does, because the checker is line-based and
-cannot otherwise tell a widening from a rename. The golden carries
-parameter NAMES only, so a widened shape is not trusted on its own: every
-appended parameter is looked up in the LIVE signature at HEAD, and one that
-is mandatory there is a break after all -- a caller who omits it no longer
-resolves.
+Each commit is judged by the schema of the golden at its parent and at itself
+(``scripts/api_lines.py`` reads both). The v2 rules apply when either end
+carries the ``# api-snapshot v2`` header:
 
-Not every golden line is library surface, though. ``otto:<name>`` (an
-``otto.__all__`` export) and ``otto.host.host:Host.<method>(...)`` (a protocol
-signature) ARE the library: their removal is a break needing a mark, with no
-escape hatch beyond the widening exception above. Every other
-``<module>:<name>`` / bare ``<module>:`` line records only
-that some user-doc fence TEACHES that import path -- so a docs edit that stops
-teaching it removes a golden line without touching the library at all. A
-docs-only change must not count as a break when the underlying library is
-unchanged: such a removal is refused only if the path no longer RESOLVES at
-the range's tip (``import <module>``, plus ``getattr(module, name)`` for a
-non-bare line). If it still resolves, it is reported as "docs-only, still
-importable" and needs no mark.
+* **Freshness.** The commit's dump must be, byte for byte, the dump
+  regenerated from that commit alone: its archive, its lock and its manifest
+  (``scripts/api_regen.py``, dump spec §5). A stale, re-sorted or
+  unregenerable dump is refused, marked or not.
+* **Compatibility.** The parent's dump and the commit's are compared by the
+  dump spec's §4 rules (``scripts/api_compat.py``). A breaking finding -- a
+  removed name, a narrowed call, a changed default, a new obligation for
+  implementers, a dropped format version -- needs a mark. Additions never do.
+* **The declaration.** ``api/public.toml`` must exist and parse at the commit,
+  marked or not; deleting the golden does not switch that off. A namespace
+  removed from it, or downgraded from stable to provisional, needs a mark.
+* **Refusals no mark excuses.** The producer schema (the golden's second line,
+  ``# producer-schema <n>``) never decreases along any parent edge. Going from
+  a v2 parent back to a v1 golden, deleting the golden, and a merge that drops
+  the v2 golden one of its parents carries are each refused.
+* **Merges.** A v2-era merge is judged against its first parent: one that
+  changes the dump or the manifest in a breaking way needs its own mark.
 
-Resolution runs in a subprocess (``sys.executable -c ...``), so a module that
-crashes on import cannot take the checker down and nothing already loaded in
-the checker's own process can make a dead path look alive; any non-zero exit
-means "does not resolve".
+**The v1 -> v2 commit** (the cutover) converts the v1 golden line by line
+(dump spec §8): a root or deep v1 line must reappear as a ``name`` record,
+whether or not its path still imports; a bare module line needs its namespace
+in the manifest; and a ``Host`` protocol line must survive as ``member
+otto.host:Host.<method>`` under v1's projection, where only a trailing
+optional parameter is a safe widening. Whatever is not carried needs a mark;
+:func:`conversion_inventory` lists it.
 
-Because resolution imports from the ``--repo`` tree as it stands on disk
-(that tree's ``src/`` goes first on the child's path), the range must END AT
-``HEAD`` -- otherwise the answer would describe a tree that is not the one the
-range's tip names. The default ``origin/main..HEAD`` satisfies this; a range
-ending anywhere else is refused with exit 2.
-
-The rules above are for a v1 golden. Each commit is judged by the schema of
-the golden in its PARENT (``scripts/api_lines.py`` reads both ends). For a v2
-golden (the API dump, dump spec
-``docs/superpowers/specs/2026-10-05-api-dump-design.md``), each commit's dump
-is regenerated from that commit's own archive and lock. A committed dump that
-differs, or that cannot be regenerated, is refused, marked or not. The
-parent's committed dump and the commit's are compared by the dump spec's §4
-rules: a breaking finding needs a mark. The producer schema may never decrease
-along any parent edge. Going from a v2 parent back to a v1 golden is a rollback;
-deleting the golden is refused too (the next commit could add a v1 golden
-under the v1 rules), and so is a merge that drops the v2 golden one of its
-parents carries; no mark excuses any of them. A v1-era merge (no v2
-golden at the merge or any parent) is still skipped, as the v1 rules always
-did; a v2-era merge is judged against its first parent. Once
-either end is v2, ``api/public.toml`` must exist and parse at the commit --
-no mark excuses its absence, and deleting the golden does not switch that
-off. A v2 -> v2 commit's namespaces are diffed against its parent's; a
-deletion is refused and nothing else is compared.
+**v1 -> v1 commits** (history before the cutover) keep the v1 rules, so a range
+that reaches back past the cutover is judged as it always was. A v1 line
+removed from the golden needs a mark if it is library surface (``otto:<name>``
+or a ``Host`` protocol line). A deep line only the docs taught needs none
+while its path still imports at ``HEAD``; that is resolved in a subprocess
+against the ``--repo`` tree, which is why the range must end at ``HEAD``. A
+``Host`` line whose parameter list survives as a strict prefix of a new one
+for the same method is a widening and needs no mark, unless an appended
+parameter is required in the live signature. A v1-era merge (no v2 golden at
+the merge or any parent) is skipped.
 
 Settings/lab keys are OUT OF SCOPE here (a later schema-diff gate); this
-script only ever reads the api_snapshot golden.
+script only ever reads the api_snapshot golden and the manifest.
 
 Usage, from the repo root::
 
@@ -96,11 +77,11 @@ Usage, from the repo root::
 before any git call, since a single ref names a checkout point, not the set
 of commits to scan -- and its END must be ``HEAD``.
 
-Exit codes: 0 every deleting commit in range is marked (or the range is
-empty); 1 at least one is not; 2 the range doesn't parse, or git could not
-resolve it (an unknown ref, a repo with no ``origin``, ...) -- distinct from
-1 so a caller never mistakes "we couldn't even look" for "we looked and it
-was clean".
+Exit codes: 0 every breaking commit in range is marked and none is refused
+(or the range is empty); 1 at least one is not; 2 the range doesn't parse, or
+git could not resolve it (an unknown ref, a repo with no ``origin``, ...) --
+distinct from 1 so a caller never mistakes "we couldn't even look" for "we
+looked and it was clean".
 """
 
 import argparse
@@ -134,12 +115,18 @@ from scripts.api_resolver_env import resolver_env as _resolver_env  # noqa: E402
 from scripts.release_events import is_breaking_commit  # noqa: E402 -- path set up above
 
 RULE = (
-    "RULE: a commit that deletes or renames a public name, deep-import path, or "
-    "Host protocol parameter must be marked breaking -- `type(scope)!:` in the "
-    "subject or a `BREAKING CHANGE:`/`BREAKING-CHANGE:` footer, on a type the "
-    "changelog keeps -- even when the deletion looks small. A rename is a "
-    "deletion plus an addition, so it is marked too; there is no separate "
-    "escape hatch."
+    "RULE: a commit that breaks the public API must be marked breaking -- "
+    "`type(scope)!:` in the subject or a `BREAKING CHANGE:`/`BREAKING-CHANGE:` "
+    "footer, on a type the changelog keeps -- however small the break looks. "
+    "Under the API dump that is any "
+    "breaking finding (a removed name, a narrowed call, a changed default, a new "
+    "obligation, a dropped format version) and any namespace removed from "
+    "api/public.toml or downgraded from stable; before the cutover, any removed "
+    "public name, deep-import path or Host protocol parameter. A rename is a "
+    "removal plus an addition, so it is marked too. A refusal (a stale dump, a "
+    "producer-schema decrease, a rollback, a missing manifest) fails marked or "
+    "not: regenerate the dump with `make api-snapshot` in the commit that "
+    "changes the surface."
 )
 
 
@@ -612,6 +599,66 @@ def conversion_breaks(
         else:
             breaking.append(line)
     return breaking, info
+
+
+def _commit_of(repo: Path, rev: str) -> str:
+    """Return the full sha of the commit *rev* names; raise :class:`ValueError` if none."""
+    try:
+        sha = _git(repo, "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}").strip()
+    except subprocess.CalledProcessError:
+        sha = ""
+    if not sha:
+        raise ValueError(f"{rev!r} is not a commit")
+    return sha
+
+
+def conversion_inventory(
+    repo: Path,
+    parent: str,
+    sha: str,
+    golden: Path = DEFAULT_GOLDEN,
+    manifest: Path = DEFAULT_MANIFEST,
+) -> "list[str]":
+    """Return the v1 -> v2 golden and TOML diff from *parent* to *sha* (spec 1 §7, inventory 5).
+
+    Read from committed blobs only: *parent*'s v1 golden, *sha*'s dump and
+    *sha*'s manifest. One line per fact, each group sorted, in this order:
+
+    * ``breaking: <v1 line> -- <why>`` for each v1 line the dump does not carry
+      (:func:`conversion_breaks`);
+    * ``info: <message>`` for each ``Host`` line carried with a safe widening;
+    * ``namespace: <name> tier <n> <stability>`` for each declared namespace,
+      and ``format: <name> reads <versions> writes <versions>`` for each
+      declared format. v1 had no manifest, so every entry is an addition.
+
+    Raises :class:`ValueError` unless *parent* and *sha* name commits, *parent*
+    holding a v1 golden and *sha* a v2 one. Each is resolved to its commit first:
+    an empty rev would otherwise read ``:<path>``, the file staged in the index.
+    """
+    parent, sha = _commit_of(repo, parent), _commit_of(repo, sha)
+    before = golden_text_at(repo, parent, golden)
+    after = golden_text_at(repo, sha, golden)
+    if before is None or api_lines.schema_of(before) != SCHEMA_V1:
+        raise ValueError(f"{parent} has no api-snapshot v1 golden")
+    if after is None or api_lines.schema_of(after) != SCHEMA_V2:
+        raise ValueError(f"{sha} has no api-snapshot v2 golden")
+    dump = api_records.parse_dump(after)
+    namespaces = manifest_at(repo, sha, manifest)
+    breaking, info = conversion_breaks(
+        api_lines.data_lines(before), dump, namespaces, _golden_rel(repo, manifest)
+    )
+    return [
+        *(f"breaking: {line}" for line in sorted(breaking)),
+        *(f"info: {line}" for line in sorted(info)),
+        *(
+            f"namespace: {name} tier {ns.tier} {ns.stability}"
+            for name, ns in sorted(namespaces.items())
+        ),
+        *(
+            f"format: {name} reads {rec.fields[0]} writes {rec.fields[1]}"
+            for name, rec in sorted(dump.formats.items())
+        ),
+    ]
 
 
 @dataclass

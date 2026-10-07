@@ -13,7 +13,7 @@ parameter combination gets its own `test_dir`:
 ```python
 import pytest
 
-from otto.config import get_host
+from otto.lab import get_host
 
 
 class TestInterfaces:
@@ -47,7 +47,7 @@ You can also use {class}`~otto.suite.expect.ExpectCollector` directly,
 outside of a test:
 
 ```{doctest}
->>> from otto.suite.expect import ExpectCollector
+>>> from otto.suite import ExpectCollector
 >>> collector = ExpectCollector()
 >>> collector.expect(1 == 1)
 >>> collector.expect(2 + 2 == 4)
@@ -90,7 +90,7 @@ with `db_path=` and review the file with `otto monitor <file>.db`, or watch a
 lab live with `otto monitor --live`.
 
 ```python
-from otto.config import get_host
+from otto.lab import get_host
 
 
 async def test_performance_under_load(monitor) -> None:

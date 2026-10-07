@@ -104,10 +104,10 @@ class LocalFileTransfer(BaseFileTransfer):
                 return Result(Status.Error, msg=str(e))
             return Result(Status.Success, value=dest)
 
-        return await self._dispatch_per_file(src_files, _copy_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, _copy_one, concurrent=concurrent)
 
     @override
-    async def _run_put(
+    async def run_put(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -118,7 +118,7 @@ class LocalFileTransfer(BaseFileTransfer):
         return await self._do_copy(src_files, dest_dir, progress_factory, concurrent=concurrent)
 
     @override
-    async def _run_get(
+    async def run_get(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -129,7 +129,7 @@ class LocalFileTransfer(BaseFileTransfer):
         return await self._do_copy(src_files, dest_dir, progress_factory, concurrent=concurrent)
 
     @override
-    async def _apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
+    async def apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
         """Chmod the copied files directly, off the event loop.
 
         ``Path.chmod`` is a blocking syscall; the whole batch runs in one
@@ -314,7 +314,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
 
         # Drive loop.subprocess_shell() directly rather than the higher-level
         # asyncio.create_subprocess_shell(), for the same reason
-        # LocalSession._open() does: it hands back the transport, so the
+        # LocalSession.open_transport() does: it hands back the transport, so the
         # `finally` below can release the pipe fds without reaching into the
         # private Process._transport. stdin=None is not a default — it is what
         # create_subprocess_shell passed, and loop.subprocess_shell would

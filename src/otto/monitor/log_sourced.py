@@ -50,6 +50,8 @@ from .parsers import (
     TimedSample,
 )
 
+__all__ = ["CsvMetricParser", "RegexLogEventParser"]
+
 T = TypeVar("T")
 
 

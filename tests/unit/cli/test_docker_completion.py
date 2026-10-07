@@ -25,7 +25,7 @@ def _ctx(**params):
 
 @pytest.fixture(autouse=True)
 def names():
-    with patch("otto.config.bootstrapped.get_completion_names", return_value=NAMES):
+    with patch("otto.bootstrap.get_completion_names", return_value=NAMES):
         yield
 
 
@@ -106,15 +106,15 @@ def test_no_lab_selected_uses_the_maps_only_entry(observed, monkeypatch):
 def test_no_lab_selected_and_two_different_defaults_offers_nothing(observed, monkeypatch):
     monkeypatch.setattr(docker_cli, "_selected_labs_for_tab", lambda ctx: [])
     two = {**NAMES, "docker_default_parent_by_lab": {"east": "test3", "west": "alt2"}}
-    with patch("otto.config.bootstrapped.get_completion_names", return_value=two):
+    with patch("otto.bootstrap.get_completion_names", return_value=two):
         assert docker_cli._container_completer(_ctx(parent=None), "") == []
 
 
 def test_a_cold_cache_offers_nothing_without_a_parent(observed, monkeypatch):
     monkeypatch.setattr(docker_cli, "_selected_labs_for_tab", lambda ctx: [])
-    with patch("otto.config.bootstrapped.get_completion_names", return_value=None):
+    with patch("otto.bootstrap.get_completion_names", return_value=None):
         assert docker_cli._container_completer(_ctx(parent=None), "") == []
-    with patch("otto.config.bootstrapped.get_completion_names", return_value={}):
+    with patch("otto.bootstrap.get_completion_names", return_value={}):
         assert docker_cli._tag_completer(_ctx(parent=None), "") == []
 
 
@@ -124,7 +124,7 @@ def test_the_observed_completers_never_bootstrap_inside_a_tab(observed, monkeypa
     # without a parent on the line.
     monkeypatch.setattr(docker_cli, "_selected_labs_for_tab", lambda ctx: ["east"])
     with patch(
-        "otto.config.bootstrapped.get_repos",
+        "otto.bootstrap.get_repos",
         side_effect=AssertionError("bootstrap inside a TAB"),
     ) as get_repos:
         assert docker_cli._container_completer(_ctx(parent="test3"), "") == ["unix-i-api-1", "3f9a"]
@@ -145,9 +145,9 @@ def test_container_completer_reads_the_one_parents_state_alone(observed, monkeyp
 
 def test_a_cold_cache_falls_back_to_the_collectors_for_declared_names():
     with (
-        patch("otto.config.bootstrapped.get_completion_names", return_value=None),
+        patch("otto.bootstrap.get_completion_names", return_value=None),
         patch("otto.config.completion_cache.collect_docker_image_names", return_value=["cold"]),
-        patch("otto.config.bootstrapped.get_repos", return_value=["repo"]),
+        patch("otto.bootstrap.get_repos", return_value=["repo"]),
     ):
         assert docker_cli._image_completer(_ctx(), "") == ["cold"]
 
@@ -155,8 +155,8 @@ def test_a_cold_cache_falls_back_to_the_collectors_for_declared_names():
 def test_the_completers_never_raise():
     boom = RuntimeError("boom")
     with (
-        patch("otto.config.bootstrapped.get_completion_names", side_effect=boom),
-        patch("otto.config.bootstrapped.get_repos", side_effect=boom),
+        patch("otto.bootstrap.get_completion_names", side_effect=boom),
+        patch("otto.bootstrap.get_repos", side_effect=boom),
         patch("otto.bootstrap.discover", side_effect=boom),
         patch("otto.config.completion_cache.read_docker_observed", side_effect=boom),
     ):

@@ -49,7 +49,7 @@ def _run(tmp_path: Path, body: str, *names: str, timeout: int = 90):
 
 _TWO_CLASSES_NO_CLOSE = """
 import pytest_asyncio
-from otto.config import get_host
+from otto.lab import get_host
 
 @pytest_asyncio.fixture(scope="session")
 async def dut():
@@ -79,7 +79,7 @@ def test_two_classes_and_a_function_share_an_unclosed_host_unpinned(tmp_path):
 _SESSION_HOST_UNDER_A_CLASS_PIN = """
 import pytest
 import pytest_asyncio
-from otto.config import get_host
+from otto.lab import get_host
 
 @pytest_asyncio.fixture(scope="session")
 async def dut():
@@ -109,7 +109,7 @@ def test_cross_loop_use_fails_fast_naming_the_host(tmp_path):
 _UNPINNED_FIXTURE_UNDER_PINNED_TESTS = """
 import pytest
 import pytest_asyncio
-from otto.config import get_host
+from otto.lab import get_host
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -133,7 +133,7 @@ def test_unpinned_fixture_close_fails_fast(tmp_path):
 _MODULE_PINNED = """
 import pytest
 import pytest_asyncio
-from otto.config import get_host
+from otto.lab import get_host
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 

@@ -546,10 +546,10 @@ class TestLoginTemplate:
     @pytest.mark.asyncio
     async def test_login_rejects_bad_user_form_before_dispatch(self, host: UnixHost):
         """A user with embedded whitespace (e.g. a stray leading space) must
-        fail loud from the shared validator, not reach ``_login`` where a
+        fail loud from the shared validator, not reach ``run_login`` where a
         subclass might silently misparse it into its own command."""
         with (
-            patch.object(host, "_login", new_callable=AsyncMock) as mock,
+            patch.object(host, "run_login", new_callable=AsyncMock) as mock,
             pytest.raises(ValueError, match="non-empty string with no whitespace"),
         ):
             await host.login(user=" root")
@@ -561,7 +561,7 @@ class TestLoginTemplate:
         legible, not with a bare ``TypeError: 'int' object is not iterable``
         from deep inside the whitespace check."""
         with (
-            patch.object(host, "_login", new_callable=AsyncMock) as mock,
+            patch.object(host, "run_login", new_callable=AsyncMock) as mock,
             pytest.raises(TypeError, match="user must be a string"),
         ):
             await host.login(user=1000)  # type: ignore[arg-type]

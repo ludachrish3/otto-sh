@@ -49,7 +49,7 @@ def lab(monkeypatch):
 
     monkeypatch.setattr("otto.config.fleet.all_hosts", all_hosts)
     monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
+    monkeypatch.setattr("otto.bootstrap.get_repos", list)
     return hosts
 
 
@@ -105,7 +105,7 @@ class TestRunLiveRefusesBeforeAnyFile:
         """
         db = tmp_path / "m.db"
         bad = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
-        monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [bad])
+        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [bad])
         with pytest.raises(MonitorInputError, match="at least") as e:
             await run_live(hosts="z.*", interval=0.5, db=db)
         assert e.value.field == "interval"
@@ -122,7 +122,7 @@ class TestRunLiveRefusesBeforeAnyFile:
     async def test_tls(self, lab, tmp_path, monkeypatch):
         db = tmp_path / "m.db"
         bad = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
-        monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [bad])
+        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [bad])
         with pytest.raises(MonitorTlsError):
             await run_live(db=db)
         assert not db.exists()
@@ -153,7 +153,7 @@ async def test_run_live_hands_the_server_the_declared_cert_and_key(
 ):
     cert, key = tls_pair
     repo = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
     await run_live(hosts="web1")
     kwargs = served.call_args.kwargs
     assert (kwargs["tls_cert"], kwargs["tls_key"]) == (cert, key)
@@ -280,7 +280,7 @@ class TestDrivingRepoScopeGate:
         }
         monkeypatch.setattr("otto.config.fleet.all_hosts", _all_hosts)
         monkeypatch.setattr(
-            "otto.config.bootstrapped.get_repos",
+            "otto.bootstrap.get_repos",
             lambda: [
                 fake_repo("app", monitor_settings=MonitorSettings()),
                 fake_repo("base", monitor_settings=MonitorSettings()),
@@ -336,7 +336,7 @@ class TestDrivingRepoScopeGate:
         current repo, so there is no verdict to enforce and the gate must not
         invent one (nor die indexing an empty list).
         """
-        monkeypatch.setattr("otto.config.bootstrapped.get_repos", list)
+        monkeypatch.setattr("otto.bootstrap.get_repos", list)
 
         report = await run_live()
 
@@ -357,7 +357,7 @@ class TestDrivingRepoScopeGate:
             raise RuntimeError("no bootstrap here")
 
         monkeypatch.setattr(
-            "otto.config.bootstrapped.get_repos",
+            "otto.bootstrap.get_repos",
             lambda: [fake_repo("app", monitor_settings=MonitorSettings())],
         )
         monkeypatch.setattr("otto.context.get_context", _boom)
@@ -384,7 +384,7 @@ class TestDrivingRepoScopeGate:
             contacted.append("walked")
             return iter([_unix("box")])
 
-        monkeypatch.setattr("otto.config.bootstrapped.get_repos", _boom)
+        monkeypatch.setattr("otto.bootstrap.get_repos", _boom)
         monkeypatch.setattr("otto.config.fleet.all_hosts", _all_hosts)
 
         with pytest.raises(RuntimeError, match="no bootstrap here"):

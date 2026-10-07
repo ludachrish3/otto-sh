@@ -255,7 +255,7 @@ each TDD'd, 812 host/cov/factory unit tests green:
   matched otto's read loop before the real output, desyncing every command. Mirrors
   repo1's `ZephyrInlineRetcodeFrame` (2.7).
 - **`TelnetOptions.write_chunk_size` / `write_chunk_delay`** (default 0 = unchunked):
-  `TelnetSession._write` paces large writes (`zephyr37_llext`: 64 B / 15 ms) so the mps2
+  `TelnetSession.write_transport` paces large writes (`zephyr37_llext`: 64 B / 15 ms) so the mps2
   UART RX FIFO doesn't overrun on the bulk `load_hex` line.
 
 `zephyr37_llext` lab entry: `command_frame: zephyr-serial`,

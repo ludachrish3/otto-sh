@@ -26,6 +26,15 @@ from typing_extensions import Never, override
 from otto.errors import OttoError
 from otto.utils import Status
 
+__all__ = [
+    "CommandNotRunError",
+    "CommandResult",
+    "NotRunResult",
+    "Result",
+    "Results",
+    "ShellResult",
+]
+
 
 class CommandNotRunError(OttoError, RuntimeError):
     """A dry-run synthetic result's value was read as if it were data.

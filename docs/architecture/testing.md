@@ -295,9 +295,7 @@ Practically, this means a new chaos-lane test module that forgets the
 fails immediately in the default gate rather than surfacing as a wrecked bed
 three weeks later.
 
-The lazy-export rules — patch where a name is defined, read lazily exported
-functions at call time — and the guards that enforce them are in
-[Patching lazily exported names](../contributing.md#patching-lazily-exported-names).
+See [Patching lazily exported names](../contributing.md#patching-lazily-exported-names).
 
 ## Other axes: TypeScript, doctests, cross-Python
 

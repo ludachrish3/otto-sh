@@ -5,7 +5,7 @@ import asyncio
 from datetime import timedelta
 
 import otto
-from otto.monitor.factory import build_monitor_collector
+from otto.monitor import build_monitor_collector
 
 
 async def main() -> None:

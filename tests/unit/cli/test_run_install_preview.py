@@ -121,8 +121,8 @@ def test_the_leaf_drives_the_real_planner_over_a_lab_without_contacting_the_host
     host.products = [product]
     ctx = OttoContext(lab=Lab(name="bench", hosts={host.id: host}), dry_run=True)
     repos = [fake_repo("r1", project_scope=None, sut_dir=tmp_path)]
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: repos)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: repos)
     token = set_context(ctx)
     try:
         dry = DispatchRunner().invoke(run_app, ["install"], async_leaves=True)

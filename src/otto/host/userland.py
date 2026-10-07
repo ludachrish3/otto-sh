@@ -28,13 +28,13 @@ what today:
 ``timeout_style``
     ``otto.host.transfer.nc.NcFileTransfer._nc_listener_prefix``
 ``stat_size``
-    ``otto.host.transfer.shell.ShellFileTransfer._run_get`` (via
+    ``otto.host.transfer.shell.ShellFileTransfer.run_get`` (via
     ``_remote_size``) — ``transfer/nc.py`` still writes its own remote stat
     at three sites (``stat -c %s`` for PUT's size-back verify, and
     ``stat -L -c '%s %F'`` at both GET prefetches), unrelated to this probe
 ``base64_flag``
-    ``otto.host.transfer.shell.ShellFileTransfer`` (both ``_run_put`` and
-    ``_run_get``), and ``otto.host.file_ops.refuse_if_base64_is_absent``
+    ``otto.host.transfer.shell.ShellFileTransfer`` (both ``run_put`` and
+    ``run_get``), and ``otto.host.file_ops.refuse_if_base64_is_absent``
     (``read_file``/``write_file``, which still hard-code the codec and read
     this only to REFUSE when the device has none). That second reader is why
     :class:`UserlandHost` below exists: it reaches the resolver through the
@@ -1676,7 +1676,7 @@ class UserlandHost:
 #
 # NOT EVERY REFUSAL IN OTTO IS THIS TABLE'S, and the distinction is what
 # :data:`PATH_PROBE_REFUSED` exists to keep straight. ``PosixPrivilege._elevate``
-# and ``ShellFileTransfer._run_put``/``_run_get`` refuse on what the host in
+# and ``ShellFileTransfer.run_put``/``run_get`` refuse on what the host in
 # front of them ANSWERED and render their OWN messages -- a different thing from
 # this table's "otto measured this on the matrix", and downgrading a record would
 # not stop them. Only the transfer pair is recorded as a path, because
@@ -1777,7 +1777,7 @@ PATH_PROBE_REFUSED = "PROBE_REFUSED"
 """This path refuses, but on its OWN authority rather than this table's.
 
 THE FOURTH STATE, and it exists because ``shell-transfer-base64`` is neither of
-the obvious two. ``ShellFileTransfer._run_put`` (in ``otto.host.transfer.shell``)
+the obvious two. ``ShellFileTransfer.run_put`` (in ``otto.host.transfer.shell``)
 reads :attr:`Userland.base64_flag`, raises
 :exc:`~otto.host.errors.UnsupportedOnUserlandError` itself, and renders its own
 message -- so calling it :data:`PATH_WIRED` would be false (downgrading this
@@ -2316,7 +2316,7 @@ GAPS: list[Gap] = [
         ),
         paths=[
             GapPath(
-                site="otto.host.transfer.shell.ShellFileTransfer._run_put",
+                site="otto.host.transfer.shell.ShellFileTransfer.run_put",
                 state=PATH_PROBE_REFUSED,
                 detail=(
                     "DEGRADES first and refuses second, both on its OWN authority. "
@@ -2340,10 +2340,10 @@ GAPS: list[Gap] = [
                 ),
             ),
             GapPath(
-                site="otto.host.transfer.shell.ShellFileTransfer._run_get",
+                site="otto.host.transfer.shell.ShellFileTransfer.run_get",
                 state=PATH_PROBE_REFUSED,
                 detail=(
-                    "the same degrade-then-refuse as `_run_put`, through the same "
+                    "the same degrade-then-refuse as `run_put`, through the same "
                     "`_select_codec`, with one difference that is not cosmetic: GET needs "
                     "`uuencode` where PUT needs `uudecode`, because the device only "
                     "ENCODES here. They are separate applets, so a device could support "
@@ -2541,7 +2541,7 @@ GAPS: list[Gap] = [
         ),
         paths=[
             GapPath(
-                site="otto.host.transfer.sftp.SftpFileTransfer._run_get",
+                site="otto.host.transfer.sftp.SftpFileTransfer.run_get",
                 state=PATH_ATTRIBUTED,
                 checked_by="otto.host.transfer.sftp.open_sftp_or_attribute",
                 detail=(
@@ -2563,7 +2563,7 @@ GAPS: list[Gap] = [
                 ),
             ),
             GapPath(
-                site="otto.host.transfer.sftp.SftpFileTransfer._run_put",
+                site="otto.host.transfer.sftp.SftpFileTransfer.run_put",
                 state=PATH_ATTRIBUTED,
                 checked_by="otto.host.transfer.sftp.open_sftp_or_attribute",
                 detail=(
@@ -2619,7 +2619,7 @@ GAPS: list[Gap] = [
         ),
         paths=[
             GapPath(
-                site="otto.host.transfer.scp.ScpFileTransfer._run_get",
+                site="otto.host.transfer.scp.ScpFileTransfer.run_get",
                 state=PATH_WIRED,
                 checked_by="otto.host.transfer.scp.refuse_if_scp_is_absent",
                 detail=(
@@ -2638,7 +2638,7 @@ GAPS: list[Gap] = [
                 ),
             ),
             GapPath(
-                site="otto.host.transfer.scp.ScpFileTransfer._run_put",
+                site="otto.host.transfer.scp.ScpFileTransfer.run_put",
                 state=PATH_WIRED,
                 checked_by="otto.host.transfer.scp.refuse_if_scp_is_absent",
                 detail=(
@@ -2805,7 +2805,7 @@ GAPS: list[Gap] = [
             "characters -- a different, shorter command runs and its success is reported "
             "as the caller's. `Host.run()` refuses instead, up front, on any host whose "
             "declared shell dialect is `ash`: `run()` drives a PERSISTENT session, which "
-            '`SshSession._open` opens with `term_type="dumb"`, so the far side allocates '
+            '`SshSession.open_transport` opens with `term_type="dumb"`, so the far side allocates '
             "a pty and the command arrives as a TYPED LINE through that editor. The bound "
             "is on the LINE and not on the command -- otto's own BEGIN/END framing costs "
             "74 characters, leaving 948 for the longest line of the command itself. "

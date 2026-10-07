@@ -24,7 +24,7 @@ class TftpFileTransfer(EmbeddedFileTransfer):
         return cls(name=ctx.host_name, max_filename_len=ctx.max_filename_len)
 
     @override
-    async def _run_get(
+    async def run_get(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -37,7 +37,7 @@ class TftpFileTransfer(EmbeddedFileTransfer):
         ) from None
 
     @override
-    async def _run_put(
+    async def run_put(
         self,
         src_files: list[Path],
         dest_dir: Path,

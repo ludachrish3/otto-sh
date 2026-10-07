@@ -147,8 +147,8 @@ def _deployment_config(monkeypatch, lab, repos, suffix):
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", suffix)
     with (
         patch("otto.config.fleet.get_lab", return_value=lab),
-        patch("otto.config.bootstrapped.get_repos", return_value=list(repos)),
-        patch("otto.config.bootstrapped.get_ordered_repos", return_value=list(repos)),
+        patch("otto.bootstrap.get_repos", return_value=list(repos)),
+        patch("otto.bootstrap.get_ordered_repos", return_value=list(repos)),
         patch.object(resolve_mod, "scope_for_repo", return_value=None),
     ):
         yield

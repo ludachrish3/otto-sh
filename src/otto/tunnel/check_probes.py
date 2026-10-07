@@ -14,12 +14,21 @@ one is wrapped in :func:`otto.check.clock.bash_script` to opt into bash's
 
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ..check.clock import PROBE_TIMEOUT_S, SOCAT_CONNECT_S, bash_script, parse_elapsed_ms
 from ..host.daemon import encode_token, launch_command, split_token
+from .model import CHECK_ECHO_READ_VERSIONS, CHECK_ECHO_WRITE_VERSIONS
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 CHECK_PREFIX = "otto-check"
-CHECK_VERSION = "v1"
+[CHECK_VERSION] = CHECK_ECHO_WRITE_VERSIONS
+"""The one declared write version, which :func:`echo_sentinel` writes.
+
+Unpacked from ``CHECK_ECHO_WRITE_VERSIONS`` (``otto.tunnel.model``), so a
+second write version fails at import until the writer chooses."""
 PS_FAILED = "@ps-failed"
 """The line :data:`SWEEP_COMMAND` prints when ``ps`` itself failed, so found-nothing and
 could-not-look read differently (the marker ``otto link check``'s sweep prints too)."""
@@ -67,7 +76,7 @@ the wait at once. One that stays open but goes quiet ends it after this
 many seconds of quiet, bounding the probe with nothing left unread. Two
 seconds covers a console's greeting burst without slowing the check."""
 
-_PAYLOAD_SEGMENTS = 5
+_PAYLOAD_SEGMENTS_V1 = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,13 +110,25 @@ def echo_sentinel(tag: EchoTag) -> str:
     )
 
 
-def parse_echo_sentinel(token: str) -> EchoTag | None:
-    """Parse one echo sentinel; ``None`` for non-otto-check / other-version / malformed."""
-    payload = split_token(token, CHECK_PREFIX, CHECK_VERSION, _PAYLOAD_SEGMENTS)
-    if payload is None:
-        return None
+def _decode_echo_v1(payload: list[str]) -> EchoTag | None:
     run, tunnel_id, protocol, role, host_id = payload
     return EchoTag(run=run, tunnel_id=tunnel_id, protocol=protocol, role=role, host_id=host_id)
+
+
+_ECHO_DECODERS: "dict[str, tuple[int, Callable[[list[str]], EchoTag | None]]]" = {
+    "v1": (_PAYLOAD_SEGMENTS_V1, _decode_echo_v1),
+}
+"""Each readable echo version's payload segment count and decoder; keys equal the declared reads."""
+
+
+def parse_echo_sentinel(token: str) -> EchoTag | None:
+    """Parse one echo sentinel; ``None`` for non-otto-check / undeclared-version / malformed."""
+    for version in CHECK_ECHO_READ_VERSIONS:
+        segments, decode = _ECHO_DECODERS[version]
+        payload = split_token(token, CHECK_PREFIX, version, segments)
+        if payload is not None:
+            return decode(payload)
+    return None
 
 
 def echo_argv(protocol: str, bind_ip: str, port: int) -> list[str]:

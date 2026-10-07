@@ -479,7 +479,7 @@ class TestPerCallOptionOverrides:
         host = get_host("test1", term="telnet")
         assert host.term == "telnet"
         # the stored instance is untouched (insulation)
-        from otto.config import get_lab
+        from otto.config.fleet import get_lab
 
         assert get_lab().hosts["test1"].term == "ssh"
 
@@ -487,7 +487,7 @@ class TestPerCallOptionOverrides:
         # sftp is in the default unix menu [scp, sftp, ftp, nc]
         host = get_host("test1", transfer="sftp")
         assert host.transfer == "sftp"
-        from otto.config import get_lab
+        from otto.config.fleet import get_lab
 
         assert get_lab().hosts["test1"].transfer == "scp"
 

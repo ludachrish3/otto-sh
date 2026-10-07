@@ -22,15 +22,18 @@ note: >
     - pydantic: cli.monitor (`ValidationError`);
     - rich.table: cli.test, cli.run, cli.docker, cli.cache, cli.inventory;
     - otto.coverage.reporter/merge/store/tree/errors: cli.cov (also
-      spelled as otto.coverage's lazy CoverageReporter/CoverageStore and
-      its five error names: CoverageCleanError, CoverageInputError,
-      CoverageNotInstrumentedError, NoCoverageDataError,
-      NoCoverageHostsError);
+      spelled as otto.coverage's lazy CoverageReporter/CoverageStore/
+      run_coverage_report and its seven error names: CoverageCleanError,
+      CoverageDataMismatchError, CoverageInputError,
+      CoverageNotInstrumentedError, CoverageToolVersionError,
+      NoCoverageDataError, NoCoverageHostsError);
     - otto.host.errors/unix_host/remote_host: cli.cov, cli.docker, cli.host
-      (also spelled as otto.host's lazy UnixHost/RemoteHost/OsType);
+      (also spelled as otto.host's lazy UnixHost/RemoteHost/OsType and its
+      error names MountNotFoundError/RawLandingError/SessionSetupError);
     - otto.config.fleet/lab/repo: cli.docker, cli.host, cli.monitor,
       cli.callbacks, cli.link, cli.tunnel (also spelled as otto.config's lazy
-      get_lab/get_host/all_hosts/... and Repo/Docker*/MonitorSettings);
+      Repo/Docker*/MonitorSettings and otto.lab's lazy Lab/load_lab/get_lab/
+      get_host/all_hosts/...);
     - otto.context: cli.test, cli.host;
     - the top-level otto package's lazy names for the entries above (its
       context and fleet/lab names, and `options`, which is pydantic's
@@ -109,7 +112,17 @@ rule:
           any:
           - kind: dotted_name
           - kind: aliased_import
-          regex: '^(fleet|lab|repo|get_lab|get_host|all_hosts|do_for_all_hosts|run_on_all_hosts|load_lab|Repo|DockerCompose|DockerImage|DockerSettings|MonitorSettings)(\s+as\s+\w+)?$'
+          regex: '^(fleet|lab|repo|Repo|DockerCompose|DockerImage|DockerSettings|MonitorSettings)(\s+as\s+\w+)?$'
+    - kind: import_from_statement
+      all:
+      - has:
+          field: module_name
+          regex: '^(\.{2,}|otto\.)lab$'
+      - has:
+          any:
+          - kind: dotted_name
+          - kind: aliased_import
+          regex: '^(Lab|load_lab|get_lab|get_host|all_hosts|do_for_all_hosts|run_on_all_hosts|fleet_of_interest)(\s+as\s+\w+)?$'
     - kind: import_from_statement
       all:
       - has:
@@ -119,7 +132,7 @@ rule:
           any:
           - kind: dotted_name
           - kind: aliased_import
-          regex: '^(errors|unix_host|remote_host|UnixHost|RemoteHost|OsType)(\s+as\s+\w+)?$'
+          regex: '^(errors|unix_host|remote_host|UnixHost|RemoteHost|OsType|MountNotFoundError|RawLandingError|SessionSetupError)(\s+as\s+\w+)?$'
     - kind: import_from_statement
       all:
       - has:
@@ -129,7 +142,7 @@ rule:
           any:
           - kind: dotted_name
           - kind: aliased_import
-          regex: '^(reporter|merge|store|tree|errors|CoverageReporter|CoverageStore|CoverageCleanError|CoverageInputError|CoverageNotInstrumentedError|NoCoverageDataError|NoCoverageHostsError)(\s+as\s+\w+)?$'
+          regex: '^(reporter|merge|store|tree|errors|CoverageReporter|CoverageStore|run_coverage_report|CoverageCleanError|CoverageDataMismatchError|CoverageInputError|CoverageNotInstrumentedError|CoverageToolVersionError|NoCoverageDataError|NoCoverageHostsError)(\s+as\s+\w+)?$'
   - not:
       inside:
         kind: function_definition

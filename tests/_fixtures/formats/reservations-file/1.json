@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "reservations": [
+    {"user": "alice", "resources": ["rack3-psu", "rack3-console"], "expires": "2099-01-01T00:00:00Z"},
+    {"user": "bob", "resources": ["rack4-psu"]},
+    {"user": "carol", "resources": ["rack3-psu"], "expires": "2001-01-01T00:00:00Z"},
+    {"user": "alice", "resources": ["rack5-psu"], "expires": "2099-06-01T12:00:00+02:00"}
+  ]
+}

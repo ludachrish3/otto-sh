@@ -132,7 +132,16 @@ builds it. Its choices:
   the environment, invalidate, bootstrap again. That is also why the errors
   ride the cached result rather than a parallel module global — recomputing
   discovery necessarily recomputes them, so a stale error cannot outlive the
-  discovery that produced it
+  discovery that produced it. The five repo accessors —
+  {func}`~otto.bootstrap.get_repos`, {func}`~otto.bootstrap.get_ordered_repos`,
+  {func}`~otto.bootstrap.get_env`, {func}`~otto.bootstrap.is_bootstrapped` and
+  {func}`~otto.bootstrap.get_completion_names` — live in the same module, so the
+  code that composes the repos is the one place that answers for them.
+  {func}`~otto.bootstrap.get_repos` and {func}`~otto.bootstrap.get_ordered_repos`
+  bootstrap on first use and {func}`~otto.bootstrap.get_env` runs discovery
+  only; {func}`~otto.bootstrap.is_bootstrapped` and
+  {func}`~otto.bootstrap.get_completion_names` never force either; none runs
+  at import
 - `otto.init` — the `otto init` doctor and scaffolder over the areas
   (settings, schemas, lab, tests, instructions, kmodcov): detect / validate /
   scaffold, reusing bootstrap's own ingestion code; `otto.cli.init` only

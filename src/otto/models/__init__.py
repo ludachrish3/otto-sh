@@ -7,7 +7,7 @@ no cycle. Higher layers (the host factory, config, monitor collectors)
 import their specs from this package. Each model mirroring a runtime type
 carries the ``Spec`` suffix.
 
-Every name is exported lazily (PEP 562): ``from otto.models import HostSpec``
+Every name is exported lazily (PEP 562): ``from otto.models import CredSpec``
 imports ``otto.models.host`` alone, not the monitor records or the settings
 models. The settings models matter most: ``OttoEnvSettings`` subclasses
 ``pydantic_settings.BaseSettings``, so an eager import would put
@@ -23,10 +23,12 @@ if TYPE_CHECKING:
     from ..utils import MIN_INTERVAL_SECONDS as MIN_INTERVAL_SECONDS
     from ..utils import validate_interval as validate_interval
     from .base import OttoModel as OttoModel
-    from .host import EmbeddedHostSpec as EmbeddedHostSpec
-    from .host import HostSpec as HostSpec
+    from .host import CredSpec as CredSpec
     from .host import ToolchainSpec as ToolchainSpec
-    from .host import UnixHostSpec as UnixHostSpec
+    from .inventory import FILLABLE_INVENTORY_FIELDS as FILLABLE_INVENTORY_FIELDS
+    from .inventory import INVENTORY_KEY_FIELDS as INVENTORY_KEY_FIELDS
+    from .inventory import SUPPLIES_EXEMPT_FIELDS as SUPPLIES_EXEMPT_FIELDS
+    from .inventory import InventoryRecord as InventoryRecord
     from .monitor import ChartSpec as ChartSpec
     from .monitor import ChartSpecRecord as ChartSpecRecord
     from .monitor import ElementRecord as ElementRecord
@@ -66,10 +68,12 @@ if TYPE_CHECKING:
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
     "OttoModel": "otto.models.base",
-    "EmbeddedHostSpec": "otto.models.host",
-    "HostSpec": "otto.models.host",
+    "CredSpec": "otto.models.host",
     "ToolchainSpec": "otto.models.host",
-    "UnixHostSpec": "otto.models.host",
+    "FILLABLE_INVENTORY_FIELDS": "otto.models.inventory",
+    "INVENTORY_KEY_FIELDS": "otto.models.inventory",
+    "InventoryRecord": "otto.models.inventory",
+    "SUPPLIES_EXEMPT_FIELDS": "otto.models.inventory",
     "ChartSpec": "otto.models.monitor",
     "ChartSpecRecord": "otto.models.monitor",
     "ElementRecord": "otto.models.monitor",
@@ -125,18 +129,21 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "FILLABLE_INVENTORY_FIELDS",
+    "INVENTORY_KEY_FIELDS",
     "MIN_INTERVAL_SECONDS",
+    "SUPPLIES_EXEMPT_FIELDS",
     "ChartSpec",
     "ChartSpecRecord",
+    "CredSpec",
     "DockerComposeSpec",
     "DockerImageSpec",
     "DockerSettingsSpec",
     "ElementRecord",
-    "EmbeddedHostSpec",
     "EventRecord",
     "FtpOptionsSpec",
     "HostSnapshot",
-    "HostSpec",
+    "InventoryRecord",
     "LabSnapshot",
     "LinkEndpointSnapshot",
     "LinkSnapshot",
@@ -165,6 +172,5 @@ __all__ = [
     "TftpOptionsSpec",
     "ToolchainSpec",
     "TunnelRecord",
-    "UnixHostSpec",
     "validate_interval",
 ]

@@ -36,7 +36,24 @@ class Role(enum.Enum):
 
 
 ProcKey = tuple[str, Direction, Role]
-"""One expected/observed tunnel process: ``(host_id, direction, role)``."""
+"""One expected or observed tunnel process, as ``(host_id, direction, role)``."""
+
+TUNNEL_SENTINEL_READ_VERSIONS: list[str] = ["v1"]
+"""``otto-tunnel`` argv sentinel versions :mod:`otto.tunnel.sentinel` decodes (dump spec §13).
+
+This list, and the three below, live beside the model the sentinels describe
+because this module imports only the standard library and the sentinel
+readers already import it; a module of their own would add an import to
+``otto tunnel`` completion."""
+
+TUNNEL_SENTINEL_WRITE_VERSIONS: list[str] = ["v1"]
+"""``otto-tunnel`` sentinel versions otto launches tunnel processes under."""
+
+CHECK_ECHO_READ_VERSIONS: list[str] = ["v1"]
+"""``otto-check`` echo-listener sentinel versions ``otto tunnel check``'s sweep decodes."""
+
+CHECK_ECHO_WRITE_VERSIONS: list[str] = ["v1"]
+"""``otto-check`` echo sentinel versions ``otto tunnel check`` launches echoes under."""
 
 
 @dataclass(frozen=True, slots=True)

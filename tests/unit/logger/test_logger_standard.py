@@ -127,3 +127,42 @@ def test_no_ottologger_symbol_exported():
     import otto.logger as pkg
 
     assert not hasattr(pkg, "OttoLogger")
+
+
+def test_log_mode_is_declared_at_the_package_and_stays_rich_free():
+    """Public signatures default to ``LogMode`` members, so the enum needs a public binding.
+
+    The API dump refuses an enum default whose class has no public binding
+    (dump spec §2.4). ``mode`` is stdlib-only, so naming the enum at the
+    package must not pull in ``rich``.
+    """
+    code = (
+        "import sys, otto.logger\n"
+        "from otto.logger import LogMode\n"
+        "assert 'rich' not in sys.modules, 'LogMode pulled in rich'\n"
+        "from otto.logger.mode import LogMode as direct\n"
+        "assert LogMode is direct\n"
+        "assert 'LogMode' in otto.logger.__all__\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_default_library_levels_resolve_lazily_from_management():
+    """The settings docs teach ``DEFAULT_LIBRARY_LEVELS`` at the package.
+
+    It lives on ``management``, so the package resolves it lazily.
+    """
+    code = (
+        "import otto.logger\n"
+        "from otto.logger import DEFAULT_LIBRARY_LEVELS\n"
+        "from otto.logger.management import DEFAULT_LIBRARY_LEVELS as direct\n"
+        "assert DEFAULT_LIBRARY_LEVELS is direct\n"
+        "assert 'DEFAULT_LIBRARY_LEVELS' in otto.logger.__all__\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr

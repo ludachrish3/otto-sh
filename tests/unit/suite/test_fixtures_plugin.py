@@ -1,6 +1,7 @@
 """OttoFixturesPlugin: the ``ctx`` fixture, the ``ensure`` marker, and plain tests under it."""
 
 import asyncio
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -19,6 +20,7 @@ from otto.suite.layout import ArtifactLayout
 from otto.suite.plugin import OttoPlugin
 from otto.suite.run import ASYNCIO_LOOP_ARGS
 from otto.utils import Status
+from tests._fixtures.paths import PROJECT_ROOT
 
 # None of the tests in this file request module_dir/test_dir — the ensure
 # marker and the ctx fixture are what is under test here — so every
@@ -27,6 +29,7 @@ from otto.utils import Status
 # temp dir (not a bare relative "unused"), so a stray resolution wouldn't
 # silently write under the repo's own cwd.
 _LAYOUT = ArtifactLayout(root=Path(tempfile.gettempdir()) / "otto-fixtures-plugin-unused-layout")
+_SRC = PROJECT_ROOT / "src"
 
 
 class _Runner:
@@ -103,7 +106,7 @@ def test_the_ctx_fixture_returns_the_active_context() -> None:
     ctx = OttoContext(lab=Lab(name="test"))
     token = set_context(ctx)
     try:
-        assert OttoFixturesPlugin.ctx.__wrapped__(plugin) is ctx
+        assert OttoFixturesPlugin._ctx.__wrapped__(plugin) is ctx
     finally:
         reset_context(token)
 
@@ -541,3 +544,35 @@ class TestStrict:
         plugins=[OttoPlugin(), OttoFixturesPlugin(layout=_LAYOUT)],
     )
     assert result.ret == pytest.ExitCode.OK
+
+
+def test_the_dump_records_the_fixtures_plugin_without_a_refusal() -> None:
+    """A pytest fixture definition is an unclassifiable member (API dump spec §3.4).
+
+    The plugin is declared at ``otto.suite``, so a fixture defined on a public
+    method name would refuse the whole dump. Each fixture is defined on a
+    private method and published under its fixture name instead.
+    """
+    from scripts import api_regen
+
+    report = api_regen.run_child(Path(sys.executable), _SRC, ["otto.suite"])
+    assert [r for r in report["refusals"] if r.startswith("otto.suite:OttoFixturesPlugin")] == []
+
+
+def test_the_five_fixtures_keep_their_names_and_scopes(pytester: pytest.Pytester) -> None:
+    """Moving the definitions to private methods must not rename a fixture a test requests."""
+    from otto.suite.pytest_plugin import OttoFixturesPlugin
+
+    pytester.makepyfile(test_inner="def test_one():\n    pass\n")
+    result = pytester.runpytest_inprocess(
+        "--fixtures", *INNER_ARGS, plugins=[OttoPlugin(), OttoFixturesPlugin(layout=_LAYOUT)]
+    )
+    result.stdout.fnmatch_lines_random(
+        [
+            "ctx [[]session scope[]] -- *",
+            "module_dir [[]module scope[]] -- *",
+            "test_dir -- *",
+            "expect -- *",
+            "monitor -- *",
+        ]
+    )

@@ -19,8 +19,9 @@ board — and the manual kind adds exactly one step at the end:
 `.otto/coverage/manual/<captured_at>-<ticket-slug>-<board-slug>.json`, where
 it is `git add`-able and shows up in a PR next to the code it proves.
 
-The artifact is `capture.model.Capture` (schema v2, pydantic
-`extra="forbid"`, exact-match version check on load): tier, `base_commit`,
+The artifact is `capture.model.Capture` (schema v3, pydantic
+`extra="forbid"`; load accepts only the versions in `CAPTURE_READ_VERSIONS`,
+`otto.coverage.formats`): tier, `base_commit`,
 `dirty_remap`, `captured_at`, tester, ticket, note, labs, board,
 display_name, and per file a `{blob, lines, branches}` record in
 **base_commit coordinates**. Two of those fields are what make it proof

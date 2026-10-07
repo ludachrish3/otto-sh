@@ -171,7 +171,7 @@ def host_class_for_id(host_id: str | None) -> type | None:
     if not host_id:
         return None
     try:
-        from ..config import get_host
+        from ..config.fleet import get_host
 
         return type(get_host(host_id))
     except Exception:  # noqa: BLE001 — completion fallback: no lab loaded / unknown id → return None for full menu
@@ -207,7 +207,7 @@ def cached_host_class_for_id(host_id: str) -> type | None:
     the memo can never go stale in practice.
     """
     global _discovered_host_classes  # noqa: PLW0603 — process-lifetime memo, see docstring
-    from ..config import get_completion_names
+    from ..bootstrap import get_completion_names
 
     cached = get_completion_names()
     mapping = cached.get("host_classes_by_id") if cached is not None else None

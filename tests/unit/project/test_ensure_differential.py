@@ -90,8 +90,8 @@ def _wire_lab(monkeypatch, repo_names, ctx):
     declaration.
     """
     ordered = [fake_repo(name) for name in repo_names]
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", lambda: ordered)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: ordered)
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: ordered)
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: ordered)
     monkeypatch.setattr("otto.context.get_context", lambda: ctx)
     return ordered
 

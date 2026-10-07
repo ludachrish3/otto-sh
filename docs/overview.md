@@ -136,7 +136,7 @@ from typing import Annotated
 import typer
 
 from otto.instructions import instruction
-from otto.config import all_hosts
+from otto.lab import all_hosts
 
 logger = logging.getLogger(__name__)
 

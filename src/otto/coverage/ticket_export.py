@@ -14,9 +14,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .formats import TICKETS_WRITE_VERSIONS
 from .store.model import CoverageStore
 
-TICKET_EXPORT_FORMAT = 2
+[TICKET_EXPORT_FORMAT] = TICKETS_WRITE_VERSIONS
 """``tickets.json`` schema version. Independent of ``STORE_FORMAT_VERSION``.
 
 v2 is additive over v1: each ticket object gains an ``"asserted"`` map

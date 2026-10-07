@@ -1,0 +1,251 @@
+# otto's public namespaces and versioned formats: spec
+# docs/superpowers/specs/2026-10-04-public-api-manifest-design.md §4 and dump spec
+# docs/superpowers/specs/2026-10-05-api-dump-design.md §13. A name is public exactly
+# when it is in the __all__ of a namespace listed here. scripts/api_manifest.py
+# reads it: `make api-snapshot` dumps these namespaces into the golden and
+# `make check-api-teaching` checks what the docs teach against them. Removing a
+# namespace, or downgrading one from stable, is a breaking change.
+
+[namespaces."otto"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.config"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.lab"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.host"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.labs"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.models"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.link"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.tunnel"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.docker"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.reservations"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.inventory"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.creds"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.monitor"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.coverage"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.suite"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.project"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.session"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.logger"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.testing"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.init"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.bootstrap"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.context"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.instructions"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.result"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.errors"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.utils"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.registry"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.params"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.tls"]
+tier = 1
+stability = "provisional"
+
+[namespaces."otto.host.transfer"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.options"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.command_frame"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.login_proxy"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.session_setup"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.app_shell"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.embedded_filesystem"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.product"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.host.dev_tool"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.monitor.parsers"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.monitor.snmp"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.monitor.log_sourced"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.cli.registry"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.app_shell"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.lab_repository"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.login_proxy"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.monitor"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.options"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.reservations"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.reservations_cli"]
+tier = 2
+stability = "provisional"
+
+[namespaces."otto.examples.session_setup"]
+tier = 2
+stability = "provisional"
+
+# Versioned formats (dump spec §13). Each table points at the literal lists of
+# the versions otto reads and writes; the dump records the values. Dropping a
+# version from either list, or removing a table, is a breaking change.
+
+[formats.check-echo-sentinel]
+reads = "otto.tunnel.model:CHECK_ECHO_READ_VERSIONS"
+writes = "otto.tunnel.model:CHECK_ECHO_WRITE_VERSIONS"
+
+[formats.check-report]
+writes = "otto.check.formats:CHECK_REPORT_WRITE_VERSIONS"
+
+[formats.coverage-capture]
+reads = "otto.coverage.formats:CAPTURE_READ_VERSIONS"
+writes = "otto.coverage.formats:CAPTURE_WRITE_VERSIONS"
+
+[formats.coverage-store]
+reads = "otto.coverage.formats:STORE_READ_VERSIONS"
+writes = "otto.coverage.formats:STORE_WRITE_VERSIONS"
+
+[formats.coverage-tickets]
+writes = "otto.coverage.formats:TICKETS_WRITE_VERSIONS"
+
+[formats.kmodcov-interface]
+reads = "otto.kmodcov.formats:KMODCOV_INTERFACE_READ_VERSIONS"
+
+[formats.link-impairment-sentinel]
+reads = "otto.link.params:IMPAIR_SENTINEL_READ_VERSIONS"
+writes = "otto.link.params:IMPAIR_SENTINEL_WRITE_VERSIONS"
+
+[formats.monitor-database]
+reads = "otto.monitor.formats:MONITOR_DB_READ_VERSIONS"
+writes = "otto.monitor.formats:MONITOR_DB_WRITE_VERSIONS"
+
+[formats.monitor-export]
+reads = "otto.models.formats:MONITOR_EXPORT_READ_VERSIONS"
+writes = "otto.models.formats:MONITOR_EXPORT_WRITE_VERSIONS"
+
+[formats.reservations-file]
+reads = "otto.models.formats:RESERVATIONS_READ_VERSIONS"
+
+[formats.tunnel-sentinel]
+reads = "otto.tunnel.model:TUNNEL_SENTINEL_READ_VERSIONS"
+writes = "otto.tunnel.model:TUNNEL_SENTINEL_WRITE_VERSIONS"

@@ -404,10 +404,11 @@ def test_an_unexpected_error_in_one_file_does_not_stop_the_corpus(tmp_path, monk
     ]
 
 
-def test_preview_manifest_parses_and_names_no_missing_namespace():
-    namespaces = load_manifest(PROJECT_ROOT / "scripts" / "api_public_preview.toml")
-    assert "otto.lab" not in namespaces  # created by P1, not before
-    assert {"otto", "otto.host", "otto.host.transfer", "otto.cli.registry"} <= set(namespaces)
+def test_the_manifest_parses_and_names_no_missing_namespace():
+    namespaces = load_manifest(PROJECT_ROOT / "api" / "public.toml")
+    assert {"otto", "otto.lab", "otto.host", "otto.host.transfer", "otto.cli.registry"} <= set(
+        namespaces
+    )
     for name in namespaces:
         rel = name.replace(".", "/")
         assert (PROJECT_ROOT / "src" / f"{rel}.py").exists() or (
@@ -416,9 +417,7 @@ def test_preview_manifest_parses_and_names_no_missing_namespace():
 
 
 def test_report_mode_always_exits_zero_and_prints_a_summary(capsys):
-    exit_code = teaching_main(
-        ["--manifest", str(PROJECT_ROOT / "scripts" / "api_public_preview.toml"), "--report"]
-    )
+    exit_code = teaching_main(["--manifest", str(PROJECT_ROOT / "api" / "public.toml"), "--report"])
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "api-surface-report:" in out.splitlines()[-1]
@@ -719,3 +718,172 @@ def test_every_unresolved_base_that_mentions_otto_fails_loudly(tmp_path, code, b
 def test_type_arguments_of_a_base_are_not_bases_and_produce_no_finding(tmp_path):
     code = HEAD + "class L(list[UnixHost]):\n    pass\n"
     assert _private_findings(tmp_path, code) == []
+
+
+def test_code_below_a_closed_doctest_docstring_is_checked(tmp_path):
+    # A def whose docstring holds a doctest is code throughout: the import below the
+    # closed docstring is checked, not dropped as the doctest's output.
+    page = _page(
+        tmp_path,
+        '```python\ndef add(a, b):\n    """Add.\n\n    >>> add(1, 2)\n    3\n    """\n'
+        "    from otto.nope import Below\n    return a + b\n```\n",
+    )
+    assert _kinds(page, tmp_path) == [("undeclared-import", "otto.nope:Below", 8)]
+
+
+def test_a_docstring_doctest_and_the_code_below_it_are_both_checked(tmp_path):
+    page = _page(
+        tmp_path,
+        '```python\ndef add(a, b):\n    """Add.\n\n    >>> from otto.nope import Inside\n    """\n'
+        "    from otto.nope import Below\n    return a + b\n```\n",
+    )
+    assert _kinds(page, tmp_path) == [
+        ("undeclared-import", "otto.nope:Below", 7),
+        ("undeclared-import", "otto.nope:Inside", 5),
+    ]
+
+
+def test_a_setup_only_name_below_a_closed_docstring_is_reported(tmp_path):
+    page = _page(
+        tmp_path,
+        '```python\ndef f():\n    """\n    >>> f()\n    """\n    return LocalHost()\n```\n',
+    )
+    assert _kinds(page, tmp_path, setup={"LocalHost"}) == [("setup-only-name", "LocalHost", 6)]
+
+
+def test_prose_inside_a_docstring_is_not_a_doctest_line(tmp_path):
+    # A blank line ends the doctest run; a prose line that starts with "..." opens nothing.
+    page = _page(
+        tmp_path,
+        '```python\ndef f():\n    """Do it.\n\n    >>> f()\n\n'
+        '    ... and LocalHost is prose here\n    """\n    return 1\n```\n',
+    )
+    assert _kinds(page, tmp_path, setup={"LocalHost"}) == []
+
+
+def test_an_f_string_holding_a_prompt_reads_alike_on_every_interpreter(tmp_path):
+    # 3.12+ tokenizes an f-string as start/middle/end tokens, 3.10 as one STRING.
+    page = _page(
+        tmp_path,
+        '```python\nx = f"""\n>>> from otto.nope import Inside\n"""\n'
+        "from otto.nope import Below\n```\n",
+    )
+    assert _kinds(page, tmp_path) == [
+        ("undeclared-import", "otto.nope:Below", 5),
+        ("undeclared-import", "otto.nope:Inside", 3),
+    ]
+
+
+def test_an_untokenizable_transcript_is_still_read_as_a_transcript(tmp_path):
+    # An output line with an unbalanced quote stops the tokenizer; the block keeps
+    # the transcript reading, so its output is never taken for code.
+    page = _page(tmp_path, "```python\n>>> import os\n'unbalanced\nfrom otto.nope import X\n```\n")
+    assert _kinds(page, tmp_path) == []
+
+
+def test_a_bad_manifest_is_a_fail_line_not_a_traceback(tmp_path, capsys):
+    manifest = tmp_path / "public.toml"
+    manifest.write_text("not = [valid\n", encoding="utf-8")
+    for mode in ([], ["--report"]):
+        assert teaching_main(["--manifest", str(manifest), *mode]) == 1
+        (line,) = capsys.readouterr().out.splitlines()
+        assert line.startswith("FAIL not valid TOML: ")
+
+
+def test_a_missing_manifest_is_a_fail_line_not_a_traceback(tmp_path, capsys):
+    absent = tmp_path / "absent.toml"
+    assert teaching_main(["--manifest", str(absent)]) == 1
+    assert capsys.readouterr().out == f"FAIL {absent} does not exist\n"
+
+
+def test_a_failed_namespace_report_is_a_fail_line_not_a_traceback(tmp_path, capsys, monkeypatch):
+    from scripts import api_agreement
+
+    def broken(namespaces, repo):
+        raise api_agreement.AgreementError("the reporting child died")
+
+    monkeypatch.setattr(api_agreement, "namespace_reports", broken)
+    root, manifest = _gating_tree(tmp_path, "```python\nfrom otto import Thing\n```\n")
+    for mode in ([], ["--report"]):
+        assert teaching_main(["--manifest", str(manifest), "--root", str(root), *mode]) == 1
+        assert capsys.readouterr().out == (
+            "FAIL cannot report the declared namespaces: the reporting child died\n"
+        )
+
+
+SHAPES = (
+    "# Shape canary\n"
+    "\n"
+    "```python\n"
+    "from otto.nope import Plain\n"
+    "```\n"
+    "\n"
+    "Indented block:\n"
+    "\n"
+    "    from otto.nope import Indented\n"
+    "\n"
+    "~~~python\n"
+    "from otto.nope import Tilde\n"
+    "~~~\n"
+    "\n"
+    "- bullet text:\n"
+    "\n"
+    "  ```python\n"
+    "  from otto.nope import ListItem\n"
+    "  ```\n"
+    "\n"
+    "```{code-block} python\n"
+    "from otto.nope import Directive\n"
+    "```\n"
+    "\n"
+    "```{note}\n"
+    "```python\n"
+    "from otto.nope import EqualNested\n"
+    "```\n"
+    "```\n"
+    "\n"
+    "````{note}\n"
+    "```python\n"
+    "from otto.nope import WiderNested\n"
+    "```\n"
+    "````\n"
+)
+
+
+def test_every_fence_shape_the_docs_use_reaches_the_validator(tmp_path):
+    """Each code-block shape a page uses is checked, each with its own finding.
+
+    Carried over from the v1 docs walk's shape canary: a plain fence, a
+    CommonMark indented block, a tilde fence, a fence indented in a list item,
+    MyST's ``{code-block}``, and a fence nested in an equal-count and in a
+    wider container. Distinct names, so a shape that goes quiet cannot hide
+    behind another.
+    """
+    page = _page(tmp_path, SHAPES, name="shapes.md")
+    assert _kinds(page, tmp_path) == [
+        ("undeclared-import", "otto.nope:Plain", 4),
+        ("undeclared-import", "otto.nope:Indented", 9),
+        ("undeclared-import", "otto.nope:Tilde", 12),
+        ("undeclared-import", "otto.nope:ListItem", 18),
+        ("undeclared-import", "otto.nope:Directive", 22),
+        ("undeclared-import", "otto.nope:EqualNested", 27),
+        ("undeclared-import", "otto.nope:WiderNested", 33),
+    ]
+
+
+def test_a_parenthesized_import_is_checked_and_an_otto_lookalike_is_not(tmp_path):
+    """Carried over from the v1 docs walk: multi-line imports, plain and doctest.
+
+    ``otto_something`` is another package, never a broken ``otto`` import.
+    """
+    page = _page(
+        tmp_path,
+        "```python\nfrom otto.host import (\n    Element,\n    Missing,\n)\n"
+        "from otto_something import Thing\nimport otto_something\n```\n"
+        "\n```{doctest}\n>>> from otto.host import (\n...     LocalHost,\n"
+        "...     AlsoMissing,\n... )\n>>> LocalHost is not None\nTrue\n```\n",
+    )
+    assert _kinds(page, tmp_path) == [
+        ("undeclared-import", "otto.host:Missing", 2),
+        ("undeclared-import", "otto.host:AlsoMissing", 11),
+    ]

@@ -581,13 +581,17 @@ class Host(Protocol):
     """Whether this host has a working ``bash`` to tag and exec through (see
     :attr:`BaseHost.has_bash`)."""
 
-    async def _login(self, user: str | None = None, force: bool = False) -> None: ...
+    async def run_login(self, user: str | None = None, force: bool = False) -> None:
+        """Open the shell :meth:`login` bridges (a hook: callers use :meth:`login`)."""
+        ...
 
     async def login(self, user: str | None = None, force: bool = False) -> None:
         """Open an interactive shell bridged to the local terminal."""
         ...
 
-    async def _logout(self) -> Result: ...
+    async def run_logout(self) -> Result:
+        """Reset the console for :meth:`logout` (a hook: callers use :meth:`logout`)."""
+        ...
 
     async def logout(self) -> Result:
         """Reset a serial console to its login prompt (console term only)."""
@@ -1529,7 +1533,14 @@ class BaseHost(ABC):
     #  Command execution
     ####################
 
-    async def _login(self, user: str | None = None, force: bool = False) -> None:
+    async def run_login(self, user: str | None = None, force: bool = False) -> None:
+        """Open the interactive shell for :meth:`login`, bridged to the local terminal.
+
+        A hook: a host family overrides it and nothing calls it but :meth:`login`,
+        which validates *user*, refuses *force* off a console and answers a dry
+        run first. This default raises :exc:`NotImplementedError`: the family has
+        no interactive session.
+        """
         raise NotImplementedError(
             f"The '{self.__class__.__name__}' class does not support interactive sessions"
         ) from None
@@ -1555,7 +1566,7 @@ class BaseHost(ABC):
     ) -> None:
         """Open an interactive shell bridged to the local terminal.
 
-        Subclasses implement ``_login`` to do the actual protocol
+        Subclasses implement ``run_login`` to do the actual protocol
         work. This wrapper exists so CLI and SDK callers have a single
         public entry point.
 
@@ -1575,7 +1586,7 @@ class BaseHost(ABC):
         side effect (a terminal bridged to a real shell), and declining to
         perform it is the whole point. On
         :class:`~otto.host.docker_host.DockerContainerHost` the arm matters
-        twice over: ``_login`` calls ``_ensure_running()``, which can reach
+        twice over: ``run_login`` calls ``_ensure_running()``, which can reach
         ``compose_up`` and START A CONTAINER. The CLI's ``--dry-run`` seam
         already stops this verb before its body (it declares no preview), so
         the exposed caller is the LIBRARY one.
@@ -1602,9 +1613,15 @@ class BaseHost(ABC):
                 f"no connection made"
             )
             return
-        await self._login(user, force=force)
+        await self.run_login(user, force=force)
 
-    async def _logout(self) -> Result:
+    async def run_logout(self) -> Result:
+        """Reset the console to its login prompt for :meth:`logout`.
+
+        A hook: a host family overrides it and nothing calls it but :meth:`logout`,
+        which refuses a non-console term and answers a dry run first. This default
+        raises :exc:`NotImplementedError`: the family has no console to reset.
+        """
         raise NotImplementedError(
             f"The '{self.__class__.__name__}' class does not support console logout"
         ) from None
@@ -1643,7 +1660,7 @@ class BaseHost(ABC):
             banner = f"[DRY RUN] logout({self.name}) — no console reset performed"
             self._log_command(banner)
             return Result(Status.NotRun, msg=banner)
-        return await self._logout()
+        return await self.run_logout()
 
     async def run(
         self,

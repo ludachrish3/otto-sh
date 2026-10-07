@@ -195,13 +195,17 @@ job that enforces it on push.
 | --- | --- | --- | --- |
 | ruff (lint + format) | `lint-python` | `lint` | `lint-python` |
 | tach + ast-grep | `lint-arch`, and pulled in by `lint-python` | `lint` | `lint-python` |
-| lazy-export import rules (two parse-only tests; see {doc}`../contributing`) | `lint-arch`, and every pytest lane | via `tests_hostless` | `tests` |
+| lazy-export import rules (three parse-only tests; see {doc}`../contributing`) | `lint-arch`, and every pytest lane | via `tests_hostless` | `tests` |
 | ty | `typecheck-python` | `typecheck` | `typecheck-python` |
 | Biome + knip | `lint-ts` | — | `check-ts` |
 | tsc | `typecheck-ts` | — | `check-ts` |
 | vendored-source hash | `check-ts` | — | `check-ts` |
 | vitest + unit coverage floor | `coverage-ts-unit` | — | `check-ts` |
 | pytest (hostless matrix) | `coverage-hostless` | `tests_hostless` | `tests` (3.10–3.14; the full selection and its coverage floor on the 3.10 + 3.14 bookends, the trimmed `tests/unit` tier minus `interpreter_agnostic` on 3.11–3.13 — see `noxfile.py`'s `HOSTLESS_MIDDLE_TEST_ARGS`) |
+| public-API golden: `tests/unit/api_snapshot/public_api.txt` is, byte for byte, the API dump of the tree (`scripts/api_snapshot.py`) | `check-api-snapshot` | via `tests_hostless` | `tests` — enforced by `tests/unit/api_snapshot/test_public_api_snapshot.py` |
+| public-API dump invariance: the dump regenerated on each supported Python, under its own `PYTHONHASHSEED`, from runtime dependencies alone, is byte-identical to the golden | — | `api_dump_invariance` | `api-dump-invariance` (3.10–3.14) |
+| breaking marks: each commit's golden is its own regenerated dump, and a commit that breaks the public API carries a `!` or a `BREAKING CHANGE:` footer (`scripts/check_breaking_marks.py`) | `check-breaking`, and pulled in by `lint-arch` | — (it needs a commit range; see `noxfile.py`'s `lint`) | `lint-python` |
+| docs teach only declared names (`scripts/api_teaching.py`) | `check-api-teaching` | — | `lint-python` |
 | test-isolation leak guard | `nox-unit-repeat` | `tests_unit_repeat` | `unit-repeat` |
 | import budget | `profile` — gates each gated surface's file operations against its per-interpreter ceilings and target ratio, and prints the tracked surfaces (see {doc}`startup-performance`); never wall-clock, which fails for reasons outside the change | via `tests_hostless` | `tests` — enforced by `tests/unit/import_budget/` |
 | build-lane invariants: an `addopts` override keeps `-p no:tach`; every lane that excludes `serial_timing` re-appends it in a paired `-n0` leg (an exclusion without its leg makes the discriminators CI-invisible). **Not attempted:** the complement — that no lane running under xdist *selects* a `serial_timing` test — is not gated. The leg check can only audit lanes that *spell* an exclusion, and resource markers like `integration` and `browser` are applied by conftest hooks at collection, so no source scan can see them; asking pytest per lane (`--collect-only -m "<expr> and serial_timing"`) was run once as a hand audit when the marker was introduced, and never wired up as a standing check. The protection in force is the root conftest, which errors any `serial_timing` test that reaches an xdist worker. Make macros in a lane's `-m` are expanded first; an unexpanded one is reported, never handed to pytest | via `coverage*` | via `tests_hostless` | `tests` — enforced by `tests/unit/test_lane_invariants.py` |
@@ -247,22 +251,22 @@ slice, and `stability-unit` across the Python matrix. Everything that needs
 a real host — `make chaos`, `stability-unix`, `stability-tunnel`,
 `stability-embedded` — runs when a human decides to run it.
 
-### The public-surface declaration (dormant)
+### The public-surface declaration
 
 The declaration in spec 1 of
 [#590](https://github.com/ludachrish3/otto-sh/issues/590)
-(`docs/superpowers/specs/2026-10-04-public-api-manifest-design.md`) has
-its tooling built but not yet enforced:
+(`docs/superpowers/specs/2026-10-04-public-api-manifest-design.md`) is live:
 
-- `api/public.toml` (from P1) declares the public namespaces and the
-  versioned formats; `scripts/api_manifest.py` reads it.
+- `api/public.toml` declares the public namespaces, each with its tier, and
+  otto's versioned formats. `scripts/api_manifest.py` reads it. A name is
+  public if and only if it is in a declared namespace's `__all__`.
 - `scripts/api_dump_child.py` imports the declared namespaces in a fresh
-  interpreter and writes the **API dump**: one tab-separated record per
-  binding, ancestry (`mro`), call, constructor input, member, obligation, enum member and
-  versioned format (`scripts/api_records.py` holds the grammar). The v2
-  golden is that dump, headed `# api-snapshot v2` and
-  `# producer-schema 1`. The live golden is still v1, whose line format
-  `scripts/api_lines.py` defines.
+  interpreter and writes the **API dump**. Each binding gets one
+  tab-separated record, and so does each ancestry (`mro`), call, constructor
+  input, member, obligation, enum member and versioned format
+  (`scripts/api_records.py` holds the grammar). The golden,
+  `tests/unit/api_snapshot/public_api.txt`, is that dump, headed
+  `# api-snapshot v2` then `# producer-schema <n>`.
 - `scripts/api_compat.py` compares two dumps. A finding is a change an
   existing caller, subclass or reader can observe: a removed name, a
   narrowed call, a changed default, a new obligation, a dropped format
@@ -270,23 +274,24 @@ its tooling built but not yet enforced:
 - `scripts/api_regen.py` regenerates any commit's dump from that commit
   alone: its archive, its lock, its manifest. `check-breaking` refuses a
   commit whose committed dump differs from its regeneration, marked or not.
-- `scripts/api_teaching.py` checks every otto name the docs and shipped
+- CI's `api-dump-invariance` job regenerates the dump on every supported
+  Python (3.10–3.14), each under its own `PYTHONHASHSEED`, from runtime
+  dependencies alone, and requires it byte-identical to the golden (nox
+  `api_dump_invariance-<python>`).
+- `scripts/api_teaching.py` checks every otto name the docs and the shipped
   examples teach, including taught use of an otto class's underscore
-  members.
+  members. It gates in CI; run it locally with `make check-api-teaching`.
 - `scripts/api_agreement.py` proves each declared namespace's `__all__`
   against a fresh interpreter.
-- `check-breaking` already applies the dump's rules (the comparison and
-  the freshness check), but only to a commit whose golden is v2, and the
-  live golden is still v1.
+- The API reference follows the declaration: one page per declared
+  namespace, and *Internals* for every other module.
+  `scripts/check_docs_api_marks.py` checks the built site's stability marks
+  against it ({doc}`../api/stability`).
 
 What a golden is, and how a commit is marked breaking, is in
 [Branching and commits](../contributing.md#branching-and-commits).
 The rules are in the dump spec
 (`docs/superpowers/specs/2026-10-05-api-dump-design.md`).
-`make api-surface-report` measures the cutover's remaining work against
-a preview declaration: agreement failures, validator findings and the
-producer's refusals. It never gates. The steps that switch the
-declaration on are listed in `todo/590-p1-public-surface-switch-on.md`.
 
 ## Why this page exists
 

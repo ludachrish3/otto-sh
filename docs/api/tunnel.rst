@@ -18,42 +18,11 @@ chains, docker endpoints, and host requirements, see the
 ``otto tunnel check`` builds on all of it: ``otto.tunnel.check`` is
 ``check_tunnel`` and its ``TunnelCheckReport``, and
 ``otto.tunnel.check_probes`` the probe scripts, the tagged echo listeners and
-their parsers. The verdicts themselves come from :doc:`otto.check <check>`.
-``check_tunnel`` and ``TunnelCheckReport`` are importable from
-``otto.tunnel``, and are documented once, under ``otto.tunnel.check``. See
+their parsers. The verdicts themselves come from :doc:`otto.check <internals/check>`.
+``check_tunnel`` and ``TunnelCheckReport`` are documented below, with the rest of the
+package. See
 the :doc:`check guide <../cli/tunnel/check>` for what the check proves and
 how to read it.
 
 .. automodule:: otto.tunnel
-   :members:
-   :exclude-members: CARRIERS, TunnelCarrier, build_carrier, register_carrier,
-      Tunnel, TunnelHop, Direction, Role, ProcKey, make_tunnel_id,
-      SENTINEL_PREFIX, ParsedSentinel, encode_sentinel, parse_sentinel,
-      DiscoveredTunnel, TunnelDiscovery, TunnelNotMeasuredError,
-      discover_tunnels, AddedTunnel, DryRunPlan,
-      RemovedReport, add_tunnel, remove_tunnel, remove_all_tunnels,
-      TunnelCheckReport, check_tunnel
-
-.. automodule:: otto.tunnel.model
-   :members:
-
-.. automodule:: otto.tunnel.sentinel
-   :members:
-
-.. automodule:: otto.tunnel.carrier
-   :members:
-
-.. automodule:: otto.tunnel.socat
-   :members:
-
-.. automodule:: otto.tunnel.discovery
-   :members:
-
-.. automodule:: otto.tunnel.manage
-   :members:
-
-.. automodule:: otto.tunnel.check
-   :members:
-
-.. automodule:: otto.tunnel.check_probes
    :members:

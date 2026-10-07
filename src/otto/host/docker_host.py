@@ -375,7 +375,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 or :func:`~otto.docker.compose.compose_up` declined, unwrapped.
                 See the arms below for why it is spelled out.
         """
-        from ..config import get_repos as _get_repos
+        from ..bootstrap import get_repos as _get_repos
         from ..docker.resolve import declared_use_cases
 
         repos = _get_repos()
@@ -425,7 +425,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 )
             return cid
 
-        from ..config import get_lab as _get_lab
+        from ..config.fleet import get_lab as _get_lab
         from ..docker.compose import compose_up
 
         logger.info(
@@ -609,7 +609,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """Record that the default run channel just opened as *user*.
 
         THE ONLY WRITER of the bind record, and it is called from
-        :meth:`~otto.host.session._DockerSshSession._open` — i.e. by the open
+        :meth:`~otto.host.session._DockerSshSession.open_transport` — i.e. by the open
         itself, once the transport is up. Recording at the point of INTENT
         instead (in ``_run_one``, before ``run_cmd``) is what the first cut of
         this feature did, and it was wrong twice over: a channel that
@@ -903,7 +903,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         )
 
     @override
-    async def _login(self, user: "str | None" = None, force: bool = False) -> None:
+    async def run_login(self, user: "str | None" = None, force: bool = False) -> None:
         """Open an interactive shell inside the container via the parent's SSH conn.
 
         ``user`` lands the shell as that identity (``docker exec -u``); the

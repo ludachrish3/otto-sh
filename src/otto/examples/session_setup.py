@@ -44,8 +44,10 @@ happen once (provisioning) is done on the default session only:
 
 import shlex
 
-from otto.host.session import HostSession
+from otto.host import HostSession
 from otto.host.session_setup import SetupContext
+
+__all__ = ["enter_python", "export_app_env"]
 
 
 async def export_app_env(session: HostSession, ctx: SetupContext) -> None:

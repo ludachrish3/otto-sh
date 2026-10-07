@@ -248,7 +248,7 @@ def real_main_mocks(tmp_path):
             "otto.logger.management._ConsoleHandler",
             side_effect=lambda *args, **kwargs: logging.NullHandler(),
         ) as p_rich,
-        patch("otto.config.bootstrapped.get_repos", return_value=[repo]),
+        patch("otto.bootstrap.get_repos", return_value=[repo]),
         patch(
             "otto.host.local_host.LocalHost.run",
             new_callable=AsyncMock,

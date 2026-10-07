@@ -35,8 +35,6 @@ if TYPE_CHECKING:
     from ..config.repo import Repo
     from .registry import CommandSpec
 
-__version__ = get_version()
-
 # TODO: Should rich help menus be optional?
 # Uncomment the line below to remove rich help menu formatting globally
 # typer.core.HAS_RICH = False  # noqa: ERA001 — intentional documented escape-hatch example
@@ -86,7 +84,7 @@ def version_callback(version: bool) -> None:
     tty — so ``tests/unit/test_shim.py`` pins it under a pty.
     """
     if version:
-        print(f"otto version: {__version__}")  # noqa: T201 — see docstring
+        print(f"otto version: {get_version()}")  # noqa: T201 — see docstring
         raise typer.Exit
 
 
@@ -97,7 +95,7 @@ def list_labs_callback(value: bool) -> None:
         from rich.panel import Panel
         from rich.table import Table
 
-        from ..config.bootstrapped import get_repos
+        from ..bootstrap import get_repos
 
         # Extract lab search paths from all repos
         panels: list[Panel] = [repo.get_lab_panel() for repo in get_repos()]
@@ -146,7 +144,7 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # 
     built in the completion fast path); falls back to a live best-effort
     collection on a cache miss. Empty when the backend can't enumerate users.
     """
-    from ..config import get_completion_names, get_repos
+    from ..bootstrap import get_completion_names, get_repos
     from ..config.completion_cache import collect_reservation_usernames
 
     cached = get_completion_names()
@@ -166,7 +164,7 @@ def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa:
     code). ``--lab`` combines labs with ``+``, so only the in-progress segment
     is completed and already-named labs are dropped.
     """
-    from ..config import get_completion_names, get_repos
+    from ..bootstrap import get_completion_names, get_repos
     from ..config.completion_cache import collect_lab_names
     from ..config.lab import LAB_SEPARATOR
     from ..utils import complete_separated_list
@@ -382,7 +380,7 @@ class _OttoGroup(TyperGroup):
         cache = getattr(self, "_real_cache", None) or {}
         self._real_cache = cache
         if spec.name not in cache:
-            from ..config.bootstrapped import get_completion_names
+            from ..bootstrap import get_completion_names
             from .registry import resolve_spec_command
 
             loader = spec.loader
@@ -408,7 +406,7 @@ class _OttoGroup(TyperGroup):
 
     @override
     def list_commands(self, ctx: Any) -> list[str]:
-        from ..config.bootstrapped import get_completion_names
+        from ..bootstrap import get_completion_names
         from .registry import CLI_COMMANDS
 
         static = [n for n in super().list_commands(ctx) if n not in CLI_COMMANDS]
@@ -448,7 +446,7 @@ class _OttoGroup(TyperGroup):
         are never dispatched and dispatch resolves through CLI_COMMANDS on the
         slow path.
         """
-        from ..config.bootstrapped import get_completion_names
+        from ..bootstrap import get_completion_names
         from .registry import CommandSpec
 
         cached = {

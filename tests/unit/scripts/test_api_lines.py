@@ -3,7 +3,6 @@
 import pytest
 
 from scripts import api_lines
-from tests._fixtures.paths import PROJECT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -41,11 +40,3 @@ def test_host_line_round_trips():
     assert api_lines.parse_host_line(line) == ("Host.put", ["src_files", "dest_dir"])
     assert api_lines.parse_host_line("otto.host.host:Host.close()") == ("Host.close", [])
     assert api_lines.parse_host_line("otto:Status") is None
-
-
-def test_every_line_of_the_committed_golden_has_a_known_v1_kind():
-    """The live golden is v1 until P1; an ``unknown`` line would slip past every rule."""
-    text = (PROJECT_ROOT / "tests/unit/api_snapshot/public_api.txt").read_text(encoding="utf-8")
-    assert api_lines.schema_of(text) == 1
-    unknown = [ln for ln in api_lines.data_lines(text) if api_lines.v1_kind(ln) == "unknown"]
-    assert unknown == []

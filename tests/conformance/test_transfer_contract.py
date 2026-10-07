@@ -171,7 +171,7 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     :class:`~otto.host.embedded_filesystem.EmbeddedFileSystem` reports
     ``supports_transfer`` False -- the flag
     ``otto.host.transfer.console.ConsoleFileTransfer`` short-circuits both
-    ``_run_put`` and ``_run_get`` on, returning an error for every file. So
+    ``run_put`` and ``run_get`` on, returning an error for every file. So
     otto already treats "no filesystem" as *nowhere to put a file* rather
     than as a transfer that fails, and this reads that rather than sniffing
     a variant name or an element.
@@ -832,7 +832,7 @@ async def test_control_the_batch_that_comes_back_is_the_batch_that_was_sent(
             ),
         )
         limit = backend.concurrency_limit
-        original = backend._dispatch_per_file
+        original = backend.dispatch_per_file
 
         async def _counting_dispatch(src_files, transfer_one, *, concurrent):
             """The backend's own dispatcher, with a counter around each file."""
@@ -853,7 +853,7 @@ async def test_control_the_batch_that_comes_back_is_the_batch_that_was_sent(
 
             return await original(src_files, _probe, concurrent=concurrent)
 
-        backend._dispatch_per_file = _counting_dispatch
+        backend.dispatch_per_file = _counting_dispatch
         count = limit + 3
         source_dir = tmp_path / "source"
         retrieved_dir = tmp_path / "retrieved"
@@ -876,7 +876,7 @@ async def test_control_the_batch_that_comes_back_is_the_batch_that_was_sent(
             # dispatcher, so nothing this control did outlives it even on the
             # failing path. Neither statement asserts, for the reason the other
             # controls' cleanups give.
-            del backend._dispatch_per_file
+            del backend.dispatch_per_file
             removed = [await remove_landed(host, words, path) for path in landed]
     for result, path in zip(removed, landed, strict=True):
         assert_bed_left_clean(result, path, cell)

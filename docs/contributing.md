@@ -291,10 +291,10 @@ the recommended "Biome" and "Vitest" VS Code extensions (see
 One asymmetry inside that shape, because it is the kind that bites: `make
 lint-python` also runs the architecture gates (`lint-arch` — tach, ast-grep,
 `ast-grep test`, which runs each rule's own valid/invalid snippets from
-`.ast-grep/rule-tests/`, and the two parse-only tests behind
+`.ast-grep/rule-tests/`, and the three parse-only tests behind
 [Patching lazily exported names](#patching-lazily-exported-names)), so it
 matches CI's `lint-python` job, which is `nox -s lint` and has always run
-them; CI runs the two import-rule tests in its `tests` job. It ran ruff only until 2026-08-10, and the difference
+them; CI runs the three import-rule tests in its `tests` job. It ran ruff only until 2026-08-10, and the difference
 was invisible: a file could pass `make lint`, `make format` and every
 coverage lane while still violating an architecture rule. Those rules mostly
 police *test* code — deadline polls, `parents[N]` path arithmetic,
@@ -337,22 +337,27 @@ the message subject:
 | `refactor:` | Code restructuring, no behavior change      |
 | `ci:`       | CI/CD configuration                         |
 
-A commit that deletes or renames a public symbol (`otto.__all__`, or a deep
-import path the docs teach), a `Host` protocol parameter, or a settings/lab
-key is a breaking change — `type(scope)!:` in the subject plus a
-`BREAKING CHANGE:` footer — no matter how small the deletion looks; a rename
-is a deletion and an addition together, so it is marked too. `make
-check-breaking` (`scripts/check_breaking_marks.py`, run in CI) enforces this
-for the first two against the committed golden,
-`tests/unit/api_snapshot/public_api.txt`; settings/lab keys are not yet
-enforced (a later schema-diff gate). A library line (`otto:<name>`, or a
-`Host` protocol signature) always needs the mark; a line only the docs
-taught — a deep import path a page stopped teaching — needs none if the path
-still imports at `HEAD`, and the check reports it as "docs-only, still
-importable" instead. Because it resolves those paths by importing them from
-the checked-out tree, the range you pass must end at `HEAD`. The tooling for the
-next, declared form of this surface is built but dormant; see
-[the public-surface declaration](architecture/quality-gates.md#the-public-surface-declaration-dormant).
+A commit that removes, renames or moves a public name, or changes one in a
+way an existing caller, subclass or reader can observe, is a breaking change.
+A public name is any name in the `__all__` of a namespace declared in
+`api/public.toml`; {doc}`api/stability` says which those are. Mark it with
+`type(scope)!:` in the subject or a `BREAKING CHANGE:` footer (either is
+accepted), however small the deletion looks. A rename is a deletion and an
+addition together, so it is marked too.
+
+A settings or lab-file key change is breaking as well, though not yet
+enforced (a later schema-diff gate). `make check-breaking`
+(`scripts/check_breaking_marks.py`, run in CI) enforces the rest against the
+committed golden, `tests/unit/api_snapshot/public_api.txt`. That golden is
+the **API dump**: one record per public binding and its shape.
+
+The checker regenerates each commit's dump from that commit alone and
+compares it with its parent's. A dump you forgot to refresh is refused,
+marked or not: run `make api-snapshot` and commit the result with the
+change. Removing a namespace from `api/public.toml`, or moving one from
+`stable` back to `provisional`, needs a mark too. The range you pass must end
+at `HEAD`. The machinery is described in
+[the public-surface declaration](architecture/quality-gates.md#the-public-surface-declaration).
 
 Before pushing, run `make all` locally — it mirrors CI
 (`clean-dist → typecheck → coverage → docs → build`).
@@ -410,7 +415,8 @@ Run `make gate-fresh` before handing a branch back or squashing it onto `main`.
 
 It runs the lanes that catch what a clean checkout sees and your dev tree
 hides: `lint-python`, `lint-arch`, `check-api-snapshot` (the public-API
-golden), `typecheck-python`, `collect-check` and `docs`. It runs them against
+golden), `check-api-teaching` (the otto names the docs teach),
+`typecheck-python`, `collect-check` and `docs`. It runs them against
 your **committed** tree inside a throwaway pristine worktree, then removes it
 (or keeps it, if the gate went red, so you have somewhere to debug). It does
 not run the test suites: they take longer than a push can wait, and CI runs
@@ -447,6 +453,12 @@ git pull --rebase
 git checkout <your-branch>
 git rebase main
 ```
+
+A merge also costs a mark. The checker judges a merge commit against its
+**first parent**, your branch. Merging `main` after a marked removal landed
+there removes that name again, relative to your branch, so the merge commit
+needs its own `!` or `BREAKING CHANGE:` footer. A rebase replays your commits
+on top of `main`, so the question never arises.
 
 Resolve conflicts commit by commit during the rebase
 (`git add <file>` then `git rebase --continue`, or `git rebase --abort`
@@ -631,47 +643,60 @@ and `make stability-tunnel CYCLES=N`.
 ### Patching lazily exported names
 
 Every otto package exports its public names lazily (PEP 562):
-`otto.config.get_repos` is resolved by the package's `__getattr__` from its lazy
-table (`_LAZY_ATTRS` or `_LAZY_EXPORTS`), and the package `__dict__` never holds
-it. Two rules follow, each with a static check and a run-time backstop.
+`otto.lab.get_lab` and `otto.config.load_user_settings` are resolved by the
+package's `__getattr__` from its lazy table (`_LAZY_ATTRS` or `_LAZY_EXPORTS`),
+and the package `__dict__` never holds them. Three rules follow, each with a
+static check; the first also has a run-time backstop.
 
 **Tests patch a name where it is defined, never on its package.**
-`monkeypatch.setattr("otto.config.bootstrapped.get_repos", fake)`, not
-`"otto.config.get_repos"`; `otto.session.lab.build_lab`, not
+`monkeypatch.setattr("otto.config.fleet.get_lab", fake)`, not
+`"otto.lab.get_lab"`; `otto.session.lab.build_lab`, not
 `otto.session.build_lab`. A package-level `monkeypatch` leaves the real object
 cached in the package `__dict__` when it undoes, and from then on, on that xdist
-worker, every `from otto.config import get_repos` binds the cached object and a
+worker, every `from otto.lab import get_lab` binds the cached object and a
 later defining-module patch reaches nothing — the failure lands on an unrelated
 test. `mock.patch` on the package does not leak, but shadows a defining-module
 patch inside its block, so the rule covers it too. The lazy table in the
 package's `__init__` names the defining module; a name declared through another
-lazy package (`otto.get_lab` → `otto.config.get_lab`) is defined one hop further
-(`otto.config.fleet.get_lab`). `tests/unit/test_patch_targets.py` parses every
-test tree, integration and e2e included, and names the module to patch instead;
-the root conftest's teardown hook (`tests/_fixtures/_lazy_exports.py`) catches a
-leak at run time, fails the leaking test by name and evicts the cached object.
-Names from a `_LAZY_ATTRS` package that a consumer binds at module level
+lazy package (`otto.app` → `otto.cli.app`) is defined one hop further
+(`otto.cli.main.app`). The repo accessors are not lazy: `otto.bootstrap`
+defines them, so `otto.bootstrap.get_repos` is both their import path and their
+patch target. `tests/unit/test_patch_targets.py` parses every test tree,
+integration and e2e included, and names the module to patch instead; the root
+conftest's teardown hook (`tests/_fixtures/_lazy_exports.py`) catches a leak at
+run time, fails the leaking test by name and evicts the cached object. Names
+from a `_LAZY_ATTRS` package that a consumer binds at module level
 (`otto.cli.link.find_link`) are patched on the consumer; that is correct and
 leaks nothing.
 
-**Source reads lazily exported functions at call time.** The function entries of
-the `otto`, `otto.config` and `otto.logger` lazy tables (`get_repos`,
-`get_ordered_repos`, `get_completion_names`, `get_env`, `get_lab`, `all_hosts`,
-`do_for_all_hosts`, `get_context`, `try_get_context`, ... and the registrars,
-such as `register_options` and `register_cli_command`) are imported inside the
-function that uses them, by either spelling (`from ..config import get_repos` or
-`from ..config.bootstrapped import get_repos`), never at module level outside
-`if TYPE_CHECKING:`. A module-level binding keeps the real function under a
-patch every other caller sees, so the module's tests run the real bootstrap
-without anyone noticing. Classes (`Repo`, `OttoContext`) are free to import at
-module level: binding one defeats no patch.
-`tests/unit/test_no_import_time_lazy_exports.py` flags both spellings; its
-`ALLOWED` table lists the sites that cannot move (a decorator applied at
-import), each with its reason.
+**Source reads process-wide getters at call time.** The process-wide getters —
+`otto.bootstrap`'s `bootstrap`, `get_repos`, `get_ordered_repos`, `get_env`,
+`is_bootstrapped` and `get_completion_names`, and the function entries of the
+`otto`, `otto.config`, `otto.logger` and `otto.lab` lazy tables (`get_lab`,
+`all_hosts`, `do_for_all_hosts`, `get_context`, `try_get_context`, ... and the
+registrars, such as `register_options` and `register_cli_command`) — are
+imported inside the function that uses them, from the defining module
+(`from ..bootstrap import get_repos`, `from ..config.fleet import get_lab`),
+never at module level outside `if TYPE_CHECKING:`. A module-level binding keeps
+the real function under a patch every other caller sees, so the module's tests
+run the real bootstrap without anyone noticing. Classes (`Repo`, `OttoContext`)
+are free to import at module level: binding one defeats no patch.
+`tests/unit/test_no_import_time_lazy_exports.py` flags a module-level binding
+by any spelling; its `ALLOWED` table lists the sites that cannot move (a
+decorator applied at import), each with its reason.
 
-Both static checks run in `make lint-arch` as well as in every pytest lane, so
-the per-change gate catches a violation that a targeted test run would never
-select.
+**A moved name has one spelling.** When a public name moves home, its old home
+is refused in every spelling — import, attribute, patch-target string,
+generated code — across `src/otto` and every test tree, by
+`tests/unit/test_moved_name_spellings.py`, which imports nothing it reads. A
+stale import inside a broad `except` would otherwise degrade silently. The same
+test keeps otto's own code off the `otto.lab` facade: code inside otto imports
+from the defining module, and only the shipped examples, which are taught code,
+use the public path.
+
+All three static checks run in `make lint-arch` as well as in every pytest
+lane, so the per-change gate catches a violation that a targeted test run would
+never select.
 
 ### Standing in for a Repo
 
@@ -820,8 +845,13 @@ CLI usage goes in `cli/`, on the page for the command it serves —
 that tree mirrors `otto`'s own command tree, so a new subcommand gets a page
 under its verb's directory and an entry in that verb's toctree.  Anything
 that serves a *Python* author rather than a CLI user goes in `cookbook/`
-instead.  API reference pages live in `api/` and use `.. automodule::`
-directives to pull documentation from docstrings.  Design rationale and subsystem
+instead.  API reference pages live in `api/`. Each namespace declared in
+`api/public.toml` has one page, a bare `.. automodule::` that renders its
+`__all__` (the *Public API*). Every other module renders under
+`api/internals/` with `:ignore-module-all:` (the *Internals*). A new
+declared namespace gets a public page and a new internal module an
+Internals page; `tests/unit/docs/test_api_reference_split.py` refuses
+anything else.  Design rationale and subsystem
 internals belong in `architecture/` — when a change alters how a
 subsystem works (not just what it does), update the matching
 architecture page in the same PR.
@@ -872,9 +902,12 @@ In Markdown documentation files (collected by Sphinx):
 ```
 ````
 
-Common imports (`Status`, `Result`, `CommandResult`, `Results`, `LocalHost`)
-are pre-loaded in doc-file doctests via `doctest_global_setup` in
-`docs/conf.py`.
+`doctest_global_setup` in `docs/conf.py` preloads a few names for the
+function doctests autodoc renders from `src/otto`. A docs page still imports
+every otto name it uses, in its own code: the docs validator
+(`scripts/api_teaching.py`) refuses a page that leans on the setup
+(`setup-only-name`). The setup's non-otto helpers (`run`, `GS_EXAMPLE`) need
+no import.
 
 ### Getting Started captures
 
@@ -959,14 +992,20 @@ these ties in mind:
   `class XmodemTransfer`, `exec`s it as the page spells it, puts it through
   `assert_transfer_backend_conforms` and one real `put_files` of two files.
   Exactly one fence may define that class.
-- **Imports on these pages are public API.** `scripts/api_snapshot.py`
-  collects every `import otto…`/`from otto… import` in a code fence or
-  doctest anywhere under `docs/` (except `docs/superpowers/`) into
-  `tests/unit/api_snapshot/public_api.txt`. A page that starts or stops
-  teaching a deep path no other page teaches changes that golden
-  (regenerate with `make api-snapshot`), and a taught import that no longer
-  resolves fails `tests/unit/api_snapshot/test_public_api_snapshot.py` (see
-  *Branching and commits*).
+- **Imports on these pages must be public.** `scripts/api_teaching.py` is
+  gated in CI; run it locally with `make check-api-teaching`. It reads
+  every code block under `docs/` (except `docs/superpowers/`) and in the
+  top-level `README.md`, and the whole of
+  `docs/examples/` and `src/otto/examples/`. Among other things, it refuses:
+  - an import, a dotted access or a `"module:Name"` string that names an
+    undeclared path;
+  - a star import;
+  - a taught use of an otto underscore member.
+
+  The full list of finding kinds is in that script's module docstring.
+
+  The docs declare nothing. To teach a new name, add it to its namespace's
+  `__all__` first ({doc}`api/stability`).
 
 ## Coverage reports
 

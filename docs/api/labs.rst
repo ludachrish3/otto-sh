@@ -8,26 +8,4 @@ The built-in ``json`` backend reads ``lab.json`` files; custom backends
 register a name via :func:`otto.labs.register_lab_repository` from an
 ``init`` module.
 
-.. autofunction:: otto.labs.build_lab_sources
-
-.. autofunction:: otto.labs.register_lab_repository
-
-.. autofunction:: otto.labs.host_summaries
-
-.. autofunction:: otto.labs.list_host_ids
-
-.. autoexception:: otto.labs.LabNotFoundError
-
-.. automodule:: otto.labs.protocol
-
-.. automodule:: otto.labs.json_repository
-
-.. automodule:: otto.labs.composite
-
-.. automodule:: otto.labs.sources
-
-.. automodule:: otto.labs.registry
-
-.. automodule:: otto.labs.doctor
-
-.. automodule:: otto.labs.errors
+.. automodule:: otto.labs

@@ -87,10 +87,10 @@ class TestRegistry:
         class NoFamilies(BaseFileTransfer):
             host_families = frozenset()
 
-            async def _run_put(self, *a, **kw):  # pragma: no cover - not invoked
+            async def run_put(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
-            async def _run_get(self, *a, **kw):  # pragma: no cover - not invoked
+            async def run_get(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
         with pytest.raises(ValueError, match="host_families is empty"):
@@ -107,10 +107,10 @@ class TestRegistry:
         class NoPromise(BaseFileTransfer):
             host_families = frozenset({"unix"})
 
-            async def _run_put(self, *a, **kw):  # pragma: no cover - not invoked
+            async def run_put(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
-            async def _run_get(self, *a, **kw):  # pragma: no cover - not invoked
+            async def run_get(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
         with pytest.raises(ValueError, match="progress_granularity is missing"):
@@ -123,10 +123,10 @@ class TestRegistry:
             host_families = frozenset({"unix"})
             progress_granularity = 8192  # not a ProgressGranularity
 
-            async def _run_put(self, *a, **kw):  # pragma: no cover - not invoked
+            async def run_put(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
-            async def _run_get(self, *a, **kw):  # pragma: no cover - not invoked
+            async def run_get(self, *a, **kw):  # pragma: no cover - not invoked
                 ...
 
         with pytest.raises(ValueError, match="progress_granularity is missing"):
@@ -294,8 +294,8 @@ async def test_sftp_hands_its_declared_stride_to_asyncssh(tmp_path: Path, monkey
     backend = SftpFileTransfer.create(_ctx())
     src = tmp_path / "f.bin"
     src.write_bytes(b"z" * 10)
-    await backend._run_put([src], Path("/remote"), None)
-    await backend._run_get([Path("/remote/f.bin")], tmp_path, None)
+    await backend.run_put([src], Path("/remote"), None)
+    await backend.run_get([Path("/remote/f.bin")], tmp_path, None)
     g = SftpFileTransfer.progress_granularity
     assert conn.put.await_args.kwargs["block_size"] == g.put == 16384
     assert conn.get.await_args.kwargs["block_size"] == g.get == 16384

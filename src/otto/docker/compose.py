@@ -1000,7 +1000,7 @@ def _register_use_case_placeholders(lab: Lab, repo: Repo, parent: UnixHost) -> i
 
 def get_container_host(host_id: str) -> DockerContainerHost:
     """Look up a registered container host by id. Raises if not present."""
-    from ..config import get_lab
+    from ..config.fleet import get_lab
 
     lab = get_lab()
     host = lab.hosts.get(host_id)

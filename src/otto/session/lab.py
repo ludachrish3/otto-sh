@@ -54,7 +54,7 @@ def build_lab(repos: "list[Repo]", labs: list[str]) -> "Lab":
     """
     if not labs:
         raise LabBuildError("no lab selected: name one or more labs", field="labs", kind="no_labs")
-    from ..config import load_lab
+    from ..config.lab import load_lab
     from ..labs import LabNotFoundError, LabRepositoryError, build_lab_sources
 
     try:

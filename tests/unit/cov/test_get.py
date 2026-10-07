@@ -103,7 +103,7 @@ def git_sut(tmp_path):
 
 @pytest.fixture
 def all_hosts_of(monkeypatch):
-    """Install *hosts as ``otto.config.all_hosts``'s answer."""
+    """Install *hosts as ``otto.config.fleet.all_hosts``'s answer."""
 
     def install(*hosts):
         monkeypatch.setattr("otto.config.fleet.all_hosts", lambda pattern=None, **kw: iter(hosts))

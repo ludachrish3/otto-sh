@@ -8,7 +8,7 @@ that decides which of those works.
 
 ## The rule: a connection lives on one event loop
 
-A test gets a host from `get_host(id)` (`from otto.config import get_host`).
+A test gets a host from `get_host(id)` (`from otto.lab import get_host`).
 The id is one of the hosts in the lab that `otto --lab <lab>` names;
 `otto --lab my_lab --list-hosts` lists them. `get_host()` returns a host
 without connecting to it. The connection opens on the host's first command,
@@ -53,7 +53,7 @@ directory gives every test the same host by name:
 ```python
 import pytest
 
-from otto.config import get_host
+from otto.lab import get_host
 
 
 @pytest.fixture(scope="session")
@@ -75,7 +75,7 @@ run's loop.
 ```python
 import pytest_asyncio
 
-from otto.config import get_host
+from otto.lab import get_host
 
 
 class TestRouter:
@@ -110,7 +110,7 @@ running on it is cancelled with it.
 import pytest
 import pytest_asyncio
 
-from otto.config import get_host
+from otto.lab import get_host
 
 
 @pytest.mark.asyncio(loop_scope="class")

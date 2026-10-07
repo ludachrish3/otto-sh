@@ -856,7 +856,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
 
     opts = root_options(ctx)
 
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..session import build_lab
 
     repos = get_repos()

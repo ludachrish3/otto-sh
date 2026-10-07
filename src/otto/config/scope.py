@@ -239,9 +239,9 @@ def scope_for_repo(owner: "str | None") -> "ProjectScopeConfig | None":
     carries the registering repo's name
     (:func:`otto.registry.get_registering_repo`), while :func:`repo_targets`
     judges a compiled :class:`ProjectScopeConfig`; the repos that hold both are
-    reachable only through ``config.get_repos()``, which bootstraps lazily.
-    That import is function-scope on purpose: this module sits low in the
-    layering and ``otto.config``'s package init would import back into it.
+    reachable only through :func:`otto.bootstrap.get_repos`, which bootstraps
+    lazily. That import is function-scope on purpose: this module sits low in
+    the layering, and ``otto.bootstrap`` imports ``otto.config``.
 
     EVERY "cannot answer" answers ``None``, which :func:`repo_targets` reads as
     *admits everything*, and that direction is deliberate. This lookup is
@@ -271,10 +271,10 @@ def scope_for_repo(owner: "str | None") -> "ProjectScopeConfig | None":
     if owner is None:
         return None
     try:
-        from . import get_repos  # function-scope: config's init imports back into this module
+        from ..bootstrap import get_repos  # function-scope: otto.bootstrap imports otto.config
 
         repos = get_repos()
-    except Exception:  # noqa: BLE001 — see above: ANY failure to reach config admits, deliberately
+    except Exception:  # noqa: BLE001 — see above: ANY failure to reach the repos admits, deliberately
         return None
     for repo in repos or ():
         if repo.name == owner:

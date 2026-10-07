@@ -1,4 +1,0 @@
-layout
-======
-
-.. automodule:: otto.layout

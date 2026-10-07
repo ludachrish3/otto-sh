@@ -55,6 +55,8 @@ import shlex
 
 from otto.host.login_proxy import ProxyContext, ProxyIO
 
+__all__ = ["enter_container"]
+
 
 async def enter_container(io: ProxyIO, ctx: ProxyContext) -> None:
     """Enter a named Docker container as a login-proxy step.

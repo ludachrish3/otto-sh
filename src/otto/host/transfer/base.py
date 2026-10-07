@@ -321,7 +321,7 @@ class BaseFileTransfer(ABC):
     (:class:`~otto.host.transfer.ConsoleFileTransfer`,
     :class:`~otto.host.transfer.TftpFileTransfer`), and any
     future ones) implement two abstract methods —
-    ``_run_put`` and ``_run_get`` — both of which receive a
+    ``run_put`` and ``run_get`` — both of which receive a
     :data:`TransferProgressFactory` and a keyword-only ``concurrent``,
     and are responsible for invoking the factory
     at least once per source file, terminating with
@@ -360,7 +360,7 @@ class BaseFileTransfer(ABC):
     **pre-flight** and refuses a ``mode`` it could never honour before any
     bytes move — a 200 MB upload that ends in "this backend has no permission
     model" helps nobody. A backend setting this ``True`` must implement
-    ``_apply_mode``.
+    :meth:`~otto.host.transfer.BaseFileTransfer.apply_mode`.
 
     ``False`` for embedded backends (``console``, ``tftp``): a Zephyr
     filesystem has no permission bits to set.
@@ -397,7 +397,7 @@ class BaseFileTransfer(ABC):
         """
         return 1
 
-    async def _dispatch_per_file(
+    async def dispatch_per_file(
         self,
         src_files: list[Path],
         transfer_one: Callable[[Path], Coroutine[Any, Any, Result]],
@@ -405,6 +405,10 @@ class BaseFileTransfer(ABC):
         concurrent: bool,
     ) -> dict[Path, Result]:
         """Run *transfer_one* per source, keyed by source exactly as passed.
+
+        A helper: a backend's :meth:`run_put` / :meth:`run_get` call it with their
+        per-file coroutine rather than writing the loop themselves. Backends do
+        not override it.
 
         The instance semaphore (sized from :attr:`concurrency_limit`) is
         acquired around EVERY file in BOTH modes, so overlapping calls on one
@@ -513,9 +517,9 @@ class BaseFileTransfer(ABC):
         Rejects a bad or unhonourable *mode* and over-limit basenames up front
         — in that order, cheapest and most specific first — then acquires the
         process-wide shared Rich progress bar (if *show_progress*) and
-        delegates to the concrete backend's ``_run_put`` implementation. When
+        delegates to the concrete backend's ``run_put`` implementation. When
         *mode* is set, the files that landed are chmod-ed in one batch
-        afterwards (see ``_apply_mode``).
+        afterwards (see ``apply_mode``).
 
         *mode* is the permission bits for the uploaded files: an ``int``
         (``0o755``) from Python, or a string that is **always** read as octal
@@ -561,10 +565,10 @@ class BaseFileTransfer(ABC):
                 {f: Result(name_check.status, msg=name_check.msg) for f in src_files}
             )
         if not show_progress:
-            per_file = await self._run_put(src_files, dest_dir, None, concurrent=concurrent)
+            per_file = await self.run_put(src_files, dest_dir, None, concurrent=concurrent)
         else:
             async with _acquire_shared_progress() as progress:
-                per_file = await self._run_put(
+                per_file = await self.run_put(
                     src_files,
                     dest_dir,
                     make_rich_progress_factory(progress, self._name),
@@ -582,7 +586,7 @@ class BaseFileTransfer(ABC):
         """Download *src_files* into *dest_dir*, validating filenames and driving progress display.
 
         Same validation and shared-progress contract as :meth:`put_files`,
-        but delegates to the concrete backend's ``_run_get`` implementation.
+        but delegates to the concrete backend's ``run_get`` implementation.
 
         *concurrent* decides how many files may be in flight at once: up to
         :attr:`concurrency_limit` when ``True``, exactly one when ``False``.
@@ -605,11 +609,11 @@ class BaseFileTransfer(ABC):
             )
         if not show_progress:
             return aggregate_transfer(
-                await self._run_get(src_files, dest_dir, None, concurrent=concurrent)
+                await self.run_get(src_files, dest_dir, None, concurrent=concurrent)
             )
         async with _acquire_shared_progress() as progress:
             return aggregate_transfer(
-                await self._run_get(
+                await self.run_get(
                     src_files,
                     dest_dir,
                     make_rich_progress_factory(progress, self._name),
@@ -617,22 +621,25 @@ class BaseFileTransfer(ABC):
                 )
             )
 
-    async def _apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
+    async def apply_mode(self, dest_paths: list[Path], mode: int) -> Result:
         """Set *mode* on the already-transferred *dest_paths*.
 
-        Called once per :meth:`put_files` with the destination paths that
-        actually landed — never with files that failed or were skipped, and
-        never at all when nothing landed. Implementations should apply the
-        mode in a **single** batched operation (see :func:`chmod_command`) so
-        a multi-file transfer costs one extra round trip rather than N.
+        A hook: a backend that declares
+        :attr:`~otto.host.transfer.BaseFileTransfer.supports_mode` implements it, and
+        only :meth:`~otto.host.transfer.BaseFileTransfer.put_files` calls it, once per
+        put, with the destination paths that actually landed — never with files
+        that failed or were skipped, and never at all when nothing landed.
+        Implementations should apply the mode in a **single** batched operation
+        (see :func:`~otto.host.transfer.chmod_command`) so a multi-file transfer
+        costs one extra round trip rather than N.
 
         Deliberately not an ``abstractmethod``: backends that cannot support
-        modes leave :attr:`supports_mode` ``False`` and never reach this. A
-        backend that flips the flag without implementing this gets a loud
-        failure rather than a silent no-op.
+        modes leave :attr:`~otto.host.transfer.BaseFileTransfer.supports_mode`
+        ``False`` and never reach this. A backend that flips the flag without
+        implementing this gets a loud failure rather than a silent no-op.
         """
         raise NotImplementedError(
-            f"{type(self).__name__} sets supports_mode = True but does not implement _apply_mode()."
+            f"{type(self).__name__} sets supports_mode = True but does not implement apply_mode()."
         )
 
     async def _finish_put(
@@ -651,7 +658,7 @@ class BaseFileTransfer(ABC):
         landed = {src: r for src, r in per_file.items() if r.status is Status.Success and r.value}
         if not landed:
             return per_file
-        mode_result = await self._apply_mode([r.value for r in landed.values()], mode)
+        mode_result = await self.apply_mode([r.value for r in landed.values()], mode)
         if mode_result.is_ok:
             return per_file
         for src, r in landed.items():
@@ -662,8 +669,12 @@ class BaseFileTransfer(ABC):
             )
         return per_file
 
+    # The roles in run_put's and run_get's docstrings are fully qualified: a backend
+    # that overrides either without a docstring renders this text under its own
+    # module, where a bare role does not resolve (the same reason as
+    # progress_granularity's).
     @abstractmethod
-    async def _run_put(
+    async def run_put(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -671,24 +682,30 @@ class BaseFileTransfer(ABC):
         *,
         concurrent: bool,
     ) -> dict[Path, Result]:
-        """Backend-specific put implementation.
+        """Move *src_files* into *dest_dir*: this backend's half of a put.
+
+        A hook: a backend implements it, and callers use
+        :meth:`~otto.host.transfer.BaseFileTransfer.put_files`, which validates the
+        request, drives the progress display and applies a mode around this call.
 
         Returns a per-file mapping keyed by the source paths exactly as passed:
         each value is a :class:`~otto.result.Result` carrying ``value=dest_path``
         on success or a per-file ``msg`` on failure -- every file is attempted
         whatever its siblings do; hand the per-file coroutine to
-        :meth:`_dispatch_per_file`, which honours *concurrent* and the
-        instance's :attr:`concurrency_limit`.
+        :meth:`~otto.host.transfer.BaseFileTransfer.dispatch_per_file`, which
+        honours *concurrent* and the instance's
+        :attr:`~otto.host.transfer.BaseFileTransfer.concurrency_limit`.
 
         For each src file the implementation must call
         ``progress_factory()`` (if not ``None``) to obtain a fresh
-        :data:`TransferProgressHandler`, then invoke that handler as bytes
+        :data:`~otto.host.transfer.TransferProgressHandler`, then invoke that
+        handler as bytes
         complete — at minimum once with ``bytes_done == bytes_total`` so
         the file's progress bar reaches 100%.
         """
 
     @abstractmethod
-    async def _run_get(
+    async def run_get(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -696,9 +713,12 @@ class BaseFileTransfer(ABC):
         *,
         concurrent: bool,
     ) -> dict[Path, Result]:
-        """Backend-specific get implementation.
+        """Move *src_files* from the host into *dest_dir*: this backend's half of a get.
 
-        Same per-file mapping and progress contract as :meth:`_run_put`.
+        A hook: a backend implements it, and callers use
+        :meth:`~otto.host.transfer.BaseFileTransfer.get_files`. Same per-file
+        mapping and progress contract as
+        :meth:`~otto.host.transfer.BaseFileTransfer.run_put`.
         """
 
 

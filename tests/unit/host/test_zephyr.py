@@ -47,13 +47,13 @@ class MockZephyrSession(FeedAfterWriteMixin, TelnetSession):
         self._out_reader: asyncio.StreamReader | None = None
         self.written: list[str] = []
 
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         self._out_reader = asyncio.StreamReader()
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         self.written.append(data)
 
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         assert self._out_reader is not None
         buf = ""
         while True:
@@ -97,7 +97,7 @@ class MockZephyrSession(FeedAfterWriteMixin, TelnetSession):
 async def session() -> MockZephyrSession:
     """Create and initialize a MockZephyrSession (readiness handshake done)."""
     s = MockZephyrSession()
-    await s._open()
+    await s.open_transport()
 
     async def init_handshake():
         await s._ensure_initialized()

@@ -43,8 +43,7 @@ if ZephyrInlineRetcodeFrame.type_name not in FRAME_CLASSES.names():
 # doc: end register-frame
 
 # doc: begin register-backend
-from otto.reservations import register_reservation_backend
-from otto.reservations.registry import RESERVATION_BACKENDS
+from otto.reservations import RESERVATION_BACKENDS, register_reservation_backend
 
 from .reservations import TeamFileBackend
 

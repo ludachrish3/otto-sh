@@ -42,7 +42,7 @@ def _bump(path: Path, seconds: int = 5) -> None:
 
 
 def _repos():
-    from otto.config import get_repos
+    from otto.bootstrap import get_repos
 
     return get_repos()
 

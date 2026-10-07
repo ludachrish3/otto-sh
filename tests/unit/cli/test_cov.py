@@ -921,7 +921,7 @@ class TestCovReportCollectionModelErrors:
         overrides_path.write_text("not valid toml {{{")
 
         with (
-            patch("otto.config.bootstrapped.get_repos", return_value=[repo]),
+            patch("otto.bootstrap.get_repos", return_value=[repo]),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["report", "--dir", str(tmp_path / "report")])

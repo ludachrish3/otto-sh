@@ -84,11 +84,11 @@ class _Probe(BaseFileTransfer):
         finally:
             self.in_flight -= 1
 
-    async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent):
-        return await self._dispatch_per_file(src_files, self._one, concurrent=concurrent)
+    async def run_put(self, src_files, dest_dir, progress_factory, *, concurrent):
+        return await self.dispatch_per_file(src_files, self._one, concurrent=concurrent)
 
-    async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent):
-        return await self._dispatch_per_file(src_files, self._one, concurrent=concurrent)
+    async def run_get(self, src_files, dest_dir, progress_factory, *, concurrent):
+        return await self.dispatch_per_file(src_files, self._one, concurrent=concurrent)
 
 
 def _files(n: int) -> list[Path]:
@@ -98,7 +98,7 @@ def _files(n: int) -> list[Path]:
 @pytest.mark.asyncio
 async def test_concurrent_runs_exactly_the_limit_at_once():
     probe = _Probe(limit=3)
-    per_file = await probe._dispatch_per_file(_files(9), probe._one, concurrent=True)
+    per_file = await probe.dispatch_per_file(_files(9), probe._one, concurrent=True)
     assert probe.peak == 3, f"peak {probe.peak}: the bound must be USED, not merely respected"
     assert all(r.is_ok for r in per_file.values())
     assert list(per_file) == _files(9), "keyed by the sources exactly as passed, in order"
@@ -107,7 +107,7 @@ async def test_concurrent_runs_exactly_the_limit_at_once():
 @pytest.mark.asyncio
 async def test_sequential_runs_one_at_a_time_in_order():
     probe = _Probe(limit=3)
-    await probe._dispatch_per_file(_files(6), probe._one, concurrent=False)
+    await probe.dispatch_per_file(_files(6), probe._one, concurrent=False)
     assert probe.peak == 1
     assert probe.order == [f.name for f in _files(6)]
 
@@ -115,7 +115,7 @@ async def test_sequential_runs_one_at_a_time_in_order():
 @pytest.mark.asyncio
 async def test_a_limit_of_one_is_sequential_even_when_concurrent():
     probe = _Probe(limit=1)
-    await probe._dispatch_per_file(_files(5), probe._one, concurrent=True)
+    await probe.dispatch_per_file(_files(5), probe._one, concurrent=True)
     assert probe.peak == 1
     assert probe.order == [f.name for f in _files(5)]
 
@@ -131,8 +131,8 @@ def test_one_object_survives_a_second_event_loop():
     queued file's entry.
     """
     probe = _Probe(limit=2)
-    first = asyncio.run(probe._dispatch_per_file(_files(5), probe._one, concurrent=True))
-    second = asyncio.run(probe._dispatch_per_file(_files(5), probe._one, concurrent=True))
+    first = asyncio.run(probe.dispatch_per_file(_files(5), probe._one, concurrent=True))
+    second = asyncio.run(probe.dispatch_per_file(_files(5), probe._one, concurrent=True))
 
     assert all(r.is_ok for r in first.values())
     assert [r.status for r in second.values()] == [Status.Success] * 5, (
@@ -144,7 +144,7 @@ def test_one_object_survives_a_second_event_loop():
 @pytest.mark.parametrize("concurrent", [True, False])
 async def test_every_file_is_attempted_after_a_failure(concurrent: bool):
     probe = _Probe(limit=2, fail={"f01"})
-    per_file = await probe._dispatch_per_file(_files(4), probe._one, concurrent=concurrent)
+    per_file = await probe.dispatch_per_file(_files(4), probe._one, concurrent=concurrent)
     assert probe.order
     assert sorted(probe.order) == sorted(f.name for f in _files(4))
     assert per_file[Path("/src/f01")].status is Status.Error
@@ -156,7 +156,7 @@ async def test_every_file_is_attempted_after_a_failure(concurrent: bool):
 @pytest.mark.parametrize("concurrent", [True, False])
 async def test_an_exception_folds_into_that_files_entry_only(concurrent: bool):
     probe = _Probe(limit=2, raise_for={"f02"})
-    per_file = await probe._dispatch_per_file(_files(4), probe._one, concurrent=concurrent)
+    per_file = await probe.dispatch_per_file(_files(4), probe._one, concurrent=concurrent)
     entry = per_file[Path("/src/f02")]
     assert entry.status is Status.Error
     assert "disk on fire" in entry.msg
@@ -168,7 +168,7 @@ async def test_an_exception_folds_into_that_files_entry_only(concurrent: bool):
 async def test_overlapping_calls_share_one_instance_budget(concurrent: bool):
     probe = _Probe(limit=2)
     await asyncio.gather(
-        *(probe._dispatch_per_file([f], probe._one, concurrent=concurrent) for f in _files(8))
+        *(probe.dispatch_per_file([f], probe._one, concurrent=concurrent) for f in _files(8))
     )
     assert probe.peak == 2, "eight one-file calls must still share the object's two permits"
 
@@ -176,7 +176,7 @@ async def test_overlapping_calls_share_one_instance_budget(concurrent: bool):
 @pytest.mark.asyncio
 async def test_cancellation_propagates_and_fabricates_nothing():
     probe = _Probe(limit=2)
-    task = asyncio.ensure_future(probe._dispatch_per_file(_files(6), probe._one, concurrent=True))
+    task = asyncio.ensure_future(probe.dispatch_per_file(_files(6), probe._one, concurrent=True))
     await asyncio.sleep(0)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -188,11 +188,11 @@ async def test_put_files_and_get_files_thread_concurrent_to_run_methods():
     seen: list[bool] = []
 
     class Spy(_Probe):
-        async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent):
+        async def run_put(self, src_files, dest_dir, progress_factory, *, concurrent):
             seen.append(concurrent)
             return {s: Result(Status.Success, value=dest_dir / s.name) for s in src_files}
 
-        async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent):
+        async def run_get(self, src_files, dest_dir, progress_factory, *, concurrent):
             seen.append(concurrent)
             return {s: Result(Status.Success, value=dest_dir / s.name) for s in src_files}
 
@@ -216,7 +216,7 @@ async def test_a_cancelled_file_is_never_fabricated_into_an_entry(concurrent: bo
     """
     probe = _Probe(limit=2, cancel_for={"f02"})
     with pytest.raises(asyncio.CancelledError):
-        await probe._dispatch_per_file(_files(4), probe._one, concurrent=concurrent)
+        await probe.dispatch_per_file(_files(4), probe._one, concurrent=concurrent)
 
 
 @pytest.mark.asyncio
@@ -227,13 +227,13 @@ async def test_a_raise_cancels_and_drains_the_sibling_tasks():
     first raise, propagates while the others keep running unobserved -- a
     later raise from one of them would surface only as an "exception was
     never retrieved" warning, and (for a real backend) its semaphore permit
-    would never come back. `_dispatch_per_file` must instead cancel and
+    would never come back. `dispatch_per_file` must instead cancel and
     drain every other in-flight file before propagating.
     """
     probe = _Probe(limit=4, cancel_for={"f02"})
 
     with pytest.raises(asyncio.CancelledError):
-        await probe._dispatch_per_file(_files(4), probe._one, concurrent=True)
+        await probe.dispatch_per_file(_files(4), probe._one, concurrent=True)
 
     assert sorted(probe.cancelled) == ["f00", "f01", "f03"]
 
@@ -245,10 +245,10 @@ def test_the_base_limit_is_one():
         host_families = frozenset({"unix"})
         progress_granularity = ProgressGranularity(put=1, get=1)
 
-        async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent):
+        async def run_put(self, src_files, dest_dir, progress_factory, *, concurrent):
             return {}
 
-        async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent):
+        async def run_get(self, src_files, dest_dir, progress_factory, *, concurrent):
             return {}
 
     assert Minimal(name="minimal").concurrency_limit == 1

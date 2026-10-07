@@ -1,6 +1,6 @@
 """``MonitorHandle`` — the per-test metrics monitor the ``monitor`` fixture hands out.
 
-The ``monitor`` fixture (``otto.suite.pytest_plugin.OttoFixturesPlugin.monitor``)
+The ``monitor`` fixture (defined on ``otto.suite.pytest_plugin.OttoFixturesPlugin``)
 hands each test, class or plain function, a fresh ``MonitorHandle``: the
 ``start``/``stop``/``event``/``results``/``events`` calls and their state live
 on the handle, never on the test instance, and the fixture stops the monitor

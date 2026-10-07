@@ -1751,8 +1751,8 @@ def test_the_excluded_guests_are_the_ones_otto_says_have_nowhere_to_put_a_file()
         filesystem = build_filesystem("none")
         assert filesystem.mount is None
         assert filesystem.supports_transfer is False, (
-            "`supports_transfer` is the flag ConsoleFileTransfer short-circuits _run_put "
-            "and _run_get on; if it stopped being False for `none`, otto would no longer "
+            "`supports_transfer` is the flag ConsoleFileTransfer short-circuits run_put "
+            "and run_get on; if it stopped being False for `none`, otto would no longer "
             "be treating a no-filesystem target as having nowhere to put a file"
         )
 

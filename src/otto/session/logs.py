@@ -54,7 +54,7 @@ def install_logging(
     :class:`~otto.host.host.HostFilter` goes on the console handlers only, so
     ``verbose.log`` keeps every host's output.
     """
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..host import HostFilter
     from ..logger import management
 

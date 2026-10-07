@@ -13,7 +13,7 @@ in ``typer`` — that is the whole point of extracting the gate out of the CLI.
 Every case installs a REAL ``OttoContext``: since spec 2026-08-28
 three-level-reservations §5 the gate computes its requirement over
 ``OttoContext.admissible_ids()``, so a lab handed over by patching
-``otto.config.get_lab`` alone would leave the fleet half of the read unwired.
+``otto.config.fleet.get_lab`` alone would leave the fleet half of the read unwired.
 """
 
 import dataclasses

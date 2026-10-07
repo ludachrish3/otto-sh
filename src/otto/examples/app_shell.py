@@ -81,6 +81,8 @@ import re
 
 from otto.host.app_shell import AppShell, Parsed
 
+__all__ = ["Listing", "PyRepl", "Row", "Version"]
+
 
 class Version(Parsed):
     """``major.minor`` extracted from a REPL's version banner or print."""

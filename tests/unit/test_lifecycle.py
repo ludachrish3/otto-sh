@@ -445,7 +445,7 @@ def test_resolve_teardown_deadline_uses_env_settings(monkeypatch):
     def _get_env() -> "_Env":
         return _Env()
 
-    monkeypatch.setattr("otto.config.bootstrapped.get_env", _get_env)
+    monkeypatch.setattr("otto.bootstrap.get_env", _get_env)
     assert lifecycle._resolve_teardown_deadline() == 3.5
 
 
@@ -455,7 +455,7 @@ def test_resolve_teardown_deadline_falls_back_when_discovery_unavailable(monkeyp
     def _boom():
         raise FileNotFoundError("no OTTO_SUT_DIRS")
 
-    monkeypatch.setattr("otto.config.bootstrapped.get_env", _boom)
+    monkeypatch.setattr("otto.bootstrap.get_env", _boom)
     assert lifecycle._resolve_teardown_deadline() == DEFAULT_TEARDOWN_DEADLINE
 
 

@@ -79,7 +79,7 @@ def main_mocks(tmp_path):
     with (
         patch.dict(os.environ, clean_env, clear=True),
         patch("otto.logger.management.init_cli_logging") as p_logger,
-        patch("otto.config.bootstrapped.get_repos", return_value=[]),
+        patch("otto.bootstrap.get_repos", return_value=[]),
         patch("otto.config.lab.load_lab", return_value=mock_lab) as p_getlab,
     ):
         yield {
@@ -171,13 +171,13 @@ class TestEagerOptions:
 
     def test_list_labs_reads_repos_where_they_are_defined(self):
         # `--list-labs` must look `get_repos` up at call time. A module-level
-        # `from ..config import get_repos` in otto.cli.main would bind the real
+        # `from ..bootstrap import get_repos` in otto.cli.main would bind the real
         # function at import, so this patch — at the defining module, where
         # every other caller sees it — would silently run the real bootstrap.
         from rich.panel import Panel
 
         repo = fake_repo(get_lab_panel=lambda: Panel("sentinel-lab-from-patch"))
-        with patch("otto.config.bootstrapped.get_repos", return_value=[repo]):
+        with patch("otto.bootstrap.get_repos", return_value=[repo]):
             result = runner.invoke(app, ["--list-labs"])
         assert result.exit_code == 0, result.output
         assert "sentinel-lab-from-patch" in result.output

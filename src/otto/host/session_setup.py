@@ -31,6 +31,8 @@ from .errors import SessionSetupError as SessionSetupError  # noqa: PLC0414 — 
 if TYPE_CHECKING:
     from .session import HostSession, ShellSession
 
+__all__ = ["SESSION_SETUPS", "SetupContext", "register_session_setup", "session_setup_from_spec"]
+
 SetupKind = Literal["default", "named", "exec_pool", "bridge"]
 """Which session is being set up. A hook that provisions something once (a
 database) does it on ``"default"`` and only *enters* on the others."""
@@ -70,6 +72,7 @@ class SessionSetup:
 SESSION_SETUPS: Registry[SessionSetupFn] = Registry(
     "session setup", register_hint="otto.register_session_setup()"
 )
+"""The session-setup hooks lab data can name, keyed by hook name."""
 
 
 def register_session_setup(name: str, fn: SessionSetupFn, *, overwrite: bool = False) -> None:

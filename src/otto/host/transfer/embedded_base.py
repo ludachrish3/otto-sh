@@ -3,7 +3,7 @@
 :class:`EmbeddedFileTransfer` holds the common embedded fields (exec_cmd,
 filesystem, mount state) shared by :class:`~otto.host.transfer.ConsoleFileTransfer`
 and :class:`~otto.host.transfer.TftpFileTransfer`. Subclasses implement
-``_run_get`` / ``_run_put`` and self-register their selector on import.
+``run_get`` / ``run_put`` and self-register their selector on import.
 """
 
 from collections.abc import Callable, Coroutine
@@ -24,7 +24,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
     shared Rich progress acquisition). Holds the fields common to all
     embedded selectors: the shell runner (``exec_cmd``), the on-device
     filesystem model, and the idempotent mount-done flag. Concrete
-    subclasses implement ``_run_put`` / ``_run_get``.
+    subclasses implement ``run_put`` / ``run_get``.
     """
 
     host_families = frozenset({"embedded"})

@@ -178,7 +178,7 @@ def test_detect_for_lab_with_coverage_config_passes_pattern_and_containers(monke
         calls["include_containers"] = include_containers
         return [host]
 
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", fake_get_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", fake_get_repos)
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", fake_get_cov_config)
     monkeypatch.setattr("otto.config.coverage_settings.load_hosts_pattern", fake_load_hosts_pattern)
     monkeypatch.setattr("otto.config.fleet.all_hosts", fake_all_hosts)
@@ -208,7 +208,7 @@ def test_detect_for_lab_without_coverage_config_defaults_to_none_pattern(monkeyp
         calls["include_containers"] = include_containers
         return [host]
 
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", fake_get_repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", fake_get_repos)
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", fake_get_cov_config)
     monkeypatch.setattr("otto.config.coverage_settings.load_hosts_pattern", fake_load_hosts_pattern)
     monkeypatch.setattr("otto.config.fleet.all_hosts", fake_all_hosts)

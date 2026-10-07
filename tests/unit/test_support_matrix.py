@@ -2250,7 +2250,7 @@ class _FakeTransfer:
 
     AND IT ANSWERS A CAP, AND OWNS THE PER-FILE DISPATCHER. The batch control
     reads ``concurrency_limit`` to size its batch and WRAPS
-    ``_dispatch_per_file`` to count what is in flight, so a fake that carried
+    ``dispatch_per_file`` to count what is in flight, so a fake that carried
     neither would make that control watch nothing at all -- its peak would
     stay 0 and the row that must pass would go red for the harness's reason
     rather than the control's. One is the honest answer for a backend with no
@@ -2268,7 +2268,7 @@ class _FakeTransfer:
     def effective_progress_granularity(self) -> ProgressGranularity:
         return ProgressGranularity(put=_FAKE_STRIDE, get=_FAKE_STRIDE)
 
-    async def _dispatch_per_file(self, src_files, transfer_one, *, concurrent):
+    async def dispatch_per_file(self, src_files, transfer_one, *, concurrent):
         """Run *transfer_one* per source, keyed by source exactly as passed."""
         return {src: await transfer_one(src) for src in src_files}
 
@@ -2384,7 +2384,7 @@ class _FakeHost:
         one-file controls and the batch control drive the same method rather
         than two that could drift apart.
 
-        ROUTED THROUGH ``_file_transfer._dispatch_per_file`` even though this
+        ROUTED THROUGH ``_file_transfer.dispatch_per_file`` even though this
         fake could just loop: that call IS the seam the batch control wraps,
         and a fake that bypassed it would leave that control's fan-out probe
         measuring nothing while still passing.
@@ -2439,7 +2439,7 @@ class _FakeHost:
             return Result(Status.Success)
 
         return aggregate_transfer(
-            await self._file_transfer._dispatch_per_file(srcs, _store, concurrent=concurrent)
+            await self._file_transfer.dispatch_per_file(srcs, _store, concurrent=concurrent)
         )
 
     def _report_progress(self, src: Path, landed: str, total: int) -> None:
@@ -2491,7 +2491,7 @@ class _FakeHost:
             return Result(Status.Success)
 
         return aggregate_transfer(
-            await self._file_transfer._dispatch_per_file(srcs, _fetch, concurrent=concurrent)
+            await self._file_transfer.dispatch_per_file(srcs, _fetch, concurrent=concurrent)
         )
 
     def _put_tree(self, src: Path, dest_dir: Path):

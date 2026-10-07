@@ -13,7 +13,7 @@ all hosts use `DEFAULT_PARSERS`.  Subclass `MetricParser` and implement
 command's raw output, then register it for specific hosts:
 
 ```python
-from otto.monitor.collector import MonitorTarget
+from otto.monitor import MonitorTarget
 from otto.monitor.parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser, ParseContext
 
 

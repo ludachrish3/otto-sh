@@ -347,7 +347,7 @@ def test_a_registration_made_outside_any_repo_admits(monkeypatch):
     def _unavailable():
         raise RuntimeError("no bootstrap in this process")
 
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _unavailable)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _unavailable)
     register_dev_tool_provider(lambda host: [_tool("gdbserver")])
     host = _host(source_lab="b")
 
@@ -366,7 +366,7 @@ def test_an_owner_config_cannot_resolve_admits(monkeypatch):
     def _unavailable():
         raise RuntimeError("no bootstrap in this process")
 
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _unavailable)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _unavailable)
     with registering_repo("ghost"):
         register_dev_tool_provider(lambda host: [_tool("gdbserver")])
     host = _host(source_lab="b")

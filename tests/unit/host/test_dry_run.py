@@ -1683,8 +1683,8 @@ class _RecordingShellSession(ShellSession):
     ``run_cmd``/``send``/``expect`` are overridden at the top rather than driven
     through the real framing engine: they are exactly the three seams
     :class:`HostSession` delegates to, so these lists measure "the guard
-    returned before touching the transport". ``_write`` and
-    ``_read_until_pattern`` stay unimplemented and LOUD, so a
+    returned before touching the transport". ``write_transport`` and
+    ``read_transport_until`` stay unimplemented and LOUD, so a
     :class:`HostSession` method that reaches past that trio cannot pass here
     silently.
     """
@@ -1702,12 +1702,12 @@ class _RecordingShellSession(ShellSession):
         # exchange in the middle of every positive control.
         self.model = ShellModel(user="admin", challenges=False)
 
-    async def _open(self) -> None: ...
+    async def open_transport(self) -> None: ...
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         raise AssertionError(f"a HostSession reached the raw transport write: {data!r}")
 
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         raise AssertionError(f"a HostSession reached the raw transport read: {pattern!r}")
 
     async def _ensure_initialized(self) -> None:
@@ -1874,14 +1874,14 @@ class TestADryRunOpensNoSessionOnAnyHost:
 
         host._auto_up = recording_auto_up
         host._session_mgr.open_session = recording_open
-        # `_login` is SPIED, not left real: its second act is
+        # `run_login` is SPIED, not left real: its second act is
         # `parent._connections.ssh()`, so a mutation that drops `login`'s arm
         # would make this test dial a real address for the duration of the
         # connect timeout. A guard is proven by a spy, never by letting the
-        # unguarded product try it. `_login`'s FIRST act is `_ensure_running()`
+        # unguarded product try it. `run_login`'s FIRST act is `_ensure_running()`
         # — which is why the arm has to exist — and the `open_session` half
         # below is what pins that call chain against the real resolver.
-        host._login = recording_login
+        host.run_login = recording_login
 
         with active_context(dry_run=True):
             assert isinstance(await host.open_session("monitor"), DeclinedSession)
@@ -1890,7 +1890,7 @@ class TestADryRunOpensNoSessionOnAnyHost:
         assert ups == [], f"A DRY RUN STARTED A CONTAINER: {ups}"
         assert probes == [], f"a dry run questioned the docker daemon: {probes}"
         assert opened == []
-        assert logins == [], "a dry run reached `_login`, whose first act is `_ensure_running()`"
+        assert logins == [], "a dry run reached `run_login`, whose first act is `_ensure_running()`"
         assert host.container_id == "", "a dry run cached a container id it never resolved"
 
         # POSITIVE CONTROL, same host, same spies, no dry run: the placeholder
@@ -1958,7 +1958,7 @@ class TestADryRunOpensNoSessionOnAnyHost:
         async def recording_login(user: str | None = None, force: bool = False) -> None:
             logins.append(user)
 
-        host._login = recording_login
+        host.run_login = recording_login
 
         with active_context(dry_run=True), _two_sided_sinks() as (console, _verbose):
             assert await host.login() is None
@@ -2173,11 +2173,11 @@ class TestTheDeclinedHandleIsUsableAndNeverMistakenForALiveOne:
 
         transport = session._session
         with pytest.raises(CommandNotRunError):
-            await transport._open()
+            await transport.open_transport()
         with pytest.raises(CommandNotRunError):
-            await transport._write("echo hi\n")
+            await transport.write_transport("echo hi\n")
         with pytest.raises(CommandNotRunError):
-            await transport._read_until_pattern(re.compile("READY"))
+            await transport.read_transport_until(re.compile("READY"))
         # ...except close, which must stay quiet so a `finally` cannot explode.
         assert await transport.close() is None
 
@@ -2462,7 +2462,7 @@ class TestADeclineNeverResurfacesAsAFabricatedFailure:
         repo = dataclasses.make_dataclass("Repo", ["name", "docker_settings"])(
             name="repo1", docker_settings=docker_settings
         )
-        monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
+        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
         # `_auto_up` hands the lab straight to the spied `compose_up` and
         # never looks inside it, so an opaque object is the honest stub.
         monkeypatch.setattr("otto.config.fleet.get_lab", object)

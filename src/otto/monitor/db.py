@@ -27,6 +27,7 @@ import aiosqlite
 from ..errors import OttoError
 from ..filesystem import network_fs_type
 from .events import MonitorEvent
+from .formats import MONITOR_DB_READ_VERSIONS, MONITOR_DB_WRITE_VERSIONS
 from .session import SessionFrame
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,8 @@ CREATE TABLE IF NOT EXISTS log_events (
 """,
 )
 
-SCHEMA_VERSION = 2
+[SCHEMA_VERSION] = MONITOR_DB_WRITE_VERSIONS
+"""The one declared write version, which stamps a new archive's ``user_version``."""
 
 # One definition of the events table's INSERT, shared between the live writer
 # (MetricDB) and the review-mode archive editor (archive_edit), so the column
@@ -142,15 +144,19 @@ class UnsupportedDBError(OttoError, RuntimeError):
     """
 
 
-def _check_version(version: int, tables: set[str], path: str) -> None:
-    """Raise :class:`UnsupportedDBError` unless *version*/*tables* are v2.
+def _check_version(version: int, tables: set[str], path: str, accepted: "list[int]") -> None:
+    """Raise :class:`UnsupportedDBError` unless *version* is in *accepted*, or the file is empty.
 
-    A brand-new (empty) file has no tables yet — that's fine, the caller is
-    about to create the schema. Anything with tables but the wrong
-    ``user_version`` is either a pre-session (v1) capture or a database from
-    a future otto; both are refused loud, with no migration offered.
+    *accepted* is ``MONITOR_DB_READ_VERSIONS`` for a reader and
+    ``MONITOR_DB_WRITE_VERSIONS`` for a path that writes into the file:
+    reading a version is no promise to append to it (dump spec §13.1). A
+    brand-new (empty) file has no tables yet — that's fine, the caller is
+    about to create the schema. Anything with tables and another
+    ``user_version`` is a pre-session (v1) capture, a database from a future
+    otto, or one this otto only reads; all are refused loud, with no
+    migration offered.
     """
-    if tables and version != SCHEMA_VERSION:
+    if tables and version not in accepted:
         raise UnsupportedDBError(
             f"'{path}' uses a pre-session schema (or schema version "
             f"{version}); otto no longer reads pre-session monitor databases "
@@ -285,7 +291,7 @@ class MetricDB:
                         "SELECT name FROM sqlite_master WHERE type='table'"
                     )
                 }
-                _check_version(version, tables, self._path)
+                _check_version(version, tables, self._path, MONITOR_DB_WRITE_VERSIONS)
                 if "sessions" in tables:
                     _check_session_columns(
                         {row[1] async for row in await conn.execute("PRAGMA table_info(sessions)")},
@@ -492,7 +498,7 @@ def read_sessions(path: str) -> list[SessionRow]:
             tables = {
                 row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
-            _check_version(version, tables, path)
+            _check_version(version, tables, path, MONITOR_DB_READ_VERSIONS)
             # _check_version is deliberately lenient about a table-less file so
             # that open() can initialize a fresh one. read_sessions has no such
             # case — an existing-but-uninitialized file is simply not readable,

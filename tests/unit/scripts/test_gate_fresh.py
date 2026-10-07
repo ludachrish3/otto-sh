@@ -283,6 +283,7 @@ class TestGateLifecycle:
                 "lint-python",
                 "lint-arch",
                 "check-api-snapshot",
+                "check-api-teaching",
                 "typecheck-python",
                 "collect-check",
                 "docs",

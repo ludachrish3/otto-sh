@@ -518,5 +518,5 @@ async def follow_logs(targets: "list[LogsTarget]") -> int | None:
         )
     if is_dry_run():
         raise CommandNotRunError(f"follow_logs({target.parent.id})", target.parent.id, command)
-    conn = await target.parent._live_connections().ssh()  # noqa: SLF001 -- intra-package access, as DockerContainerHost._login does
+    conn = await target.parent._live_connections().ssh()  # noqa: SLF001 -- intra-package access, as DockerContainerHost.run_login does
     return await run_ssh_login(conn=conn, host_name=target.parent.name, command=command)

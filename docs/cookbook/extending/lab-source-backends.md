@@ -20,7 +20,7 @@ two read-only methods:
   for what the lab reserves as a whole, and, on each host it builds,
   `element.resources` for the element it belongs to and `resources` for the
   host itself. Both host-side sets are `frozenset[str]`; a host built through
-  [`create_host_from_dict`](../../api/host/factory.rst) gets the element's set
+  [`create_host_from_dict`](../../api/host/index.rst) gets the element's set
   from the `Element` passed as `element=` and the host's own from the host
   dict's `resources` key. See {doc}`../../cli/reservation/index` for what
   the three levels mean.
@@ -79,7 +79,7 @@ just make it a decision rather than an omission.
     applies the same profile merge and validation the host factory applies,
     which hand-formatting silently gets wrong (a numeric field arriving as
     `3.0`, or an `os_profile` that supplies `board`/`slot`). See
-    [`host_identity`](../../api/host/factory.rst).
+    [`host_identity`](../../api/host/index.rst).
   - **Every host `load_lab()` produces must be summarized.** Otherwise
     completion simply stops offering it, and nothing anywhere says so.
   - **Every FIELD must match**, not just `id`. `HostSummary`'s fields have
@@ -113,7 +113,7 @@ holds a mapping of lab name to element dicts — each grouping its own host
 dicts — builds one `Element` per group, resolves each host dict's inventory
 reference with `resolve_host_entry(record, inventory, element)` (a
 pass-through when the record carries no `inventory` key), and builds real
-hosts with [`create_host_from_dict`](../../api/host/factory.rst) (`element=`
+hosts with [`create_host_from_dict`](../../api/host/index.rst) (`element=`
 that same `Element`, `inventory_ref=` the resolution's `ref`) so each becomes
 a `RemoteHost` keyed by its `id`, as [the interface](#the-interface) requires.
 Note where its resources live: a *second* mapping, lab name to

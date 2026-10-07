@@ -173,7 +173,7 @@ class _Connections:
 
 
 def _backend(userland: "Userland | None") -> ScpFileTransfer:
-    """A real ``ScpFileTransfer`` — real ``_run_put``/``_run_get`` — on a dead wire."""
+    """A real ``ScpFileTransfer`` — real ``run_put``/``run_get`` — on a dead wire."""
     return ScpFileTransfer(
         connections=_Connections(),  # type: ignore[arg-type]
         name=_HOST,
@@ -380,7 +380,7 @@ class TestTheGuardKeysOnASettledAbsence:
         ``has_applet`` raises on a userland nobody resolved, so a guard that
         forgot to await ``resolve()`` would fail with a ``RuntimeError`` about
         otto's internals rather than refuse. Both callers rely on this: neither
-        ``_run_put`` nor ``_run_get`` resolves anything of its own.
+        ``run_put`` nor ``run_get`` resolves anything of its own.
         """
         runner = _ProbingRunner(present={"nc"})
         userland = Userland(UserlandOptions(), runner)
@@ -448,9 +448,9 @@ class TestTheMessageComesFromTheRecord:
 
 
 class TestPutArrivesAtTheGuard:
-    """``_run_put`` is one of the two paths the record names, and it is reachable.
+    """``run_put`` is one of the two paths the record names, and it is reachable.
 
-    ``BaseHost.put`` -> ``BaseFileTransfer.put_files`` -> ``_run_put`` is the
+    ``BaseHost.put`` -> ``BaseFileTransfer.put_files`` -> ``run_put`` is the
     only route bytes take out over this backend, so a guard the public verb
     cannot reach would be decoration.
     """
@@ -480,7 +480,7 @@ class TestPutArrivesAtTheGuard:
     async def test_the_probe_round_is_paid_once_per_call_and_not_once_per_file(self) -> None:
         """The cost this guard adds is charged above the per-file fan-out.
 
-        It sits in ``_run_put``, which ``put_files`` calls once however many
+        It sits in ``run_put``, which ``put_files`` calls once however many
         files it was given, and ``resolve()`` is idempotent once everything is
         settled — so a five-file put issues the batch once and a second put on
         the same host issues nothing at all. The six non-applet capabilities are

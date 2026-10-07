@@ -11,8 +11,7 @@ host is not one of its two placeholders, so that install is code.
 # doc: begin product-class
 import shlex
 
-from otto.host import DeclaredProduct
-from otto.host.host import Host
+from otto.host import DeclaredProduct, Host
 from otto.result import Result
 
 

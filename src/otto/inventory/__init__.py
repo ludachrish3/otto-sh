@@ -30,8 +30,8 @@ if TYPE_CHECKING:
     from .json_backend import parse_inventory_document as parse_inventory_document
     from .netbox import NetBoxInventory as NetBoxInventory
     from .protocol import Inventory as Inventory
+    from .protocol import SupportsStatPaths as SupportsStatPaths
     from .protocol import check_supplies as check_supplies
-    from .registry import get_inventory_backend_class as get_inventory_backend_class
     from .registry import register_inventory_backend as register_inventory_backend
     from .resolve import ResolvedEntry as ResolvedEntry
     from .resolve import resolve_host_entry as resolve_host_entry
@@ -59,8 +59,8 @@ _LAZY_ATTRS: dict[str, str] = {
     "parse_inventory_document": "otto.inventory.json_backend",
     "NetBoxInventory": "otto.inventory.netbox",
     "Inventory": "otto.inventory.protocol",
+    "SupportsStatPaths": "otto.inventory.protocol",
     "check_supplies": "otto.inventory.protocol",
-    "get_inventory_backend_class": "otto.inventory.registry",
     "register_inventory_backend": "otto.inventory.registry",
     "ResolvedEntry": "otto.inventory.resolve",
     "resolve_host_entry": "otto.inventory.resolve",
@@ -98,6 +98,7 @@ __all__ = [
     "RefreshResult",
     "ResolvedEntry",
     "SnapshotCache",
+    "SupportsStatPaths",
     "build_inventory",
     "build_inventory_from_declarations",
     "check_supplies",
@@ -105,7 +106,6 @@ __all__ = [
     "construct_inventory",
     "diff_records",
     "document_to_records",
-    "get_inventory_backend_class",
     "merge_creds",
     "parse_inventory_document",
     "records_to_document",

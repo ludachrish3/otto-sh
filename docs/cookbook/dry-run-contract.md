@@ -8,13 +8,16 @@ run-parse-branch code. For the CLI behaviour, see
 ## Opting in: `dry_run_preview=True`
 
 A command whose body can say something useful without touching a device
-declares it **at registration**:
+declares it **at registration**. Here, the `mytool` group from
+{doc}`extending/extending-cli` opts in, loaded lazily from your own module:
 
 ```python
+from otto.cli.registry import register_cli_command
+
 register_cli_command(
-    "link",
-    "otto.cli.link:link_app",
-    help="Inspect and impair the lab's static links.",
+    "mytool",
+    "my_lab.mytool:mytool_app",
+    help="Project-specific device utilities.",
     output_dir=False,
     dry_run_preview=True,
 )

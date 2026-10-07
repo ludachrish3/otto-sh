@@ -311,11 +311,10 @@ network, so this runs as-is:
 
 ```{doctest}
 >>> import re
->>> from otto.host.element import Element
->>> from otto.host.factory import create_host_from_dict
->>> from otto.config.lab import Lab
+>>> from otto.host import Element, create_host_from_dict
+>>> from otto.lab import Lab
 >>> from otto.context import OttoContext, set_context, reset_context
->>> from otto.config import all_hosts, get_host
+>>> from otto.lab import all_hosts, get_host
 >>> hosts = [create_host_from_dict(spec, element=element) for spec, element in [
 ...     ({"ip": "10.0.0.11", "creds": [{"login": "admin", "password": "x"}]}, Element("test1")),
 ...     ({"ip": "10.0.0.12", "creds": [{"login": "admin", "password": "x"}]}, Element("test2")),
@@ -451,7 +450,7 @@ destination on the spot:
 from pathlib import Path
 
 from otto.coverage import DestinationError
-from otto.suite.run import RunOptions, prepare_run
+from otto.suite import RunOptions, prepare_run
 
 cov_dir = Path("./coverage-run/cov")
 opts = RunOptions(cov_dir=cov_dir, overwrite_cov_dir=True)
@@ -532,9 +531,8 @@ import asyncio
 from pathlib import Path
 
 import otto
-from otto.config import get_repos
-from otto.coverage import collect_coverage, resolve_report_inputs
-from otto.coverage.reporter import run_coverage_report
+from otto.bootstrap import get_repos
+from otto.coverage import collect_coverage, resolve_report_inputs, run_coverage_report
 
 
 async def main():

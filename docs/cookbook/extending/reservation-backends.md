@@ -530,7 +530,7 @@ directly testable against a gate around the
 scheduler or CLI invocation:
 
 ```{doctest}
->>> from otto.config.lab import Lab
+>>> from otto.lab import Lab
 >>> from otto.examples.reservations import ExampleReservationBackend
 >>> from otto.examples.reservations_cli import check_report, translate
 >>> from otto.reservations import ReservationGate, resolve_username

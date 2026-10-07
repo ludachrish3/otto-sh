@@ -2,55 +2,19 @@ host
 ====
 
 The host package provides the core abstractions for running commands on
-local and remote machines.
+local and remote machines. The pages below are its extension namespaces:
+the modules a backend or a custom host class imports from.
 
 .. toctree::
 
-   host
-   remotehost
-   unixhost
-   embeddedhost
-   localhost
-   dockerhost
    transfer
-   transfer_base
-   transfer_scp
-   transfer_sftp
-   embedded_filesystem
-   session
-   app_shell
-   connections
-   errors
-   login_proxy
-   loop_owner
-   session_setup
-   transport
-   telnet
-   console
-   capability_grid
-   os_profile
-   factory
-   lab_info
-   element
-   mount
-   inventory_ref
-   command_frame
-   daemon
-   toolchain
    options
-   userland
-   interface
-   interact
+   command_frame
+   login_proxy
+   session_setup
+   app_shell
+   embedded_filesystem
    product
-   declared_product
    dev_tool
-   shell_kind
-   embedded_kind
-   kmod_kind
-   kmod_tool_kind
-   docker_image_kind
-   power
-   privilege
-   file_ops
-   recursive_transfer
-   binary_loader
+
+.. automodule:: otto.host

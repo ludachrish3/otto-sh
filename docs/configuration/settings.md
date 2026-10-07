@@ -396,7 +396,7 @@ At startup, otto validates the declarations after discovering every repo in
   init modules load before its dependents'). Repos with no declared
   dependencies keep `OTTO_SUT_DIRS` order exactly.
 
-Inspect the outcome at runtime via `otto.config.get_repos()` — each repo
+Inspect the outcome at runtime via {func}`otto.bootstrap.get_repos` — each repo
 carries a `dependencies` list with per-dependency status and the provider's
 version.
 

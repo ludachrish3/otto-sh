@@ -64,7 +64,7 @@ def repo(sut_repo, tmp_path, home) -> ImportLogRepo:
 
 
 def _the_repo():
-    from otto.config import get_repos
+    from otto.bootstrap import get_repos
 
     [only] = get_repos()
     return only

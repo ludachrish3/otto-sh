@@ -105,7 +105,7 @@ def test_default_parent_mirror_table(by_lab, labs, expected, monkeypatch):
 
 def test_reading_the_default_parent_never_bootstraps(stored_names):
     with patch(
-        "otto.config.bootstrapped.get_repos", side_effect=AssertionError("bootstrap in a TAB")
+        "otto.bootstrap.get_repos", side_effect=AssertionError("bootstrap in a TAB")
     ) as get_repos:
         assert docker_cli._default_parent_for_tab(_ctx(["east"])) == "test3"
     get_repos.assert_not_called()

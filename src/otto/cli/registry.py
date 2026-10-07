@@ -21,6 +21,8 @@ from ..registry import Registry, caller_module
 from .builtin_commands import register_builtin_commands
 from .invoke import prepare_command_target
 
+__all__ = ["CLI_COMMANDS", "CommandSpec", "cli_command", "register_cli_command"]
+
 
 @dataclass(frozen=True)
 class CommandSpec:

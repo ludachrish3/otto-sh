@@ -247,7 +247,7 @@ class TestContainerScanning:
     def test_down_placeholder_contributes_nothing_and_never_composes(self, monkeypatch) -> None:
         compose_up = AsyncMock()
         monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-        monkeypatch.setattr("otto.config.bootstrapped.get_repos", MagicMock(return_value=[]))
+        monkeypatch.setattr("otto.bootstrap.get_repos", MagicMock(return_value=[]))
         monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
         ctr, calls = _container_placeholder(ps_out="")
         lab = FakeLab(hosts={"a": FakeHost("a", _full_ps_for("a")), ctr.id: ctr})

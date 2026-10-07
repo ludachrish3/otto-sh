@@ -29,6 +29,8 @@ from typing import (
 
 from .errors import OttoError
 
+__all__ = ["Arg", "Exclude", "Opt", "Status", "cli_exposed"]
+
 
 def anchor_path(value: Path, root: Path) -> Path:
     """Expand ``~``, then anchor a still-relative path to *root*.
@@ -447,6 +449,10 @@ class _Exclude:
 
 
 Exclude = _Exclude()
+"""Mark a verb parameter ``Annotated[T, Exclude]`` to keep it off the CLI.
+
+The command line never sets it, so the verb runs with the parameter's
+default. Python callers still pass it as usual."""
 
 
 DRY_RUN_HEADLINE = "dry run: no command body was run and no device was contacted"

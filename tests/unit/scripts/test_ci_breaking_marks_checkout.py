@@ -16,6 +16,11 @@ skips merges, and its docs-only exemption resolves paths against the
 checked-out tree, which must stay the synthetic merged tree, so it runs no
 checkout.
 
+Whatever the event, push or pull_request, a v2 golden at ``HEAD`` must open
+with exactly its two header lines, ``# api-snapshot v2`` then ``# producer-schema
+<n>`` (dump spec §2.1), or the step fails with an ``::error`` naming the golden
+before the checker runs.
+
 The behavioural tests run the step's real shell script under ``bash -e`` with
 ``git`` and ``uv`` replaced by stubs on ``PATH`` that log their argv -- no
 real git runs.
@@ -34,7 +39,7 @@ pytestmark = pytest.mark.interpreter_agnostic
 GOLDEN = "tests/unit/api_snapshot/public_api.txt"
 HEAD_SHA = "h" * 40
 BASE_SHA = "b" * 40
-V2_TEXT = "# api-snapshot v2\n# header\nname otto:Alpha\n"
+V2_TEXT = "# api-snapshot v2\n# producer-schema 1\nname\totto:Alpha\tfunction\n"
 # api_lines.schema_of strips each line, so whitespace around the header is still v2.
 V2_SPACED_TEXT = "  # api-snapshot v2 \t\n# header\nname otto:Alpha\n"
 V1_TEXT = "# a v1 golden header\notto:Alpha\n"
@@ -50,21 +55,29 @@ def _marking_step_script() -> str:
     return step["run"]
 
 
-def _run_pr_step(tmp_path, base_text: "str | None", head_text: "str | None") -> "list[str]":
-    """Run the marking step as a pull_request; return the stubs' logged argv lines.
+def _run_marking_step(
+    tmp_path,
+    *,
+    event: str,
+    base_text: "str | None" = None,
+    head_text: "str | None" = None,
+    checked_out: "str | None" = None,
+) -> "tuple[subprocess.CompletedProcess[str], list[str]]":
+    """Run the marking step for *event*; return the finished process and the stubs' argv lines.
 
-    The ``git`` stub answers ``git show <sha>:<golden>`` with the golden text
-    given for that sha (exit 128, as git does, when it is None or the path is
-    not the golden) and logs every call.
+    The ``git`` stub answers ``git show <rev>:<golden>`` with the golden text
+    given for that rev (exit 128, as git does, when it is None or the path is
+    not the golden) and logs every call. *checked_out* is the golden at
+    ``HEAD``, the commit the step checks.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     goldens = tmp_path / "goldens"
     goldens.mkdir()
     log = tmp_path / "calls.log"
-    for sha, text in ((BASE_SHA, base_text), (HEAD_SHA, head_text)):
+    for rev, text in ((BASE_SHA, base_text), (HEAD_SHA, head_text), ("HEAD", checked_out)):
         if text is not None:
-            (goldens / f"{sha}.txt").write_text(text, encoding="utf-8")
+            (goldens / f"{rev}.txt").write_text(text, encoding="utf-8", newline="")
     (bin_dir / "git").write_text(
         "#!/bin/sh\n"
         'echo "git $*" >> "$STUB_LOG"\n'
@@ -79,7 +92,7 @@ def _run_pr_step(tmp_path, base_text: "str | None", head_text: "str | None") -> 
         (bin_dir / stub).chmod(0o755)
     script = (
         _marking_step_script()
-        .replace("${{ github.event_name }}", "pull_request")
+        .replace("${{ github.event_name }}", event)
         .replace("${{ github.event.pull_request.head.sha }}", HEAD_SHA)
         .replace("${{ github.event.pull_request.base.sha }}", BASE_SHA)
         .replace("${{ github.event.before }}", "0" * 40)
@@ -91,9 +104,27 @@ def _run_pr_step(tmp_path, base_text: "str | None", head_text: "str | None") -> 
         "STUB_LOG": str(log),
         "STUB_DIR": str(goldens),
         "STUB_GOLDEN": GOLDEN,
+        "TMPDIR": str(tmp_path),
     }
-    subprocess.run(["bash", "-e", "-c", script], env=env, check=True, cwd=tmp_path)
-    return log.read_text(encoding="utf-8").splitlines()
+    proc = subprocess.run(
+        ["bash", "-e", "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return proc, calls
+
+
+def _run_pr_step(tmp_path, base_text: "str | None", head_text: "str | None") -> "list[str]":
+    """Run the marking step as a pull_request; return the stubs' logged argv lines."""
+    proc, calls = _run_marking_step(
+        tmp_path, event="pull_request", base_text=base_text, head_text=head_text
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    return calls
 
 
 @pytest.mark.parametrize(
@@ -149,3 +180,46 @@ def test_both_endpoint_gates_precede_the_detach_in_the_script():
         assert script.index(gate) < checkout_at, gate
     assert script.index("# api-snapshot v2") < checkout_at
     assert checkout_at < script.index("check_breaking_marks.py")
+
+
+GOLDEN_ERROR = f"::error file={GOLDEN}::"
+CHECKER = "uv run python scripts/check_breaking_marks.py "
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+@pytest.mark.parametrize(
+    "checked_out",
+    [
+        V2_SPACED_TEXT,
+        "# api-snapshot v2\n# header\nname otto:Alpha\n",
+        "# a comment\n# api-snapshot v2\n# producer-schema 1\n",
+        V2_TEXT.replace("\n", "\r\n"),
+        "  # api-snapshot v2\n# producer-schema 1\nname\totto:Alpha\tfunction\n",
+    ],
+    ids=[
+        "header-not-exact",
+        "line-2-not-the-schema",
+        "header-not-on-line-1",
+        "crlf",
+        "header-not-exact-line-2-ok",
+    ],
+)
+def test_a_v2_golden_without_its_two_header_lines_fails_before_the_check(
+    tmp_path, event, checked_out
+):
+    proc, calls = _run_marking_step(
+        tmp_path, event=event, base_text=V2_TEXT, head_text=checked_out, checked_out=checked_out
+    )
+    assert proc.returncode == 1
+    assert GOLDEN_ERROR in proc.stdout
+    assert not [c for c in calls if c.startswith(CHECKER)], calls
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+@pytest.mark.parametrize("checked_out", [V2_TEXT, V1_TEXT, None], ids=["v2", "v1", "absent"])
+def test_a_well_headed_v1_or_absent_golden_reaches_the_check(tmp_path, event, checked_out):
+    proc, calls = _run_marking_step(
+        tmp_path, event=event, base_text=V2_TEXT, head_text=checked_out, checked_out=checked_out
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert calls[-1].startswith(CHECKER), calls

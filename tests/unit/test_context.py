@@ -276,7 +276,7 @@ def test_context_runtime_flags_default_and_override():
 
 
 def test_bare_accessors_delegate_to_active_context():
-    import otto.config as cm
+    import otto.lab as cm
     from otto.context import OttoContext, reset_context, set_context
 
     lab = _lab_with("test1", "test2")
@@ -299,7 +299,7 @@ def test_admissible_ids_is_public_and_the_private_name_is_an_alias(monkeypatch):
     cannot be reached through an underscored method; the private spelling stays
     as an alias for one release rather than breaking any caller that has it.
     """
-    monkeypatch.setattr("otto.config.bootstrapped.get_ordered_repos", list)
+    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", list)
     ctx = OttoContext(lab=_lab_with("test1"))
 
     assert ctx.admissible_ids() == {"test1"}
@@ -621,7 +621,7 @@ def cov_detection(monkeypatch):
             for i, verdict in enumerate(state["instrumented"])
         ]
 
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: state["repos"])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: state["repos"])
     monkeypatch.setattr(OttoContext, "all_hosts", _all_hosts)
     return state
 
@@ -665,7 +665,7 @@ def test_cov_on_the_library_sentinel_lab_is_false_without_touching_repos(monkeyp
     def _boom():
         raise AssertionError("the sentinel lab must not reach the repos")
 
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _boom)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _boom)
     assert OttoContext(lab=Lab(name=LIBRARY_LAB_NAME)).cov is False
 
 
@@ -686,7 +686,7 @@ def test_cov_detection_with_unreachable_repos_is_false(monkeypatch):
     def _unreachable():
         raise RuntimeError("no bootstrap")
 
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", _unreachable)
+    monkeypatch.setattr("otto.bootstrap.get_repos", _unreachable)
     assert OttoContext(lab=_lab_with("test1")).cov is False
 
 

@@ -1,6 +1,6 @@
 """A test patches a lazily exported name where it is DEFINED, never on its package.
 
-``monkeypatch.setattr("otto.config.get_repos", fake)`` leaves the real object
+``monkeypatch.setattr("otto.config.load_user_settings", fake)`` leaves the real object
 cached in the package ``__dict__`` on undo and later hides a patch of the
 defining module (see ``tests/_fixtures/_lazy_exports.py``, which also fails the
 test at teardown at run time). ``mock.patch`` on the package does not leak but
@@ -119,44 +119,50 @@ class TestTheScannerSeesEveryForm:
         return package_level_patches(body, "t.py")
 
     def test_string_setattr(self):
-        got = self.scan('monkeypatch.setattr("otto.config.get_repos", f)')
-        assert got == ["t.py:1 otto.config.get_repos -> patch otto.config.bootstrapped.get_repos"]
+        got = self.scan('monkeypatch.setattr("otto.config.load_user_settings", f)')
+        assert got == [
+            (
+                "t.py:1 otto.config.load_user_settings"
+                " -> patch otto.config.user_settings.load_user_settings"
+            )
+        ]
 
     def test_mock_patch_in_its_spellings(self):
         for call in (
-            'patch("otto.config.get_lab")',
-            'mock.patch("otto.config.get_lab")',
-            'mocker.patch("otto.config.get_lab")',
+            'patch("otto.lab.get_lab")',
+            'mock.patch("otto.lab.get_lab")',
+            'mocker.patch("otto.lab.get_lab")',
         ):
             assert self.scan(call) == [
-                "t.py:1 otto.config.get_lab -> patch otto.config.fleet.get_lab"
+                "t.py:1 otto.lab.get_lab -> patch otto.config.fleet.get_lab"
             ], call
 
     def test_a_hop_through_another_lazy_package_names_the_true_home(self):
-        assert self.scan('patch("otto.get_lab")') == [
-            "t.py:1 otto.get_lab -> patch otto.config.fleet.get_lab"
-        ]
+        assert self.scan('patch("otto.app")') == ["t.py:1 otto.app -> patch otto.cli.main.app"]
 
     def test_attribute_forms_through_an_import_alias(self):
         source = (
             "import otto.config as config\n"
             "from otto import config as cfg\n"
-            'monkeypatch.setattr(config, "get_repos", f)\n'
-            'patch.object(cfg, "get_repos")\n'
-            'mock.patch.object(otto.config, "get_repos")\n'
+            'monkeypatch.setattr(config, "load_user_settings", f)\n'
+            'patch.object(cfg, "load_user_settings")\n'
+            'mock.patch.object(otto.config, "load_user_settings")\n'
         )
         got = self.scan(source)
         assert [line.split()[0] for line in got] == ["t.py:3", "t.py:4"]
 
     def test_delattr_in_its_string_and_attribute_forms(self):
         source = (
-            "import otto.config as config\n"
-            'monkeypatch.delattr("otto.config.get_repos")\n'
-            'monkeypatch.delattr(config, "get_lab")\n'
+            "import otto.lab as lab\n"
+            'monkeypatch.delattr("otto.config.load_user_settings")\n'
+            'monkeypatch.delattr(lab, "get_lab")\n'
         )
         assert self.scan(source) == [
-            "t.py:2 otto.config.get_repos -> patch otto.config.bootstrapped.get_repos",
-            "t.py:3 otto.config.get_lab -> patch otto.config.fleet.get_lab",
+            (
+                "t.py:2 otto.config.load_user_settings"
+                " -> patch otto.config.user_settings.load_user_settings"
+            ),
+            "t.py:3 otto.lab.get_lab -> patch otto.config.fleet.get_lab",
         ]
 
     def test_a_plain_package_import_binds_the_root_for_dotted_spellings(self):
@@ -168,13 +174,13 @@ class TestTheScannerSeesEveryForm:
         assert [line.split()[0] for line in self.scan(source)] == ["t.py:2", "t.py:3"]
 
     def test_dotted_spelling_needs_the_root_import(self):
-        source = 'import otto\nmonkeypatch.setattr(otto.config, "get_repos", f)\n'
+        source = 'import otto\nmonkeypatch.setattr(otto.config, "load_user_settings", f)\n'
         assert len(self.scan(source)) == 1
 
     def test_the_defining_module_and_unrelated_targets_pass(self):
         source = (
             "import otto.config as config\n"
-            'monkeypatch.setattr("otto.config.bootstrapped.get_repos", f)\n'
+            'monkeypatch.setattr("otto.bootstrap.get_repos", f)\n'
             'monkeypatch.setattr("otto.config.load_otto_env", f)\n'
             'monkeypatch.setattr(config, "load_otto_env", f)\n'
             'patch("otto.logger.management._ConsoleHandler")\n'

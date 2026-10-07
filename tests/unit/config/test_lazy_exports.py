@@ -216,7 +216,7 @@ def test_help_surface_does_not_load_host():
     ``monitor.py``) are not on this surface at all — MEASURED, not assumed.
 
     Which is exactly why this guard is worth its subprocess. A future
-    module-level ``from ..config import get_host`` in one of the four modules
+    module-level ``from ..config.fleet import get_host`` in one of the four modules
     root help DOES load would re-trigger the whole chain through
     ``config.fleet``, and the in-process guard above — which imports
     ``otto.config`` and nothing else — could never see it.
@@ -230,12 +230,6 @@ def test_help_surface_does_not_load_host():
 # its expectation from the table it is checking asserts only that the table
 # equals itself, and would follow a typo straight into green.
 _PUBLIC_CALLABLES = {
-    "all_hosts": ("otto.config.fleet", "all_hosts"),
-    "do_for_all_hosts": ("otto.config.fleet", "do_for_all_hosts"),
-    "get_host": ("otto.config.fleet", "get_host"),
-    "get_lab": ("otto.config.fleet", "get_lab"),
-    "run_on_all_hosts": ("otto.config.fleet", "run_on_all_hosts"),
-    "load_lab": ("otto.config.lab", "load_lab"),
     "load_otto_env": ("otto.config.env", "load_otto_env"),
     "Repo": ("otto.config.repo", "Repo"),
     "DockerCompose": ("otto.config.repo", "DockerCompose"),
@@ -243,6 +237,8 @@ _PUBLIC_CALLABLES = {
     "DockerSettings": ("otto.config.repo", "DockerSettings"),
     "MonitorSettings": ("otto.config.repo", "MonitorSettings"),
     "Version": ("otto.config.version", "Version"),
+    "load_user_settings": ("otto.config.user_settings", "load_user_settings"),
+    "user_settings_path": ("otto.config.user_settings", "user_settings_path"),
 }
 
 
@@ -251,9 +247,9 @@ def test_config_public_names_resolve_to_the_right_object():
 
     Identity against the owning module, never ``is not None``: MUTATION-PROVEN
     that the weaker check cannot fail usefully — rebinding
-    ``"get_host": ("otto.config.fleet", "get_lab")`` in ``_LAZY_EXPORTS``
-    still hands back a callable, and every caller of ``otto.config.get_host``
-    would quietly receive a lab.
+    ``"user_settings_path": ("otto.config.user_settings", "load_user_settings")``
+    in ``_LAZY_EXPORTS`` still hands back a callable, and every caller of
+    ``otto.config.user_settings_path`` would quietly receive the loader.
 
     ``dir()`` membership is the second assertion, and it is not decoration: a
     PEP 562 name never enters the module dict, so dropping ``__dir__`` from
@@ -271,6 +267,34 @@ def test_config_public_names_resolve_to_the_right_object():
         assert name in dir(c), f"{name} is missing from dir(otto.config)"
 
 
+# Names that left otto.config, mapped to their one home. Written out by hand
+# for the same reason as _PUBLIC_CALLABLES.
+_MOVED_OUT = {
+    "get_completion_names": "otto.bootstrap",
+    "get_env": "otto.bootstrap",
+    "get_ordered_repos": "otto.bootstrap",
+    "get_repos": "otto.bootstrap",
+    "is_bootstrapped": "otto.bootstrap",
+    "all_hosts": "otto.lab",
+    "do_for_all_hosts": "otto.lab",
+    "get_host": "otto.lab",
+    "get_lab": "otto.lab",
+    "load_lab": "otto.lab",
+    "run_on_all_hosts": "otto.lab",
+}
+
+
+def test_a_moved_name_is_gone_from_otto_config():
+    """A moved name has one home: ``otto.config`` neither resolves, declares nor lists it."""
+    import otto.config as c
+
+    for name, home in _MOVED_OUT.items():
+        assert not hasattr(c, name), f"otto.config.{name} still resolves"
+        assert name not in c.__all__, name
+        assert name not in dir(c), name
+        assert callable(getattr(importlib.import_module(home), name)), f"{home}.{name}"
+
+
 _IMPORT_STAR_SCRIPT = """
 namespace = {}
 exec("from otto.config import *", namespace)
@@ -278,10 +302,8 @@ exec("from otto.config import *", namespace)
 missing = [
     name
     for name in (
-        "all_hosts", "do_for_all_hosts", "get_host", "get_lab",
-        "run_on_all_hosts", "load_lab", "load_otto_env",
-        "load_user_settings", "user_settings_path", "ResolvedDependency",
-        "Repo", "Version",
+        "load_otto_env", "load_user_settings", "user_settings_path",
+        "ResolvedDependency", "Repo", "Version",
     )
     if name not in namespace
 ]

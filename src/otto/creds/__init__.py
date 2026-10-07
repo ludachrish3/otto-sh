@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     from .json_store import JsonCredsStore as JsonCredsStore
     from .json_store import parse_creds_document as parse_creds_document
     from .protocol import CredsStore as CredsStore
-    from .registry import get_creds_backend_class as get_creds_backend_class
     from .registry import register_creds_backend as register_creds_backend
 
 # name -> the module that defines it, imported on first access by __getattr__.
@@ -37,7 +36,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "JsonCredsStore": "otto.creds.json_store",
     "parse_creds_document": "otto.creds.json_store",
     "CredsStore": "otto.creds.protocol",
-    "get_creds_backend_class": "otto.creds.registry",
     "register_creds_backend": "otto.creds.registry",
 }
 
@@ -64,7 +62,6 @@ __all__ = [
     "compile_creds",
     "compile_creds_table",
     "construct_creds_store",
-    "get_creds_backend_class",
     "parse_creds_document",
     "register_creds_backend",
 ]

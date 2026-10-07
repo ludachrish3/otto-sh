@@ -131,7 +131,7 @@ async def _gather_settled(*aws: "Awaitable[CommandResult]") -> list[CommandResul
 class _StabilityFakeSession(ShellSession):
     """``ShellSession`` that simulates real transport timing.
 
-    ``_open()`` and ``close()`` yield to the event loop so concurrent tasks
+    ``open_transport()`` and ``close()`` yield to the event loop so concurrent tasks
     can interleave at realistic points. Every command succeeds with
     retcode 0; this module probes the manager, not command flow.
     """
@@ -141,11 +141,11 @@ class _StabilityFakeSession(ShellSession):
         self.instance_id = instance_id
         self._read_queue: asyncio.Queue[str] = asyncio.Queue()
 
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         # Yield to mimic real transport setup (TCP+auth in ssh/telnet).
         await asyncio.sleep(0)
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         if self._ready_marker in data:
             self._read_queue.put_nowait(f"{self._ready_marker}\n")
         elif self._begin_marker in data:
@@ -163,7 +163,7 @@ class _StabilityFakeSession(ShellSession):
             # because the error path is where the patient retry budgets live.
             self._read_queue.put_nowait(f"{self._recover_marker}0__\n")
 
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         buf = ""
         while True:
             chunk = await self._read_queue.get()
@@ -211,7 +211,7 @@ def _make_mgr(factory: _Factory, term: str = "telnet") -> SessionManager:
 
 
 class _ConnectOverlapTracker:
-    """Records the peak number of ``_open()`` calls in flight simultaneously.
+    """Records the peak number of ``open_transport()`` calls in flight simultaneously.
 
     One tracker is shared by every session a :class:`_SlowConnectFactory`
     hands out, so ``peak`` is the largest number of pool connects that were
@@ -233,10 +233,10 @@ class _ConnectOverlapTracker:
 
 
 class _SlowConnectFakeSession(_StabilityFakeSession):
-    """Fake session with a configurable, non-trivial ``_open()`` delay.
+    """Fake session with a configurable, non-trivial ``open_transport()`` delay.
 
     Real telnet ``exec()`` pool sessions spend ~1-2 s in the connect
-    handshake, and sleeping for ``connect_delay`` inside ``_open()`` keeps the
+    handshake, and sleeping for ``connect_delay`` inside ``open_transport()`` keeps the
     fake faithful to that: each concurrent connect is parked on a real timer
     for the width of a handshake, the way the real ones are.
 
@@ -259,7 +259,7 @@ class _SlowConnectFakeSession(_StabilityFakeSession):
         super().__init__(instance_id)
         self.overlap = overlap
 
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         self.overlap.enter()
         try:
             await asyncio.sleep(self.connect_delay)
@@ -304,11 +304,11 @@ class _SwallowOneCommandFakeSession(_StabilityFakeSession):
         super().__init__(instance_id)
         self.swallow_next_command = False
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         if self.swallow_next_command and self._begin_marker in data:
             self.swallow_next_command = False
             return  # the reply the caller is waiting for never comes
-        await super()._write(data)
+        await super().write_transport(data)
 
 
 @pytest.mark.asyncio
@@ -364,7 +364,7 @@ async def test_exec_pool_connects_concurrently() -> None:
     With per-name locks, distinct names connect concurrently.
 
     The assertion observes that overlap *directly* — the peak number of
-    ``_open()`` calls in flight at once — rather than inferring it from how
+    ``open_transport()`` calls in flight at once — rather than inferring it from how
     long the fan-out took.  That is load-immune, and on the axis this test
     exists to guard, connect serialization, it strictly dominates the
     ``elapsed < 0.5 s`` bound it replaced (issue #229).  Measured by handing
@@ -377,7 +377,7 @@ async def test_exec_pool_connects_concurrently() -> None:
 
     Dominance is claimed on that axis only, not in general: ``peak`` sees
     only the connect phase, while ``elapsed`` bounded the whole fan-out.  A
-    regression that added wall-clock cost *outside* ``_open()`` — a
+    regression that added wall-clock cost *outside* ``open_transport()`` — a
     re-introduced per-exec settle, say — would have tripped the old bound and
     passes this one.  Nothing here guards that; it is not what this test is
     for.
@@ -390,14 +390,14 @@ async def test_exec_pool_connects_concurrently() -> None:
     results = await asyncio.gather(*(mgr.exec(f"echo {i}") for i in range(N)))
 
     assert all(r.status.is_ok for r in results), "some execs returned non-ok status"
-    # A peak of N already implies at least N sessions existed (one _open()
+    # A peak of N already implies at least N sessions existed (one open_transport()
     # in flight each). This pins the other side: exactly one pool session per
     # exec, no surplus builds.
     assert factory.created_count == N, (
         f"expected {N} pool sessions to be built, got {factory.created_count}"
     )
     assert factory.overlap.peak == N, (
-        f"peak concurrent _open() was {factory.overlap.peak}, expected {N} — "
+        f"peak concurrent open_transport() was {factory.overlap.peak}, expected {N} — "
         f"pool connects serialized instead of running in parallel (a single "
         f"shared lock around the get-or-create body pins the peak at 1)"
     )
@@ -653,7 +653,7 @@ class _NeverReadyFakeSession(_StabilityFakeSession):
         super().__init__(instance_id)
         self.closed = False
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         # Never enqueue the READY marker — the handshake stalls.
         pass
 
@@ -704,14 +704,14 @@ class _HandshakeFailsOnceFakeSession(_StabilityFakeSession):
 
     fail_until_instance: int = 1
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         if self._ready_marker in data and self.instance_id <= self.fail_until_instance:
             raise ConnectionError(
                 "shell never became ready after open — the transport connected "
                 "but the shell never reached a prompt; the shell may never have "
                 "started, or the login never completed (e.g. bad credentials)"
             )
-        await super()._write(data)
+        await super().write_transport(data)
 
 
 @pytest.mark.asyncio

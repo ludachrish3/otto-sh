@@ -26,6 +26,15 @@ from .command_frame import BashFrame, SessionMarkers
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .shell_liveness import confirm_live
 
+__all__ = [
+    "LOGIN_PROXIES",
+    "Cred",
+    "ProxyContext",
+    "ProxyIO",
+    "register_login_proxy",
+    "resolve_chain",
+]
+
 
 @dataclass(frozen=True)
 class Cred:
@@ -132,6 +141,7 @@ class LoginProxyError(OttoError, ConnectionError):
 LOGIN_PROXIES: Registry[LoginProxy] = Registry(
     "login proxy", register_hint="otto.register_login_proxy()"
 )
+"""The login proxies a host's login chain can name, keyed by proxy name."""
 
 
 def register_login_proxy(

@@ -1,6 +1,6 @@
 """ShellSession.enter_frame: a second handshake on the SAME transport.
 
-Uses MockSession from test_session.py: its ``_open`` replaces the output
+Uses MockSession from test_session.py: its ``open_transport`` replaces the output
 reader, so a reply fed BEFORE ``enter_frame`` is lost if frame entry reopens
 the transport — the property the first test pins.
 """
@@ -31,15 +31,15 @@ class _CountingSession(MockSession):
         super().__init__(*a, **kw)
         self.opens = 0
 
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         self.opens += 1
-        await super()._open()
+        await super().open_transport()
 
 
 @pytest.mark.asyncio
 async def test_enter_frame_never_reopens_the_transport():
     s = _CountingSession()
-    await s._open()  # the fixture shape: explicit open, then handshake
+    await s.open_transport()  # the fixture shape: explicit open, then handshake
     feed = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
     await s._ensure_initialized()
     await feed
@@ -175,7 +175,7 @@ async def test_enter_frame_never_confirms_a_marker_the_prompt_runs_into(landed):
 @pytest.mark.asyncio
 async def test_raw_landing_writes_nothing_and_is_ready():
     s = MockSession(command_frame=RawFrame())
-    await s._open()
+    await s.open_transport()
     await s._ensure_initialized()
     assert s.written == []
     assert s.alive
@@ -185,7 +185,7 @@ async def test_raw_landing_writes_nothing_and_is_ready():
 @pytest.mark.asyncio
 async def test_run_cmd_in_a_raw_landing_refuses_and_keeps_the_session_alive():
     s = MockSession(command_frame=RawFrame())
-    await s._open()
+    await s.open_transport()
     await s._ensure_initialized()
     with pytest.raises(RawLandingError, match="enter_frame"):
         await s.run_cmd("ls")
@@ -196,7 +196,7 @@ async def test_run_cmd_in_a_raw_landing_refuses_and_keeps_the_session_alive():
 @pytest.mark.asyncio
 async def test_run_cmd_in_a_raw_landing_refuses_before_ensure_ready():
     s = MockSession(command_frame=RawFrame())
-    await s._open()  # transport up, NOT initialized
+    await s.open_transport()  # transport up, NOT initialized
     s._needs_recovery = True
     with pytest.raises(RawLandingError, match="enter_frame"):
         await s.run_cmd("ls")
@@ -211,7 +211,7 @@ async def test_run_cmd_in_a_raw_landing_refuses_before_ensure_ready():
 @pytest.mark.asyncio
 async def test_raw_landing_send_and_expect_are_raw():
     s = MockSession(command_frame=RawFrame())
-    await s._open()
+    await s.open_transport()
     await s._ensure_initialized()
     s.feed("Press 1 for shell\n")
     await s.send("1\n")
@@ -231,7 +231,7 @@ async def test_recovery_in_a_raw_landing_writes_nothing():
     therefore belongs at the ENTRY of recovery, not only at the confirm.
     """
     s = MockSession(command_frame=RawFrame())
-    await s._open()
+    await s.open_transport()
     await s._ensure_initialized()
     s._needs_recovery = True
     with pytest.raises(RuntimeError, match="not alive"):
@@ -250,7 +250,7 @@ async def test_confirm_recovered_in_a_raw_landing_marks_the_session_dead_and_wri
     so the session is marked dead, not crashed, and nothing is written.
     """
     s = MockSession(command_frame=RawFrame())
-    await s._open()
+    await s.open_transport()
     await s._ensure_initialized()
     assert await s._confirm_recovered() == ""
     assert not s.alive

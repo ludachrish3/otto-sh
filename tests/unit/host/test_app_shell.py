@@ -313,15 +313,15 @@ class FakeShellSession(ShellSession):
         self.recovered = False
 
     @override
-    async def _open(self):
+    async def open_transport(self):
         raise NotImplementedError
 
     @override
-    async def _write(self, data):
+    async def write_transport(self, data):
         raise NotImplementedError
 
     @override
-    async def _read_until_pattern(self, pattern):
+    async def read_transport_until(self, pattern):
         raise NotImplementedError
 
     @override

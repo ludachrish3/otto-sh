@@ -18,15 +18,16 @@ which is also a member of the `busybox` lab. The host id is what is matched:
 What the declaration changes is the fleet every walk starts from.
 `all_hosts()` and {meth}`~otto.context.OttoContext.do_for_all_hosts` iterate
 the **fleet of interest**, not the lab, and a walk that would iterate
-nothing refuses loudly rather than silently doing nothing. The same
-computation, without a connection, run from the example project's
-directory, after its init modules are imported as a real `otto` run does
-at startup:
+nothing refuses loudly rather than silently doing nothing.
+{func}`otto.lab.fleet_of_interest <otto.config.fleet.fleet_of_interest>`
+computes it without a connection. Here it runs from the example project's
+directory, after its init modules are imported as a real `otto` run does at
+startup:
 
 ```{testsetup}
 import os
 
-from otto.config.repo import Repo
+from otto.config import Repo
 from otto.registry import registering_repo
 
 _old_cwd = os.getcwd()
@@ -42,15 +43,13 @@ os.chdir(_old_cwd)
 
 ```{doctest}
 >>> from pathlib import Path
->>> from otto.config.lab import load_lab
->>> from otto.config.repo import Repo
->>> from otto.config.scope import resolve_scopes, scoped_ids
+>>> from otto.config import Repo
+>>> from otto.lab import fleet_of_interest, load_lab
 >>> repo = Repo(sut_dir=Path.cwd())
 >>> lab = load_lab("busybox", search_paths=[Path("lab_data")])
 >>> sorted(lab.hosts)
 ['bb1161-qemu', 'bb1211-qemu', 'bb1281-qemu', 'bb1310-qemu', 'bb1350-qemu', 'local', 'test1']
->>> scopes = resolve_scopes([repo], lab.component_names, lab.hosts, exclude_ids=frozenset({"local"}))
->>> sorted(scoped_ids(lab.hosts, scopes, None))
+>>> sorted(fleet_of_interest(lab, [repo]))
 ['bb1161-qemu', 'bb1211-qemu', 'bb1281-qemu', 'bb1310-qemu', 'bb1350-qemu']
 ```
 

@@ -95,7 +95,8 @@ declared dependency graph from `tach.toml`, cycle included.
 | --- | --- |
 | `otto.models` | Pydantic specs for lab.json, settings.toml, env vars, monitor records |
 | `otto.labs` | The lab-repository (host source) protocol and the default JSON backend |
-| `otto.config` | Repo/lab discovery, settings parsing, fleet accessors |
+| `otto.config` | Parsing otto's inputs: the environment, each repo's `settings.toml`, lab data; the fleet implementation behind `otto.lab` |
+| {mod}`otto.lab` | The public lab and fleet API: load a lab, reach its hosts, walk the fleet of interest |
 
 **Domain** — the subsystems that do the actual work:
 
@@ -112,7 +113,7 @@ declared dependency graph from `tach.toml`, cycle included.
 
 | Module | Responsibility |
 | --- | --- |
-| {mod}`otto.bootstrap` | Two-phase composition root: discovery, then contained user-code registration |
+| {mod}`otto.bootstrap` | Two-phase composition root: discovery, then contained user-code registration; the repo accessors (`get_repos`, `get_env`, ...) read it |
 | {mod}`otto.context` | {class}`~otto.context.OttoContext`: the per-invocation runtime and host lifecycle scope |
 | `otto.cli` | The Typer app, the command registry, lazy dispatch, shell completion |
 

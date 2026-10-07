@@ -112,7 +112,7 @@ def test_chmod_command_terminates_options_before_paths():
 
 
 # ---------------------------------------------------------------------------
-# The put_files seam — capability, pre-flight, _apply_mode
+# The put_files seam — capability, pre-flight, apply_mode
 # ---------------------------------------------------------------------------
 
 
@@ -129,23 +129,23 @@ class _FakeBackend(BaseFileTransfer):
         self._chmod_result = Result(Status.Success) if chmod_result is None else chmod_result
         self._outcomes = outcomes
 
-    async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
+    async def run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         self.run_put_calls += 1
         if self._outcomes is not None:
             return dict(self._outcomes)
         return {src: Result(Status.Success, value=dest_dir / src.name) for src in src_files}
 
-    async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
+    async def run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         return {}
 
-    async def _apply_mode(self, dest_paths, mode):
+    async def apply_mode(self, dest_paths, mode):
         self.apply_mode_calls.append((list(dest_paths), mode))
         return self._chmod_result
 
 
 @pytest.mark.asyncio
 async def test_unsupported_backend_fails_before_any_bytes_move():
-    # The point of the pre-flight check: assert _run_put was never reached.
+    # The point of the pre-flight check: assert run_put was never reached.
     backend = _FakeBackend(name="zephyr1", supports_mode=False)
     result = await backend.put_files([Path("a.bin")], Path("/RAM:"), False, mode="755")
     assert not result.is_ok
@@ -220,10 +220,10 @@ async def test_chmod_failure_downgrades_but_keeps_dest_path():
 @pytest.mark.asyncio
 async def test_supports_mode_without_apply_mode_raises():
     class _Broken(_FakeBackend):
-        _apply_mode = BaseFileTransfer._apply_mode
+        apply_mode = BaseFileTransfer.apply_mode
 
     backend = _Broken(supports_mode=True)
-    with pytest.raises(NotImplementedError, match="_apply_mode"):
+    with pytest.raises(NotImplementedError, match="apply_mode"):
         await backend.put_files([Path("a.bin")], Path("/opt"), False, mode="755")
 
 
@@ -239,14 +239,14 @@ def test_default_backend_does_not_support_mode():
 class _ConcreteUnix(UnixFileTransfer):
     """Concrete stand-in — UnixFileTransfer itself is abstract.
 
-    Exercises the real inherited ``_apply_mode``; only the two abstract
+    Exercises the real inherited ``apply_mode``; only the two abstract
     transfer methods are stubbed out.
     """
 
-    async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
+    async def run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         return {}
 
-    async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
+    async def run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         return {}
 
 
@@ -272,7 +272,7 @@ async def test_unix_apply_mode_issues_exactly_one_batched_chmod():
         return_value=CommandResult(Status.Success, value="", command="", retcode=0)
     )
     backend = _unix_backend(exec_cmd)
-    result = await backend._apply_mode([Path("/opt/a"), Path("/opt/b"), Path("/opt/c")], 0o755)
+    result = await backend.apply_mode([Path("/opt/a"), Path("/opt/b"), Path("/opt/c")], 0o755)
     assert result.is_ok
     # Batching is the contract, not just the outcome: N files, ONE exec.
     assert exec_cmd.await_count == 1
@@ -290,7 +290,7 @@ async def test_unix_apply_mode_reports_chmod_failure():
         )
     )
     backend = _unix_backend(exec_cmd)
-    result = await backend._apply_mode([Path("/opt/a")], 0o755)
+    result = await backend.apply_mode([Path("/opt/a")], 0o755)
     assert not result.is_ok
     assert "Operation not permitted" in result.msg
 

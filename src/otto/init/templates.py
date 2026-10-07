@@ -486,7 +486,7 @@ def repo_marker() -> str:
 #
 # @pytest_asyncio.fixture(scope="class")
 # async def primary_host():
-#     from otto.config import get_host
+#     from otto.lab import get_host
 #
 #     host = get_host("example-device")
 #     yield host

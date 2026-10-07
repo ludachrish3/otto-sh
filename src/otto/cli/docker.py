@@ -113,7 +113,7 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     (``cache['docker_hosts']``); falls through to a live ``lab.json``
     scan on cache miss so first-run completion still works.
     """
-    from ..config import get_completion_names, get_repos
+    from ..bootstrap import get_completion_names, get_repos
     from ..config.completion_cache import collect_docker_capable_host_ids
     from .completers import lab_scoped_host_ids, selected_lab_names
 
@@ -141,7 +141,7 @@ def _use_case_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
     completer: a use-case is declared by REPOS, and which lab is selected
     decides where its fragments land, not whether it exists.
     """
-    from ..config import get_completion_names, get_repos
+    from ..bootstrap import get_completion_names, get_repos
     from ..config.completion_cache import collect_docker_use_case_names
 
     cached = get_completion_names()
@@ -155,7 +155,7 @@ def _use_case_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
 
 def _names_or(key: str, collect: "Callable[[], Any]") -> Any:
     """Return the cached ``names`` entry for *key*, else the collector's live answer (cold run)."""
-    from ..config import get_completion_names
+    from ..bootstrap import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and key in cached:
@@ -166,7 +166,7 @@ def _names_or(key: str, collect: "Callable[[], Any]") -> Any:
 @completion_source(kind="payload", key="docker_images", sort=True)
 def _image_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Shell-completion source for ``IMAGE``: every declared ``[[docker.images]]`` name."""
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..config.completion_cache import collect_docker_image_names
 
     try:
@@ -185,7 +185,7 @@ def _service_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     Nothing is offered until a use-case is on the line (the services of an
     unnamed use-case would be a guess).
     """
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..config.completion_cache import collect_docker_services_by_use_case
 
     try:
@@ -206,7 +206,7 @@ def _service_completer(ctx: typer.Context, incomplete: str) -> list[str]:
 @completion_source(kind="payload", key="repos", sort=True)
 def _repo_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Shell-completion source for ``--repo``: every active repo's name."""
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..config.completion_cache import collect_repo_names
 
     try:
@@ -248,7 +248,7 @@ def _default_parent_for_tab(ctx: typer.Context) -> "str | None":
 
     The bash shim mirrors this as ``otto._shim_complete._default_parent``; change both or neither.
     """
-    from ..config import get_completion_names
+    from ..bootstrap import get_completion_names
 
     cached = get_completion_names()
     by_lab = cached.get("docker_default_parent_by_lab") if cached else None
@@ -329,7 +329,7 @@ def _default_use_case(use_case: str | None) -> str:
     if use_case is not None:
         return use_case
 
-    from ..config.bootstrapped import get_repos
+    from ..bootstrap import get_repos
     from ..docker.resolve import declared_use_cases
 
     names = sorted(declared_use_cases(get_repos()))
@@ -559,7 +559,7 @@ async def _record_host(host_id: str, *, images: bool, containers: bool) -> None:
     that catches them all, so one host's failure never stops the next host's
     record nor changes the verb.
     """
-    from ..config.bootstrapped import get_repos
+    from ..bootstrap import get_repos
     from ..config.completion_cache import record_docker_containers, record_docker_images
     from ..docker.observe import observed_containers, observed_images
 
@@ -900,7 +900,7 @@ def _use_cases(
     # a reason to exit 1.
     from rich.table import Table
 
-    from ..config.bootstrapped import get_repos
+    from ..bootstrap import get_repos
     from ..config.fleet import get_lab
     from ..docker.observe import DockerVerbError, docker_parent
     from ..docker.resolve import (

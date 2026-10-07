@@ -3,7 +3,7 @@
 Conformance suites that assert a backend satisfies one of otto's pluggable
 interfaces. Import the helper for the interface you implement and call it from a
 pytest test (it raises a single ``AssertionError`` listing every contract
-violation):
+violation)::
 
     from otto.testing import (
         assert_creds_store_conforms,

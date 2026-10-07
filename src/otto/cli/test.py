@@ -104,8 +104,8 @@ either limit is reached first.
     Title shown in the HTML report header (only used with ``--cov-report``).
 
 ``--cov-tickets-json PATH``
-    Also write a machine-readable per-ticket coverage summary (``format: 1``,
-    versioned independently of the internal ``store.json``) to this path.
+    Also write a machine-readable per-ticket coverage summary (its own
+    ``format`` version, independent of the internal ``store.json``) to this path.
     Implies ``--cov-report`` (and therefore ``--cov``). ``[coverage.tickets]``
     must be configured at all, checked immediately — an unconfigured table
     aborts before the test run starts rather than after a long run finishes.
@@ -209,7 +209,7 @@ def _names_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
     completer reads: test names are not in it, so ``otto ho<TAB>`` never
     validates the test tree.
     """
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..config.collected_tests import completion_view
 
     names = completion_view(get_repos()).names
@@ -227,7 +227,7 @@ def _markers_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noq
     (:func:`otto.utils.complete_marker_expression`) completes the identifier
     being typed and keeps the rest of the expression.
     """
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..config.collected_tests import completion_view
     from ..suite.markers import OTTO_MARKERS
     from ..utils import complete_marker_expression
@@ -278,7 +278,7 @@ def list_markers_callback(value: bool) -> None:
     """
     if not value:
         return
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..suite.markers import OTTO_MARKERS
     from ..suite.run import _refresh_tables
 
@@ -364,7 +364,7 @@ def _selected_tests(names: "list[str]", markers: str) -> "Listing":
 
 def _print_trees(listing: "Listing") -> None:
     """Print *listing* as one tree per repo, a repo with no selected test included."""
-    from ..config import get_repos
+    from ..bootstrap import get_repos
 
     for repo in get_repos():
         rprint(tests_tree(repo, listing.tests.get(repo.name, [])))

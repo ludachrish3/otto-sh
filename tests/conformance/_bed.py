@@ -330,7 +330,7 @@ def bed_scratch_dir(element: str) -> "Path | None":
       module's judgement: their filesystem reports ``supports_transfer``
       False, which is the very flag
       ``otto.host.transfer.console.ConsoleFileTransfer`` short-circuits
-      ``_run_put`` and ``_run_get`` on -- so otto answers "nowhere", loudly
+      ``run_put`` and ``run_get`` on -- so otto answers "nowhere", loudly
       and by design, and this reads that answer rather than restating it.
       Verified rather than assumed: ``build_filesystem("none").mount`` is
       ``None`` and ``supports_transfer`` is ``False``.

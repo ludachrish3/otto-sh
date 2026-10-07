@@ -243,7 +243,7 @@ Every command above has a callable counterpart in `otto.tunnel` — see the
 
 ```python
 from otto.instructions import instruction
-from otto.config import get_lab
+from otto.lab import get_lab
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 
 

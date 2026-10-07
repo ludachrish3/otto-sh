@@ -66,7 +66,7 @@ def _link_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     same source ``otto host <TAB>`` uses — rather than offering every lab
     file's links and letting ``find_link`` refuse most of them.
     """
-    from ..config.bootstrapped import get_repos
+    from ..bootstrap import get_repos
 
     try:
         labs = selected_lab_names(ctx)

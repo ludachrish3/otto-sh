@@ -2,7 +2,7 @@
 
 import otto.host.os_profile as op
 from otto.host.os_profile import registered_host_specs
-from otto.models import EmbeddedHostSpec, UnixHostSpec
+from otto.models.host import EmbeddedHostSpec, UnixHostSpec
 
 
 def test_returns_builtin_name_to_spec_mapping():

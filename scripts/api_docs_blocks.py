@@ -1,9 +1,9 @@
 """Walk otto's teaching material and yield its code blocks, in page order.
 
 One walker, shared by every script that reads code out of the docs, so they
-all agree on what a "code block" is. ``scripts/api_snapshot.py`` builds its
-documented-import candidates on it; the public-surface docs validator (#590)
-reads the same blocks to check every import a page teaches.
+all agree on what a "code block" is. ``scripts/api_teaching.py``, the
+public-surface docs validator (#590), reads them to check every name a page
+teaches.
 
 A :class:`Block` is a code block's raw lines, each paired with its 1-based
 line number in the file, plus a ``lang`` label saying what kind of block it

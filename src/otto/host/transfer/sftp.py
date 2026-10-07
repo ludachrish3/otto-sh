@@ -250,7 +250,7 @@ class SftpFileTransfer(UnixFileTransfer):
         )
 
     @override
-    async def _run_get(
+    async def run_get(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -266,7 +266,7 @@ class SftpFileTransfer(UnixFileTransfer):
         )
 
     @override
-    async def _run_put(
+    async def run_put(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -303,7 +303,7 @@ class SftpFileTransfer(UnixFileTransfer):
             )
             return Result(Status.Success, value=dest_dir / src.name)
 
-        return await self._dispatch_per_file(src_files, _get_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, _get_one, concurrent=concurrent)
 
     async def _put_files_sftp(
         self,
@@ -327,4 +327,4 @@ class SftpFileTransfer(UnixFileTransfer):
             )
             return Result(Status.Success, value=dest_dir / src.name)
 
-        return await self._dispatch_per_file(src_files, _put_one, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, _put_one, concurrent=concurrent)

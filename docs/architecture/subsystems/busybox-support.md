@@ -116,7 +116,7 @@ rows as "what otto knows", and each `reason` and **Status:** line as what such a
 refusal *would* say and do.
 
 Not every refusal in otto is this table's. `PosixPrivilege._elevate` and
-`ShellFileTransfer._run_put`/`_run_get` are *probe-driven*: they refuse on what
+`ShellFileTransfer.run_put`/`run_get` are *probe-driven*: they refuse on what
 the host in front of them answered *and* print their own message, which is a
 different thing from "otto measured this on the matrix". That is why
 [`shell-transfer-base64`](#shell-transfer-base64) picks a codec, and then
@@ -225,13 +225,13 @@ authority.
 
 **Paths otto touches this from:**
 
-- `otto.host.transfer.shell.ShellFileTransfer._run_put` — **PROBE_REFUSED**:
+- `otto.host.transfer.shell.ShellFileTransfer.run_put` — **PROBE_REFUSED**:
   degrades first, refuses second, both with its own message. On a *settled*
   `base64_flag` of `absent` it switches to `uudecode` and the transfer happens;
   it refuses only when `uudecode` is measured absent too, or when the probe round
   never arrived at all — a probe that could not be asked does not get to choose a
   codec.
-- `otto.host.transfer.shell.ShellFileTransfer._run_get` — **PROBE_REFUSED**: the
+- `otto.host.transfer.shell.ShellFileTransfer.run_get` — **PROBE_REFUSED**: the
   same choice in the other direction, after GET's own size-probe check, reading
   `uuencode` rather than `uudecode` — the device only *encodes* for a GET, and the
   two are separate applets.
@@ -360,12 +360,12 @@ after the paths for why a pre-check would be worse than none.
 
 **Paths otto touches this from:**
 
-- `otto.host.transfer.sftp.SftpFileTransfer._run_get` — **ATTRIBUTED** by
+- `otto.host.transfer.sftp.SftpFileTransfer.run_get` — **ATTRIBUTED** by
   {func}`~otto.host.transfer.sftp.open_sftp_or_attribute`: opens the subsystem,
   and if it closes before the SFTP handshake, raises this record with asyncssh's
   own error chained beneath it. The transfer still fails; only the message
   changes.
-- `otto.host.transfer.sftp.SftpFileTransfer._run_put` — **ATTRIBUTED** by the
+- `otto.host.transfer.sftp.SftpFileTransfer.run_put` — **ATTRIBUTED** by the
   same guard, charged once per `put()` rather than once per file because it sits
   above the per-file fan-out. That position is also why no file is ever blamed
   for the missing subsystem.
@@ -416,11 +416,11 @@ that has one, or one otto could not ask, transfers exactly as it did before.
 
 **Paths otto touches this from:**
 
-- `otto.host.transfer.scp.ScpFileTransfer._run_get` — **WIRED** by
+- `otto.host.transfer.scp.ScpFileTransfer.run_get` — **WIRED** by
   {func}`~otto.host.transfer.scp.refuse_if_scp_is_absent`: resolves the userland
   and declines before the connection is opened, rather than letting asyncssh
   report the missing binary once per file.
-- `otto.host.transfer.scp.ScpFileTransfer._run_put` — **WIRED** by the same
+- `otto.host.transfer.scp.ScpFileTransfer.run_put` — **WIRED** by the same
   guard, in the other direction. Two sites, one guard — and it is charged once
   per `put()`/`get()` rather than once per file, because it sits above the
   per-file fan-out.

@@ -451,7 +451,7 @@ class _BridgeShellSession(ShellSession):
 
     Built only for a host with a session-setup hook: the hook needs
     ``run()``, and ``run()`` needs a frame. The bridge owns the PTY, so
-    :meth:`_open` and :meth:`close` touch nothing. On the telnet bridge every
+    :meth:`open_transport` and :meth:`close` touch nothing. On the telnet bridge every
     newline becomes ``\r`` (mirroring :class:`~otto.host.session.TelnetSession`),
     not only a trailing one, so a multi-line payload is right. Whatever the
     last framed read left unconsumed is the *residual* — a prompt, a banner —
@@ -489,17 +489,17 @@ class _BridgeShellSession(ShellSession):
         self.console_client = console_client
 
     @override
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         return None
 
     @override
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         if self._newline == b"\r":
             data = re.sub(r"\r?\n", "\r", data)
         await self._write_remote(data.encode("utf-8"))
 
     @override
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         while True:
             match = pattern.search(self._buffer)
             if match is not None:

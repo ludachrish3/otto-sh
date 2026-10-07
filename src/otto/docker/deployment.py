@@ -581,7 +581,7 @@ def resolve_use_case(
             (``field="parent"``).
         ~otto.docker.resolve.UseCaseResolutionError: the selection refused.
     """
-    from ..config.bootstrapped import get_ordered_repos, get_repos
+    from ..bootstrap import get_ordered_repos, get_repos
     from ..config.fleet import get_lab
     from .observe import docker_parent
 

@@ -109,7 +109,7 @@ def _inventory(code: int = 1) -> "Inventory":
     *code* is the exit code to fail with — 1 everywhere except ``diff``, which
     passes :data:`_CANNOT_ANSWER`.
     """
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..inventory import InventoryError, build_inventory
 
     try:

@@ -258,7 +258,7 @@ def test_list_commands_includes_cached_third_party_names(monkeypatch):
     from otto.cli.main import _OttoGroup
 
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_completion_names",
+        "otto.bootstrap.get_completion_names",
         lambda: {"commands": [{"name": "cached-tool", "help": "Cached.", "lab_free": False}]},
     )
     group = _OttoGroup(name="otto")
@@ -271,7 +271,7 @@ def test_get_command_serves_cached_third_party_as_stub(monkeypatch):
     from otto.cli.main import _OttoGroup
 
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_completion_names",
+        "otto.bootstrap.get_completion_names",
         lambda: {"commands": [{"name": "cached-tool", "help": "Cached.", "lab_free": False}]},
     )
     group = _OttoGroup(name="otto")
@@ -297,7 +297,7 @@ def test_get_command_prefers_real_registry_over_cache(monkeypatch):
         from otto.cli.main import _OttoGroup
 
         monkeypatch.setattr(
-            "otto.config.bootstrapped.get_completion_names",
+            "otto.bootstrap.get_completion_names",
             lambda: {
                 "commands": [{"name": "dupe-tool", "help": "Stale cached.", "lab_free": False}]
             },
@@ -326,7 +326,7 @@ def test_list_commands_dedupes_registry_over_cache(monkeypatch):
         from otto.cli.main import _OttoGroup
 
         monkeypatch.setattr(
-            "otto.config.bootstrapped.get_completion_names",
+            "otto.bootstrap.get_completion_names",
             lambda: {"commands": [{"name": "both-tool", "help": "Stale.", "lab_free": False}]},
         )
         group = _OttoGroup(name="otto")
@@ -343,7 +343,7 @@ def test_cached_stub_group_serves_children(monkeypatch):
     from otto.cli.main import _OttoGroup
 
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_completion_names",
+        "otto.bootstrap.get_completion_names",
         lambda: {
             "commands": [
                 {
@@ -374,7 +374,7 @@ def test_cached_stub_leaf_serves_option_flags(monkeypatch):
     from otto.cli.main import _OttoGroup
 
     monkeypatch.setattr(
-        "otto.config.bootstrapped.get_completion_names",
+        "otto.bootstrap.get_completion_names",
         lambda: {
             "commands": [
                 {

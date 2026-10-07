@@ -141,6 +141,21 @@ def test_generate_worktree_renders_a_parseable_dump(tmp_path):
     )
 
 
+def test_generate_worktree_hands_its_seed_to_the_child(tmp_path, monkeypatch):
+    write_tree(tmp_path, {"otto/__init__.py": '__all__ = ["f"]\ndef f(): pass\n'})
+    (tmp_path / "manifest.toml").write_text(MANIFEST)
+    real, seen = api_regen.run_child, []
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("seed"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(api_regen, "run_child", spy)
+    out = api_regen.generate_worktree(tmp_path, tmp_path / "manifest.toml", seed="312")
+    assert out.text is not None, out.refusals
+    assert seen == ["312"]
+
+
 def _uv_project(root):
     root.mkdir(parents=True)
     (root / "pyproject.toml").write_text(

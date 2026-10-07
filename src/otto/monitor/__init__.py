@@ -9,28 +9,34 @@ Quick start (live mode, persisting to a session-scoped SQLite archive).
 :class:`MonitorSession` owns the session's identity, lab snapshot, collector
 and archive; ``async with session:`` opens the archive before any collection
 task exists and, on exit, stamps the end and finalizes it. ``server.serve()``
-runs until stopped, so the collection task runs beside it:
+runs until stopped, so the collection task runs beside it::
+
     import asyncio
 
     from otto.monitor import MonitorServer, MonitorSession
 
+
     async def main(host):
         # `host` is an already-configured otto.host.UnixHost.
         session = MonitorSession.build(
-            [host], interval=5, db_path='metrics.db', label='fan fix', owns_hosts=True
+            [host], interval=5, db_path="metrics.db", label="fan fix", owns_hosts=True
         )
         server = MonitorServer(
-            session.collector, host='0.0.0.0', port=8080,
-            frame=session.frame, lab=session.lab,
+            session.collector,
+            host="0.0.0.0",
+            port=8080,
+            frame=session.frame,
+            lab=session.lab,
         )
         async with session:
             task = session.spawn()
             try:
-                print(f'Dashboard: {server.url}')
+                print(f"Dashboard: {server.url}")
                 await server.serve()  # blocks until server.stop() is called
             finally:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+
 
     asyncio.run(main(host))
 
@@ -41,13 +47,14 @@ selects hosts from the active lab (so it needs one), builds the session,
 serves the dashboard and returns a :class:`LiveReport`.
 
 Review mode (serves a previously saved ``.db`` or ``.json`` export; no live
-collection — the library behind ``otto monitor <source>``):
+collection — the library behind ``otto monitor <source>``)::
+
     import asyncio
     from pathlib import Path
 
     from otto.monitor import serve_review
 
-    asyncio.run(serve_review(Path('metrics.db'), repos=[]))  # blocks until stopped
+    asyncio.run(serve_review(Path("metrics.db"), repos=[]))  # blocks until stopped
 
 Every name is exported lazily (PEP 562): ``from otto.monitor import
 MetricCollector`` imports ``otto.monitor.collector`` and what it needs, and
@@ -60,6 +67,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .collector import MetricCollector as MetricCollector
+    from .collector import MonitorTarget as MonitorTarget
     from .errors import MonitorInputError as MonitorInputError
     from .errors import MonitorTlsError as MonitorTlsError
     from .errors import NoMonitorableHostsError as NoMonitorableHostsError
@@ -82,6 +90,7 @@ if TYPE_CHECKING:
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
     "MetricCollector": "otto.monitor.collector",
+    "MonitorTarget": "otto.monitor.collector",
     "MonitorInputError": "otto.monitor.errors",
     "MonitorTlsError": "otto.monitor.errors",
     "NoMonitorableHostsError": "otto.monitor.errors",
@@ -129,6 +138,7 @@ __all__ = [
     "MonitorInputError",
     "MonitorServer",
     "MonitorSession",
+    "MonitorTarget",
     "MonitorTlsError",
     "NoMonitorableHostsError",
     "ReviewSourceError",

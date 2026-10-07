@@ -9,8 +9,7 @@ defines ``agent`` in data, and a name is defined in data OR in code.
 from pathlib import Path
 
 from otto.context import variant
-from otto.host import DeclaredProduct
-from otto.host.host import Host
+from otto.host import DeclaredProduct, Host
 from otto.host.product import Product, register_product_provider
 
 # The project root (this file is libs/gs_example/versions.py). A provider anchors

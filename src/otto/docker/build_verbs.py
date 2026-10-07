@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 def _select_docker_repos(repo: "str | None") -> "list[Repo]":
     """Every loaded repo with a ``[docker]`` section, narrowed to *repo* when given."""
-    from ..config.bootstrapped import get_repos
+    from ..bootstrap import get_repos
 
     docker_repos = [
         r
@@ -115,7 +115,7 @@ def _check_images(repos: "Sequence[Repo]", images: "Sequence[str] | None") -> No
 
 def _dependency_order(repos: "Sequence[Repo]") -> "list[Repo]":
     """*repos* in bootstrap dependency order; a repo the order omits sorts last."""
-    from ..config.bootstrapped import get_ordered_repos
+    from ..bootstrap import get_ordered_repos
 
     order = {r.name: i for i, r in enumerate(get_ordered_repos())}
     return sorted(repos, key=lambda r: order.get(r.name, len(order)))

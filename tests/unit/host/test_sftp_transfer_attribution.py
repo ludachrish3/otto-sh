@@ -331,7 +331,7 @@ class TestTheCatchIsNarrowerThanEveryWayAnSftpSessionFails:
 
 
 class TestPutArrivesAtTheGuard:
-    """``_run_put`` is a declared ``ATTRIBUTED`` path; prove the message gets there."""
+    """``run_put`` is a declared ``ATTRIBUTED`` path; prove the message gets there."""
 
     @pytest.mark.asyncio
     async def test_a_device_with_no_sftp_server_gets_this_record_instead_of_a_byte_count(
@@ -343,7 +343,7 @@ class TestPutArrivesAtTheGuard:
         src.write_bytes(b"x")
         backend = _backend(_FakeConnections(SFTPConnectionLost(_MEASURED_ASYNCSSH_TEXT)))
         with pytest.raises(UnsupportedOnUserlandError) as caught:
-            await backend._run_put([src], Path("/tmp"), None)
+            await backend.run_put([src], Path("/tmp"), None)
         assert gap.docs_anchor in str(caught.value)
 
     @pytest.mark.asyncio
@@ -363,7 +363,7 @@ class TestPutArrivesAtTheGuard:
         src.write_bytes(b"x")
         backend = _backend(_FakeConnections(SFTPConnectionLost(_MEASURED_ASYNCSSH_TEXT)))
         with pytest.raises(UnsupportedOnUserlandError) as caught:
-            await backend._run_put([src], Path("/tmp"), None)
+            await backend.run_put([src], Path("/tmp"), None)
         assert src.name not in str(caught.value), (
             f"the attributed failure names {src.name}, so the missing subsystem is being "
             f"reported as a problem with a file that is present and readable — the "
@@ -383,7 +383,7 @@ class TestPutArrivesAtTheGuard:
         conns = _FakeConnections(SFTPConnectionLost(_MEASURED_ASYNCSSH_TEXT))
         backend = _backend(conns)
         with pytest.raises(UnsupportedOnUserlandError):
-            await backend._run_put(srcs, Path("/tmp"), None)
+            await backend.run_put(srcs, Path("/tmp"), None)
         assert conns.calls == 1, (
             f"the subsystem was opened {conns.calls} times for a 3-file PUT. The open sits "
             f"above the per-file gather so the operator gets one message, not one per file "
@@ -392,7 +392,7 @@ class TestPutArrivesAtTheGuard:
 
 
 class TestGetArrivesAtTheGuard:
-    """``_run_get`` is the other declared ``ATTRIBUTED`` path. Same guard, same message."""
+    """``run_get`` is the other declared ``ATTRIBUTED`` path. Same guard, same message."""
 
     @pytest.mark.asyncio
     async def test_a_device_with_no_sftp_server_gets_this_record_instead_of_a_byte_count(
@@ -402,14 +402,14 @@ class TestGetArrivesAtTheGuard:
         assert gap is not None
         backend = _backend(_FakeConnections(SFTPConnectionLost(_MEASURED_ASYNCSSH_TEXT)))
         with pytest.raises(UnsupportedOnUserlandError) as caught:
-            await backend._run_get([Path("/tmp/remote.bin")], tmp_path, None)
+            await backend.run_get([Path("/tmp/remote.bin")], tmp_path, None)
         assert gap.docs_anchor in str(caught.value)
 
     @pytest.mark.asyncio
     async def test_a_working_subsystem_still_transfers(self, tmp_path: Path) -> None:
         """The success path through the new signature, so the wiring is not just the sad one.
 
-        ``_run_get`` now opens the client and HANDS IT to ``_get_files_sftp``
+        ``run_get`` now opens the client and HANDS IT to ``_get_files_sftp``
         rather than letting it open its own. That is a real change to how the
         bytes move, and a file whose every test raises would not notice it
         breaking.
@@ -417,7 +417,7 @@ class TestGetArrivesAtTheGuard:
         client = MagicMock(name="SFTPClient")
         client.get = AsyncMock()
         backend = _backend(_FakeConnections(client))
-        per_file = await backend._run_get([Path("/tmp/remote.bin")], tmp_path, None)
+        per_file = await backend.run_get([Path("/tmp/remote.bin")], tmp_path, None)
         assert per_file[Path("/tmp/remote.bin")].status is Status.Success
         client.get.assert_awaited_once()
         assert isinstance(per_file[Path("/tmp/remote.bin")], Result)

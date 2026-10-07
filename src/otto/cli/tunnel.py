@@ -105,7 +105,7 @@ def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
     kind="payload", key="hosts", lab_scoped=True, sort=True, sep=",", live_past_sep=True
 )
 def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:
-    from ..config.bootstrapped import get_repos
+    from ..bootstrap import get_repos
     from .completers import lab_scoped_host_ids
 
     try:
@@ -140,7 +140,7 @@ def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:
 
 @completion_source(kind="live")
 def _tunnel_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001
-    from ..config.bootstrapped import get_repos
+    from ..bootstrap import get_repos
 
     try:
         ids = read_tunnel_ids(get_repos()) or []
@@ -378,7 +378,7 @@ async def list_tunnels() -> None:
     """List the live tunnels, as observed on the hosts."""
     from rich.table import Table
 
-    from ..config.bootstrapped import get_repos
+    from ..bootstrap import get_repos
     from ..config.fleet import get_lab
 
     lab = get_lab()
@@ -451,7 +451,7 @@ async def remove(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the --all confirmation."),
 ) -> None:
     """Remove a tunnel by id (all hops, both directions), or all tunnels."""
-    from ..config.bootstrapped import get_repos
+    from ..bootstrap import get_repos
     from ..config.fleet import get_lab
 
     # These two usage-error exits are deliberately kept OUT of the try/except

@@ -42,6 +42,8 @@ from typing_extensions import override
 
 from otto.reservations import Reservation, ReservationBackendBase
 
+__all__ = ["ExampleReservationBackend"]
+
 # A tiny built-in dataset: "shared" is held by two users to demonstrate the
 # multi-holder holders() contract.
 _DEMO_RESERVATIONS: dict[str, list[str]] = {

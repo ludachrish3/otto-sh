@@ -634,10 +634,10 @@ class _Conforming(BaseFileTransfer):
     def create(cls, ctx):
         return cls("probe")
 
-    async def _run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
+    async def run_put(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         return {}
 
-    async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
+    async def run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
         return {}
 
 
@@ -662,12 +662,12 @@ class TestTheTransferBackendRules:
 
     def test_a_backend_missing_a_keyword_the_base_class_passes_is_refused(self):
         class NoProgressFactory(_Conforming):
-            async def _run_put(self, src_files, dest_dir, *, concurrent=True):
+            async def run_put(self, src_files, dest_dir, *, concurrent=True):
                 return {}
 
         with pytest.raises(
             AssertionError,
-            match=r"BaseFileTransfer\._run_put: does not accept progress_factory by keyword",
+            match=r"BaseFileTransfer\.run_put: does not accept progress_factory by keyword",
         ):
             assert_transfer_backend_conforms(NoProgressFactory)
 
@@ -692,10 +692,10 @@ class TestTheTransferBackendRules:
     def test_a_backend_leaving_a_method_abstract_is_refused(self):
         class StillAbstract(_Conforming):
             @abstractmethod
-            async def _run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
+            async def run_get(self, src_files, dest_dir, progress_factory, *, concurrent=True):
                 """Reopened, so the class cannot be instantiated."""
 
-        with pytest.raises(AssertionError, match=r"leaves _run_get abstract"):
+        with pytest.raises(AssertionError, match=r"leaves run_get abstract"):
             assert_transfer_backend_conforms(StillAbstract)
 
     def test_an_authenticates_that_is_not_a_bool_is_refused(self):
@@ -714,14 +714,14 @@ class TestTheTransferBackendRules:
         assert_transfer_backend_conforms(LogsIn)
 
     def test_supports_mode_without_an_apply_mode_is_refused(self):
-        """The base's ``_apply_mode`` raises, so the promise could never be kept."""
+        """The base's ``apply_mode`` raises, so the promise could never be kept."""
 
         class PromisesModes(_Conforming):
             supports_mode = True
 
         with pytest.raises(
             AssertionError,
-            match=r"supports_mode is True, so _apply_mode must be overridden",
+            match=r"supports_mode is True, so apply_mode must be overridden",
         ):
             assert_transfer_backend_conforms(PromisesModes)
 
@@ -729,7 +729,7 @@ class TestTheTransferBackendRules:
         class AppliesModes(_Conforming):
             supports_mode = True
 
-            async def _apply_mode(self, dest_paths, mode):
+            async def apply_mode(self, dest_paths, mode):
                 return Result(Status.Success)
 
         assert_transfer_backend_conforms(AppliesModes)
@@ -738,11 +738,11 @@ class TestTheTransferBackendRules:
         class SyncApply(_Conforming):
             supports_mode = True
 
-            def _apply_mode(self, dest_paths, mode):
+            def apply_mode(self, dest_paths, mode):
                 return Result(Status.Success)
 
         with pytest.raises(
-            AssertionError, match=r"BaseFileTransfer\._apply_mode: must be an async def"
+            AssertionError, match=r"BaseFileTransfer\.apply_mode: must be an async def"
         ):
             assert_transfer_backend_conforms(SyncApply)
 
@@ -750,7 +750,7 @@ class TestTheTransferBackendRules:
         """One direction only: an unused override promises nothing and breaks nothing."""
 
         class UnusedApply(_Conforming):
-            async def _apply_mode(self, dest_paths, mode):
+            async def apply_mode(self, dest_paths, mode):
                 return Result(Status.Success)
 
         assert not UnusedApply.supports_mode
@@ -760,7 +760,7 @@ class TestTheTransferBackendRules:
         """``**kwargs`` genuinely accepts what production passes; the rule must not cry wolf."""
 
         class Kwargs(_Conforming):
-            async def _run_put(self, *args, **kwargs):
+            async def run_put(self, *args, **kwargs):
                 return {}
 
         assert_transfer_backend_conforms(Kwargs)

@@ -41,7 +41,7 @@ Two rules that are easy to miss:
   identity.
 
 ```python
-from otto.models.host import CredSpec
+from otto.models import CredSpec
 
 
 class MyVaultStore:
@@ -96,8 +96,8 @@ or `ValueError`: otto wraps it into an error naming the settings file and the
 backend.
 
 {func}`~otto.creds.register_creds_backend` refuses a duplicate name unless
-you pass `overwrite=True`; {func}`~otto.creds.get_creds_backend_class`
-resolves a name. This is the same named-registry mechanism otto uses for
+you pass `overwrite=True`. A name nobody registered raises when otto builds the store, and the
+error lists the registered names. This is the same named-registry mechanism otto uses for
 inventories, host sources and reservation backends — see
 {doc}`Extension points <../../architecture/subsystems/extension-points>`.
 

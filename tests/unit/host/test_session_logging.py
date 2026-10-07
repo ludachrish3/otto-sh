@@ -33,13 +33,13 @@ class MockSession(FeedAfterWriteMixin, ShellSession):
         self._out_reader: asyncio.StreamReader | None = None
         self.written: list[str] = []
 
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         self._out_reader = asyncio.StreamReader()
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         self.written.append(data)
 
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         assert self._out_reader is not None
         buf = ""
         while True:
@@ -64,7 +64,7 @@ async def initialized_session(caplog: pytest.LogCaptureFixture) -> MockSession:
     """A MockSession past the readiness handshake, with caplog active."""
     caplog.set_level(logging.DEBUG, logger="otto")
     s = MockSession()
-    await s._open()
+    await s.open_transport()
 
     async def handshake():
         await s._ensure_initialized()
@@ -104,7 +104,7 @@ class TestHandshakeLogging:
         """
         caplog.set_level(logging.DEBUG, logger="otto")
         s = MockSession()
-        await s._open()
+        await s.open_transport()
 
         feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
         task = asyncio.create_task(s._ensure_initialized())
@@ -136,7 +136,7 @@ class TestHandshakeLogging:
         # Shrink the timeout so the test doesn't sit on the default 3s.
         monkeypatch.setattr(s, "_init_timeout", 0.05)
         monkeypatch.setattr(s, "_init_probe_interval", 0.02)
-        await s._open()
+        await s.open_transport()
 
         with pytest.raises(ConnectionError):
             await s._ensure_initialized()
@@ -280,9 +280,9 @@ class _AliveStubSession(ShellSession):
     """A session that's already 'initialized' and echoes one output line
     through whichever sink run_cmd is given. No real transport/handshake."""
 
-    async def _open(self) -> None: ...
-    async def _write(self, data: str) -> None: ...
-    async def _read_until_pattern(self, pattern):  # pragma: no cover - unused
+    async def open_transport(self) -> None: ...
+    async def write_transport(self, data: str) -> None: ...
+    async def read_transport_until(self, pattern):  # pragma: no cover - unused
         raise AssertionError("stub does not read")
 
     async def close(self) -> None:

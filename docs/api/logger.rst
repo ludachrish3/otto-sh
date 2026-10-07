@@ -12,10 +12,4 @@ and undoes it with :func:`otto.logger.reset <otto.logger.management.reset>`
 :doc:`architecture page <../architecture/utilities/logging>` for the three
 postures this pair fits into.
 
-.. automodule:: otto.logger.levels
-
-.. automodule:: otto.logger.formatters
-
-.. automodule:: otto.logger.mode
-
-.. automodule:: otto.logger.management
+.. automodule:: otto.logger

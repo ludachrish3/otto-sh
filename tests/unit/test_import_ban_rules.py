@@ -2,7 +2,7 @@
 
 ``.ast-grep/rules/cli-command-no-module-scope-heavy-import.yml`` bans a short
 list of heavy modules from the top of ``src/otto/cli/`` modules. A lazy package
-re-exports names from those modules, so ``from ..config import get_lab`` loads
+re-exports names from those modules, so ``from otto.lab import get_lab`` loads
 ``otto.config.fleet`` as surely as ``from ..config.fleet import get_lab`` does,
 and the rule enumerates those re-export names by hand. When a lazy table gains
 a name that resolves into a denylisted module, the rule must gain it too, or
@@ -20,42 +20,15 @@ import re
 import pytest
 import yaml
 
+from tests._fixtures._lazy_exports import lazy_package_names
 from tests._fixtures.paths import PROJECT_ROOT
 
 RULE = PROJECT_ROOT / ".ast-grep" / "rules" / "cli-command-no-module-scope-heavy-import.yml"
 
-# Every package whose __init__ carries a lazy table. test_lazy_packages.py's
-# scan pins that this set is complete; a package missing here only narrows
-# this check, it cannot make it pass wrongly.
-LAZY_PACKAGES = [
-    "otto",
-    "otto._webassets",
-    "otto.check",
-    "otto.cli",
-    "otto.config",
-    "otto.coverage",
-    "otto.coverage.fetcher",
-    "otto.coverage.merge",
-    "otto.coverage.store",
-    "otto.creds",
-    "otto.docker",
-    "otto.env",
-    "otto.host",
-    "otto.host.survey",
-    "otto.host.transfer",
-    "otto.inventory",
-    "otto.kmodcov",
-    "otto.labs",
-    "otto.link",
-    "otto.logger",
-    "otto.models",
-    "otto.monitor",
-    "otto.project",
-    "otto.reservations",
-    "otto.suite",
-    "otto.testing",
-    "otto.tunnel",
-]
+# Every package whose __init__ carries a lazy table, discovered from the source
+# tree (tests/_fixtures/_lazy_exports.py), so a new lazy package is checked
+# without anyone listing it here.
+LAZY_PACKAGES = lazy_package_names()
 
 
 def _rule() -> dict:
@@ -103,8 +76,8 @@ def _lazy_table(package: str) -> dict[str, tuple[str, str]]:
 def _defining_module(module: str, attr: str) -> str:
     """Follow lazy re-exports to the module that loads when *attr* is taken from *module*.
 
-    ``otto.get_lab`` is ``("otto.config", "get_lab")``, and otto.config's own
-    table sends that on to ``otto.config.fleet``: the ban is about the module
+    ``otto.app`` is ``("otto.cli", "app")``, and otto.cli's own table sends
+    that on to ``otto.cli.main``: the ban is about the module
     that finally loads, so a chain of lazy tables is followed to its end.
     """
     seen = set()
@@ -145,11 +118,13 @@ def test_the_rule_reads_as_this_test_expects():
         r"^(\.{2,}|otto)$",
         r"^rich$",
         r"^(\.{2,}|otto\.)config$",
+        r"^(\.{2,}|otto\.)lab$",
         r"^(\.{2,}|otto\.)host$",
         r"^(\.{2,}|otto\.)coverage$",
     ]
-    assert _flagged("otto.config", "get_lab")
-    assert not _flagged("otto.config", "get_repos")
+    assert _flagged("otto.lab", "get_lab")
+    assert not _flagged("otto.lab", "EmptySelectionError")
+    assert {"otto", "otto.config", "otto.coverage", "otto.host", "otto.lab"} <= set(LAZY_PACKAGES)
 
 
 @pytest.mark.parametrize("package", LAZY_PACKAGES)

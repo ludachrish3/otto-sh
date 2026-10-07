@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot api-surface-report check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -1386,8 +1386,8 @@ lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependen
 	@uv run --group lint ast-grep scan src/otto web/src tests
 	@$(SAY) "ast-grep: rule tests (.ast-grep/rule-tests/)"
 	@uv run --group lint ast-grep test --skip-snapshot-tests
-	@$(SAY) "import rules: lazy exports patched where defined, read at call time"
-	@uv run pytest tests/unit/test_patch_targets.py tests/unit/test_no_import_time_lazy_exports.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
+	@$(SAY) "import rules: lazy exports patched where defined, read at call time, moved names spelled once"
+	@uv run pytest tests/unit/test_patch_targets.py tests/unit/test_no_import_time_lazy_exports.py tests/unit/test_moved_name_spellings.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
 	@$(SAY) "import cycle: no module joins it, no edge inside it is added (shrink-only)"
 	@uv run pytest tests/unit/test_import_cycle_ratchet.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
 
@@ -1489,7 +1489,7 @@ check-python: lint-python typecheck-python lint-arch ## (Quality) All Python sta
 # ever refactored, and avoids a plain `REF` in the child process's
 # environment shadowing anyone else's expectations of that name.
 gate-fresh: export GATE_FRESH_REF := $(if $(filter command line,$(origin REF)),$(value REF),)
-gate-fresh: ## (Quality) Run the pre-push lanes (lint-python + lint-arch + check-api-snapshot + typecheck-python + collect-check + docs) against the COMMITTED tree in a throwaway pristine worktree at REF (default HEAD). Catches gitignored-artifact, unsynced-uv.lock and forgotten-`git add` failures that the dev tree hides. Refuses if tracked files are modified or staged.
+gate-fresh: ## (Quality) Run the pre-push lanes (lint-python + lint-arch + check-api-snapshot + check-api-teaching + typecheck-python + collect-check + docs) against the COMMITTED tree in a throwaway pristine worktree at REF (default HEAD). Catches gitignored-artifact, unsynced-uv.lock and forgotten-`git add` failures that the dev tree hides. Refuses if tracked files are modified or staged.
 	@$(SAY) "gate-fresh: pristine worktree, assets-absent CI lanes"
 	@uv run python scripts/gate_fresh.py $(if $(filter command line,$(origin REF)),--ref "$$GATE_FRESH_REF",)
 
@@ -1537,17 +1537,21 @@ import-snapshot: ## (Dev) Regenerate this interpreter's file-operation ceilings 
 	@$(SAY) "regenerating this interpreter's file-operation ceilings"
 	@uv run python scripts/import_budget.py --update
 
-api-snapshot: ## (Dev) Regenerate the public-API golden snapshot (otto.__all__ + every deep import path the docs teach — run after adding/removing/renaming a public name or a documented import, then review the diff)
+api-snapshot: ## (Dev) Regenerate the public-API golden: the API dump of every namespace api/public.toml declares. Run after changing a declared name, signature, member or format, then review the diff
 	@$(SAY) "updating public-API golden snapshot"
-	@uv run python scripts/api_snapshot.py --update
+	@uv run python scripts/api_snapshot.py --manifest api/public.toml --update
 
-check-api-snapshot: ## (Quality) Fail if the public-API golden no longer matches the live surface, or a documented import no longer resolves (`make api-snapshot` regenerates it)
+check-api-snapshot: ## (Quality) Fail if the public-API golden is not, byte for byte, the API dump of the working tree, or a declared namespace disagrees with its runtime (`make api-snapshot` regenerates it)
 	@$(SAY) "checking public-API golden snapshot"
-	@uv run python scripts/api_snapshot.py --check
+	@uv run python scripts/api_snapshot.py --manifest api/public.toml --check
 
-api-surface-report: ## (Dev) Measure the public-surface cutover's docs work: validator findings + agreement failures + API-dump producer refusals against the PREVIEW declaration (scripts/api_public_preview.toml). Report-only, never gates; dormant until P1 (spec 2026-10-04-public-api-manifest-design.md §7)
-	@uv run python scripts/api_teaching.py --manifest scripts/api_public_preview.toml --report
-	@uv run python scripts/api_snapshot.py --manifest scripts/api_public_preview.toml --assume-dir --report
+check-api-teaching: ## (Quality) Fail if the docs, README or a shipped example teach an otto name api/public.toml does not declare, or a declared namespace disagrees with its runtime (scripts/api_teaching.py; spec 2026-10-04-public-api-manifest-design.md §6)
+	@$(SAY) "checking every taught otto name against api/public.toml"
+	@uv run python scripts/api_teaching.py --manifest api/public.toml
+
+api-surface-report: ## (Dev) Measure the declared surface's open work without gating: agreement failures, validator findings and API-dump producer refusals against api/public.toml (`check-api-teaching` and `check-api-snapshot` are the gates). Always exits 0
+	@uv run python scripts/api_teaching.py --manifest api/public.toml --report
+	@uv run python scripts/api_snapshot.py --manifest api/public.toml --report
 
 check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; RANGE must end at HEAD) that deletes a public-API golden line without a mark git-cliff's census counts, or carries a Corrects: footer that does not validate
 	@$(SAY) "check-breaking-marks: $(RANGE)"
@@ -1578,6 +1582,8 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 scripts/render_proven_range.py      \
                 tach.toml                           \
                 scripts/render_module_graph.py      \
+                scripts/docs_api_reference.py       \
+                api/public.toml                     \
 
 docs: docs-lint docs-html doctest doctest-src ## (Docs) Build HTML docs + Sphinx & src doctests (sub-targets: docs-lint, docs-html, doctest, doctest-src, docs-inventories)
 
@@ -1593,6 +1599,8 @@ docs-lint:
 	@uv run python scripts/refresh_docs_captures.py --check --labless
 
 docs-html: docs/_build/html/index.html
+	@$(SAY) "api reference: stability marks and the pre-1.0 notice (built site)"
+	@uv run python scripts/check_docs_api_marks.py docs/_build/html
 
 docs-inventories:
 	@$(SAY) "fetching intersphinx inventories → docs/_inventories/"
@@ -1607,7 +1615,10 @@ docs-inventories:
 	@curl -sSL --retry 3 -o docs/_inventories/requests.inv   https://requests.readthedocs.io/en/latest/objects.inv
 
 # -E (fresh env, no stale doctrees) + -a (write all) make a local build match
-# CI's clean build, so incremental state can't mask or invent a warning.
+# CI's clean build, so incremental state can't mask or invent a warning. The
+# output tree is removed first: -a rewrites every page but deletes none, and a
+# page left behind by a moved or deleted .rst would be read by
+# scripts/check_docs_api_marks.py, which checks every page of the built site.
 #
 # The dist prerequisites are load-bearing, not decorative: docs/conf.py runs
 # scripts/capture_docs_media.py, which boots a real MonitorServer and
@@ -1616,6 +1627,7 @@ docs-inventories:
 # stale bundle is lying around — or, on a fresh worktree, none at all.
 docs/_build/html/index.html: $(SPHINX_SRCS) $(DASHBOARD_DIST) $(COVAPP_DIST)
 	@$(SAY) "sphinx-build html (clean rebuild, warnings are errors)"
+	@rm -rf docs/_build/html
 	@uv run sphinx-build -E -a -W -b html docs/ docs/_build/html
 
 doctest:

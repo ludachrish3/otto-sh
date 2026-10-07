@@ -55,6 +55,16 @@ from ..models.monitor import DEFAULT_MAX_SERIES_PER_CHART
 from ..registry import Registry, caller_module
 from .rates import RateTracker
 
+__all__ = [
+    "DEFAULT_PARSERS",
+    "LogEvent",
+    "MetricDataPoint",
+    "MetricParser",
+    "ParseContext",
+    "register_host_parsers",
+    "register_parsers",
+]
+
 _float_re_str = r"[\d]+(\.\d+)?"
 _mem_size_re_str = rf"{_float_re_str}(?:\s*[KMGT]B?)?"
 _percent_re_str = rf"{_float_re_str}%"
@@ -586,6 +596,7 @@ DEFAULT_PARSERS: dict[str, MetricParser] = {
         ProcCountParser(),
     ]
 }
+"""otto's built-in metric parsers, keyed by the command each one parses."""
 
 
 # ---------------------------------------------------------------------------

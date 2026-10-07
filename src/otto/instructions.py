@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
     from .context import OttoContext
 
+__all__ = ["instruction", "run_instruction"]
+
 
 @dataclasses.dataclass(frozen=True)
 class InstructionEntry:

@@ -25,7 +25,7 @@ class _Console:
     ``DialectShell.reply()`` answers only the LAST write, so a read issued
     when the console has nothing to say for that write is a SILENT console,
     not a closed one. It is spelled here as ``asyncio.TimeoutError`` (the
-    fixture's own idiom, see ``DialectSession._read_until_pattern``) rather
+    fixture's own idiom, see ``DialectSession.read_transport_until``) rather
     than as an empty chunk: an empty chunk is EOF, and the product treats
     EOF as the transport dying — which would kill the session under the
     login proxy's credential-prompt watch instead of letting it time out.
@@ -93,7 +93,7 @@ def _hooked_host(creds: list[Cred], setup_name: str) -> UnixHost:
 
 
 async def _login_over_a_console(host: UnixHost, console: _Console, *, login_target: str):
-    """Drive ``UnixHost._login``'s ssh arm against *console*; return every write.
+    """Drive ``UnixHost.run_login``'s ssh arm against *console*; return every write.
 
     The bridge is entered through the HOST, not through
     ``_run_session_setup_on_bridge`` directly, because the host's own
@@ -120,7 +120,7 @@ async def _login_over_a_console(host: UnixHost, console: _Console, *, login_targ
     ):
         interact.sys.stdin.isatty = lambda: False
         interact.sys.stdin.fileno = lambda: 0
-        await host._login()
+        await host.run_login()
     return [w.decode() for w in console.sent]
 
 
@@ -237,7 +237,7 @@ async def test_telnet_bridge_translates_every_newline_of_a_multiline_payload():
     s = interact._BridgeShellSession(
         write_remote, read_remote, newline=b"\r", command_frame=BashFrame()
     )
-    await s._write("a\nb\r\nc\n")
+    await s.write_transport("a\nb\r\nc\n")
     assert sent == [b"a\rb\rc\r"]
 
 

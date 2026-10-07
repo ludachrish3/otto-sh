@@ -319,14 +319,14 @@ class PlanRecorder(UnixHost):
             term="ssh",
         )
         self.id = "h1"
-        self._login = login
+        self._configured_login = login
         self.lines: list[str] = []
         self.home_reads = 0
         self._scripts: dict[str, list[str]] = {}
 
     @property
     def current_user(self) -> str:  # ty: ignore[invalid-method-override] — the recorder stands in for the session
-        return self._login  # the configured login, as a fresh session is seeded with it
+        return self._configured_login  # the configured login, as a fresh session is seeded with it
 
     def script(self, cmd: str, output: str) -> None:
         self._scripts.setdefault(cmd, []).append(output)
@@ -454,7 +454,7 @@ def embedded_plan_recorder() -> EmbeddedPlanRecorder:
 async def landed() -> MockSession:
     """A MockSession that has completed its bash landing handshake."""
     s = MockSession()
-    await s._open()
+    await s.open_transport()
     feed = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
     await s._ensure_initialized()
     await feed

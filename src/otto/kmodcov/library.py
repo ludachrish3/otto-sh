@@ -24,8 +24,13 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-INTERFACE = 2
-"""The library interface this otto drives; equals ``KMODCOV_INTERFACE`` in ``kmodcov.h``."""
+from .formats import KMODCOV_INTERFACE_READ_VERSIONS
+
+[INTERFACE] = KMODCOV_INTERFACE_READ_VERSIONS
+"""The library interface this otto drives and ships; equals ``KMODCOV_INTERFACE`` in ``kmodcov.h``.
+
+The one interface otto declares it reads (``otto.kmodcov.formats``),
+unpacked so a second fails at import until the shipped library chooses."""
 
 SHIPPED_FILES = (
     "Kbuild",

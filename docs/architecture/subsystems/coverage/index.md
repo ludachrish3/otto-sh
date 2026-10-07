@@ -133,8 +133,8 @@ a kind whose counters live in the kernel or behind a daemon overrides them.
   table into precedence-ordered `TierConfig` values
 - `otto.coverage.store` — versioned store models (`RunRecord`,
   `LineRecord`, `Thresholds`, `STAT_TYPES`) and `CoverageStore`'s
-  `save`/`load`, including the `STORE_FORMAT_VERSION` exact-match
-  loader
+  `save`/`load`, including a loader that accepts only the
+  declared read versions
 - `otto.coverage.report_config` — resolves `[coverage.report]`'s raw
   settings dict into render `Thresholds` at report time; also re-exports
   `[coverage.tickets]`'s loader (`otto.coverage.tickets`, below)

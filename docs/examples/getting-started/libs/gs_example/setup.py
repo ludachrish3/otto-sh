@@ -5,7 +5,7 @@ import shlex
 
 from otto import SetupContext
 from otto.examples.app_shell import PyRepl  # the REPL example the app-shell page shows
-from otto.host.session import HostSession
+from otto.host import HostSession
 
 
 async def provision_app(session: HostSession, ctx: SetupContext) -> None:

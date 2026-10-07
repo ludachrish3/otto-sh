@@ -174,20 +174,22 @@ makes that possible.
 `store.json` is the canonical, versioned artifact `otto cov report`
 writes for downstream consumers — external tooling, a foreign report
 viewer — to read back; the in-process renderer consumes the same store
-directly, in memory, before it is ever serialized. `CoverageStore.save`/
-`.load` (`otto.coverage.store.model`) stamp every file with a top-level
-`"format"` key equal to `STORE_FORMAT_VERSION` (`8`). The loader is
-**exact-match**: a file whose `"format"` is missing, the wrong type, or
-any version other than the one the running otto expects fails loud with
-a `ValueError` naming both versions and telling the caller to
+directly, in memory, before it is ever serialized. `CoverageStore.save`
+(`otto.coverage.store.model`) stamps every file with a top-level `"format"`
+key: the one version otto writes (`STORE_WRITE_VERSIONS` in
+`otto.coverage.formats`, today `8`). `CoverageStore.load` accepts only the
+versions otto declares it reads (`STORE_READ_VERSIONS`, today `8` alone): a
+file whose `"format"` is missing, the wrong type, or any other version fails
+loud with a `ValueError` naming the versions and telling the caller to
 regenerate, rather than attempting to read renamed or reshaped keys
 under old assumptions. There is no migration shim, by design —
 `store.json` is a cheap-to-regenerate report artifact, not a long-lived
 source of truth, so "delete and regenerate" beats accreted,
 rarely-exercised migration code.
 
-This is otto's own internal, renderer-shaped schema — free to reshape on
-every `STORE_FORMAT_VERSION` bump. The one export built for consumers otto
+This is otto's own renderer-shaped schema: a reshape bumps the version, and
+dropping the old version from what otto reads and writes is a breaking
+change, marked like any other. The one export built for consumers otto
 does not control, `tickets.json` (`--tickets-json` / `--cov-tickets-json`),
 deliberately does **not** share this version counter; see
 {ref}`coverage-tickets-json`.
@@ -196,7 +198,7 @@ deliberately does **not** share this version counter; see
 
 `CoverageStore.save` writes exactly ten:
 
-- **`format`** — `STORE_FORMAT_VERSION`, the exact-match key above.
+- **`format`** — the version stamp above.
 - **`tier_order`** — the tier precedence list, first entry highest. Drives
   column order and the winner-take-all row colouring.
 - **`tier_colors`** — tier name → colour string, seeded from each

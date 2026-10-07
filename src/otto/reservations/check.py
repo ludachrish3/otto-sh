@@ -140,8 +140,7 @@ class ReservationGate:
         """Use an explicit lab as given; otherwise the active lab and its hosts in play."""
         if lab is not None:
             return lab, host_ids
-        from ..config import get_lab
-        from ..config.fleet import get_hosts_in_play
+        from ..config.fleet import get_hosts_in_play, get_lab
 
         return get_lab(), (get_hosts_in_play() if host_ids is None else host_ids)
 

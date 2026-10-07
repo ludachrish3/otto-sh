@@ -2,7 +2,7 @@
 
 # doc: begin enter-python
 from otto import SetupContext
-from otto.host.session import HostSession
+from otto.host import HostSession
 
 
 async def enter_python(session: HostSession, ctx: SetupContext) -> None:

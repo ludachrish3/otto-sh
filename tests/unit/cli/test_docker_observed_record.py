@@ -23,7 +23,7 @@ def recorders():
     with (
         patch("otto.config.completion_cache.record_docker_images") as images,
         patch("otto.config.completion_cache.record_docker_containers") as containers,
-        patch("otto.config.bootstrapped.get_repos", return_value=["repo"]),
+        patch("otto.bootstrap.get_repos", return_value=["repo"]),
     ):
         yield images, containers
 
@@ -172,7 +172,7 @@ def test_a_probe_that_raises_leaves_the_verbs_output_and_exit_alone():
         patch(
             "otto.docker.observe.observed_containers", AsyncMock(side_effect=OSError("gone"))
         ) as observed,
-        patch("otto.config.bootstrapped.get_repos", return_value=["repo"]),
+        patch("otto.bootstrap.get_repos", return_value=["repo"]),
     ):
         result = DispatchRunner().invoke(docker_cli.docker_app, ["ps"], spec_name="docker")
     observed.assert_awaited_once_with("test3")

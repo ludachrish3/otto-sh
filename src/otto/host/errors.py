@@ -140,7 +140,7 @@ class UnsupportedOnUserlandError(OttoError, RuntimeError):
     of userland ("BusyBox has no ``shutdown`` applet"). A caller's own
     f-string renders what THIS host answered a probe ("resolved
     ``elevation='none'``") — see ``PosixPrivilege._elevate`` and
-    ``ShellFileTransfer._run_put``, which are probe-driven and stay that way.
+    ``ShellFileTransfer.run_put``, which are probe-driven and stay that way.
     A registry record cannot say the second thing and a probe cannot say the
     first.
     """

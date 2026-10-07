@@ -93,7 +93,7 @@ def _enforce_driving_repo_scope() -> None:
             ``[project]`` scope that admits no host here. The CLI frames it
             like the leaf's other refusals -- one line, no traceback.
     """
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..config.scope import require_current_scope
     from ..context import get_context
 
@@ -130,7 +130,7 @@ async def run_live(
         NoMonitorableHostsError: nothing selected can be sampled.
         MonitorTlsError: the repos' declared TLS cannot be served.
     """
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..config.fleet import get_lab
     from ..tunnel.records import discover_tunnel_records
     from .server import MonitorServer

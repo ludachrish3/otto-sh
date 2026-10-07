@@ -29,6 +29,17 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
+__all__ = [
+    "FtpOptions",
+    "LocalPortForward",
+    "NcOptions",
+    "ScpOptions",
+    "SftpOptions",
+    "SnmpOptions",
+    "SshOptions",
+    "TelnetOptions",
+]
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:

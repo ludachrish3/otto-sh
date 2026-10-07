@@ -97,8 +97,7 @@ repo a "base" for shared conventions and others its overlays.
 ## Non-standard SSH port
 
 ```{doctest}
->>> from otto.host import UnixHost
->>> from otto.host.element import Element
+>>> from otto.host import Element, UnixHost
 >>> from otto.host.login_proxy import Cred
 >>> from otto.host.options import SshOptions
 >>> host = UnixHost(
@@ -258,7 +257,7 @@ timeout — pass an `*_options=` keyword to `get_host()` or
 `all_hosts()` instead of editing the lab definition:
 
 ```python
-from otto.config import get_host, all_hosts
+from otto.lab import get_host, all_hosts
 from otto.host.options import SshOptions, TelnetOptions
 
 # A single host with a one-off SSH override.
@@ -287,7 +286,7 @@ The same kwargs are accepted by `do_for_all_hosts()` and
 `run_on_all_hosts()`:
 
 ```python
-from otto.config import run_on_all_hosts
+from otto.lab import run_on_all_hosts
 from otto.host.options import SshOptions
 
 results = await run_on_all_hosts(

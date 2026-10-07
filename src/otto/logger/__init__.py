@@ -24,10 +24,14 @@ from . import levels
 
 if TYPE_CHECKING:
     from . import management as management
+    from .management import DEFAULT_LIBRARY_LEVELS as DEFAULT_LIBRARY_LEVELS
     from .management import install as install
     from .management import reset as reset
+    from .mode import LogMode as LogMode
 
 __all__ = [
+    "DEFAULT_LIBRARY_LEVELS",
+    "LogMode",
     "install",
     "levels",
     "management",
@@ -39,6 +43,8 @@ _LAZY_EXPORTS: dict[str, str] = {
 }
 
 _LAZY_ATTRS: dict[str, str] = {
+    "DEFAULT_LIBRARY_LEVELS": "otto.logger.management",
+    "LogMode": "otto.logger.mode",
     "install": "otto.logger.management",
     "reset": "otto.logger.management",
 }
@@ -49,7 +55,11 @@ both live on ``management`` — so naming them here keeps
 ``from otto.logger import install, reset`` working without importing
 ``management`` (and therefore ``rich``) for the callers that merely
 ``import otto.logger``. Calling either one IS the opt-in, so paying for rich
-at that moment is the point.
+at that moment is the point. ``DEFAULT_LIBRARY_LEVELS`` lives there too.
+
+``LogMode`` comes from ``mode``, which is stdlib-only, so naming it costs no
+rich. It needs a public binding because public signatures (``Host.run``,
+``ProxyIO.send``) default to its members (API dump spec §2.4).
 """
 
 

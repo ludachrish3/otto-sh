@@ -152,8 +152,8 @@ def _install(lab, repos, ordered=None):
     """Patch deploy.py's three config seams for the duration of the block."""
     with (
         patch("otto.config.fleet.get_lab", return_value=lab),
-        patch("otto.config.bootstrapped.get_repos", return_value=list(repos)),
-        patch("otto.config.bootstrapped.get_ordered_repos", return_value=list(ordered or repos)),
+        patch("otto.bootstrap.get_repos", return_value=list(repos)),
+        patch("otto.bootstrap.get_ordered_repos", return_value=list(ordered or repos)),
     ):
         yield
 

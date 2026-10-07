@@ -70,9 +70,7 @@ def _rows():
 def test_each_flag_reaches_run_tests_as_the_class_constructs_it(
     param, capture_cov, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(
-        "otto.config.bootstrapped.get_repos", lambda: [_repo_with_tickets_configured()]
-    )
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [_repo_with_tickets_configured()])
     value, argv = _sample(param, tmp_path)
     contradiction_message = None
     try:

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from .sentinel import ParsedSentinel as ParsedSentinel
     from .sentinel import encode_sentinel as encode_sentinel
     from .sentinel import parse_sentinel as parse_sentinel
+    from .socat import SocatCarrier as SocatCarrier
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
@@ -69,6 +70,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "SENTINEL_PREFIX": "otto.tunnel.sentinel",
     "encode_sentinel": "otto.tunnel.sentinel",
     "parse_sentinel": "otto.tunnel.sentinel",
+    "SocatCarrier": "otto.tunnel.socat",
 }
 
 
@@ -98,6 +100,7 @@ __all__ = [
     "ProcKey",
     "RemovedReport",
     "Role",
+    "SocatCarrier",
     "Tunnel",
     "TunnelCarrier",
     "TunnelCheckReport",

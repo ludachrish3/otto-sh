@@ -23,13 +23,13 @@ class FrameMockSession(FeedAfterWriteMixin, ShellSession):
         self.emitted: list[str] = []
         self._on_output = self.emitted.append
 
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         self._out_reader = asyncio.StreamReader()
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         self.written.append(data)
 
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         assert self._out_reader is not None
         buf = ""
         while True:
@@ -50,7 +50,7 @@ class FrameMockSession(FeedAfterWriteMixin, ShellSession):
 
 
 async def _init(s: FrameMockSession) -> None:
-    await s._open()
+    await s.open_transport()
     feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
     task = asyncio.create_task(s._ensure_initialized())
     await task
@@ -155,7 +155,7 @@ class TestWriteProgress:
         progress: list[tuple[int, int]] = []
         s._write_progress = lambda done, total: progress.append((done, total))
 
-        await s._write("0123456789")  # 10 bytes, chunk 4 -> 3 writes
+        await s.write_transport("0123456789")  # 10 bytes, chunk 4 -> 3 writes
 
         assert b"".join(writes) == b"0123456789"
         assert progress == [(4, 10), (8, 10), (10, 10)]
@@ -167,7 +167,7 @@ class TestWriteProgress:
         progress: list[tuple[int, int]] = []
         s._write_progress = lambda done, total: progress.append((done, total))
 
-        await s._write("abcd")
+        await s.write_transport("abcd")
 
         assert progress == [(4, 4)]
 
@@ -176,14 +176,14 @@ class TestWriteProgress:
         # write_progress is set only for the framed command write, then cleared.
         s = zephyr_session
         seen: list[object] = []
-        orig_write = s._write
+        orig_write = s.write_transport
 
         async def _record_write(data):
             if s._begin_marker in data:  # the framed command write
                 seen.append(s._write_progress)
             await orig_write(data)
 
-        s._write = _record_write
+        s.write_transport = _record_write
 
         def cb(done: int, total: int) -> None:
             return None

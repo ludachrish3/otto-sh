@@ -33,6 +33,8 @@ pytestmark = pytest.mark.interpreter_agnostic
 
 # Each module in a cycle -> the modules of the same cycle it may import.
 # Shrink-only: delete entries as edges are cut, never add one to quiet a failure.
+# One owner-approved re-baseline (spec 2026-10-06 repo-and-scope-inputs, S-5) added the seven
+# edges to otto.bootstrap and cut otto.lifecycle -> otto.config. Shrink-only again from here.
 BASELINE: dict[str, list[str]] = {
     "otto.bootstrap": ["otto.config", "otto.host"],
     "otto.check": ["otto.host"],
@@ -77,20 +79,34 @@ BASELINE: dict[str, list[str]] = {
         "otto.reservations",
         "otto.session",
     ],
-    "otto.coverage": ["otto.config", "otto.context", "otto.host", "otto.models"],
+    "otto.coverage": ["otto.bootstrap", "otto.config", "otto.context", "otto.host", "otto.models"],
     "otto.creds": ["otto.models"],
-    "otto.docker": ["otto.config", "otto.host", "otto.lifecycle", "otto.models"],
-    "otto.host": ["otto.config", "otto.context", "otto.docker", "otto.lifecycle", "otto.models"],
+    "otto.docker": ["otto.bootstrap", "otto.config", "otto.host", "otto.lifecycle", "otto.models"],
+    "otto.host": [
+        "otto.bootstrap",
+        "otto.config",
+        "otto.context",
+        "otto.docker",
+        "otto.lifecycle",
+        "otto.models",
+    ],
     "otto.init": ["otto.config", "otto.host", "otto.inventory", "otto.labs", "otto.models"],
     "otto.instructions": ["otto.context", "otto.project", "otto.session"],
     "otto.inventory": ["otto.config", "otto.creds", "otto.host", "otto.models"],
     "otto.labs": ["otto.config", "otto.host", "otto.inventory", "otto.link", "otto.models"],
-    "otto.lifecycle": ["otto.config", "otto.context"],
+    "otto.lifecycle": ["otto.bootstrap", "otto.context"],
     "otto.link": ["otto.check", "otto.host", "otto.lifecycle", "otto.models"],
     "otto.models": ["otto.config", "otto.host", "otto.link"],
     "otto.monitor": ["otto.host", "otto.link", "otto.models"],
-    "otto.monitor.live": ["otto.config", "otto.context", "otto.monitor", "otto.tunnel"],
+    "otto.monitor.live": [
+        "otto.bootstrap",
+        "otto.config",
+        "otto.context",
+        "otto.monitor",
+        "otto.tunnel",
+    ],
     "otto.project": [
+        "otto.bootstrap",
         "otto.config",
         "otto.context",
         "otto.host",
@@ -110,6 +126,7 @@ BASELINE: dict[str, list[str]] = {
         "otto.models",
     ],
     "otto.suite": [
+        "otto.bootstrap",
         "otto.config",
         "otto.context",
         "otto.coverage",

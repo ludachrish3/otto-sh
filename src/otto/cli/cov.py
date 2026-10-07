@@ -28,8 +28,8 @@ See the :doc:`/cli/cov/index` and :doc:`/cli/host/index` documentation.
     Title shown in the HTML report header.
 
 ``--tickets-json PATH``
-    Also write a machine-readable per-ticket coverage summary (``format: 1``,
-    versioned independently of the internal ``store.json``) to this path.
+    Also write a machine-readable per-ticket coverage summary (its own
+    ``format`` version, independent of the internal ``store.json``) to this path.
     Every file path in it is repo-relative posix (never an absolute,
     machine-specific path), so it diffs cleanly across checkouts. Requires
     ``[coverage.tickets]`` to have attributed at least one ticket; fails
@@ -305,7 +305,7 @@ def report(
             # ValueError) from load_override_config, and must hit the same
             # clean-message `except ValueError` handler below as every
             # other settings/data ValueError, not propagate as a traceback.
-            from ..config import get_repos
+            from ..bootstrap import get_repos
 
             inputs = resolve_report_inputs(get_repos())
         store = run_command(

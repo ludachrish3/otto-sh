@@ -9,6 +9,7 @@ The simplest pattern: run one command and inspect the result.
 
 ```{doctest}
 >>> import asyncio
+>>> from otto.host import LocalHost
 >>> host = LocalHost()
 >>> result = asyncio.run(host.run("echo hello")).only
 >>> result.status
@@ -21,6 +22,7 @@ The simplest pattern: run one command and inspect the result.
 state like the working directory persists between calls:
 
 ```{doctest}
+>>> from otto.host import LocalHost
 >>> host = LocalHost()
 >>> run(host.run("cd /tmp"))
 Results(status=<Status.Success: 0>, value=[CommandResult(status=<Status.Success: 0>, value='', msg='', command='cd /tmp', retcode=0, timed_out=False)], msg='')
@@ -37,6 +39,7 @@ aggregate status plus individual per-command results:
 
 ```{doctest}
 >>> import asyncio
+>>> from otto.host import LocalHost
 >>> host = LocalHost()
 >>> result = asyncio.run(host.run(["echo first", "echo second"]))
 >>> result.status
@@ -53,6 +56,7 @@ not share state:
 
 ```{doctest}
 >>> import asyncio
+>>> from otto.host import LocalHost
 >>> host = LocalHost()
 >>> async def concurrent_exec():
 ...     results = await asyncio.gather(
@@ -101,7 +105,7 @@ for the matching rule.
 
 ```python
 import re
-from otto.config import run_on_all_hosts
+from otto.lab import run_on_all_hosts
 
 
 async def check_all_hosts():
@@ -136,8 +140,8 @@ your own.
 
 ```python
 from pathlib import Path
-from otto.config import do_for_all_hosts
-from otto.host.unix_host import UnixHost
+from otto.lab import do_for_all_hosts
+from otto.host import UnixHost
 
 
 async def deploy_firmware():
@@ -179,7 +183,7 @@ coordinating cross-host synchronization inside the same task graph.
 
 ```python
 import asyncio
-from otto.config import all_hosts
+from otto.lab import all_hosts
 
 
 async def mixed_workload():
@@ -198,6 +202,7 @@ async def mixed_workload():
 `status`/`value`/`msg` base plus `command` and `retcode`:
 
 ```{doctest}
+>>> from otto import CommandResult, Status
 >>> result = CommandResult(status=Status.Success, value="hi", command="echo hi", retcode=0)
 >>> result.command
 'echo hi'
@@ -211,6 +216,7 @@ Check the {attr}`~otto.utils.Status.is_ok` property to determine if a
 command succeeded:
 
 ```{doctest}
+>>> from otto import Status
 >>> Status.Success.is_ok
 True
 >>> Status.Failed.is_ok

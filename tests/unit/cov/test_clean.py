@@ -196,7 +196,7 @@ async def test_no_hosts_in_the_lab_refuses(lab):
 @pytest.mark.asyncio
 async def test_defaults_to_get_repos_when_none_given(lab):
     lab(_host("t1", _product("app", Result(Status.Success))))
-    with patch("otto.config.bootstrapped.get_repos", return_value=[_repo()]) as get_repos:
+    with patch("otto.bootstrap.get_repos", return_value=[_repo()]) as get_repos:
         report = await clean_coverage()
     get_repos.assert_called_once()
     assert report.hosts == {"t1": {"app": Result(Status.Success)}}

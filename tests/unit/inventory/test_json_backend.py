@@ -8,9 +8,9 @@ from otto.inventory import (
     InventoryError,
     InventoryKeyError,
     JsonInventory,
-    get_inventory_backend_class,
     parse_inventory_document,
 )
+from otto.inventory.registry import get_inventory_backend_class
 from otto.models.inventory import FILLABLE_INVENTORY_FIELDS
 from otto.testing import assert_inventory_conforms
 

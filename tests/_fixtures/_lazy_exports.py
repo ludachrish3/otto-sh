@@ -80,8 +80,8 @@ def _lazy_target(module: ModuleType, name: str) -> tuple[str, str] | None:
 def _defining_module(package: ModuleType, name: str) -> str:
     """The module that really defines ``package.name``, following lazy hops.
 
-    ``otto.get_lab`` is declared as ``otto.config.get_lab``, which is itself
-    lazy and defined in ``otto.config.fleet``; patching the intermediate
+    ``otto.app`` is declared as ``otto.cli.app``, which is itself lazy and
+    defined in ``otto.cli.main``; patching the intermediate
     package would trip the guard again, so the chain is followed until the
     target module no longer declares the attribute lazily.
     """

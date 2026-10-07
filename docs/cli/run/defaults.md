@@ -232,7 +232,7 @@ await self.ctx.do_for_all_hosts(_dispatch_install, pattern=re.compile("sensor-.*
 ```
 
 A pattern that matches none of the hosts the walk may reach raises
-{class}`~otto.config.scope.EmptySelectionError` rather than doing nothing:
+{class}`otto.lab.EmptySelectionError <otto.config.scope.EmptySelectionError>` rather than doing nothing:
 
 ```text
 pattern 'sensor' fullmatches none of the 6 host(s) this run may walk,

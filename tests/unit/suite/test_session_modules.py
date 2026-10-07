@@ -31,9 +31,9 @@ def _save(path: Path, text: str) -> None:
 
 
 def _repo(name: str | None = None):
-    import otto.config
+    import otto.bootstrap
 
-    repos = otto.config.get_repos()
+    repos = otto.bootstrap.get_repos()
     return repos[0] if name is None else next(r for r in repos if r.name == name)
 
 
@@ -141,7 +141,7 @@ def _lib_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, 
         tmp_path / "sut", name="sut", tests=["tests"], extra='libs = ["pylib"]\n', files=files
     )
     repo = Repo(sut_dir=sut)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
     monkeypatch.syspath_prepend(str(sut / "pylib"))
     return sut
 
@@ -255,7 +255,7 @@ def test_a_session_keeps_what_it_imported_from_outside_the_test_directories(tmp_
         },
     )
     repo = Repo(sut_dir=sut)
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: [repo])
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
     monkeypatch.syspath_prepend(str(sut / "pylib"))
     try:
         assert run_tests(["test_l"], output_dir=tmp_path / "out").exit_code == 0

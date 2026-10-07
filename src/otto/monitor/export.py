@@ -19,9 +19,18 @@ from ..models import (
     TabSpecRecord,
     TunnelRecord,
 )
+from ..models.formats import MONITOR_EXPORT_WRITE_VERSIONS
 from .collector import MetricCollector
 from .db import MetricDB, SessionRow, read_sessions
 from .session import SessionFrame
+
+[EXPORT_FORMAT] = MONITOR_EXPORT_WRITE_VERSIONS
+"""The ``format`` every export this module builds is stamped with.
+
+It is the one declared write version. ``MonitorExport.format`` is a
+``Literal`` that a test holds equal to the declared read list, so the type
+checker cannot see that this ``int`` fits it; pydantic still validates it.
+"""
 
 
 def _split_series_key(key: str) -> tuple[str, str]:
@@ -203,7 +212,10 @@ def build_live_export(
         chart_map=collector.get_chart_map(),
         tunnels=collector.get_tunnel_records(),
     )
-    return MonitorExport(format=1, sessions=[session])
+    return MonitorExport(
+        format=EXPORT_FORMAT,  # ty: ignore[invalid-argument-type]
+        sessions=[session],
+    )
 
 
 def _ts(value: str) -> datetime:
@@ -298,7 +310,10 @@ def build_db_export(path: str) -> MonitorExport:
         :class:`~otto.models.monitor.SessionRecord` per archived session, in
         the archive's own (start-ordered) order.
     """
-    return MonitorExport(format=1, sessions=[_session_record(row) for row in read_sessions(path)])
+    return MonitorExport(
+        format=EXPORT_FORMAT,  # ty: ignore[invalid-argument-type]
+        sessions=[_session_record(row) for row in read_sessions(path)],
+    )
 
 
 def document_json(export: MonitorExport) -> str:

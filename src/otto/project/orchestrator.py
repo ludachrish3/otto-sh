@@ -5,7 +5,7 @@ what the LAB does: the same verbs, composed across every configured repo in
 dependency order, plus the host-global steps that belong to no repo at all.
 
 Module-level async functions over the ambient context (the
-``otto.config.all_hosts`` idiom), so an instruction, a suite, or a pytest
+``otto.lab.all_hosts`` idiom), so an instruction, a suite, or a pytest
 fixture calls them with no arguments at all -- or with the one options
 instance (or :class:`~otto.params.OptionsSource`) its flags arrived on, which
 ``_source`` normalises so every body downstream sees the same thing.
@@ -17,7 +17,7 @@ name (``walk``, ``continue_on_failure``, ``require_dependencies``,
 a repo that adds a project instruction gets the same machinery otto's six use.
 
 * **Direction.** A ``forward`` walk takes dependencies first
-  (:func:`~otto.config.bootstrapped.get_ordered_repos`'s own order); ``reverse`` takes
+  (:func:`~otto.bootstrap.get_ordered_repos`'s own order); ``reverse`` takes
   dependents first, because a dependent must come down before the thing it
   depends on. The order is READ, never rewritten -- ``get_ordered_repos()``
   hands back bootstrap's own list, so ``_run_bodies`` reverses a COPY of
@@ -172,7 +172,7 @@ def _lab() -> "tuple[OttoContext, list[Repo]]":
     are gated by the verb they delegate to, before that delegate does anything
     either.
     """
-    from ..config import get_ordered_repos
+    from ..bootstrap import get_ordered_repos
     from ..context import get_context
 
     ctx = get_context()
@@ -186,7 +186,7 @@ def _enforce_current_scope(ctx: "OttoContext") -> None:
     THE DRIVING REPO IS ``bootstrap().repos[0]`` -- the first ``OTTO_SUT_DIRS``
     entry, the project whose run this is -- and NOT the first repo of the walk
     order this module iterates. Those are two different repos in any lab with a
-    dependency: :func:`~otto.config.bootstrapped.get_ordered_repos` hands back a topological
+    dependency: :func:`~otto.bootstrap.get_ordered_repos` hands back a topological
     reorder, dependencies first, so its head is the thing being depended ON.
     Gating on that one would abort a healthy project's run over a dependency's
     declaration, which is precisely the veto D3's asymmetry exists to prevent.
@@ -200,7 +200,7 @@ def _enforce_current_scope(ctx: "OttoContext") -> None:
     legal -- ``otto run`` in a bare lab directory -- so the lookup is guarded
     rather than indexed.
     """
-    from ..config import get_repos
+    from ..bootstrap import get_repos
     from ..config.scope import require_current_scope
 
     repos = get_repos()
@@ -709,7 +709,7 @@ def project_instruction_body_options(
     lab-inactive dependency (:class:`InactiveRequiredDependencyError`) --
     exactly as a real run's walk would, before either builds anything.
     """
-    from ..config import get_ordered_repos
+    from ..bootstrap import get_ordered_repos
 
     source = OptionsSource.from_kwargs(kwargs)
     seen: set[type] = set()

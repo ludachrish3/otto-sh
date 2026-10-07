@@ -78,6 +78,8 @@ seam should catch ``BaseException`` and re-raise what :func:`is_containable`
 rejects.
 """
 
+__all__ = ["EnsureStateError", "OttoError"]
+
 #: Exceptions a containment seam must re-raise rather than frame.
 #:
 #: These mean "this process or task is being torn down", not "this user file is
@@ -97,7 +99,7 @@ rejects.
 #:
 #: ``asyncio.CancelledError`` is deliberately ABSENT, and the reason is NOT
 #: "no event loop is running" — ``open_context`` and
-#: ``otto.config.get_repos`` both reach ``bootstrap()`` from async callers.
+#: ``otto.bootstrap.get_repos`` both reach ``bootstrap()`` from async callers.
 #: It is that ``bootstrap()`` contains no ``await``: cancellation is delivered
 #: at a suspension point, and this seam has none, so a ``CancelledError`` can
 #: only get here by a user module body raising it explicitly — which is user

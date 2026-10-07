@@ -931,6 +931,10 @@ A repo that registers no providers and declares no `[[products]]` or
   declared universe rather than the whole loaded lab.  See
   {doc}`../cli/run/defaults` for the walk semantics, the union across repos, and
   the whole-lab fallback for repos that declare nothing.
+- **It can be computed without a run.**
+  {func}`otto.lab.fleet_of_interest <otto.config.fleet.fleet_of_interest>` returns the
+  ids a walk would take, from a loaded lab and its repos, without connecting or
+  bootstrapping; {doc}`../getting-started/boards-of-interest` runs it.
 - **Providers are gated by it.**  A repo's product and dev-tool providers are
   not invoked at all on a host outside its universe, so nothing that repo owns
   can attach to a machine it never declared.

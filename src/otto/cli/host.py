@@ -45,7 +45,7 @@ def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: 
     per-repo backends complete without re-running user code);
     falls back to the live registry, where otto's built-ins are always present.
     """
-    from ..config import get_completion_names
+    from ..bootstrap import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("term_backends"), list):
@@ -66,7 +66,7 @@ def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
     host, so only backends whose ``host_families`` include ``'unix'`` are offered.
     Cached entries are ``{"name": str, "host_families": [...]}``.
     """
-    from ..config import get_completion_names
+    from ..bootstrap import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("transfer_backends"), list):
@@ -194,7 +194,7 @@ def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]"
     gate = ctx.meta.get("otto_reservation")
     if gate is None:
         return
-    from ..config import get_lab
+    from ..config.fleet import get_lab
     from ..reservations import MissingReservationError
 
     try:

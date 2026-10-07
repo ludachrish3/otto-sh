@@ -15,9 +15,9 @@ params exist here.
 
 ``kmodcov`` fixes the module name to ``otto_kmodcov`` and adds the library's
 interface check: a built ``.ko`` reports ``<otto version>+kmodcov<n>`` through
-``MODULE_VERSION`` (:mod:`otto.kmodcov`), and one whose ``n`` is not this
-otto's :data:`otto.kmodcov.library.INTERFACE` is refused — at lab load when the file
-exists, and again at ``install``, before it is ever loaded. Lab load also
+``MODULE_VERSION`` (:mod:`otto.kmodcov`), and one whose ``n`` is not in
+``otto.kmodcov.formats.KMODCOV_INTERFACE_READ_VERSIONS`` is refused — at lab
+load when the file exists, and again at ``install``, before it is ever loaded. Lab load also
 refuses both ways the binding can fail: a host matching two kmodcov entries (a
 host has one kernel and holds one otto_kmodcov), and a host whose
 ``coverage = "module"`` product matches none. Which product needs the
@@ -316,7 +316,8 @@ def interface_problem(tool: KmodcovTool) -> str | None:
     directory, and advising an export into it would put sources where the
     ``.ko`` lands.
     """
-    from ..kmodcov import INTERFACE, interface_of, modinfo_version
+    from ..kmodcov.formats import KMODCOV_INTERFACE_READ_VERSIONS
+    from ..kmodcov.library import interface_of, modinfo_version
 
     if not tool.artifact.is_file():
         return f"{tool.name}: {tool.artifact} is not built (no such file)"
@@ -327,7 +328,7 @@ def interface_problem(tool: KmodcovTool) -> str | None:
             "from exported sources?"
         )
     found = interface_of(version)
-    if found == INTERFACE:
+    if found in KMODCOV_INTERFACE_READ_VERSIONS:
         return None
     reports = (
         f"reports {version}, which carries no kmodcov interface number"
@@ -340,9 +341,10 @@ def interface_problem(tool: KmodcovTool) -> str | None:
         else "re-export the vendored library (declare `source` on the entry to have it named "
         "here) and rebuild"
     )
+    drives = " or ".join(f"kmodcov{n}" for n in KMODCOV_INTERFACE_READ_VERSIONS)
     return (
         f"{tool.name}: {tool.artifact} {reports}, but this otto drives interface "
-        f"kmodcov{INTERFACE} — {remedy}"
+        f"{drives} — {remedy}"
     )
 
 

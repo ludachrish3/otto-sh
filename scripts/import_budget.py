@@ -527,7 +527,7 @@ SURFACES: list[Surface] = [
     # THE LOGIN PATH, on the same closed-port host, under a pty as a user's
     # terminal would be. Not the built-in `local` host: `LocalHost` implements
     # no interactive session, so its `login` refuses before connecting.
-    # `budget-ssh` takes `UnixHost._login`'s SSH branch and is refused at the
+    # `budget-ssh` takes `UnixHost.run_login`'s SSH branch and is refused at the
     # connect that precedes the terminal bridge (`interact.run_ssh_login`
     # needs the connection), so the bridge module is counted as far as the
     # host module imports it, and the bridge itself never runs. It ends as

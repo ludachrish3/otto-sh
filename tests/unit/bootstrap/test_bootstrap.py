@@ -512,7 +512,7 @@ def test_an_init_module_that_reenters_gets_the_settled_repos(tmp_path, monkeypat
     """A repo init calling ``get_repos()`` is answered, not recursed.
 
     The import phase runs USER code, and user code reaching
-    ``otto.config.get_repos()`` re-enters ``bootstrap()`` with ``_result``
+    ``otto.bootstrap.get_repos()`` re-enters ``bootstrap()`` with ``_result``
     still unset — directly, or by way of a stamped host whose product
     providers consult ``scope_for_repo``. Discovery and the dependency pass
     are already done by then, so the honest answer is the repo list the outer
@@ -523,7 +523,7 @@ def test_an_init_module_that_reenters_gets_the_settled_repos(tmp_path, monkeypat
         _reentrant_repo(
             tmp_path,
             """
-            from otto.config import get_repos
+            from otto.bootstrap import get_repos
 
             SEEN = [r.name for r in get_repos()]
             """,
@@ -623,7 +623,7 @@ def test_reentrance_does_not_compose_the_root_twice(tmp_path, monkeypatch):
         _reentrant_repo(
             tmp_path,
             """
-            from otto.config import get_repos
+            from otto.bootstrap import get_repos
 
             SEEN = [r.name for r in get_repos()]
             """,

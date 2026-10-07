@@ -1,20 +1,22 @@
-"""The one reader and writer of the public-API golden's line format.
+"""Tell the public-API golden's two schemas apart, and read the old one.
 
-``scripts/api_snapshot.py`` writes ``tests/unit/api_snapshot/public_api.txt``;
-``scripts/check_breaking_marks.py`` reads it at both ends of every commit in a
-range. Both used to hard-code the format. This module is now its only
-definition.
+``tests/unit/api_snapshot/public_api.txt`` has had two schemas (spec
+``docs/superpowers/specs/2026-10-04-public-api-manifest-design.md`` §6):
 
-Two schemas (spec ``docs/superpowers/specs/2026-10-04-public-api-manifest-design.md`` §6):
+* **v2**, the golden since the cutover (#590): the API dump, which
+  ``scripts/api_records.py`` defines and ``scripts/api_snapshot.py`` writes
+  (dump spec ``docs/superpowers/specs/2026-10-05-api-dump-design.md``). This
+  module only detects it: ``schema_of`` reads its ``# api-snapshot v2``
+  header, which ``scripts/api_snapshot.py`` requires of the golden it checks.
+* **v1**, the line format before the cutover. Nothing writes it any more.
+  ``scripts/check_breaking_marks.py`` still reads it, through this module, to
+  judge commits from before the cutover and to convert the last v1 golden at
+  the cutover commit:
 
-* **v1**, today's:
   * ``otto:<name>``: a root export;
   * ``<module>:<name>``: a deep path the docs teach;
   * ``<module>:``: a bare documented ``import``;
   * ``otto.host.host:Host.<method>(<params>)``: a Host protocol signature.
-* **v2**: the API dump (``scripts/api_records.py``; dump spec
-  ``docs/superpowers/specs/2026-10-05-api-dump-design.md``). This module only
-  detects it: ``schema_of`` reads its ``# api-snapshot v2`` header.
 """
 
 import re

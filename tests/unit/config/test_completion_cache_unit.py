@@ -1347,7 +1347,7 @@ def test_write_read_cache_round_trips_docker_use_cases(tmp_path: Path, monkeypat
     # The consumer end: the completer serves exactly what came off disk.
     from otto.cli.docker import _use_case_completer
 
-    with mock.patch("otto.config.bootstrapped.get_completion_names", return_value=out):
+    with mock.patch("otto.bootstrap.get_completion_names", return_value=out):
         assert _use_case_completer(MagicMock(), "i") == ["integration"]
 
 

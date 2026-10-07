@@ -43,6 +43,7 @@ PACKAGES = [
     "otto.host.survey",
     "otto.inventory",
     "otto.kmodcov",
+    "otto.lab",
     "otto.labs",
     "otto.link",
     "otto.models",
@@ -200,6 +201,7 @@ def test_the_lazy_package_scan_finds_the_known_packages():
         "otto.host.transfer",
         "otto.inventory",
         "otto.kmodcov",
+        "otto.lab",
         "otto.labs",
         "otto.link",
         "otto.logger",
@@ -402,14 +404,14 @@ IMPORT_ORDERS = [
     "import otto.monitor",
     "from otto.host import UnixHost",
     "from otto.host import LocalHost",
-    "from otto.models import HostSpec",
+    "from otto.host import HostSpec",
     "from otto.monitor import MetricCollector",
     "import otto.models.host; import otto.host",
     "import otto.models.host; from otto.host import UnixHost",
-    "import otto.models.settings; from otto.models import UnixHostSpec",
+    "import otto.models.settings; from otto.host import UnixHostSpec",
     "import otto.models.monitor; from otto.monitor import build_monitor_collector",
     "import otto.monitor.collector; from otto.models import MonitorExport",
-    "import otto.host.factory; from otto.models import HostSpec",
+    "import otto.host.factory; from otto.host import HostSpec",
     "import otto.host.os_profile; from otto.host import EmbeddedHost",
     "import otto.host.unix_host; import otto.models.host",
     "import otto.coverage",
@@ -447,6 +449,10 @@ IMPORT_ORDERS = [
     "import otto.check.verdict; from otto.check import probe_fingerprint",
     "import otto.creds.registry; from otto.creds import JsonCredsStore",
     "import otto.suite.run; from otto.suite import OttoFixturesPlugin",
+    "import otto.lab",
+    "from otto.lab import EmptySelectionError; import otto.config",
+    "import otto.config.fleet; from otto.lab import get_lab",
+    "from otto.lab import Lab; from otto import load_lab",
     # The built-in command table imports the registry only when it runs: a
     # process whose first import is the table still gets every built-in.
     (
@@ -541,22 +547,25 @@ def test_a_monkeypatch_on_a_lazy_exports_package_is_caught_and_evicted():
 
     assert leaked_lazy_exports() == []
     patcher = pytest.MonkeyPatch()
-    patcher.setattr(_on_the_package("otto.config", "get_repos"), list)
+    patcher.setattr(_on_the_package("otto.config", "load_user_settings"), list)
     patcher.undo()
     try:
-        assert leaked_lazy_exports() == ["otto.config.get_repos"]
+        assert leaked_lazy_exports() == ["otto.config.load_user_settings"]
         with pytest.raises(
             LeakedLazyExportError,
-            match=re.escape("otto.config.get_repos -> patch otto.config.bootstrapped.get_repos"),
+            match=re.escape(
+                "otto.config.load_user_settings"
+                " -> patch otto.config.user_settings.load_user_settings"
+            ),
         ):
             raise_on_leaked_lazy_exports("the-leaking-test")
-        assert "get_repos" not in vars(otto.config)
+        assert "load_user_settings" not in vars(otto.config)
     finally:
-        vars(otto.config).pop("get_repos", None)
+        vars(otto.config).pop("load_user_settings", None)
 
 
 def test_the_guard_names_the_module_that_really_defines_a_hopped_export():
-    """``otto.get_lab`` is declared as ``otto.config.get_lab``, itself lazy: name the true home."""
+    """``otto.app`` is declared as ``otto.cli.app``, itself lazy: name the true home."""
     import otto
     from tests._fixtures._lazy_exports import (
         LeakedLazyExportError,
@@ -566,18 +575,18 @@ def test_the_guard_names_the_module_that_really_defines_a_hopped_export():
 
     assert leaked_lazy_exports() == []
     patcher = pytest.MonkeyPatch()
-    patcher.setattr(_on_the_package("otto", "get_lab"), lambda: None)
+    patcher.setattr(_on_the_package("otto", "app"), lambda: None)
     patcher.undo()
     try:
-        assert leaked_lazy_exports() == ["otto.get_lab"]
+        assert leaked_lazy_exports() == ["otto.app"]
         with pytest.raises(
             LeakedLazyExportError,
-            match=re.escape("otto.get_lab -> patch otto.config.fleet.get_lab"),
+            match=re.escape("otto.app -> patch otto.cli.main.app"),
         ):
             raise_on_leaked_lazy_exports("the-leaking-test")
-        assert "get_lab" not in vars(otto)
+        assert "app" not in vars(otto)
     finally:
-        vars(otto).pop("get_lab", None)
+        vars(otto).pop("app", None)
 
 
 def test_an_eager_name_in_a_lazy_exports_package_is_not_a_leak():

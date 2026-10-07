@@ -87,7 +87,7 @@ def anchor_to_repo(v: Path, info: ValidationInfo) -> Path:
 
 
 RepoPath = Annotated[Path, AfterValidator(anchor_to_repo)]
-"""A ``settings.toml`` path: ``~``-expanded, then anchored to the repo root."""
+"""A ``settings.toml`` path, ``~``-expanded and then anchored to the repo root."""
 
 
 class DockerImageSpec(OttoModel):
@@ -574,6 +574,10 @@ class ReservationEntry(OttoModel):
 class ReservationFile(OttoModel):
     """The ``version: 1`` JSON reservation file the built-in JSON backend reads."""
 
+    # The Literal's arguments are RESERVATIONS_READ_VERSIONS (otto.models.formats,
+    # dump spec §13.1), spelled again: this module loads on budgeted CLI surfaces
+    # and must not import the list. tests/unit/models/test_declared_version_fields.py
+    # holds the two equal; add or drop a version in both places.
     version: Literal[1]
     reservations: list[ReservationEntry] = Field(default_factory=list)
 

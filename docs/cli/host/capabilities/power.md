@@ -29,7 +29,7 @@ Projects register richer controllers (IPMI/redfish/libvirt/PDU) via
 `register_power_controller(type_name, cls)` — pass the type-name string and the
 `PowerController` subclass:
 
-    from otto.host.power import register_power_controller, PowerController
+    from otto.host import PowerController, register_power_controller
 
     class MyIpmiController(PowerController):
         type_name = "ipmi"

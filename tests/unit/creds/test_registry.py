@@ -2,8 +2,8 @@
 
 import pytest
 
-from otto.creds import JsonCredsStore, get_creds_backend_class, register_creds_backend
-from otto.creds.registry import CREDS_BACKENDS
+from otto.creds import JsonCredsStore, register_creds_backend
+from otto.creds.registry import CREDS_BACKENDS, get_creds_backend_class
 
 
 class _Fake:

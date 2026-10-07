@@ -235,7 +235,7 @@ def test_restricted_bash_still_reaches_the_ready_marker():
 
     Both of the payload's statements therefore fail. It must still degrade to
     a working (if noisy) session rather than stranding the READY probe —
-    ``_read_until_pattern`` discards anything preceding the marker.
+    ``read_transport_until`` discards anything preceding the marker.
     """
     proc = _run(["bash", "--restricted"], PAYLOAD + f"echo {_READY}")
     assert _READY in proc.stdout, f"rbash session stranded: stderr={proc.stderr!r}"

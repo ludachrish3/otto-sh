@@ -1,12 +1,19 @@
-"""``scripts/check_breaking_marks.py``: a public-API golden deletion must be marked.
+"""``scripts/check_breaking_marks.py``: a public-API break must be marked.
 
 ``tests/unit/api_snapshot/public_api.txt`` (``scripts/api_snapshot.py``) is the
-golden anchor: a line removed from it is, by construction, a public-API break
-(a name gone from ``otto.__all__``, a deep import the docs stopped teaching, or
-a ``Host`` protocol parameter dropped/renamed). ``make release``'s version
-comes from git-cliff's conventional-commit census, which only sees what a
-commit SUBJECT/BODY says — this script is what makes an unmarked deletion a
-CI failure instead of a silent patch release.
+golden. Since the cutover (#590) it is the API dump (v2): a breaking finding
+between a commit's parent dump and its own (a removed name, a narrowed call, a
+changed default, a new obligation, a dropped format version) is a public-API
+break, and a dump that is not its commit's own regeneration is refused, marked
+or not. ``make release``'s version comes from git-cliff's conventional-commit
+census, which only sees what a commit SUBJECT/BODY says — this script is what
+makes an unmarked break a CI failure instead of a silent patch release.
+
+The v1 schema, the line format before the cutover, survives only as history:
+a range can reach back past the cutover, and the cutover commit converts the
+last v1 golden. So the v1 rules stay tested here too. Under them a removed
+line is the break: a name gone from ``otto.__all__``, a deep import the docs
+stopped teaching, or a ``Host`` protocol parameter dropped/renamed.
 
 Every test builds its own throwaway git repo under ``tmp_path`` via
 ``tests._fixtures.gitrepo.TmpGitRepo`` (the same hermetic harness
@@ -15,12 +22,15 @@ itself.
 """
 
 import sys
+from pathlib import Path
 
 import pytest
 
 from scripts.check_breaking_marks import (
+    RULE,
     RangeError,
     commits_in_range,
+    conversion_inventory,
     is_library_line,
     is_widened_protocol_line,
     main,
@@ -621,8 +631,10 @@ def test_resorted_dump_is_refused_by_freshness_but_has_no_compat_finding(tmp_pat
     assert _run(repo, f"{tip}~1..{tip}") == 1
     out = capsys.readouterr().out
     assert "refused: stale dump" in out
-    assert "removed" not in out
-    assert "new required" not in out
+    # RULE names every kind of break; the findings are the output without it.
+    findings = out.replace(RULE, "")
+    assert "removed" not in findings
+    assert "new required" not in findings
 
 
 def test_intermediate_stale_dump_is_flagged_on_its_own_commit(tmp_path, capsys):
@@ -636,7 +648,7 @@ def test_intermediate_stale_dump_is_flagged_on_its_own_commit(tmp_path, capsys):
     assert _run(repo, f"{base}..HEAD") == 1
     out = capsys.readouterr().out
     assert f"commit {stale}" in out
-    assert "stale dump" in out
+    assert "refused: stale dump" in out
 
 
 def test_namespace_import_failure_is_refused_even_when_marked(tmp_path, capsys):
@@ -809,7 +821,7 @@ def test_manifest_only_downgrade_needs_a_mark(tmp_path, capsys):
     _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat: f", manifest=stable)
     tip = _commit_dump(repo, _init(["f"], "def f(): pass\n"), "chore: provisional again")
     assert _run(repo, f"{tip}~1..{tip}") == 1
-    assert "stable" in capsys.readouterr().out
+    assert "stability downgraded: otto stable -> provisional" in capsys.readouterr().out
 
 
 def test_manifest_without_v2_golden_changes_nothing(tmp_path):
@@ -966,7 +978,8 @@ def test_a_malformed_manifest_at_a_custom_path_is_refused_naming_it(tmp_path, ca
     assert _run(repo, f"{tip}~1..{tip}", CUSTOM) == 1
     out = capsys.readouterr().out
     assert f"{CUSTOM} missing or malformed" in out
-    assert "api/public.toml" not in out
+    # RULE names the default manifest; the findings are the output without it.
+    assert "api/public.toml" not in out.replace(RULE, "")
 
 
 def test_a_missing_namespace_entry_names_the_custom_manifest_path(tmp_path, capsys):
@@ -979,7 +992,8 @@ def test_a_missing_namespace_entry_names_the_custom_manifest_path(tmp_path, caps
     assert _run(repo, f"{tip}~1..{tip}", CUSTOM) == 1
     out = capsys.readouterr().out
     assert f"no namespace entry for otto.docker in {CUSTOM}" in out
-    assert "api/public.toml" not in out
+    # RULE names the default manifest; the findings are the output without it.
+    assert "api/public.toml" not in out.replace(RULE, "")
 
 
 def test_regeneration_reads_the_custom_manifest_path(tmp_path):
@@ -1014,7 +1028,7 @@ def test_a_merge_whose_only_change_downgrades_a_namespace_needs_a_mark_on_the_me
     out = capsys.readouterr().out
     assert f"commit {merge} merge side" in out
     assert f"commit {side}" not in out
-    assert "stable" in out
+    assert "stability downgraded: otto stable -> provisional" in out
 
 
 def test_a_deletion_after_the_conversion_in_one_range_is_judged_by_v2_rules(tmp_path, capsys):
@@ -1352,3 +1366,93 @@ def test_a_correction_does_not_excuse_an_unmarked_commit_in_the_same_range(tmp_p
     out = capsys.readouterr().out
     assert f"commit {drop} feat(api): drop Beta" in out
     assert "refused: Corrects" not in out
+
+
+def test_conversion_inventory_lists_the_breaks_then_the_declaration(tmp_path):
+    """Inventory 5 of the cutover's footer (spec 1 §7): the v1 -> v2 golden and TOML diff."""
+    repo, tip = _convert(
+        tmp_path,
+        [*V1, "otto:Gone", "json:dumps"],
+        "src_files, dest_dir, mode=None",
+        msg="build(api)!: switch to the dump",
+    )
+    assert conversion_inventory(repo.root, f"{tip}~1", tip, Path("golden.txt")) == [
+        "breaking: json:dumps -- not carried into the v2 golden",
+        "breaking: otto:Gone -- not carried into the v2 golden",
+        "info: widened otto.host.host:Host.put(src_files, dest_dir); no mark needed",
+        "namespace: otto tier 1 provisional",
+        "namespace: otto.host tier 1 provisional",
+    ]
+
+
+def _formats_reversed(text):
+    """Reverse the dump's format records: the producer's canonical order would hide no sort."""
+    lines = text.splitlines(keepends=True)
+    formats = [line for line in lines if line.startswith("format\t")]
+    return "".join([line for line in lines if not line.startswith("format\t")] + formats[::-1])
+
+
+def test_conversion_inventory_lists_each_declared_format_with_its_versions(tmp_path):
+    repo = TmpGitRepo(tmp_path)
+    repo.write("golden.txt", "otto:f\n")
+    base = repo.commit("chore: v1")
+    files = {**_versions([7, 8]), "otto/versions.py": "READS = [7, 8]\nOLD = [1]\n"}
+    manifest = FORMATS + '\n[formats.archive]\nreads = "otto.versions:OLD"\n'
+    tip = _commit_dump(
+        repo, files, "build(api)!: the dump", manifest=manifest, edit=_formats_reversed
+    )
+    assert conversion_inventory(repo.root, base, tip, Path("golden.txt")) == [
+        "namespace: otto tier 1 provisional",
+        "format: archive reads I:1 writes -",
+        "format: store reads I:7 I:8 writes -",
+    ]
+
+
+HOST_FIRST = '[namespaces."otto.host"]\ntier = 1\nstability = "provisional"\n\n' + OTTO_ONLY
+TWO_WIDENED = (
+    "from typing import Protocol\n__all__ = ['Host']\n"
+    "class Host(Protocol):\n"
+    "    def put(self, src_files, dest_dir, mode=None): ...\n"
+    "    def get(self, src_files, dest_dir, mode=None): ...\n"
+)
+
+
+def test_conversion_inventory_sorts_each_group_whatever_the_input_order(tmp_path):
+    """The golden lists Zed, Gone, put, get and the manifest otto.host first; each group sorts."""
+    repo = TmpGitRepo(tmp_path)
+    repo.write(
+        "golden.txt",
+        "otto:f\notto:Zed\notto:Gone\n"
+        "otto.host.host:Host.put(src_files, dest_dir)\n"
+        "otto.host.host:Host.get(src_files, dest_dir)\n",
+    )
+    base = repo.commit("chore: v1")
+    files = {**_init(["f"], "def f(): pass\n"), "otto/host/__init__.py": TWO_WIDENED}
+    tip = _commit_dump(repo, files, "build(api)!: the dump", manifest=HOST_FIRST)
+    assert conversion_inventory(repo.root, base, tip, Path("golden.txt")) == [
+        "breaking: otto:Gone -- not carried into the v2 golden",
+        "breaking: otto:Zed -- not carried into the v2 golden",
+        "info: widened otto.host.host:Host.get(src_files, dest_dir); no mark needed",
+        "info: widened otto.host.host:Host.put(src_files, dest_dir); no mark needed",
+        "namespace: otto tier 1 provisional",
+        "namespace: otto.host tier 1 provisional",
+    ]
+
+
+def test_conversion_inventory_refuses_anything_but_a_v1_to_v2_pair(tmp_path):
+    repo, tip = _convert(tmp_path, V1, "src_files, dest_dir")
+    with pytest.raises(ValueError, match="has no api-snapshot v1 golden"):
+        conversion_inventory(repo.root, tip, tip, Path("golden.txt"))
+    with pytest.raises(ValueError, match="has no api-snapshot v2 golden"):
+        conversion_inventory(repo.root, f"{tip}~1", f"{tip}~1", Path("golden.txt"))
+
+
+def test_conversion_inventory_reads_commits_never_the_index(tmp_path):
+    """An empty rev would read ``:golden.txt``, the staged file; it is refused as no commit."""
+    repo, tip = _convert(tmp_path, V1, "src_files, dest_dir")
+    repo.write("golden.txt", "otto:f\n")
+    repo.git("add", "golden.txt")
+    with pytest.raises(ValueError, match="'' is not a commit"):
+        conversion_inventory(repo.root, "", tip, Path("golden.txt"))
+    with pytest.raises(ValueError, match="'no-such-rev' is not a commit"):
+        conversion_inventory(repo.root, f"{tip}~1", "no-such-rev", Path("golden.txt"))

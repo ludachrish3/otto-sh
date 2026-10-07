@@ -23,62 +23,9 @@ impair``/``repair``/``list``, and ``otto.link.sentinel`` tags the detached
 cycle, ``otto.link.sandbox`` the throwaway namespace it tests in,
 ``otto.link.probes`` the probe commands and their parsers, and
 ``otto.link.judge`` the rule that turns each measurement into a verdict. The
-verdicts themselves come from :doc:`otto.check <check>`. See the
+verdicts themselves come from :doc:`otto.check <internals/check>`. See the
 :doc:`link guide <../cli/link/index>` for CLI usage, the in-path model, and
 the Python API.
 
 .. automodule:: otto.link
-   :members:
-   :exclude-members: AppliedPlacement, DirectionState, DryRunPlan, FlowDirection,
-      IMPAIRERS,
-      ImpairReport, ImpairmentParams, Link, LinkCheckReport, LinkCommandFailedError,
-      LinkEndpoint, LinkHostUnreachableError, LinkImpairer, LinkNotMeasuredError,
-      LinkState, NetEmImpairer, Placement,
-      Provenance, RepairAllReport, RepairReport, ScopedState, Selector,
-      build_impairer, check_link, find_link, impair_link, make_link_id,
-      make_static_link_id,
-      parse_percent, parse_rate, parse_time_ms, read_link_states,
-      register_impairer, repair_all, repair_link
-
-.. automodule:: otto.link.model
-   :members:
-
-.. automodule:: otto.link.derive
-   :members:
-
-.. automodule:: otto.link.params
-   :members:
-
-.. automodule:: otto.link.impairer
-   :members:
-
-.. automodule:: otto.link.netem
-   :members:
-
-.. automodule:: otto.link.placement
-   :members:
-
-.. automodule:: otto.link.manage
-   :members:
-
-.. automodule:: otto.link.sentinel
-   :members:
-
-.. automodule:: otto.link.check
-   :members:
-
-.. automodule:: otto.link.check_live
-   :members:
-
-.. automodule:: otto.link.sandbox
-   :members:
-
-.. automodule:: otto.link.probes
-   :members:
-   :ignore-module-all:
-
-.. automodule:: otto.link.judge
-   :members:
-
-.. automodule:: otto.models.link
    :members:

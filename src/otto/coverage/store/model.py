@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..formats import STORE_READ_VERSIONS, STORE_WRITE_VERSIONS
+
 TIER_SYSTEM = "system"
 """Conventional tier name used by the merged .gcda pipeline.
 
@@ -26,7 +28,7 @@ Any string is a valid tier name; this constant spares callers a string
 literal when they mean the canonical system-coverage tier.
 """
 
-STORE_FORMAT_VERSION = 8
+[STORE_FORMAT_VERSION] = STORE_WRITE_VERSIONS
 """``store.json`` schema version, bumped on breaking on-disk changes.
 
 Version 2 is the first version to carry an explicit ``"format"`` key —
@@ -58,10 +60,11 @@ the denominator. Version 7 also carries an additive, optional ``files[].function
 list (2026-09); absent keys load as no functions, so no bump.
 Version 8 adds a per-run ``product`` (the ``<product>`` segment of
 ``cov/<host>/<product>/``; ``""`` for a synthetic or unnamed unit run).
-There is no migration shim: a file that does not declare this exact
-version fails loud in :meth:`CoverageStore.load` with a message telling
-the caller to regenerate it, rather than silently mis-reading
-renamed/reshaped keys under old names.
+The version ``save`` writes: the one entry of ``STORE_WRITE_VERSIONS``
+(``otto.coverage.formats``), unpacked so that a second write version fails at
+import until a writer chooses it. There is no migration shim: ``load``
+accepts only ``STORE_READ_VERSIONS`` and fails loud on anything else, telling
+the caller to regenerate rather than mis-reading renamed or reshaped keys.
 """
 
 STAT_TYPES: tuple[str, ...] = ("line", "branch", "decision")
@@ -693,15 +696,13 @@ class CoverageStore:
         """Deserialise a store from JSON.
 
         Raises:
-            ValueError: The file's ``"format"`` key does not match
-                :data:`STORE_FORMAT_VERSION` (including files with no
-                ``"format"`` key at all — everything predating this
-                store-format version).  There is no migration shim; the
-                message tells the caller to regenerate the store.
+            ValueError: The file's ``"format"`` key is not one of
+                ``STORE_READ_VERSIONS`` (including files with no
+                ``"format"`` key at all).
         """
         data = json.loads(path.read_text())
         found_format = data.get("format") if isinstance(data, dict) else None
-        if found_format != STORE_FORMAT_VERSION:
+        if found_format not in STORE_READ_VERSIONS:
             # Distinguish "no format key at all" (found_format is None) from
             # "a format key was present but isn't the int we expect" (e.g. a
             # hand-edited store.json with "format": "3") — the latter must
@@ -714,8 +715,8 @@ class CoverageStore:
             else:
                 found_label = f"{found_format!r} (expected an int)"
             raise ValueError(
-                f"coverage store format v{STORE_FORMAT_VERSION} required; "
-                f"found {found_label} — regenerate with otto cov get/report"
+                f"coverage store format {' or '.join(f'v{v}' for v in STORE_READ_VERSIONS)} "
+                f"required; found {found_label} — regenerate with otto cov get/report"
             )
 
         tier_order = data.get("tier_order") or []

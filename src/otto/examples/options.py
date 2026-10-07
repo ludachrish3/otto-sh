@@ -49,6 +49,8 @@ from pydantic import Field
 
 from otto import options
 
+__all__ = ["DeviceTestOptions", "RepoOptions"]
+
 
 @options
 class RepoOptions:

@@ -37,7 +37,7 @@ def test_marker_nests():
 
 def test_bootstrap_result_declares_an_ordered_repos_field():
     # Kills: the FIELD never landing on the carrier (dropped, or renamed out
-    # from under `otto.config.get_ordered_repos`, which is nothing but this
+    # from under `otto.bootstrap.get_ordered_repos`, which is nothing but this
     # attribute read) — every orchestrator walk would die on an AttributeError.
     #
     # IT DOES NOT KILL AN UNPOPULATED FIELD, though the shape invites the

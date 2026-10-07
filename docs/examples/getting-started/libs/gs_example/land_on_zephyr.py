@@ -2,7 +2,7 @@
 
 # doc: begin land-on-zephyr
 from otto import SetupContext
-from otto.host.session import HostSession
+from otto.host import HostSession
 
 
 async def land_on_zephyr(session: HostSession, ctx: SetupContext) -> None:

@@ -27,6 +27,7 @@ def test_every_shipped_file_exists_and_the_package_holds_nothing_else():
         *kmodcov.SHIPPED_FILES,
         kmodcov.VERSION_HEADER,
         "__init__.py",
+        "formats.py",
         "library.py",
     }, (
         "the wheel ships every file under src/otto/: a build product or a stray file here "

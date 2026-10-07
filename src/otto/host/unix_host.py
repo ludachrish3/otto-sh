@@ -709,7 +709,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     # TODO: Make sync versions of cmd and file methods that just wraps the async def
 
     @override
-    async def _login(self, user: str | None = None, force: bool = False) -> None:
+    async def run_login(self, user: str | None = None, force: bool = False) -> None:
         """Open an interactive shell on this host, bridged to the local terminal.
 
         Dispatches on ``self.term``:
@@ -718,7 +718,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
           multiplexes channels, so opening a PTY-backed process on an
           existing connection is cheap). Works transparently through
           configured hops because the connection is already tunneled.
-        - **telnet**: builds a *dedicated* :class:`TelnetClient` for
+        - **telnet**: builds a *dedicated* :class:`~otto.host.telnet.TelnetClient` for
           this session with ``auto_window_resize=True`` and opens it in
           ``interactive=True`` mode so the remote shell echoes the
           user's keystrokes back (the normal connect path sends
@@ -923,7 +923,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 await client.close()
 
     @override
-    async def _logout(self) -> Result:
+    async def run_logout(self) -> Result:
         """Reset this host's serial console to its login prompt (see ``BaseHost.logout``).
 
         Closes otto's own session on this host first (it holds the

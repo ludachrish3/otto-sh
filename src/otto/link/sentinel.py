@@ -14,17 +14,25 @@ otto's, owner-agnostic.
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ..host.daemon import dec, enc, encode_token, parse_ps_output, ps_scan_command, split_token
-from .params import Selector
+from .params import IMPAIR_SENTINEL_READ_VERSIONS, Selector
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    _Decoded = tuple[str, str, Selector | None] | None
 
 IMPAIR_SENTINEL_PREFIX = "otto-impair"
 IMPAIR_SENTINEL_VERSION = "v1"
-IMPAIR_SENTINEL_VERSION_V2 = "v2"
+"""The whole-link writer's version (:func:`encode_impair_sentinel`)."""
 IMPAIR_SENTINEL_VERSION_V3 = "v3"
-_PAYLOAD_SEGMENTS_V1 = 2
-_PAYLOAD_SEGMENTS_V2 = 4
-_PAYLOAD_SEGMENTS_V3 = 6
+"""The per-selector writer's version (:func:`encode_impair_sentinel_v3`).
+
+Each writer names its own version; a test holds the two equal to
+``IMPAIR_SENTINEL_WRITE_VERSIONS`` (``otto.link.params``), so neither can emit
+an undeclared one."""
 
 IMPAIR_PS_COMMAND: str = ps_scan_command(IMPAIR_SENTINEL_PREFIX)
 """The per-host expire-timer scan. Built by
@@ -78,33 +86,49 @@ def _selector_or_none(port_text: str, proto_text: str, side_text: str) -> Select
         return None
 
 
+def _decode_v1(payload: list[str]) -> "_Decoded":
+    return dec(payload[0]), dec(payload[1]), None
+
+
+def _decode_v2(payload: list[str]) -> "_Decoded":
+    selector = _selector_or_none(dec(payload[2]), dec(payload[3]), "")
+    return None if selector is None else (dec(payload[0]), dec(payload[1]), selector)
+
+
+def _decode_v3(payload: list[str]) -> "_Decoded":
+    port, end = dec(payload[2]), dec(payload[3])
+    selector = _selector_or_none(f"{port}:{end}" if end else port, dec(payload[4]), dec(payload[5]))
+    return None if selector is None else (dec(payload[0]), dec(payload[1]), selector)
+
+
+_DECODERS: "dict[str, tuple[int, Callable[[list[str]], _Decoded]]]" = {
+    "v1": (2, _decode_v1),
+    "v2": (4, _decode_v2),
+    "v3": (6, _decode_v3),
+}
+"""Each readable version's payload segment count and decoder; keys equal the declared reads.
+
+:func:`parse_impair_sentinel` walks ``IMPAIR_SENTINEL_READ_VERSIONS``, never
+this table's keys, so a decoder whose version is not declared reads nothing."""
+
+
 # DEBT(no-tuple-return): three parsed fields; callers index into it.
 # ast-grep-ignore: no-tuple-return
 def parse_impair_sentinel(token: str) -> tuple[str, str, Selector | None] | None:
-    """Decode a v1, v2 or v3 token to ``(link_id, netdev, selector)``; ``None`` if not ours.
+    """Decode a token to ``(link_id, netdev, selector)``; ``None`` if not ours or undeclared.
 
     v1 decodes with ``selector=None``; v2 (older otto) decodes to a
-    single-port, either-side selector. Unknown versions and malformed
-    payloads (non-numeric/out-of-range port, unknown proto/side) parse to
-    ``None``, never an error — the framing stability contract.
+    single-port, either-side selector. Versions outside
+    ``IMPAIR_SENTINEL_READ_VERSIONS`` and malformed payloads
+    (non-numeric/out-of-range port, unknown proto/side) parse to ``None``,
+    never an error — the framing stability contract.
     """
-    v1 = split_token(token, IMPAIR_SENTINEL_PREFIX, IMPAIR_SENTINEL_VERSION, _PAYLOAD_SEGMENTS_V1)
-    if v1 is not None:
-        return dec(v1[0]), dec(v1[1]), None
-    v3 = split_token(
-        token, IMPAIR_SENTINEL_PREFIX, IMPAIR_SENTINEL_VERSION_V3, _PAYLOAD_SEGMENTS_V3
-    )
-    if v3 is not None:
-        port, end = dec(v3[2]), dec(v3[3])
-        selector = _selector_or_none(f"{port}:{end}" if end else port, dec(v3[4]), dec(v3[5]))
-        return None if selector is None else (dec(v3[0]), dec(v3[1]), selector)
-    v2 = split_token(
-        token, IMPAIR_SENTINEL_PREFIX, IMPAIR_SENTINEL_VERSION_V2, _PAYLOAD_SEGMENTS_V2
-    )
-    if v2 is None:
-        return None
-    selector = _selector_or_none(dec(v2[2]), dec(v2[3]), "")
-    return None if selector is None else (dec(v2[0]), dec(v2[1]), selector)
+    for version in IMPAIR_SENTINEL_READ_VERSIONS:
+        segments, decode = _DECODERS[version]
+        payload = split_token(token, IMPAIR_SENTINEL_PREFIX, version, segments)
+        if payload is not None:
+            return decode(payload)
+    return None
 
 
 def parse_impair_ps(output: str) -> list[ImpairTimer]:

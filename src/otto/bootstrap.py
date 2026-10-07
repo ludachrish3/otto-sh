@@ -21,6 +21,13 @@ deliberately NOT part of bootstrap — it happens lazily at first access.
 ``bootstrap()`` is idempotent: the CLI entrypoint calls it before argv
 parsing, ``open_context()`` calls it lazily, and repeated calls return the
 same :class:`BootstrapResult`.
+
+The five repo accessors live here too: :func:`get_repos` and
+:func:`get_ordered_repos` read :func:`bootstrap`'s result, :func:`get_env`
+reads :func:`discover`'s, and :func:`is_bootstrapped` and
+:func:`get_completion_names` read this module's state. Each runs discovery
+or bootstrap on first use, never at import, and each looks its source up
+when called, so a test's patch of ``otto.bootstrap.bootstrap`` reaches it.
 """
 
 import importlib
@@ -33,6 +40,21 @@ from .registry import registering_repo
 if TYPE_CHECKING:
     from .config.repo import Repo
     from .models.settings import OttoEnvSettings
+
+__all__ = [
+    "BootstrapError",
+    "BootstrapResult",
+    "BootstrapWarning",
+    "DependencyError",
+    "ProjectScopeError",
+    "bootstrap",
+    "get_completion_names",
+    "get_env",
+    "get_ordered_repos",
+    "get_repos",
+    "invalidate",
+    "is_bootstrapped",
+]
 
 
 class BootstrapError(OttoError):
@@ -117,7 +139,7 @@ Set once discovery and the dependency pass are done — which is when ``repos``
 and ``ordered_repos`` are final — and cleared when ``bootstrap()`` leaves. It
 exists so a RE-ENTRANT ``bootstrap()`` has something true to answer with, and
 the reentrance is real: the import phase runs repo ``init`` modules, i.e. user
-code, and anything there that reaches ``config.get_repos()``
+code, and anything there that reaches :func:`get_repos`
 — directly, or by way of a stamped host whose product providers consult
 :func:`~otto.config.scope.scope_for_repo` — lands back here with ``_result``
 still unset. Without this, that call composed a SECOND, nested root.
@@ -350,6 +372,32 @@ def bootstrap() -> BootstrapResult:
     return _result
 
 
+def get_repos() -> "list[Repo]":
+    """Return the configured repos, as discovered (bootstraps lazily).
+
+    Every repo whose ``settings.toml`` parsed, in ``OTTO_SUT_DIRS`` order,
+    including one the dependency pass skipped; a repo whose settings would not
+    parse is absent, and its error is in :attr:`BootstrapResult.errors`.
+    """
+    return bootstrap().repos
+
+
+def get_ordered_repos() -> "list[Repo]":
+    """Return configured repos in dependency-topological order (bootstraps lazily).
+
+    Dependencies first, dependents after — the walk order the ``otto.project``
+    orchestrator installs in (and reverses to uninstall). Skipped repos
+    (unsatisfied required deps) are absent, exactly as they are absent from
+    phase-2 registration.
+    """
+    return bootstrap().ordered_repos
+
+
+def get_env() -> "OttoEnvSettings":
+    """Return the startup environment settings (runs discovery lazily, never bootstrap)."""
+    return discover().env
+
+
 def is_bootstrapped() -> bool:
     """Report whether bootstrap has already started — never forces it.
 
@@ -359,15 +407,20 @@ def is_bootstrapped() -> bool:
     :func:`invalidate`. Mid-bootstrap counts as bootstrapped ON PURPOSE: an
     init module that builds a host — directly, or by way of a stamped host
     whose product/dev-tool providers apply — is running INSIDE that window,
-    and :func:`~otto.config.bootstrapped.get_repos` already answers correctly and for free
+    and :func:`get_repos` already answers correctly and for free
     there (the re-entrant branch in :func:`bootstrap` returns
     ``_in_progress``, whose ``repos``/``ordered_repos`` are final by then).
     Treating that window as "not bootstrapped" would make a host built mid-
     bootstrap silently drop its declared entries while its providers still
     applied. The non-forcing probe: a caller that must not TRIGGER discovery
     or repo init imports as a side effect of merely asking reads this instead
-    of calling :func:`bootstrap` or :func:`~otto.config.bootstrapped.get_repos` — only a
+    of calling :func:`bootstrap` or :func:`get_repos` — only a
     process that has not started bootstrap at all collects nothing.
+
+    Callers that must not pay bootstrap's cost as a side effect of merely
+    asking — e.g. :func:`otto.declared.declared_for_host`, reached from
+    ``create_host_from_dict`` in bare-library and pre-bootstrap processes —
+    check this first and treat ``False`` as "nothing loaded yet".
     """
     return _result is not None or _in_progress is not None
 
@@ -379,7 +432,25 @@ def set_completion_names(names: "dict[str, Any] | None") -> None:
 
 
 def get_completion_names() -> "dict[str, Any] | None":
-    """Return the completion-cache snapshot, or None outside the fast path."""
+    """Return cached instruction/suite/host data when the completion fast path is active.
+
+    Return ``None`` when not active.
+
+    Returned keys:
+
+    - ``instructions`` / ``suites``: each a list of
+      ``{"name": str, "options": [...]}`` dicts. :mod:`otto.cli.main` rebuilds
+      Typer stubs from them.
+    - ``hosts``: a plain list of host-ID strings. :mod:`otto.cli.host`'s
+      ``host_id`` completer prefers this over live ``lab.json`` parsing.
+    - ``term_backends``: a ``list[str]`` of registered term backend names.
+      :mod:`otto.cli.host`'s ``--term`` completer prefers this over the live
+      registry.
+    - ``transfer_backends``: a list of
+      ``{"name": str, "host_families": [str, ...]}`` dicts for registered
+      transfer backends. :mod:`otto.cli.host`'s ``--transfer`` completer
+      prefers this over the live registry.
+    """
     return _completion_names
 
 

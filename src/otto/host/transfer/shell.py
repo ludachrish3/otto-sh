@@ -271,7 +271,7 @@ after).
 Collision risk, deliberately re-checked rather than waved through: two
 stagings collide only if they draw the same 32-bit token AND target the
 same directory AND the same destination basename AND overlap in time.
-Neither ``_run_put`` nor ``_run_get`` has any concurrency of its own: this
+Neither ``run_put`` nor ``run_get`` has any concurrency of its own: this
 backend answers
 :attr:`~otto.host.transfer.BaseFileTransfer.concurrency_limit` 1 and the
 base dispatcher wraps every file in that one permit, so exactly one file is
@@ -1122,8 +1122,8 @@ class ShellFileTransfer(UnixFileTransfer):
     THIS CLASS IS THE STAGING SKELETON, not the encoding. It names the temp,
     handles the empty-file case, verifies before the rename, renames, and
     cleans up; a ``ShellCodec`` moves the bytes in between. Which one is
-    ``_select_codec``'s single decision, taken once per ``_run_put`` /
-    ``_run_get`` from the device's own probe: ``Base64Codec`` wherever
+    ``_select_codec``'s single decision, taken once per ``run_put`` /
+    ``run_get`` from the device's own probe: ``Base64Codec`` wherever
     ``base64`` is available, ``UuencodeCodec`` on a device measured not to
     have it.
 
@@ -1234,7 +1234,7 @@ class ShellFileTransfer(UnixFileTransfer):
     # ------------------------------------------------------------------
 
     @override
-    async def _run_put(
+    async def run_put(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -1252,12 +1252,12 @@ class ShellFileTransfer(UnixFileTransfer):
         read as "we tried and it failed" when nothing was tried at all. See
         :exc:`~otto.host.errors.UnsupportedOnUserlandError`.
 
-        The CODEC is chosen first, by :meth:`_select_codec`, which also owns
+        The CODEC is chosen first, by ``_select_codec``, which also owns
         the refusal for a device that can run neither: without an encoder no
         chunk can be moved at all, so nothing else here can run.
         ``checksum == "absent" and stat_size == "absent"`` together is
-        checked second: :meth:`_put_one` always verifies its temp before the
-        final ``mv`` (see :meth:`_verify_integrity`), and with neither a
+        checked second: ``_put_one`` always verifies its temp before the
+        final ``mv`` (see ``_verify_integrity``), and with neither a
         digest tool nor a size probe on the device there is no way to run
         that check at all -- refusing here, before a single chunk is sent,
         keeps that requirement as loud as the ``base64`` one instead of
@@ -1268,8 +1268,8 @@ class ShellFileTransfer(UnixFileTransfer):
 
         ``resolve()`` is idempotent, serialized, and rate-limited (see
         :meth:`~otto.host.userland.Userland.resolve`), so calling it once per
-        ``_run_put`` -- rather than once per file -- is the intended usage,
-        matching :meth:`~otto.host.transfer.nc.NcFileTransfer.prepare`.
+        ``run_put`` -- rather than once per file -- is the intended usage,
+        matching ``NcFileTransfer.prepare``.
 
         One file at a time -- this backend has no concurrency story of its
         own (every chunk is one more exec round trip on the same control
@@ -1297,10 +1297,10 @@ class ShellFileTransfer(UnixFileTransfer):
                 src, dest_dir / src.name, codec, checksum, stat_size, handler
             )
 
-        return await self._dispatch_per_file(src_files, _put_file, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, _put_file, concurrent=concurrent)
 
     @override
-    async def _run_get(
+    async def run_get(
         self,
         src_files: list[Path],
         dest_dir: Path,
@@ -1311,13 +1311,13 @@ class ShellFileTransfer(UnixFileTransfer):
         """One-at-a-time shell GET: size it, pick a codec, then decode one file at a time.
 
         Two userland questions are answered before any file is dispatched,
-        for the same reason :meth:`_run_put`'s own two are: each is about
+        for the same reason :meth:`run_put`'s own two are: each is about
         the WHOLE transfer, not about any one file, so answering it
         late would read as "we tried and it failed" when nothing was tried
         at all. GET's two are not the same PAIR as PUT's, though: GET never
         needs the ``checksum``-or-``stat_size`` refusal PUT does, because
         GET's ``checksum == "absent"`` fallback reuses the size it already
-        fetched for chunk planning (see :meth:`_verify_integrity`) rather
+        fetched for chunk planning (see ``_verify_integrity``) rather
         than needing a second, independent probe the way PUT's fresh
         query on its temp does -- so GET's ``stat_size == "absent"`` refusal
         below already covers the one case that would otherwise leave GET
@@ -1332,15 +1332,15 @@ class ShellFileTransfer(UnixFileTransfer):
         and a non-BusyBox unix host can answer differently, so the branch
         is real and stays.
 
-        The CODEC is chosen second, by the same :meth:`_select_codec`
-        :meth:`_run_put` calls -- but for the applet THIS direction needs.
+        The CODEC is chosen second, by the same ``_select_codec``
+        :meth:`run_put` calls -- but for the applet THIS direction needs.
         The device only ENCODES for GET, so what it must have is
         ``uuencode``, not the ``uudecode`` PUT asks about; the ``base64``
         arm needs the same binary either way, even though no *decode* flag of
         its own is ever emitted remotely (decoding happens locally; see
-        :meth:`_get_one`).
+        ``_get_one``).
 
-        One file at a time, like :meth:`_run_put`: this backend has no
+        One file at a time, like :meth:`run_put`: this backend has no
         concurrency story of its own, so ``concurrent=True`` is a no-op
         here -- but every file is attempted, and a failure is that file's
         entry rather than the batch's.
@@ -1364,12 +1364,12 @@ class ShellFileTransfer(UnixFileTransfer):
                 src, dest_dir / src.name, codec, stat_size, checksum, handler
             )
 
-        return await self._dispatch_per_file(src_files, _get_file, concurrent=concurrent)
+        return await self.dispatch_per_file(src_files, _get_file, concurrent=concurrent)
 
     def _select_codec(self, direction: str, applet: str) -> ShellCodec:
         """Choose the codec this host can actually run, or refuse before anything is sent.
 
-        Called once per ``_run_put`` / ``_run_get``, after ``resolve()``, and
+        Called once per ``run_put`` / ``run_get``, after ``resolve()``, and
         it is the ONLY place either direction decides how bytes are encoded.
 
         BASE64 WINS WHEREVER IT IS AVAILABLE, and the preference is a
@@ -1762,7 +1762,7 @@ class ShellFileTransfer(UnixFileTransfer):
         locally) when source and destination are on different filesystems.
 
         Sizing runs first, via *stat_size* (``"stat"`` or ``"wc"`` --
-        ``"absent"`` is refused earlier, in :meth:`_run_get`, before this
+        ``"absent"`` is refused earlier, in :meth:`run_get`, before this
         method is ever called), and the number it returns is handed to
         *codec* as :attr:`GetChunkLoop.total`. PULLING the bytes is then one
         :meth:`ShellCodec.fetch_chunks` call: how many chunks that is, what

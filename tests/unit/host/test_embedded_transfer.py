@@ -398,7 +398,7 @@ class TestPutProgress:
         src.write_bytes(b"x" * 100)
 
         calls: list = []
-        status, err = _pf(await xfer._run_put([src], RAM, _spy_factory(calls)), src)
+        status, err = _pf(await xfer.run_put([src], RAM, _spy_factory(calls)), src)
         assert status == Status.Success, err
         assert len(calls) == 4
         # Bytes-done monotonically increases up to bytes-total.
@@ -422,7 +422,7 @@ class TestPutProgress:
         src.write_bytes(b"y" * 50)
 
         calls: list = []
-        await xfer._run_put([src], RAM, _spy_factory(calls))
+        await xfer.run_put([src], RAM, _spy_factory(calls))
         assert calls[-1][2] == calls[-1][3] == 50
         assert_progress_invariants(
             _events(calls),
@@ -441,7 +441,7 @@ class TestPutProgress:
         src.write_bytes(b"")
 
         calls: list = []
-        status, err = _pf(await xfer._run_put([src], RAM, _spy_factory(calls)), src)
+        status, err = _pf(await xfer.run_put([src], RAM, _spy_factory(calls)), src)
         assert status == Status.Success, err
         assert calls == [(str(src), "/RAM:/empty.bin", 0, 0)]
 
@@ -474,7 +474,7 @@ class TestGetProgress:
         calls: list = []
         status, err = _sm(
             aggregate_transfer(
-                await xfer._run_get(
+                await xfer.run_get(
                     [RAM / "a.bin", RAM / "b.bin"],
                     tmp_path,
                     _spy_factory(calls),
@@ -486,7 +486,7 @@ class TestGetProgress:
         # Each event reports bytes_done == bytes_total (file-complete signal).
         for _src, _dst, done, total in calls:
             assert done == total > 0
-        # One `_run_get`, two files: ONE list holding TWO streams. The
+        # One `run_get`, two files: ONE list holding TWO streams. The
         # invariant is per file -- clause 2 refuses a foreign src rather than
         # filtering it -- so the events are split by src and each stream is
         # checked against its own size.

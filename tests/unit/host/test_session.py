@@ -42,27 +42,27 @@ class MockSession(FeedAfterWriteMixin, ShellSession):
         # Captures everything written to stdin (for assertions)
         self.written: list[str] = []
         # Set by feed_connection_lost(); consumed (and cleared) by the next
-        # _read_until_pattern wakeup, mirroring how feed_eof() drives the
+        # read_transport_until wakeup, mirroring how feed_eof() drives the
         # IncompleteReadError branch below.
         self._connection_lost_pending = False
         # Set by feed_write_broken_pipe(); consumed (and cleared) by the next
-        # _write() call, simulating the idle-death-then-write shape (see
+        # write_transport() call, simulating the idle-death-then-write shape (see
         # feed_write_broken_pipe's docstring).
         self._write_broken_pipe_pending = False
 
-    async def _open(self) -> None:
+    async def open_transport(self) -> None:
         # Create paired streams: what the session writes to "stdin" can be read
         # by the test, and what the test writes to "stdout" can be read by the session.
         self._out_reader = asyncio.StreamReader()
         # No real writer needed — we feed data directly into the StreamReader
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         if self._write_broken_pipe_pending:
             self._write_broken_pipe_pending = False
             raise BrokenPipeError("Channel not open for sending")
         self.written.append(data)
 
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         assert self._out_reader is not None
         buf = ""
         while True:
@@ -110,7 +110,7 @@ class MockSession(FeedAfterWriteMixin, ShellSession):
         A real dropped-transport failure (asyncssh.ConnectionLost) doesn't
         arrive as a clean EOF on the stream the way feed_eof() does — it's
         raised out of the underlying read call instead. Feed one byte to
-        wake the pending `_out_reader.read(1)`, and _read_until_pattern
+        wake the pending `_out_reader.read(1)`, and read_transport_until
         raises ConnectionLost as soon as it observes the pending flag,
         before treating that byte as content.
         """
@@ -136,7 +136,7 @@ class MockSession(FeedAfterWriteMixin, ShellSession):
 async def session() -> MockSession:
     """Create and initialize a MockSession."""
     s = MockSession()
-    await s._open()
+    await s.open_transport()
 
     async def init_handshake():
         await s._ensure_initialized()
@@ -400,7 +400,7 @@ class TestTimeout:
                 raise AssertionError("unreachable: the hang is cancelled by wait_for")
             raise asyncssh.ConnectionLost("keepalive gave up during recovery")
 
-        monkeypatch.setattr(session, "_read_until_pattern", reads)
+        monkeypatch.setattr(session, "read_transport_until", reads)
 
         result = await session.run_cmd("sleep 999", timeout=0.05)
 
@@ -430,7 +430,7 @@ class TestTimeout:
         Deterministic by construction: the broken-pipe flag is armed only
         after the begin marker lands (so it can't fire on the initial framed
         command write, already sent by then) and is consumed by the very
-        next ``_write()`` call -- recovery's Ctrl+C entry write, once the
+        next ``write_transport()`` call -- recovery's Ctrl+C entry write, once the
         command times out."""
         # Never feed the END marker -- the command hangs, forcing recovery.
         # ``then`` arms broken-pipe once BEGIN has landed, for recovery's
@@ -586,7 +586,7 @@ class TestZephyrRecovery:
     async def _init_session(self, frame_cls: type[CommandFrame]) -> MockSession:
         """A ``MockSession`` framed by ``frame_cls`` and past its readiness handshake."""
         session = MockSession(command_frame=frame_cls())
-        await session._open()
+        await session.open_transport()
         feed_task = asyncio.create_task(session.feed_after_write(session._ready_marker + "\n"))
         init_task = asyncio.create_task(session._ensure_initialized())
         await init_task
@@ -724,7 +724,7 @@ class TestShellHistorySuppression:
     async def _first_probe(**kwargs) -> tuple[MockSession, str]:
         """Drive a MockSession through its handshake; return it and what it wrote."""
         s = MockSession(**kwargs)
-        await s._open()
+        await s.open_transport()
         feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
         task = asyncio.create_task(s._ensure_initialized())
         await task
@@ -773,7 +773,7 @@ class TestSessionInit:
     @pytest.mark.asyncio
     async def test_init_sends_stty_and_ready_marker(self):
         s = MockSession()
-        await s._open()
+        await s.open_transport()
 
         async def init():
             await s._ensure_initialized()
@@ -1179,7 +1179,7 @@ class TestEnsureInitializedTimeout:
         """Marker never arrives -> ConnectionError, not an indefinite hang."""
         s = MockSession()
         s._init_timeout = 0.05  # shrink so the test is fast
-        await s._open()
+        await s.open_transport()
         # Never feed the READY marker — simulates a stuck login prompt.
 
         with pytest.raises(ConnectionError, match="never became ready"):
@@ -1193,7 +1193,7 @@ class TestEnsureInitializedTimeout:
         """Peer EOF mid-handshake also surfaces as a clear error."""
         s = MockSession()
         s._init_timeout = 5.0  # EOF fires first; timeout shouldn't be reached
-        await s._open()
+        await s.open_transport()
 
         # EOF is the event, so it rides ``then``, ordered after the handshake
         # probe write.
@@ -1209,7 +1209,7 @@ class TestHandshakeFailureNamesTheRealCondition:
     """The readiness failure must not accuse the device of being down (#260).
 
     ``_fail_init`` is reachable ONLY from ``_handshake``, which runs only after
-    ``_open()`` has already returned — for telnet the transport is established
+    ``open_transport()`` has already returned — for telnet the transport is established
     before the session is even built. So by construction the transport is up
     every time this message is raised, and "the device is unresponsive" is
     never true here. On a Zephyr console it sent a real investigation after
@@ -1221,7 +1221,7 @@ class TestHandshakeFailureNamesTheRealCondition:
         """Run a handshake that never confirms; return the raised message."""
         s = MockSession(command_frame=frame)
         s._init_timeout = 0.05
-        await s._open()
+        await s.open_transport()
         with pytest.raises(ConnectionError) as exc_info:
             await s._ensure_initialized()
         return str(exc_info.value)
@@ -1679,13 +1679,13 @@ class _ImmediateSession(ShellSession):
         self.closed = False
         self.model = ShellModel(user=user, challenges=prompts, **model_kw)  # ty: ignore[invalid-argument-type]
 
-    async def _open(self) -> None: ...
+    async def open_transport(self) -> None: ...
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         self.writes.append(data)
         self.model.wrote(data)
 
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         reply = self.model.reply()
         if reply is None:
             # Nothing to say. That is not a broken fake — the login-proxy
@@ -1982,13 +1982,13 @@ class _StubExecSession(ShellSession):
         # resync's identity check sees the target it was promised.
         self.model = ShellModel(user="admin", challenges=False)
 
-    async def _open(self) -> None: ...
+    async def open_transport(self) -> None: ...
 
-    async def _write(self, data: str) -> None:
+    async def write_transport(self, data: str) -> None:
         self.writes.append(data)
         self.model.wrote(data)
 
-    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         reply = self.model.reply()
         if reply is None:
             raise asyncio.TimeoutError("stub does not read: this shell does not prompt")

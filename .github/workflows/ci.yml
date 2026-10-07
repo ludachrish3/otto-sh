@@ -422,6 +422,13 @@ jobs:
           enable-cache: true
       - run: uv python install 3.10
       - run: uv run nox -s lint
+      # Every otto name the docs and shipped examples teach must be declared in
+      # api/public.toml, and the declaration must agree with the runtime
+      # (scripts/api_teaching.py). It runs before the marking step, which may
+      # detach to a pull request's head: like the lint above, it judges the tree
+      # the pull request would land.
+      - name: check-api-teaching — every taught otto name is declared
+        run: make check-api-teaching
       # A pull_request checks out GitHub's synthetic merge commit, which carries
       # no breaking mark. Under a v2 golden merges are judged against their first
       # parent, so a v2-era PR -- the golden at its base OR its head is v2, as in
@@ -430,6 +437,9 @@ jobs:
       # documented paths against the checked-out tree, and those live decisions
       # must not change.
       # tests/unit/scripts/test_ci_breaking_marks_checkout.py pins both paths.
+      # Whatever the event, a v2 golden at HEAD must open with exactly its two
+      # header lines (dump spec §2.1); the pre-flight below says so, naming the
+      # file, before the checker regenerates a single commit.
       - name: check-breaking-marks — a public-API golden deletion must be marked
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -444,6 +454,15 @@ jobs:
             RANGE="${{ github.event.before }}..HEAD"
           else
             RANGE="origin/main..HEAD"
+          fi
+          golden="$(mktemp)"
+          trap 'rm -f "$golden"' EXIT
+          if git show "HEAD:tests/unit/api_snapshot/public_api.txt" > "$golden" 2>/dev/null \
+              && grep -qxE '[[:space:]]*# api-snapshot v2[[:space:]]*' "$golden" \
+              && ! { [ "$(sed -n 1p "$golden")" = "# api-snapshot v2" ] \
+                && sed -n 2p "$golden" | grep -qxE '# producer-schema [0-9]+'; }; then
+            echo "::error file=tests/unit/api_snapshot/public_api.txt::a v2 golden starts with '# api-snapshot v2' and then '# producer-schema <n>'; regenerate it with make api-snapshot"
+            exit 1
           fi
           uv run python scripts/check_breaking_marks.py "$RANGE"
 
@@ -517,13 +536,37 @@ jobs:
       - run: uv python install 3.10
       - run: make wheel-smoke
 
+  # The API dump is byte-identical on every supported Python and under any hash
+  # seed (dump spec §6, D-3). Each leg regenerates HEAD's dump under its own
+  # PYTHONHASHSEED, from otto's runtime dependencies alone, and compares it with
+  # the committed golden. A declared enum whose records differ across minors
+  # fails here, on the minor that disagrees.
+  api-dump-invariance:
+    name: api-dump-invariance-${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - name: Set up Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+      - name: Regenerate the dump under Python ${{ matrix.python }} and compare it with the golden
+        run: uv run nox -s api_dump_invariance-${{ matrix.python }}
+
   # If any job above fails on a push to main, open (or update) a tracking
   # issue so a broken main surfaces without anyone having to watch the
   # Actions tab. Skipped for pull_request — PR failures are already visible
   # to the PR author in the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [lint-python, tests, unit-repeat, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke]
+    needs: [lint-python, tests, unit-repeat, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance]
     if: failure() && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -537,7 +580,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of lint-python / tests / unit-repeat / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke failed."
+            echo "Check the job logs to see which of lint-python / tests / unit-repeat / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance failed."
           } > issue-body.md
 
       - name: Create issue from file

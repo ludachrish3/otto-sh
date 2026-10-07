@@ -8,7 +8,7 @@ named bundles of lab-data defaults — are configuration and live in
 Call `register_os_profile()` from an init module listed in `settings.toml`:
 
 ```python
-from otto.host.os_profile import register_os_profile
+from otto.host import register_os_profile
 
 register_os_profile(
     "vendor-linux",
@@ -47,9 +47,8 @@ To ship a host subclass from an external repo:
 
 ```python
 from dataclasses import dataclass, field
-from otto.host.embedded_host import EmbeddedHost
+from otto.host import EmbeddedHost, register_host_class
 from otto.host.command_frame import ZephyrFrame
-from otto.host.os_profile import register_host_class
 
 
 @dataclass(slots=True, kw_only=True)
@@ -88,7 +87,7 @@ A `lab.json` entry reaches your class through a boundary spec, a
 {class}`~otto.models.host.HostSpec` subclass that validates the entry and
 refuses any key it does not declare.  `register_host_class` takes it as
 `spec=`.  Left out, it is the spec registered for the nearest registered
-ancestor — {class}`~otto.models.host.UnixHostSpec` under `UnixHost`,
+ancestor — {class}`~otto.host.UnixHostSpec` under `UnixHost`,
 {class}`~otto.models.host.EmbeddedHostSpec` under `EmbeddedHost` and
 `ZephyrHost` — so a class that only re-declares inherited fields, like
 `MyRtosHost` above, needs none.
@@ -100,9 +99,7 @@ succeeds but every lab entry that sets the field is refused at load:
 ```python
 from dataclasses import dataclass
 
-from otto.host.os_profile import register_host_class
-from otto.host.unix_host import UnixHost
-from otto.models.host import UnixHostSpec
+from otto.host import UnixHost, UnixHostSpec, register_host_class
 
 
 @dataclass(slots=True, kw_only=True)
@@ -175,7 +172,7 @@ Three things moved when the bases became dataclasses:
 ### Proving it
 
 ```python
-from otto.host.element import Element
+from otto.host import Element
 from otto.testing import assert_host_conforms, assert_host_registrable
 
 
@@ -221,7 +218,7 @@ Layer a defaults bundle over a custom class to create per-build profiles
 without writing a new subclass:
 
 ```python
-from otto.host.os_profile import register_os_profile
+from otto.host import register_os_profile
 
 # "my-rtos" is already registered as a host class (see above).
 register_os_profile(

@@ -90,7 +90,7 @@ def _clean_logging():
 
 def _repos(monkeypatch, *tables):
     repos = [_LevelsRepo(f"r{i}", dict(table)) for i, table in enumerate(tables)]
-    monkeypatch.setattr("otto.config.bootstrapped.get_repos", lambda: repos)
+    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: repos)
     return repos
 
 
