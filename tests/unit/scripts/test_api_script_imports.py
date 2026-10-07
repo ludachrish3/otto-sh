@@ -18,7 +18,8 @@ pytestmark = pytest.mark.interpreter_agnostic
 
 SCRIPTS = PROJECT_ROOT / "scripts"
 ROOTS = sorted(
-    [p.stem for p in SCRIPTS.glob("api_*.py")] + ["check_breaking_marks"],
+    [p.stem for p in SCRIPTS.glob("api_*.py")]
+    + ["check_breaking_marks", "release_bump", "release_events"],
 )
 
 

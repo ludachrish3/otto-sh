@@ -15,12 +15,22 @@ request is refused, with the offending commits named); `NEW_VERSION=` is the
 prerelease escape hatch and is never refused, only warned about, since a
 prerelease's exact number is the human's call.
 
+Which commits are breaking is not decided here: ``scripts/release_events.py``
+is the one event model this script, ``scripts/check_breaking_marks.py`` and
+``cliff.toml`` share -- marked commits plus corrections. Two refusals come
+from it. A correction since the last tag that does not validate is refused,
+because the release notes would misreport it. And a census that is only a
+patch bump while the events hold a breaking change means git-cliff and the
+model disagree about what a mark is; the release stops rather than ship the
+smaller bump. ``NEW_VERSION=`` turns the first into a warning and skips the
+second, as it does every census check.
+
 Pure decision logic lives in ``decide_bump`` (and its helpers), which take
 already-computed strings and never touch a subprocess -- that is what makes
 the module's own tests fast and hostless. ``main`` is the thin CLI shim that
-gathers those strings via git-cliff, bump-my-version and ``git log``, prints
-the chosen version to stdout (for the Makefile to capture) and everything
-else to stderr, and exits 1 on a refusal.
+gathers those strings via git-cliff, bump-my-version and the event model,
+prints the chosen version to stdout (for the Makefile to capture) and
+everything else to stderr, and exits 1 on a refusal.
 
 Usage, from the repo root, mirroring how the Makefile's `release` recipe
 invokes it::
@@ -31,7 +41,6 @@ invokes it::
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -39,32 +48,9 @@ from pathlib import Path
 
 from packaging.version import Version
 
-# Matches a Conventional Commits subject marked breaking: `type!:` or
-# `type(scope)!:`. Deliberately simple -- it only has to agree with
-# cliff.toml's own `breaking_always_bump_major`-adjacent behaviour closely
-# enough to name commits in a refusal message, not to re-implement git-cliff.
-_BREAKING_SUBJECT = re.compile(r"^[A-Za-z]+(?:\([^)]*\))?!:")
-
-# Conventional Commits allows either spelling of the breaking-change footer
-# token: "BREAKING CHANGE:" and "BREAKING-CHANGE:" are declared synonyms.
-_BREAKING_FOOTER = re.compile(r"BREAKING[ -]CHANGE:")
-
-
-def is_breaking_commit(subject: str, body: str) -> bool:
-    """Whether *subject*/*body* mark a Conventional Commits breaking change."""
-    return bool(_BREAKING_SUBJECT.match(subject)) or bool(_BREAKING_FOOTER.search(body))
-
-
-def offending_commits(commits: "list[tuple[str, str, str]]") -> "list[str]":
-    """Render the ``sha subject`` lines a refusal message names, in the given order.
-
-    *commits* is a list of ``(short_sha, subject, body)`` triples, oldest
-    calling convention matching ``git log``'s default newest-first order --
-    the caller decides the order, this only filters.
-    """
-    return [
-        f"{sha} {subject}" for sha, subject, body in commits if is_breaking_commit(subject, body)
-    ]
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+from scripts import release_events  # noqa: E402 -- path set up above
 
 
 def bump_floor(last_tag: str, census: str) -> str:
@@ -131,6 +117,47 @@ def census_guard(
     return None
 
 
+def _indented(lines: "list[str]") -> str:
+    """Indent every line of every entry by two spaces (an event may span lines)."""
+    return "\n".join("  " + line for entry in lines for line in entry.splitlines())
+
+
+def _corrections_message(last_tag: str, refusals: "list[str]") -> str:
+    """Name the corrections since *last_tag* that do not validate; ``""`` when none."""
+    if not refusals:
+        return ""
+    return (
+        f"corrections since v{last_tag} do not validate (scripts/release_events.py), so "
+        f"the release notes would misreport them:\n{_indented(refusals)}\n"
+    )
+
+
+def _decide_new_version(
+    new_version: str, census: "str | None", guard_message: "str | None"
+) -> BumpDecision:
+    """Decide the ``NEW_VERSION=`` branch of :func:`decide_bump`: honoured, at most warned."""
+    if guard_message is not None:
+        reason = guard_message.removeprefix("REFUSED: ")
+        return BumpDecision(
+            "honoured",
+            new_version,
+            f"WARNING: {reason} Honouring NEW_VERSION={new_version} without a "
+            "census comparison (prerelease versions are the human's call).",
+        )
+    if Version(new_version) < Version(census):
+        return BumpDecision(
+            "prerelease-warning",
+            new_version,
+            f"WARNING: NEW_VERSION={new_version} is lower than the conventional-commit "
+            f"census v{census}; proceeding anyway (prerelease versions are the human's call).",
+        )
+    return BumpDecision(
+        "honoured",
+        new_version,
+        f"targeting NEW_VERSION={new_version} (census: v{census})",
+    )
+
+
 def decide_bump(
     *,
     last_tag: str,
@@ -139,7 +166,8 @@ def decide_bump(
     bump: "str | None" = None,
     bump_computed: "str | None" = None,
     new_version: "str | None" = None,
-    offending: "list[str]" = (),
+    events: "list[str] | None" = None,
+    refusals: "list[str] | None" = None,
 ) -> BumpDecision:
     """Compare the census against a human's ``BUMP=``/``NEW_VERSION=`` override.
 
@@ -156,50 +184,60 @@ def decide_bump(
     covering all three unusable states (unavailable, empty, stuck at
     *last_tag*); see its docstring.
 
+    *events* describes the breaking release events since *last_tag* (one
+    entry per marked commit, its corrections indented under it) and
+    *refusals* each correction the event model refused. A refused correction
+    is refused here too, and a census that is only a patch bump while
+    *events* is non-empty means git-cliff and the model disagree; both stop
+    the census and ``BUMP=`` branches.
+
     For the census/``BUMP=`` branches, a guard hit is refused outright --
     there is nothing for a human's override to raise. The ``NEW_VERSION=``
-    branch is different: a guard hit there is downgraded to a WARNING and
-    *new_version* is honoured without a census comparison, since the
+    branch is different: a guard hit or a refused correction there is
+    downgraded to a WARNING and *new_version* is honoured, since the
     docstring/docs promise NEW_VERSION= is "never refused, only warned" --
-    the WARNING text is the guard's own message with its ``REFUSED: ``
+    the WARNING text is the refusal's own message with its ``REFUSED: ``
     prefix stripped, since an honoured decision must never say REFUSED.
     """
+    events = events or []
     guard_message = census_guard(last_tag, census, census_error=census_error)
+    refused_corrections = _corrections_message(last_tag, refusals or [])
 
     if new_version is not None:
-        if guard_message is not None:
-            reason = guard_message.removeprefix("REFUSED: ")
-            return BumpDecision(
-                "honoured",
-                new_version,
-                f"WARNING: {reason} Honouring NEW_VERSION={new_version} without a "
-                "census comparison (prerelease versions are the human's call).",
+        decision = _decide_new_version(new_version, census, guard_message)
+        if refused_corrections:
+            decision.message += (
+                f"\nWARNING: {refused_corrections}Honouring NEW_VERSION={new_version} anyway."
             )
-        new_v = Version(new_version)
-        census_v = Version(census)
-        if new_v < census_v:
-            return BumpDecision(
-                "prerelease-warning",
-                new_version,
-                f"WARNING: NEW_VERSION={new_version} is lower than the conventional-commit "
-                f"census v{census}; proceeding anyway (prerelease versions are the human's call).",
-            )
+        return decision
+
+    if refused_corrections:
         return BumpDecision(
-            "honoured",
-            new_version,
-            f"targeting NEW_VERSION={new_version} (census: v{census})",
+            "refused",
+            census or "",
+            f"REFUSED: {refused_corrections}NEW_VERSION= releases anyway, with this as a warning.",
         )
 
     if guard_message is not None:
         return BumpDecision("refused", census or "", guard_message)
 
     census_v = Version(census)
+    named = _indented(events) or "  (none found -- check LAST_TAG)"
+
+    if events and bump_floor(last_tag, census) == "patch":
+        return BumpDecision(
+            "refused",
+            census,
+            f"REFUSED: git-cliff's census v{census} is a patch bump, but these release "
+            f"events since v{last_tag} are breaking:\n{named}\ncliff.toml and "
+            "scripts/release_events.py disagree about what a mark is; reconcile them "
+            "before releasing.",
+        )
 
     if bump is not None:
         computed_v = Version(bump_computed)
         if computed_v < census_v:
             floor = bump_floor(last_tag, census)
-            named = "\n".join(f"  {c}" for c in offending) or "  (none found -- check LAST_TAG)"
             return BumpDecision(
                 "refused",
                 census,
@@ -262,32 +300,13 @@ def bump_my_version_new_version(bump: str, cwd: "Path | None" = None) -> str:
     ).stdout.strip()
 
 
-_FIELD_SEP = "\x1f"
-_RECORD_SEP = "\x1e"
-
-
-def git_log_commits(last_tag: str, cwd: "Path | None" = None) -> "list[tuple[str, str, str]]":
-    """Return ``(short_sha, subject, body)`` for every commit since *last_tag*, newest first."""
-    fmt = f"%h{_FIELD_SEP}%s{_FIELD_SEP}%b{_RECORD_SEP}"
-    raw = subprocess.run(  # noqa: S603 -- fixed argv, no shell, format/range are ours
-        ["git", "log", f"--format={fmt}", f"{last_tag}..HEAD"],  # noqa: S607 -- `git` via PATH
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    commits: "list[tuple[str, str, str]]" = []
-    for raw_record in raw.split(_RECORD_SEP):
-        record = raw_record.strip("\n")
-        if not record:
-            continue
-        sha, subject, body = record.split(_FIELD_SEP, 2)
-        commits.append((sha, subject, body))
-    return commits
+def read_release_events(last_tag: str, cwd: "Path | None" = None) -> "release_events.Events":
+    """Return the release events since *last_tag* (e.g. ``v0.11.0``)."""
+    return release_events.release_events(cwd or Path.cwd(), f"{last_tag}..HEAD")
 
 
 def main(argv: "list[str]") -> int:
-    """Gather the census and any override, decide, and report.
+    """Gather the census, the release events and any override, decide, and report.
 
     Prints the chosen version to stdout on success (what the Makefile
     captures via command substitution) and everything else to stderr; exits
@@ -324,11 +343,13 @@ def main(argv: "list[str]") -> int:
         census = None
         census_error = (exc.stderr or str(exc)).strip()
 
+    # Unconditional too: every branch must see a refused correction, and the
+    # census branch checks the census against the events.
+    events = read_release_events(f"v{last_tag}", cwd=args.cwd)
+
     bump_computed = None
-    offending: "list[str]" = []
     if new_version is None and bump is not None:
         bump_computed = bump_my_version_new_version(bump, cwd=args.cwd)
-        offending = offending_commits(git_log_commits(f"v{last_tag}", cwd=args.cwd))
 
     decision = decide_bump(
         last_tag=last_tag,
@@ -337,7 +358,8 @@ def main(argv: "list[str]") -> int:
         bump=bump,
         bump_computed=bump_computed,
         new_version=new_version,
-        offending=offending,
+        events=[event.describe() for event in events.events],
+        refusals=[f"{r.commit.sha[:12]} {r.commit.subject}: {r.reason}" for r in events.refusals],
     )
 
     print(decision.message, file=sys.stderr)

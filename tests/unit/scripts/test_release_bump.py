@@ -32,10 +32,9 @@ from scripts.release_bump import (
     census_guard,
     decide_bump,
     git_last_tag,
-    is_breaking_commit,
     main,
-    offending_commits,
 )
+from scripts.release_events import Commit, Event, Events, Refusal
 from tests._fixtures.gitrepo import TmpGitRepo
 from tests._fixtures.paths import PROJECT_ROOT
 
@@ -43,42 +42,77 @@ CLIFF = PROJECT_ROOT / "cliff.toml"
 
 
 # ---------------------------------------------------------------------------
-# is_breaking_commit / offending_commits — the classifier the refusal message
-# names commits with.
+# The release events -- marked commits and corrections, read by
+# scripts/release_events.py (its classifier is pinned in test_release_events.py).
 # ---------------------------------------------------------------------------
 
 
-def test_bang_after_type_is_breaking() -> None:
-    assert is_breaking_commit("feat!: drop the old flag", "")
+def _events(*marked: "tuple[str, str]", refused: "tuple[str, str, str] | None" = None) -> Events:
+    """Build an event list: ``(sha, subject)`` per marked commit, one optional refusal."""
+    events = Events(events=[Event(Commit(sha, subject, "")) for sha, subject in marked])
+    if refused is not None:
+        sha, subject, reason = refused
+        events.refusals.append(Refusal(Commit(sha, subject, ""), reason))
+    return events
 
 
-def test_bang_after_scope_is_breaking() -> None:
-    assert is_breaking_commit("fix(cli)!: rename a flag", "")
+@pytest.mark.parametrize(
+    ("bump", "bump_computed"),
+    [(None, None), ("minor", "0.11.0")],
+    ids=["census", "bump-at-the-census"],
+)
+def test_a_refused_correction_refuses_the_census_branch(
+    bump: "str | None", bump_computed: "str | None"
+) -> None:
+    """With no override, or with a ``BUMP=`` the census itself allows, a refusal stands."""
+    decision = decide_bump(
+        last_tag="0.10.0",
+        census="0.11.0",
+        bump=bump,
+        bump_computed=bump_computed,
+        refusals=["abc1234 fix(api)!: x: Corrects: def5678 is not an ancestor of this commit"],
+    )
+    assert decision.decision == "refused"
+    assert "is not an ancestor" in decision.message
+    assert "NEW_VERSION=" in decision.message
 
 
-def test_breaking_change_footer_is_breaking() -> None:
-    assert is_breaking_commit("feat(cov): add a thing", "BREAKING CHANGE: store.json v5 -> v6.")
+def test_a_refused_correction_is_only_a_warning_under_new_version() -> None:
+    decision = decide_bump(
+        last_tag="0.10.0",
+        census="0.11.0",
+        new_version="0.11.0",
+        refusals=["abc1234 fix(api)!: x: Corrects: def5678 is not an ancestor of this commit"],
+    )
+    assert decision.decision == "honoured"
+    assert decision.version == "0.11.0"
+    assert "WARNING: corrections since v0.10.0 do not validate" in decision.message
+    assert "REFUSED" not in decision.message
 
 
-def test_breaking_change_footer_hyphen_spelling_is_breaking() -> None:
-    """Conventional Commits declares BREAKING-CHANGE: a synonym for BREAKING CHANGE:."""
-    assert is_breaking_commit("feat(cov): add a thing", "BREAKING-CHANGE: store.json v5 -> v6.")
+def test_a_patch_census_with_breaking_events_is_refused() -> None:
+    """git-cliff and the event model disagree: the release must not ship the smaller bump."""
+    decision = decide_bump(
+        last_tag="0.10.0",
+        census="0.10.1",
+        events=["abc1234 feat!: drop the old flag"],
+    )
+    assert decision.decision == "refused"
+    assert "disagree about what a mark is" in decision.message
+    assert "  abc1234 feat!: drop the old flag" in decision.message
 
 
-def test_ordinary_commit_is_not_breaking() -> None:
-    assert not is_breaking_commit("fix(cli): mend a thing", "")
-
-
-def test_offending_commits_selects_only_the_breaking_ones() -> None:
-    commits = [
-        ("aaa1111", "feat!: drop the old flag", ""),
-        ("bbb2222", "fix(cli): mend a thing", ""),
-        ("ccc3333", "feat(cov): add a thing", "BREAKING CHANGE: store.json v5 -> v6."),
-    ]
-    assert offending_commits(commits) == [
-        "aaa1111 feat!: drop the old flag",
-        "ccc3333 feat(cov): add a thing",
-    ]
+def test_a_refusal_names_each_correction_under_its_event() -> None:
+    decision = decide_bump(
+        last_tag="0.10.0",
+        census="0.11.0",
+        bump="patch",
+        bump_computed="0.10.1",
+        events=["abc1234 fix(api)!: record it\n    corrects def5678 feat(api): drop Beta"],
+    )
+    assert "  abc1234 fix(api)!: record it\n      corrects def5678 feat(api): drop Beta\n" in (
+        decision.message
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +235,7 @@ def test_bump_lower_than_census_is_refused_and_names_the_breaking_commit() -> No
         census="0.11.0",
         bump="patch",
         bump_computed="0.10.1",
-        offending=["abc1234 feat!: drop the old flag"],
+        events=["abc1234 feat!: drop the old flag"],
     )
     assert decision.decision == "refused"
     assert decision.version == "0.11.0"
@@ -327,14 +361,15 @@ def _patch_subprocess(
     census: str,
     last_tag: str = "0.10.0",
     bump_computed: "str | None" = None,
-    log_commits=(),
+    events: "Events | None" = None,
 ) -> None:
     monkeypatch.setattr("scripts.release_bump.git_last_tag", lambda cwd=None: f"v{last_tag}")
     monkeypatch.setattr(
         "scripts.release_bump.git_cliff_bumped_version", lambda cwd=None: f"v{census}"
     )
     monkeypatch.setattr(
-        "scripts.release_bump.git_log_commits", lambda last_tag, cwd=None: list(log_commits)
+        "scripts.release_bump.read_release_events",
+        lambda last_tag, cwd=None: events or Events(),
     )
     if bump_computed is not None:
         monkeypatch.setattr(
@@ -354,6 +389,25 @@ def test_main_no_bump_prints_the_census_and_exits_0(
     assert out.out.strip() == "0.11.0"
 
 
+def test_main_refuses_a_refused_correction_with_no_override(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The events are read on every branch, not only when BUMP= asks for names."""
+    reason = "Corrects: def5678 is not an ancestor of this commit"
+    _patch_subprocess(
+        monkeypatch,
+        census="0.11.0",
+        events=_events(("abc1234", "fix(api)!: x"), refused=("abc1234", "fix(api)!: x", reason)),
+    )
+    monkeypatch.delenv("BUMP", raising=False)
+    monkeypatch.delenv("NEW_VERSION", raising=False)
+    rc = main([])
+    out = capsys.readouterr()
+    assert rc == 1
+    assert out.out.strip() == ""
+    assert f"abc1234 fix(api)!: x: {reason}" in out.err
+
+
 def test_main_refuses_a_lower_bump_and_exits_1(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
@@ -361,7 +415,7 @@ def test_main_refuses_a_lower_bump_and_exits_1(
         monkeypatch,
         census="0.11.0",
         bump_computed="0.10.1",
-        log_commits=[("abc1234", "feat!: drop the old flag", "")],
+        events=_events(("abc1234", "feat!: drop the old flag")),
     )
     monkeypatch.setenv("BUMP", "patch")
     monkeypatch.delenv("NEW_VERSION", raising=False)
@@ -417,6 +471,7 @@ def test_main_refuses_cleanly_when_git_cliff_itself_fails(
         )
 
     monkeypatch.setattr("scripts.release_bump.git_cliff_bumped_version", _boom)
+    monkeypatch.setattr("scripts.release_bump.read_release_events", lambda tag, cwd=None: Events())
     monkeypatch.delenv("BUMP", raising=False)
     monkeypatch.delenv("NEW_VERSION", raising=False)
     rc = main([])

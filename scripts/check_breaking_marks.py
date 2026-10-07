@@ -10,11 +10,20 @@ call. ``make release``'s version comes from git-cliff's conventional-commit
 census (``scripts/release_bump.py``), which can only see what a commit
 SUBJECT and BODY say -- an unmarked break still ships as a patch bump. This
 script closes that gap: for every commit in a range, a golden-line deletion
-that the commit didn't mark ``type(scope)!:`` in the subject, or with a
-``BREAKING CHANGE:``/``BREAKING-CHANGE:`` token matched ANYWHERE in the body
-(not just as a trailer on its own line -- the same classifier
-``scripts/release_bump.py::is_breaking_commit`` already uses for the version
-census), is refused.
+that the commit didn't mark is refused. A mark is what git-cliff's census
+counts, read by the release event model ``scripts/release_events.py`` that
+``scripts/release_bump.py`` and ``cliff.toml`` share: ``type(scope)!:`` in
+the subject, or a ``BREAKING CHANGE:``/``BREAKING-CHANGE:`` footer, on a
+commit whose type the changelog keeps. A ``BREAKING CHANGE:`` inside a prose
+paragraph, or a ``test(api)!:`` the changelog drops, bumps nothing, so it
+marks nothing here either.
+
+The same model validates CORRECTIONS: a marked commit with a ``Corrects: <full
+sha> <original subject>`` footer repairs a mark an earlier commit lacked, once
+that commit is published and can no longer be amended. Every correction in the
+range is checked by the rules in ``scripts/release_events.py``; a refused one
+is a violation no mark can excuse. A correction never excuses an unmarked
+commit in the same range: an unpublished commit is amended, not corrected.
 
 RULE: a commit that deletes or renames a public symbol or a ``Host`` protocol
 parameter must be marked breaking, regardless of how small it looks. A
@@ -108,7 +117,13 @@ SCHEMA_V1 = 1
 SCHEMA_V2 = 2
 
 sys.path.insert(0, str(REPO_ROOT))
-from scripts import api_compat, api_lines, api_records, api_regen  # noqa: E402 -- path set up above
+from scripts import (  # noqa: E402 -- path set up above
+    api_compat,
+    api_lines,
+    api_records,
+    api_regen,
+    release_events,
+)
 from scripts.api_manifest import (  # noqa: E402 -- path set up above
     ManifestError,
     Namespace,
@@ -116,14 +131,15 @@ from scripts.api_manifest import (  # noqa: E402 -- path set up above
     parse_manifest,
 )
 from scripts.api_resolver_env import resolver_env as _resolver_env  # noqa: E402
-from scripts.release_bump import is_breaking_commit  # noqa: E402 -- path set up above
+from scripts.release_events import is_breaking_commit  # noqa: E402 -- path set up above
 
 RULE = (
     "RULE: a commit that deletes or renames a public name, deep-import path, or "
     "Host protocol parameter must be marked breaking -- `type(scope)!:` in the "
-    "subject or a `BREAKING CHANGE:`/`BREAKING-CHANGE:` footer -- even when the "
-    "deletion looks small. A rename is a deletion plus an addition, so it is "
-    "marked too; there is no separate escape hatch."
+    "subject or a `BREAKING CHANGE:`/`BREAKING-CHANGE:` footer, on a type the "
+    "changelog keeps -- even when the deletion looks small. A rename is a "
+    "deletion plus an addition, so it is marked too; there is no separate "
+    "escape hatch."
 )
 
 
@@ -303,13 +319,6 @@ def commits_in_range(repo: Path, rev_range: str) -> "list[str]":
         stderr = (exc.stderr or str(exc)).strip()
         raise RangeError(f"cannot resolve range {rev_range!r}: {stderr}") from exc
     return [line.strip() for line in out.splitlines() if line.strip()]
-
-
-def commit_subject_body(repo: Path, sha: str) -> "tuple[str, str]":
-    """Return (subject, body) for *sha*."""
-    out = _git(repo, "log", "-1", "--format=%s%x1f%b", sha)
-    subject, _, body = out.rstrip("\n").partition("\x1f")
-    return subject, body
 
 
 def _golden_rel(repo: Path, golden: Path) -> str:
@@ -818,6 +827,7 @@ def main(argv: "list[str]") -> int:
         return 2
 
     env = api_regen.CurrentEnv() if args.env == "current" else api_regen.UvDepsEnv()
+    events = release_events.release_events(args.repo, args.range)
     violations = 0
     for sha in shas:
         parents = _git(args.repo, "rev-list", "--parents", "-n", "1", sha).split()[1:]
@@ -841,19 +851,28 @@ def main(argv: "list[str]") -> int:
             print(f"info: {sha[:12]} {message}")
         if not verdict.refused and not verdict.breaking:
             continue
-        subject, body = commit_subject_body(args.repo, sha)
-        if not verdict.refused and is_breaking_commit(subject, body):
+        commit = release_events.read_commit(args.repo, sha)
+        marked = is_breaking_commit(commit.subject, commit.body, separated=commit.separated)
+        if not verdict.refused and marked:
             continue
         violations += 1
-        print(f"commit {sha} {subject}")
+        print(f"commit {sha} {commit.subject}")
         for line in verdict.refused:
             print(f"  - refused: {line} -- no breaking mark can excuse this")
         for line in verdict.breaking:
             print(f"  - {line}")
         print()
 
+    for refusal in events.refusals:
+        print(f"commit {refusal.commit.sha} {refusal.commit.subject}")
+        print(f"  - refused: {refusal.reason} -- no breaking mark can excuse this")
+        print()
+
     if violations:
         print(RULE)
+    if events.refusals:
+        print(release_events.CORRECTION_RULE)
+    if violations or events.refusals:
         return 1
 
     print(f"check-breaking-marks: OK ({len(shas)} commit(s) scanned)")

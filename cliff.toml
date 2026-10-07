@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 # notes on ad0edab3 entirely. A truncated migration instruction under a
 # **BREAKING** badge is worse than none, so the badge sends the reader to the
 # commit rather than paraphrasing it wrongly.
+#
+# A correction (docs/contributing.md, "Repairing a missing mark") is a marked
+# commit with one `Corrects: <full sha> <original subject>` footer per commit
+# it repairs. Its bullet stays as above, and each footer adds a nested line
+# quoting the original subject and its short sha, so the release that takes the
+# late bump also says which earlier entry broke callers. `make check-breaking`
+# and `make release` validate the footer first (scripts/release_events.py);
+# the template only formats it. Only the footer's first line is read: git-cliff
+# folds any later prose paragraph into the last footer's value.
 body = """
 
 {% if version -%}
@@ -55,6 +64,10 @@ body = """
 - {% if commit.breaking %}**BREAKING** {% endif %}\
 {%- if commit.scope %}**{{ commit.scope }}**: {% endif %}\
 {{- commit.message | split(pat="\\n") | first | trim }}
+{% for footer in commit.footers | filter(attribute="token", value="Corrects") -%}
+{%- set quoted = footer.value | split(pat="\\n") | first | trim -%}
+{%- set words = quoted | split(pat=" ") %}  - corrects {{ words | slice(start=1) | join(sep=" ") }} ({{ words | first | truncate(length=8, end="") }}), which broke callers without a mark for it
+{% endfor -%}
 {% endfor %}
 {% endfor %}
 """
@@ -94,6 +107,11 @@ split_commits = false
 # (and usually a body). 42 bullets in CHANGELOG.md still carry their `(#NN)`,
 # which is the useful behaviour; the rule is gone rather than repaired.
 
+# scripts/release_events.py reads these rows to decide which marks git-cliff's
+# census counts -- a skipped commit's `!` bumps nothing, so it marks nothing in
+# `make check-breaking` either -- and refuses a row keyed on anything but
+# `message`. Add such a row only after teaching the model to mirror it.
+#
 # Map Conventional Commit types into Keep a Changelog sections.
 # `group` is the section heading; `default_scope` lets dependabot's
 # `chore(deps)` land in its own bucket. Order here = order in the rendered

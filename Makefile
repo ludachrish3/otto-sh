@@ -1549,7 +1549,7 @@ api-surface-report: ## (Dev) Measure the public-surface cutover's docs work: val
 	@uv run python scripts/api_teaching.py --manifest scripts/api_public_preview.toml --report
 	@uv run python scripts/api_snapshot.py --manifest scripts/api_public_preview.toml --assume-dir --report
 
-check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; RANGE must end at HEAD) that deletes a public-API golden line without a `!`/`BREAKING CHANGE:` mark
+check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; RANGE must end at HEAD) that deletes a public-API golden line without a mark git-cliff's census counts, or carries a Corrects: footer that does not validate
 	@$(SAY) "check-breaking-marks: $(RANGE)"
 	@uv run python scripts/check_breaking_marks.py $(RANGE)
 

@@ -218,3 +218,43 @@ def test_the_config_declares_no_remote() -> None:
     # a comment that names `[remote.github]`, and a substring check would be
     # satisfied by its own rationale.
     assert not declared, declared
+
+
+def test_a_correction_lists_the_original_subject_under_its_own_entry(tmp_path) -> None:
+    """A correction names the commit it repairs, under its own entry.
+
+    A correction (docs/contributing.md, "Repairing a missing mark") is a marked
+    commit with a ``Corrects: <full sha> <original subject>`` footer. Its own
+    bullet keeps its subject and badge; one nested line per footer quotes the
+    original subject and its short sha, so a reader of this release learns
+    which earlier entry broke callers.
+    """
+    cliff = shutil.which("git-cliff")
+    assert cliff, "git-cliff is a declared dev dependency -- run `uv sync` rather than skipping"
+    repo = TmpGitRepo(tmp_path, dates=COMMIT_DATE)
+    repo.write("seed", "x")
+    repo.commit("feat: the released past")
+    repo.git("tag", "v0.1.0")
+    repo.write("beta", "x")
+    target = repo.commit("feat(api): drop Beta quietly")
+    repo.git("tag", "v0.1.1")
+    repo.write("fix", "x")
+    repo.commit(
+        "fix(api)!: record that dropping Beta broke callers\n\n"
+        f"BREAKING CHANGE: Beta is gone.\nCorrects: {target} feat(api): drop Beta quietly"
+    )
+
+    proc = subprocess.run(
+        [cliff, "--config", str(CLIFF), "--offline", "--unreleased"],
+        cwd=repo.root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, f"git-cliff exited {proc.returncode}\n{proc.stderr}"
+    assert (
+        "- **BREAKING** **api**: record that dropping Beta broke callers\n"
+        f"  - corrects feat(api): drop Beta quietly ({target[:8]}), "
+        "which broke callers without a mark for it\n"
+    ) in proc.stdout

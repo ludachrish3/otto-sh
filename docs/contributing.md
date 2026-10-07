@@ -357,6 +357,53 @@ next, declared form of this surface is built but dormant; see
 Before pushing, run `make all` locally — it mirrors CI
 (`clean-dist → typecheck → coverage → docs → build`).
 
+### Repairing a missing mark
+
+A breaking commit can reach `main` without its mark, if it was pushed with
+`--no-verify` or merged over a red check. `make check-breaking` flags it once,
+on that push, and the next push's range starts after it. Published history is
+never rewritten. Re-marking the commit would not help anyway: if it already
+shipped, that release missed the bump. The repair is a **correction**: a new,
+ordinary marked commit that names the commit it repairs. The release that
+contains the correction takes the bump, and its notes quote the original
+subject under the correction's entry.
+
+```text
+fix(api)!: record that dropping Beta broke callers
+
+BREAKING CHANGE: `otto.Beta` is gone; import `otto.Alpha` instead.
+Corrects: 3f9c2a1e5b7d4c8f0a6e2b9d1c4f7a3e5b8d0c2f feat(api): drop Beta
+```
+
+- **The correction carries the mark itself**: `type(scope)!:`, or a
+  `BREAKING CHANGE:` footer. A mark counts only where git-cliff's census
+  counts it. A footer belongs in the message's last paragraph, never inside
+  prose, and the type must be one the changelog keeps (see the table under
+  [Version management](#version-management)). A `test!:` or `ci!:` mark bumps
+  nothing. Nor does any mark in a message git-cliff cannot parse: a header
+  continued on its second line, or a last footer with no value.
+- **`Corrects:` is a footer in that same last paragraph.** It holds the
+  repaired commit's full 40-character sha, a space, and that commit's subject
+  exactly as written. Repairing several commits takes one `Corrects:` line
+  each.
+- **The repaired commit must be an ancestor of the correction.** A correction
+  cherry-picked onto a branch that never had that commit is refused.
+- **A marked commit may still be corrected**, for a second break it did not
+  mark.
+- **Each commit is corrected once.** If two corrections of the same commit
+  meet in one history, on one branch or two, both are refused: neither counts
+  as first. Check `git log --grep '^Corrects: <sha>'` before you correct.
+- **Only a published commit is corrected.** A commit still on your branch is
+  amended instead. `make check-breaking` keeps reporting it unmarked even when
+  a correction follows it in the same range.
+- **A correction repairs a missing mark, never a missing notice period.** Once
+  otto has a deprecation lifecycle, removing a protected name without its
+  window is reported as a breach, not corrected.
+
+`make check-breaking` validates every correction in its range. The rules live
+in `scripts/release_events.py`, which `make release` also reads (see
+[the release process](release_process.md)).
+
 ### Gating a branch before it lands
 
 Run `make gate-fresh` before handing a branch back or squashing it onto `main`.
@@ -485,6 +532,11 @@ entry — write it that way:
   the first, which mangled real entries. Write the footer for someone
   upgrading anyway — it is what a reader finds when the badge sends them to
   the commit.
+- a correction (see [Repairing a missing mark](#repairing-a-missing-mark))
+  keeps its own bullet and badge, and adds one nested line per repaired
+  commit -- `corrects <original subject> (<short sha>), which broke callers
+  without a mark for it` -- so the release that takes the late bump says
+  which earlier entry broke callers.
 
 The rendering is pinned by `tests/unit/test_changelog_rendering.py`, which
 runs the real renderer over a synthetic repo. The committed file is

@@ -236,7 +236,7 @@ def test_red_inverting_the_marked_check_lets_an_unmarked_removal_through(tmp_pat
     """
     import scripts.check_breaking_marks as mod
 
-    monkeypatch.setattr(mod, "is_breaking_commit", lambda subject, body: True)
+    monkeypatch.setattr(mod, "is_breaking_commit", lambda subject, body, **_: True)
 
     repo = TmpGitRepo(tmp_path)
     _seed(repo, ["otto:Alpha", "otto:Beta"])
@@ -757,7 +757,7 @@ def test_merge_that_leaves_v2_is_refused_even_when_marked(tmp_path, capsys):
     repo.write("golden.txt", "otto:f\n")
     repo.commit("chore: v1")
     repo.git("checkout", "-q", "-b", "side")
-    _commit_dump(repo, _init(["f"], "def f(): pass\n"), "build(api)!: v2")
+    _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat(api)!: v2")
     repo.git("checkout", "-q", "main")
     repo.git("merge", "-q", "--no-ff", "-s", "ours", "-m", "chore!: merge side", "side")
     merge = repo.git("rev-parse", "HEAD").strip()
@@ -937,7 +937,7 @@ def test_conversion_dropping_a_root_line_needs_a_mark(tmp_path, capsys):
 
 def test_conversion_marked_passes(tmp_path):
     repo, tip = _convert(
-        tmp_path, [*V1, "otto:Gone"], "src_files, dest_dir", msg="build(api)!: switch to the dump"
+        tmp_path, [*V1, "otto:Gone"], "src_files, dest_dir", msg="feat(api)!: switch to the dump"
     )
     assert _run(repo, f"{tip}~1..{tip}") == 0
 
@@ -1306,3 +1306,49 @@ def test_historical_commits_are_regenerated_by_the_checker_s_own_producer(tmp_pa
     assert "name\totto:f\tfunction\n" in committed
     assert api_regen.CHILD == api_regen.REPO_ROOT / "scripts" / "api_dump_child.py"
     assert _run(repo, f"{base}..HEAD") == 0
+
+
+def test_a_mark_on_a_type_the_changelog_drops_does_not_excuse_a_removal(tmp_path, capsys):
+    """git-cliff drops a `test` commit before its census, so its `!` bumps nothing."""
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["otto:Alpha", "otto:Beta"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+    tip = repo.commit("test(api)!: drop Beta")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 1
+    assert "otto:Beta" in capsys.readouterr().out
+
+
+def test_a_breaking_change_token_in_prose_does_not_excuse_a_removal(tmp_path, capsys):
+    """Only a footer marks: git-cliff reads no mark out of a prose paragraph."""
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["otto:Alpha", "otto:Beta"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+    tip = repo.commit("feat(api): drop Beta\n\nThis is a BREAKING CHANGE: for Beta users.")
+
+    exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 1
+    assert "otto:Beta" in capsys.readouterr().out
+
+
+def test_a_correction_does_not_excuse_an_unmarked_commit_in_the_same_range(tmp_path, capsys):
+    """An unpublished commit is amended, not corrected: the correction excuses nothing."""
+    repo = TmpGitRepo(tmp_path)
+    base = _seed(repo, ["otto:Alpha", "otto:Beta"])
+    repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+    drop = repo.commit("feat(api): drop Beta")
+    repo.write("fix", "x")
+    repo.commit(
+        "fix(api)!: record that dropping Beta broke callers\n\n"
+        f"BREAKING CHANGE: Beta is gone.\nCorrects: {drop} feat(api): drop Beta"
+    )
+
+    exit_code = main([f"{base}..HEAD", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert f"commit {drop} feat(api): drop Beta" in out
+    assert "refused: Corrects" not in out

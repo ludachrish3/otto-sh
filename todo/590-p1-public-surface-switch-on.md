@@ -209,7 +209,7 @@ Spec `docs/superpowers/specs/2026-10-06-host-construction-design.md` §2 and §7
   (`tests/unit/scripts/test_api_dump_invariance.py`).
 - [ ] **CI's v2 header check** (`.github/workflows/ci.yml:437`, `:439`) also
   checks line 2, `# producer-schema <n>`.
-- [ ] **The erratum: a per-release correction event** (owner decision, 2026-10-05,
+- [x] ✅ **The erratum: a per-release correction event** (owner decision, 2026-10-05,
   after a Codex design review). A mistake can reach `main` unmarked, through
   `git push --no-verify` or a PR whose red CI was ignored. CI flags it only once,
   because the next push's range starts after that commit. Published history is

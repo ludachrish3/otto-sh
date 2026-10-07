@@ -41,6 +41,14 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
    `cliff.toml`'s `[bump]` section flips to standard semver (a breaking
    change becomes a MAJOR bump).
 
+   The census is cross-checked against `scripts/release_events.py`, the
+   release event model `make check-breaking` also reads. A census that is
+   only a patch bump while a breaking commit exists since the last tag is
+   refused (git-cliff and the model disagree), and so is a correction since
+   the last tag that does not validate (see
+   [Repairing a missing mark](contributing.md#repairing-a-missing-mark)).
+   `NEW_VERSION=` skips the first check and turns the second into a warning.
+
    `make release` runs `typecheck`, builds the docs, runs the **full nox
    matrix across every supported Python** (this requires the dev VM with
    Vagrant hosts up), regenerates `CHANGELOG.md` at the new version, bumps the
