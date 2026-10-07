@@ -348,7 +348,7 @@ P1 writes each list into the module as its first `__all__` (that narrows `from m
 
 ## G. Taught paths retired in P1
 
-26 paths: every v1 golden deep line plus every import a reader copies (docs code, `docs/examples`, `otto.examples`), minus the declared ones. P1, the marked cutover commit, re-points every page and example to the declared path and lists each retired path in its footer. The defining module is untouched, so the old path still imports until spec 5 moves it, but it is no longer public.
+27 paths: every v1 golden deep line plus every import a reader copies (docs code, `docs/examples`, `otto.examples`), minus the declared ones. The 27th, `otto.models.host:UnixHostSpec`, was taught by #602 (`588b5f19`) after this appendix was frozen; it is listed here because a reader copies it, and the spec 3b addendum below keeps the facade name `otto.models:UnixHostSpec`. P1, the marked cutover commit, re-points every page and example to the declared path and lists each retired path in its footer. The defining module is untouched, so the old path still imports until spec 5 moves it, but it is no longer public.
 
 | Taught path | Declared path it moves to | First source |
 |---|---|---|
@@ -372,6 +372,7 @@ P1 writes each list into the module as its first `__all__` (that narrows `from m
 | `otto.host.session:HostSession` | `otto.host:HostSession` | docs/cookbook/extending/extending-backends.md:430 (+5) |
 | `otto.host.unix_host:UnixHost` | `otto.host:UnixHost` | docs/cookbook/async-patterns.md:140 (+1) |
 | `otto.models.host:CredSpec` | `otto.models:CredSpec` | docs/cookbook/extending/creds-backends.md:44 (+1) |
+| `otto.models.host:UnixHostSpec` | `otto.host:UnixHostSpec` | docs/cookbook/extending/custom-host-classes.md:105 |
 | `otto.monitor.collector:MonitorTarget` | `otto.monitor:MonitorTarget` | docs/cookbook/extending/custom-parsers.md:16 (+1) |
 | `otto.monitor.factory:build_monitor_collector` | `otto.monitor:build_monitor_collector` | docs/examples/getting-started/collect_metrics.py:8 |
 | `otto.reservations.registry:RESERVATION_BACKENDS` | `otto.reservations:RESERVATION_BACKENDS` | docs/examples/getting-started/libs/gs_example/__init__.py:47 |
@@ -391,7 +392,7 @@ Spec 3a (`2026-10-06-registry-catalog-design.md` §8.1) deletes three functions 
 
 ### G addendum: host specs re-homed by spec 3b
 
-Spec 3b (`2026-10-06-host-construction-design.md` §2.1, decision H-1) declares the host specs at `otto.host`. P1 drops them from `otto.models`'s `__all__`, typing exports and lazy bindings, adds them to `otto.host`'s, and lists each move in its footer. All three are untaught today (appendix C, row `otto.models`). The defining module stays `otto.models.host` until spec 5 moves it.
+Spec 3b (`2026-10-06-host-construction-design.md` §2.1, decision H-1) declares the host specs at `otto.host`. P1 drops them from `otto.models`'s `__all__`, typing exports and lazy bindings, adds them to `otto.host`'s, and lists each move in its footer. All three were untaught when this appendix was frozen (appendix C, row `otto.models`); #602 has since taught the deep path `otto.models.host:UnixHostSpec`, which the main table of G retires. The defining module stays `otto.models.host` until spec 5 moves it.
 
 | Path today | Declared path it moves to |
 |---|---|
