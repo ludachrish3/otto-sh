@@ -435,6 +435,43 @@ def annotated_metadata_text(meta: object) -> "list[str]":
     return out
 
 
+def blank_string_literals(text: str) -> str:
+    """Return *text* with each quoted string literal's characters, quotes included, as spaces.
+
+    Both quote types are read, and a backslash escapes the character after it,
+    as in the ``repr`` Sphinx writes for a string default. Every other
+    character keeps its index, so a match in the result is a match in *text*
+    outside any string: a comma, bracket or ``~otto.`` inside ``'a,b'`` or
+    ``'~otto.x'`` is gone. A quote that never closes is not a string, and
+    what follows it is kept.
+
+    The scan cannot tell a string from prose: in the raw text Sphinx falls
+    back to, any PAIR of quotes reads as a string, so the text between two
+    apostrophes is blanked too. That cannot hide a ``~otto.`` leak in
+    practice: unquoted prose in a signature only comes from an
+    ``otto.utils.Opt``/``Arg`` repr's help text, which
+    ``check_docs_api_marks``' CLI-metadata rule matches on the unblanked text
+    before its raw ``~otto.`` rule runs.
+    """
+    out, quote, start, i = [], "", 0, 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 1
+            elif ch == quote:
+                out.append(" " * (i + 1 - start))
+                quote = ""
+        elif ch in "'\"":
+            quote, start = ch, i
+        else:
+            out.append(ch)
+        i += 1
+    if quote:
+        out.append(text[start:])
+    return "".join(out)
+
+
 def _parameter_spans(text: str) -> "list[tuple[int, int]]":
     """Return the ``(start, end)`` of each top-level comma-separated part of *text*.
 
@@ -442,24 +479,15 @@ def _parameter_spans(text: str) -> "list[tuple[int, int]]":
     (a default such as ``'a,b'`` or ``'['``) neither splits nor nests.
     """
     spans: list[tuple[int, int]] = []
-    depth, start, quote, i = 0, 0, "", 0
-    while i < len(text):
-        ch = text[i]
-        if quote:
-            if ch == "\\":
-                i += 1
-            elif ch == quote:
-                quote = ""
-        elif ch in "'\"":
-            quote = ch
-        elif ch in _OPENERS:
+    depth, start = 0, 0
+    for i, ch in enumerate(blank_string_literals(text)):
+        if ch in _OPENERS:
             depth += 1
         elif ch in _CLOSERS:
             depth -= 1
         elif ch == "," and depth == 0:
             spans.append((start, i))
             start = i + 1
-        i += 1
     spans.append((start, len(text)))
     return spans
 

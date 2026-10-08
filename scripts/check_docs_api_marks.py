@@ -17,14 +17,15 @@ here. The rules are ``docs/api/stability.md``'s "How these pages mark it":
   an Internals page, shows ``object``'s default repr
   (``<otto.registry.Registry object>``), a default that is not Python
   (``<factory>``, ``<class '…'>``, ``<function …>``), CLI metadata
-  (``Annotated[T, otto.utils.Opt(…)]``) or a raw ``~otto.`` prefix. The data
-  and attribute documenters leave a default-repr value out
-  (``scripts/docs_api_reference.py``'s ``shows_value``), and ``docs/conf.py``
-  renders CLI metadata away (``drop_annotated_markers``) and each other
-  default as Python (``factory_default``, ``object_default``). Text that is
-  not Python makes Sphinx show the whole signature raw, which is what lets a
-  ``~otto.`` prefix through. An Internals page's other signatures are not
-  checked: CLI internals take Typer's ``OptionInfo`` objects as defaults;
+  (``Annotated[T, otto.utils.Opt(…)]``) or a raw ``~otto.`` prefix outside a
+  string literal. The data and attribute documenters leave a default-repr
+  value out (``scripts/docs_api_reference.py``'s ``shows_value``), and
+  ``docs/conf.py`` renders CLI metadata away (``drop_annotated_markers``) and
+  each other default as Python (``factory_default``, ``object_default``).
+  Text that is not Python makes Sphinx show the whole signature raw, which is
+  what lets a ``~otto.`` prefix through. An Internals page's other signatures
+  are not checked: CLI internals take Typer's ``OptionInfo`` objects as
+  defaults;
 * while the release is before 1.0, every page carries ``otto-api-provisional``.
 
 Usage: ``python scripts/check_docs_api_marks.py docs/_build/html [--manifest PATH]``.
@@ -42,7 +43,7 @@ import types
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, NamedTuple
 
 from typing_extensions import Self
 
@@ -50,7 +51,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 from scripts.api_manifest import load_manifest  # noqa: E402 -- path set up above
-from scripts.docs_api_reference import MANIFEST, trackable  # noqa: E402 -- path set up above
+from scripts.docs_api_reference import (  # noqa: E402 -- path set up above
+    MANIFEST,
+    blank_string_literals,
+    trackable,
+)
 
 INTERNALS = "api/internals/"
 NOTICE = "otto-api-provisional"
@@ -63,22 +68,40 @@ _VALUE_SIGNATURE = re.compile(
 _SIGNATURE = re.compile(r"<dt\b([^>]*)>(.*?)</dt>", re.DOTALL)
 _ID = re.compile(r'\bid="([^"]*)"')
 _TAG = re.compile(r"<[^>]+>")
-#: What a signature must not show, each with how a finding names it. A
-#: signature that holds any text which is not Python (all but the last) falls
-#: back to raw text, where every ``~otto.`` prefix shows.
+
+
+class _Leak(NamedTuple):
+    """One shape a signature must not show."""
+
+    #: What to find; its ``shown`` group is what a finding quotes.
+    pattern: "re.Pattern[str]"
+    #: How a finding names it, with ``{}`` for the ``shown`` text.
+    template: str
+    #: Whether a match inside a quoted string literal counts.
+    inside_strings: bool = True
+
+
+#: What a signature must not show. A signature that holds any text which is
+#: not Python (all but the last) falls back to raw text, where every
+#: ``~otto.`` prefix shows. That last rule reads only the text outside string
+#: literals: a string default may legitimately say ``'~otto.x'``.
 _LEAKS = [
-    (
+    _Leak(
         re.compile(r"<(?P<shown>[\w.]+) object(?: at 0x[0-9a-fA-F]+)?>"),
         "a default repr (<{} object>)",
     ),
-    (re.compile(r"(?P<shown><factory>)"), "a default that is not Python ({})"),
-    (re.compile(r"(?P<shown><class '[^']*'>)"), "a default that is not Python ({})"),
-    (
+    _Leak(re.compile(r"(?P<shown><factory>)"), "a default that is not Python ({})"),
+    _Leak(re.compile(r"(?P<shown><class '[^']*'>)"), "a default that is not Python ({})"),
+    _Leak(
         re.compile(r"(?P<shown><function [^\s<>]*(?:<[^<>]*>[^\s<>]*)*>)"),
         "a default that is not Python ({})",
     ),
-    (re.compile(r"[\[,]\s*(?P<shown>~?otto\.utils\.(?:Arg|Opt))\("), "CLI metadata ({}(…))"),
-    (re.compile(r"(?P<shown>~otto\.)"), "a raw {} prefix: Sphinx could not parse it"),
+    _Leak(re.compile(r"[\[,]\s*(?P<shown>~?otto\.utils\.(?:Arg|Opt))\("), "CLI metadata ({}(…))"),
+    _Leak(
+        re.compile(r"(?P<shown>~otto\.)"),
+        "a raw {} prefix: Sphinx could not parse it",
+        inside_strings=False,
+    ),
 ]
 
 
@@ -296,10 +319,11 @@ def _internal_findings(site: Site, stabilities: "dict[str, str]") -> "list[str]"
 
 def _signature_leak(text: str) -> "str | None":
     """Return how a finding names what signature *text* must not show, or None."""
-    for pattern, template in _LEAKS:
-        match = pattern.search(text)
+    bare = blank_string_literals(text)
+    for leak in _LEAKS:
+        match = leak.pattern.search(text if leak.inside_strings else bare)
         if match:
-            return template.format(match.group("shown"))
+            return leak.template.format(match.group("shown"))
     return None
 
 
@@ -307,11 +331,11 @@ def _signature_findings(site: Site, pages: "list[str]") -> "list[str]":
     """No signature on a Public API page, or data signature on Internals, shows what is not Python.
 
     That is ``object``'s default repr, a ``<factory>``/``<class '…'>``/
-    ``<function …>`` default, CLI metadata, or a raw ``~otto.`` prefix. On an
-    Internals page only data and attribute signatures are read: CLI internals
-    take Typer's ``OptionInfo`` objects as defaults. Sphinx highlights a shown
-    value token by token, so this reads the text of each ``<dt>`` signature,
-    not its markup.
+    ``<function …>`` default, CLI metadata, or a raw ``~otto.`` prefix outside
+    a string literal. On an Internals page only data and attribute signatures
+    are read: CLI internals take Typer's ``OptionInfo`` objects as defaults.
+    Sphinx highlights a shown value token by token, so this reads the text of
+    each ``<dt>`` signature, not its markup.
     """
     out: list[str] = []
     for page in pages:

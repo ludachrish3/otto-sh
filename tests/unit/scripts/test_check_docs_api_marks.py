@@ -454,6 +454,10 @@ def _public_page_findings(tmp_path, body):
             "class otto.host.RepoBuild(repo: str, images: dict[str, ~otto.docker.ImageBuild])",
             "a raw ~otto. prefix: Sphinx could not parse it",
         ),
+        (
+            "find(pattern: str = &#x27;~otto.x&#x27;, host: ~otto.host.UnixHost)",
+            "a raw ~otto. prefix: Sphinx could not parse it",
+        ),
     ],
 )
 def test_a_public_signature_showing_text_that_is_not_python_fails(tmp_path, text, shown):
@@ -480,6 +484,16 @@ def test_a_parsed_public_signature_passes(tmp_path):
         _signature("otto.host.make", "make(x: bool = True, y: set[str] = set(), z: list = ...)")
         + _signature("otto.utils.Opt", parsed, kind="class")
         + _signature("otto.host.Lab.ROLE", "ROLE = &lt;UserSupport.chown: &#x27;chown&#x27;&gt;")
+    )
+    assert _public_page_findings(tmp_path, body) == []
+
+
+def test_a_raw_otto_prefix_inside_a_string_default_passes(tmp_path):
+    """A string default may say ``~otto.``: only text outside a string literal is a leak."""
+    body = _signature(
+        "otto.host.make",
+        "make(pattern: str = &#x27;~otto.x&#x27;, "
+        "glob: str = &quot;~otto.*&quot;, esc: str = &#x27;it\\&#x27;s ~otto.y&#x27;)",
     )
     assert _public_page_findings(tmp_path, body) == []
 

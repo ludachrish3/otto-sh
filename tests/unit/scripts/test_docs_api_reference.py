@@ -17,6 +17,7 @@ from scripts.docs_api_reference import (
     Home,
     annotated_metadata,
     annotated_metadata_text,
+    blank_string_literals,
     build_reference,
     choose_home,
     data_sources,
@@ -393,6 +394,20 @@ def test_annotated_metadata_is_found_wherever_the_annotated_is_nested():
 )
 def test_replace_defaults_rewrites_only_the_named_default_as_shown(text, defaults, expected):
     assert replace_defaults(text, defaults) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("a: str = '~otto.x', b: ~otto.Y", "a: str = " + " " * 9 + ", b: ~otto.Y"),
+        ('a: str = "x,]", b', "a: str = " + " " * 5 + ", b"),
+        (r"a = 'it\'s', b", "a = " + " " * 7 + ", b"),
+        ("help=Don't ~otto.x", "help=Don't ~otto.x"),
+    ],
+)
+def test_blank_string_literals_keeps_only_text_outside_strings(text, expected):
+    """Both quote types and escapes; an unclosed quote is an apostrophe, not a string."""
+    assert blank_string_literals(text) == expected
 
 
 _T = typing.TypeVar("_T")
