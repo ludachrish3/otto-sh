@@ -530,8 +530,12 @@ def factory_default(factory: object) -> str:
     that requires an argument (pydantic passes a one-argument factory the
     validated data, so a bare call would misstate the default). A
     parameterized generic (``dict[str, Any]``) is judged by its class: calling
-    it builds that class, so it shows ``dict()``.
+    it builds that class, so it shows ``dict()``. An ``Annotated[T, ...]``
+    factory is judged by ``T``, whose call it makes: ``Annotated[list, m]``
+    shows ``list()``.
     """
+    while typing.get_origin(factory) is typing.Annotated:
+        factory = typing.get_args(factory)[0]
     factory = typing.get_origin(factory) or factory
     if isinstance(factory, type) and _callable_without_arguments(factory):
         name = _python_name(factory)

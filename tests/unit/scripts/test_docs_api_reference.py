@@ -484,6 +484,13 @@ def test_a_parameterized_generic_factory_is_judged_by_its_class():
     assert factory_default(_Box[int]) == "..."
 
 
+def test_an_annotated_factory_is_judged_by_the_class_it_wraps():
+    """``Annotated[list, m]`` builds a ``list``; to 3.12 its origin ``Annotated`` is a class."""
+    assert factory_default(typing.Annotated[list, "m"]) == "list()"
+    assert factory_default(typing.Annotated[dict[str, int], "m"]) == "dict()"
+    assert factory_default(typing.Annotated[_NeedsData, "m"]) == "..."
+
+
 def test_a_nested_class_shows_its_qualified_name():
     class Local:
         """Defined inside a function: no name a caller could write."""
