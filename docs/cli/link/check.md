@@ -73,7 +73,7 @@ On every host otto checks:
 
 - **A way for otto to become root.** otto logs in as the host's first
   applicable `creds` entry in the lab config (see
-  [Per-host fields](../../configuration/lab-config.md#required) and
+  [Per-host fields](../../configuration/lab-config.md#common-optional) and
   {ref}`cred-protocols`). If that user isn't root, otto elevates the way every
   privileged otto command does: through the host's `sudo`, or `su` where there
   is no sudo, answering a password prompt from that host's `creds`. So a sudo

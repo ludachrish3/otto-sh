@@ -11,7 +11,7 @@ from otto.host.embedded_filesystem import NoFileSystem
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.factory import create_host_from_dict
 from otto.host.interface import Interface
-from otto.host.login_proxy import via_cred
+from otto.host.login_proxy import Cred, via_cred
 from otto.host.options import TelnetOptions
 from otto.host.os_profile import HOST_CLASSES
 from otto.host.toolchain import Toolchain
@@ -185,12 +185,114 @@ def test_common_host_kwargs_builds_nested_when_set():
     assert kw["toolchain"].sysroot == Path("/opt")
 
 
-def test_unix_spec_requires_creds():
-    with pytest.raises(ValidationError, match=r"creds\s+Field required") as exc:
-        UnixHostSpec(
-            ip="10.0.0.1",
-        )  # creds required for unix
-    assert "creds" in str(exc.value)
+def test_unix_spec_without_creds_builds_a_credless_host():
+    """``creds`` is optional: a console, or a host whose creds come from elsewhere.
+
+    The runtime already connects such a host loginless, so the spec must not
+    refuse what the host can do.
+    """
+    spec = UnixHostSpec(ip="10.0.0.1")
+    assert spec.creds == []
+    host = spec.to_host(element=Element("lab"))
+    assert isinstance(host, UnixHost)
+    assert host.creds == []
+    assert host.default_cred is None
+
+
+@dataclasses.dataclass(slots=True, kw_only=True)
+class _DeviceDefaultHost(UnixHost):
+    """A custom host class whose own creds default is the device's account."""
+
+    creds: list[Cred] = dataclasses.field(
+        default_factory=lambda: [Cred(login="device", password="d")]
+    )
+
+
+def test_a_credless_spec_keeps_a_host_subclass_s_own_creds_default():
+    """Omitted creds fall through to the TARGET class's default, as every other
+    unset field does; ``[]`` is supplied only where the class has no default."""
+    host = UnixHostSpec(ip="10.0.0.1").to_host(_DeviceDefaultHost, element=Element("lab"))
+    assert isinstance(host, _DeviceDefaultHost)
+    assert [c.login for c in host.creds] == ["device"]
+
+
+def test_explicit_creds_still_beat_a_host_subclass_s_default():
+    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "lab", "password": "p"}])
+    host = spec.to_host(_DeviceDefaultHost, element=Element("lab"))
+    assert [c.login for c in host.creds] == ["lab"]
+
+
+class _ConstructorDefaultHost(UnixHost):
+    """An undecorated host class whose own constructor defaults creds.
+
+    Its dataclass field is still UnixHost's required one: only the signature
+    says creds may be omitted.
+    """
+
+    def __init__(self, creds: list[Cred] | None = None, **kwargs) -> None:
+        if creds is None:
+            creds = [Cred(login="device", password="d")]
+        UnixHost.__init__(self, creds=creds, **kwargs)
+
+
+@dataclasses.dataclass(slots=True, kw_only=True)
+class _SelfCredHost(UnixHost):
+    """A host class that sets creds itself: ``field(init=False)``, filled in ``__post_init__``."""
+
+    creds: list[Cred] = dataclasses.field(init=False)
+
+    def __post_init__(self) -> None:
+        self.creds = [Cred(login="self", password="s")]
+        UnixHost.__post_init__(self)
+
+
+def test_a_credless_spec_keeps_a_host_constructor_s_creds_default():
+    """The constructor's contract decides, not the dataclass field: a default
+    in a hand-written ``__init__`` applies when the entry omits creds."""
+    host = UnixHostSpec(ip="10.0.0.1").to_host(_ConstructorDefaultHost, element=Element("lab"))
+    assert isinstance(host, _ConstructorDefaultHost)
+    assert [c.login for c in host.creds] == ["device"]
+
+
+def test_explicit_creds_still_beat_a_host_constructor_s_default():
+    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "lab", "password": "p"}])
+    host = spec.to_host(_ConstructorDefaultHost, element=Element("lab"))
+    assert [c.login for c in host.creds] == ["lab"]
+
+
+def test_a_credless_spec_builds_a_host_that_sets_its_own_creds():
+    """A constructor with no ``creds`` parameter at all is passed none."""
+    host = UnixHostSpec(ip="10.0.0.1").to_host(_SelfCredHost, element=Element("lab"))
+    assert isinstance(host, _SelfCredHost)
+    assert [c.login for c in host.creds] == ["self"]
+
+
+class _PassthroughHost(UnixHost):
+    """A wrapper ``__init__`` that forwards everything: its signature names no ``creds``."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        UnixHost.__init__(self, *args, **kwargs)
+
+
+class _PassthroughSelfCredHost(_SelfCredHost):
+    """The same passthrough over a class whose creds field is ``init=False``."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        _SelfCredHost.__init__(self, *args, **kwargs)
+
+
+def test_a_credless_spec_builds_a_passthrough_host_credless():
+    """Behind ``**kwargs`` the dataclass field speaks: UnixHost's creds is required."""
+    host = UnixHostSpec(ip="10.0.0.1").to_host(_PassthroughHost, element=Element("lab"))
+    assert isinstance(host, _PassthroughHost)
+    assert host.creds == []
+
+
+def test_a_credless_spec_keeps_a_passthrough_host_s_own_creds():
+    """An ``init=False`` field behind the passthrough is not passed: the class sets it."""
+    host = UnixHostSpec(ip="10.0.0.1").to_host(_PassthroughSelfCredHost, element=Element("lab"))
+    assert isinstance(host, _PassthroughSelfCredHost)
+    assert [c.login for c in host.creds] == ["self"]
 
 
 def test_unix_spec_builds_unix_host_with_defaults():
@@ -819,9 +921,8 @@ class TestCredSpec:
             _cred_spec([{"login": "a", "password": "x"}], user="hunter2-looking-value")
         assert "hunter2" not in e.value.errors(include_input=False)[0]["msg"]
 
-    def test_creds_required_on_unix_host(self):
-        with pytest.raises(ValidationError, match=r"creds\s+Field required"):
-            UnixHostSpec.model_validate(CRED_BASE)
+    def test_creds_optional_on_unix_host(self):
+        assert UnixHostSpec.model_validate(CRED_BASE).creds == []
 
     def test_creds_protocols_roundtrip_and_default_to_unscoped(self):
         spec = _cred_spec(

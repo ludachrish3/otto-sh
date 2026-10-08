@@ -8,6 +8,8 @@ their ``to_runtime()`` builders; embedded registry-name fields
 host registries at build time.
 """
 
+import dataclasses
+import inspect
 from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Annotated, Any, ClassVar
@@ -612,9 +614,9 @@ class HostSpec(OttoModel):
         refusal at the far end and on telnet is a session that never reaches a
         prompt. Cheaper and far clearer at load, naming what IS there.
 
-        Skipped when ``creds`` is empty: an embedded console host with no
-        login step is loginless on purpose (the unix family already requires a
-        non-empty list), and when the host declares no term at all.
+        Skipped when ``creds`` is empty: a host with no creds (a console with
+        no login step, of either family) is loginless on purpose; and when the
+        host declares no term at all.
         """
         term = self._effective_term()
         if not self.creds or term is None:
@@ -767,6 +769,32 @@ class HostSpec(OttoModel):
         )
 
 
+def _constructor_requires(cls: type[UnixHost], name: str) -> bool:
+    """Whether *cls*'s constructor must be passed the argument *name*.
+
+    The constructor's signature decides first: a parameter *name* with no
+    default is required, and one with a default is not. A signature with no
+    parameter *name* but a ``**kwargs`` (a passthrough ``__init__``) hides the
+    contract, so the dataclass field decides: required only when *cls* has an
+    ``init`` field *name* with neither a default nor a default factory. A
+    signature with neither cannot accept *name* at all (e.g. a
+    ``field(init=False)`` set in ``__post_init__``), so it is not required.
+    """
+    params = inspect.signature(cls).parameters
+    param = params.get(name)
+    if param is not None:
+        return param.default is inspect.Parameter.empty
+    if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return False
+    f = next((f for f in dataclasses.fields(cls) if f.name == name), None)
+    return (
+        f is not None
+        and f.init
+        and f.default is dataclasses.MISSING
+        and f.default_factory is dataclasses.MISSING
+    )
+
+
 class UnixHostSpec(HostSpec):
     """Boundary spec for a Unix host entry in ``lab.json``.
 
@@ -777,7 +805,8 @@ class UnixHostSpec(HostSpec):
     ``cls``).
     """
 
-    creds: list[CredSpec] = Field(min_length=1)  # required for a Unix host (SSH/telnet login)
+    # optional: a loginless host needs none, and an inventory record or creds store may hold none
+    creds: list[CredSpec] = Field(default_factory=list)
     valid_terms: list[str] = Field(default_factory=lambda: ["ssh", "telnet"])
     valid_transfers: list[str] = Field(default_factory=lambda: ["scp", "sftp", "ftp", "nc"])
     valid_impairers: list[str] = Field(default_factory=lambda: ["netem"])
@@ -856,6 +885,11 @@ class UnixHostSpec(HostSpec):
         preferences: dict[str, list[str]] | None = None,
     ) -> UnixHost:
         kw = self._common_host_kwargs()
+        if "creds" not in kw and _constructor_requires(cls, "creds"):
+            # UnixHost's constructor requires creds, so an entry with none
+            # builds a credless host; a class that defaults its creds, or sets
+            # them itself, keeps its own.
+            kw["creds"] = []
         kw["element"] = element
         s = self.model_fields_set
         prefs = preferences or {}

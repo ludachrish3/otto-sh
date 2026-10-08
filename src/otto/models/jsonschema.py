@@ -198,20 +198,20 @@ def _allow_inventory_reference(doc: dict[str, Any]) -> None:
     """Let a referenced entry state ``inventory`` INSTEAD of the fields a record fills (spec §5).
 
     ``lab.json`` is a SUPERSET of what a host spec validates: an entry with
-    ``"inventory": "<key>"`` carries no ``ip`` — nor, when the inventory
-    supplies them, any ``creds`` — because those arrive from the inventory
-    record, and the loader joins the two
-    (:func:`otto.inventory.resolve_host_entry`) before the spec ever sees the
-    dict. Without this, the schema an editor validates
-    ``lab.json`` against would red-underline every referenced entry in a file
-    otto loads perfectly.
+    ``"inventory": "<key>"`` carries no ``ip`` — nor any other field the
+    inventory supplies — because those arrive from the inventory record, and
+    the loader joins the two (:func:`otto.inventory.resolve_host_entry`)
+    before the spec ever sees the dict. Without this, the schema an editor
+    validates ``lab.json`` against would red-underline every referenced entry
+    in a file otto loads perfectly.
 
     Expressed as a CHOICE, not by dropping the requirement: the fields leave
     the top-level ``required`` list but come back as one arm of an
     ``anyOf`` whose other arm is ``inventory``. An entry with neither an
-    address nor a reference is still an error, and an inline entry still
-    needs everything it always needed — which is the whole value of the
-    schema in an editor.
+    address nor a reference is still an error, and the arm restores the FULL
+    ``required`` list, not just ``ip``: an inline entry still needs every
+    field its spec requires — which is the whole value of the schema in an
+    editor.
     """
     required = doc.get("required")
     if not isinstance(required, list) or "inventory" not in doc.get("properties", {}):

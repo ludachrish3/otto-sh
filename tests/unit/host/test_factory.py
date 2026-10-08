@@ -62,16 +62,13 @@ class TestCreateHostFromDict:
         assert "ip" in str(exc_info.value)
         assert "Field required" in str(exc_info.value)
 
-    def test_missing_creds_raises_validationerror(self):
-        """Missing required ``creds`` field is caught by the spec validator."""
-        host_data = {
-            "ip": "10.10.200.11",
-        }
-        with pytest.raises(ValidationError, match=r"(?m)^creds\n\s+Field required") as exc_info:
-            create_host_from_dict(host_data, element=Element("alt1"))
+    def test_an_entry_without_creds_loads_a_credless_unix_host(self):
+        """``creds`` is optional: the host is built with none and connects loginless."""
+        host = create_host_from_dict({"ip": "10.10.200.11"}, element=Element("alt1"))
 
-        assert "creds" in str(exc_info.value)
-        assert "Field required" in str(exc_info.value)
+        assert isinstance(host, UnixHost)
+        assert host.creds == []
+        assert host.default_cred is None
 
     def test_optional_fields(self):
         """Test that optional fields are handled correctly."""
@@ -104,13 +101,14 @@ class TestValidateHostDict:
 
     def test_validate_missing_required_field(self):
         """Test validation fails for missing required field."""
-        host_data = {
-            "ip": "10.10.200.11",
-        }
-        with pytest.raises(ValueError, match="creds") as exc_info:
-            validate_host_dict(host_data)
+        with pytest.raises(ValueError, match="ip") as exc_info:
+            validate_host_dict({"creds": [{"login": "vagrant", "password": "vagrant"}]})
 
-        assert "creds" in str(exc_info.value)
+        assert "ip" in str(exc_info.value)
+
+    def test_validate_accepts_a_unix_entry_without_creds(self):
+        """``creds`` is optional on a Unix host (a console, or creds from elsewhere)."""
+        validate_host_dict({"ip": "10.10.200.11"})
 
     def test_validate_ip_not_string(self):
         """Test validation fails when ip is not a string."""
@@ -576,15 +574,14 @@ class TestValidateOsType:
             }
         )
 
-    def test_validate_unix_still_requires_creds(self):
-        with pytest.raises(ValueError, match="creds") as exc_info:
-            validate_host_dict(
-                {
-                    "ip": "10.10.200.11",
-                    "os_type": "unix",
-                }
-            )
-        assert "creds" in str(exc_info.value)
+    def test_validate_unix_minimal(self):
+        """A Unix host, like an embedded one, needs only ip (creds are optional)."""
+        validate_host_dict(
+            {
+                "ip": "10.10.200.11",
+                "os_type": "unix",
+            }
+        )
 
     def test_validate_invalid_ostype_raises(self):
         with pytest.raises(ValueError, match="os_type") as exc_info:

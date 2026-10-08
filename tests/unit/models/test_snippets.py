@@ -79,3 +79,19 @@ def test_embedded_snippet_declares_its_own_os_type() -> None:
     assert "otto zephyr host" not in snips
     body = "\n".join(snips["otto embedded host"]["body"])
     assert '"os_type": "embedded"' in body
+
+
+def test_only_the_unix_skeleton_carries_creds_although_neither_spec_requires_them() -> None:
+    """``creds`` is optional on both families; the skeletons follow what is USUAL.
+
+    A Unix host almost always logs in, an RTOS shell usually has no login
+    step — so the unix snippet keeps the credential pair and the embedded one
+    stays without, neither of which ``is_required()`` could decide.
+    """
+    from otto.models.host import EmbeddedHostSpec, UnixHostSpec
+
+    assert not UnixHostSpec.model_fields["creds"].is_required()
+    assert not EmbeddedHostSpec.model_fields["creds"].is_required()
+    snips = build_snippets(builtins_only=True)
+    assert '"creds"' in "\n".join(snips["otto unix host"]["body"])
+    assert '"creds"' not in "\n".join(snips["otto embedded host"]["body"])

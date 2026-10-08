@@ -2572,7 +2572,7 @@ mro	otto.host:UnixHostSpec	{otto.host:HostSpec} {otto.models:OttoModel}
 input	otto.host:UnixHostSpec	S:"board"	optional	N	S:"board"
 input	otto.host:UnixHostSpec	S:"command_frame"	optional	N	S:"command_frame"
 input	otto.host:UnixHostSpec	S:"console_options"	optional	O	S:"console_options"
-input	otto.host:UnixHostSpec	S:"creds"	required	-	S:"creds"
+input	otto.host:UnixHostSpec	S:"creds"	optional	O	S:"creds"
 input	otto.host:UnixHostSpec	S:"debug_log_globs"	optional	O	S:"debug_log_globs"
 input	otto.host:UnixHostSpec	S:"default_dest_dir"	optional	O	S:"default_dest_dir"
 input	otto.host:UnixHostSpec	S:"docker_capable"	optional	B:false	S:"docker_capable"

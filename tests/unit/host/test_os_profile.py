@@ -437,9 +437,6 @@ class TestBusyBoxProfile:
                 "os_type": "busybox",
                 "has_bash": True,
                 "ip": "10.0.0.1",
-                # Required by UnixHostSpec — a dict without it raises
-                # `ValidationError: creds Field required`, which reads like a
-                # profile bug and is not one.
                 "creds": [{"login": "v", "password": "v"}],
             },
             element=Element("bb1"),

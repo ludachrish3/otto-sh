@@ -24,6 +24,13 @@ from .lab import HOISTED_HOST_KEYS
 # belongs in the schema's autocomplete, not in the starting skeleton.
 _COMMON_OPTIONAL = ("os_type", "valid_terms", "valid_transfers", "board", "metadata")
 
+# Optional fields a family's entries usually carry, placed ahead of the common
+# ones: a Unix host almost always logs in, so its skeleton keeps the credential
+# pair although the spec does not require it; an RTOS shell usually has no
+# login step, so the embedded skeleton stays without one. Lists, not tuples,
+# as the repo prefers for new collections; never mutated, like the tuple above.
+_FAMILY_USUAL: dict[str, list[str]] = {"unix": ["creds"]}
+
 
 def _host_body(spec_cls: type[HostSpec], os_type: str) -> list[str]:
     """Render one host entry's snippet body: required fields first, then common options.
@@ -36,7 +43,8 @@ def _host_body(spec_cls: type[HostSpec], os_type: str) -> list[str]:
     """
     fields = spec_cls.model_fields
     required = [n for n, f in fields.items() if f.is_required() and n not in HOISTED_HOST_KEYS]
-    optional = [n for n in _COMMON_OPTIONAL if n in fields and n not in required]
+    usual = _FAMILY_USUAL.get(getattr(spec_cls, "_host_family", ""), [])
+    optional = [n for n in [*usual, *_COMMON_OPTIONAL] if n in fields and n not in required]
     names = required + optional
     lines = ["{"]
     stop = 1

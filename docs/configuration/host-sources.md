@@ -430,12 +430,15 @@ itself; a chain of `via` links must terminate at a proxy-less entry (a cycle
 is rejected at load, not discovered mid-connection); `proxy` names are
 checked against the live login-proxy registry the same way `term`/`transfer`
 selectors are checked against theirs — an unregistered name fails loud,
-listing what's registered, instead of failing later mid-connection; at least
-one entry applies to the host's term, so the term never connects as nobody —
-for the term the file declares. A `--term` override onto a term nothing
-applies to is loginless and fails at the far end naming the host. And a
-`user` key is refused with a message pointing here — the field is gone,
-order `creds` instead.
+listing what's registered, instead of failing later mid-connection; when
+there are any entries, at least one applies to the host's term, so the term
+never connects as nobody — for the term the file declares. A `--term`
+override onto a term nothing applies to authenticates with an empty login,
+as a host with no `creds` does
+([the `creds` field](lab-config.md#common-optional) says what follows): over
+ssh the far end refuses it, and the error names the address, not the otto
+host. And a `user` key is refused with a message pointing here — the field
+is gone, order `creds` instead.
 
 ### Ownership when a login is proxied
 

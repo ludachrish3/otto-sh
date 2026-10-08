@@ -177,9 +177,9 @@ def test_referenced_entry_needs_neither_ip_nor_creds(lab_validator):
 def test_an_entry_with_neither_an_address_nor_a_reference_is_still_rejected(lab_validator):
     """The relaxation is a CHOICE, not a dropped requirement.
 
-    Dropping ``ip``/``creds`` from ``required`` without restoring them as an
-    ``anyOf`` arm would make this document validate — the failure mode the
-    arm exists to prevent.
+    Dropping ``ip`` from ``required`` without restoring it as an ``anyOf``
+    arm would make this document validate — the failure mode the arm exists
+    to prevent.
     """
     lab = lab_json_v2([{"element": "test1", "docker_capable": True}])
     assert list(lab_validator.iter_errors(lab)), (
@@ -187,14 +187,46 @@ def test_an_entry_with_neither_an_address_nor_a_reference_is_still_rejected(lab_
     )
 
 
-def test_an_inline_entry_still_needs_every_field_it_always_needed(lab_validator):
-    """The restored arm is the FULL original ``required`` list, not just ``ip``.
+def test_an_inline_entry_without_creds_validates(lab_validator):
+    """The schema follows the spec: ``creds`` is optional on a Unix host.
 
-    ``UnixHostSpec`` requires ``ip`` AND ``creds``; an arm naming only ``ip``
-    would let this credential-less inline entry through.
+    A host reached with no login step carries none; otto loads it, so an
+    editor must not red-underline it.
     """
     lab = lab_json_v2([{"ip": "10.0.0.1", "element": "test1", "docker_capable": True}])
-    assert list(lab_validator.iter_errors(lab)), "an inline entry without creds must fail"
+    errors = list(lab_validator.iter_errors(lab))
+    assert errors == [], [e.message for e in errors]
+
+
+def test_the_inline_arm_restores_every_required_field_not_just_ip():
+    """The restored arm is the FULL original ``required`` list, not just ``ip``.
+
+    No built-in spec requires a second field the inventory can fill any more
+    (``creds`` became optional), so a synthetic spec that re-requires
+    ``creds`` keeps the guard: an arm naming only ``ip`` would let its
+    credential-less inline entry through.
+    """
+    from otto.models.host import CredSpec, UnixHostSpec
+    from otto.models.inventory import FILLABLE_INVENTORY_FIELDS
+    from otto.models.jsonschema import _allow_inventory_reference
+
+    class _CredsRequired(UnixHostSpec):
+        creds: list[CredSpec]
+
+    doc = _CredsRequired.model_json_schema()
+    # The premise: two required fields, both ones a record can fill.
+    assert {"ip", "creds"} <= set(doc["required"])
+    assert {"ip", "creds"} <= FILLABLE_INVENTORY_FIELDS
+    _allow_inventory_reference(doc)
+    validator = Draft202012Validator(doc)
+    creds = [{"login": "u", "password": "p"}]
+
+    assert list(validator.iter_errors({"ip": "10.0.0.1"})), (
+        "an inline entry without creds must fail"
+    )
+    for ok in ({"ip": "10.0.0.1", "creds": creds}, {"inventory": "test1"}):
+        errors = list(validator.iter_errors(ok))
+        assert errors == [], [e.message for e in errors]
 
 
 def test_the_reference_arm_constrains_the_value_not_just_the_key(lab_validator):
