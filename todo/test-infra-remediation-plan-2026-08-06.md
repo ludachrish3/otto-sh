@@ -1260,7 +1260,7 @@ As landed:
 - `tests/unit/host/_session_feed.py`: `FeedAfterWriteMixin.feed_after_write(*chunks,
   then=, timeout=)` — the 65-site family's wall-clock feeder ordering replaced by
   "the session WROTE its next command". Baseline capture is EAGER (the sync outer
-  call), which is load-bearing: run_cmd executes synchronously through _write until
+  call), which is load-bearing: run_cmd executes synchronously through write_transport until
   it blocks reading, so a lazily-read baseline already includes the write it means
   to await. Expiry raises a named WaitTimeoutError premise failure. 56 call sites
   across the four doubles (34 test_session + 5 logging + 6 output_buffering + 11

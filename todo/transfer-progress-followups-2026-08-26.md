@@ -89,7 +89,7 @@ none does and the empty file is documented as rowless.
 
 `TftpFileTransfer` declares `ProgressGranularity(put=None, get=None,
 note="not implemented; both directions raise NotImplementedError")` and both
-`_run_get` / `_run_put` raise (`src/otto/host/transfer/tftp.py:16-20`, `:28-48`).
+`run_get` / `run_put` raise (`src/otto/host/transfer/tftp.py:15-19`, `:26-50`).
 It IS registered, so it appears in `TRANSFER_BACKENDS`, in the derived promise
 table, and in the registry guard — with a declaration that is true.
 

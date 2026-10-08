@@ -43,7 +43,7 @@ them with **no product call site at all**; five now consult the table:
    device answering `absent` to both — which is why the path carries the new
    `ADAPTED` state rather than `WIRED`.
 5. `scp-transfer` — `otto.host.transfer.scp.refuse_if_scp_is_absent`, called
-   from both `ScpFileTransfer._run_put` and `._run_get`. Keyed on a settled
+   from both `ScpFileTransfer.run_put` and `.run_get`. Keyed on a settled
    `applet_scp == "absent"`. **Back to a refusal**, deliberately, and the
    surface is why rather than a change of heart: `ScpOptions` carries no
    binary-name override and the far-side name is the legacy protocol's, so
@@ -60,7 +60,7 @@ them with **no product call site at all**; five now consult the table:
    discovered.
 
 The other three measured-broken surfaces are unchanged, and
-`shell-transfer-base64` still refuses only incidentally, because `_run_put`
+`shell-transfer-base64` still refuses only incidentally, because `run_put`
 probes `base64_flag` rather than reading this table. **Since the `uuencode`
 codec landed, that site now DEGRADES before it refuses** — a settled `absent`
 selects uu instead of declining — but the standing is the same: the verdict and
@@ -96,7 +96,7 @@ are each pinned end to end by a test that arrives at the site with a bash-less
 host.
 
 `scp-transfer` came out the other way on the call sites and was still worth
-checking rather than assuming: `_run_put` and `_run_get` are the only two places
+checking rather than assuming: `run_put` and `run_get` are the only two places
 the backend runs the protocol, `BaseFileTransfer.put_files`/`get_files` are their
 only callers, and `Host.put`/`Host.get` are the only callers of those — so both
 are reachable, both are guarded, and nothing is left over.
@@ -330,7 +330,7 @@ probe; the difference is the path, not a change of policy.
    catches it — which is the mechanism working as designed, but it means the gate
    command in the brief is not where that drift shows up.
 4. **`ShellFileTransfer` still refuses on an ASSUMED `absent`**
-   (`_run_put`/`_run_get` read the value without asking whether it was
+   (`run_put`/`run_get` read the value without asking whether it was
    settled), so a transfer to a host whose probes were refused is declined with
    a message about the device's applets. That is a pre-existing, probe-driven
    refusal and was left alone; `shell-transfer-base64` is the next surface in

@@ -67,7 +67,7 @@ of the five rows' own `uuencode`/`uudecode` in the Tier 2 rootfs.
 three uuencoded chunks to one file and decoding it ONCE returns **only the
 first chunk** — 4096 of 10253 bytes — on **all five rows**, because `uudecode`
 stops at the first `end` trailer. It exits **rc=0** while doing so. So the
-naive port of `_run_put`'s append-then-decode-once shape yields a silently
+naive port of `run_put`'s append-then-decode-once shape yields a silently
 truncated file that reports success: the same failure class this workstream
 exists to remove, reintroduced by a codec swap.
 
