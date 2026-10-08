@@ -29,6 +29,7 @@ declaration, so a hook that stops marking fails there.
 import dataclasses
 import importlib
 import inspect
+import itertools
 import re
 import sys
 import types
@@ -312,11 +313,14 @@ def data_sources(namespace: str, name: str) -> "list[str]":
 
 _DEFAULT_REPR = re.compile(r"<[\w.]+ object at 0x[0-9a-fA-F]+>")
 _ANNOTATED_HEAD = re.compile(r"~?(?:\w+\.)*Annotated$")
-_OPENERS, _CLOSERS = "[(", "])"
+#: What nests in a rendered signature: brackets and parentheses in
+#: annotations and calls, and braces in a dict or set literal default
+#: (``{'a': 1, 'b': 2}``), whose commas and colons belong to the value.
+_OPENERS, _CLOSERS = "[({", "])}"
 
 
 def _top_level_split(text: str) -> "list[str]":
-    """Split *text* on the commas outside any bracket or parenthesis."""
+    """Split *text* on the commas outside any bracket, parenthesis or brace."""
     parts, depth, start = [], 0, 0
     for i, ch in enumerate(text):
         depth += (ch in _OPENERS) - (ch in _CLOSERS)
@@ -472,24 +476,27 @@ def blank_string_literals(text: str) -> str:
     return "".join(out)
 
 
+def _top_level(text: str, chars: str) -> "list[int]":
+    """Return the index of each of *chars* in *text* outside any nesting or string literal."""
+    out, depth = [], 0
+    for i, ch in enumerate(blank_string_literals(text)):
+        if ch in _OPENERS:
+            depth += 1
+        elif ch in _CLOSERS:
+            depth -= 1
+        elif ch in chars and depth == 0:
+            out.append(i)
+    return out
+
+
 def _parameter_spans(text: str) -> "list[tuple[int, int]]":
     """Return the ``(start, end)`` of each top-level comma-separated part of *text*.
 
     Unlike :func:`_top_level_split`, a comma or bracket inside a quoted string
     (a default such as ``'a,b'`` or ``'['``) neither splits nor nests.
     """
-    spans: list[tuple[int, int]] = []
-    depth, start = 0, 0
-    for i, ch in enumerate(blank_string_literals(text)):
-        if ch in _OPENERS:
-            depth += 1
-        elif ch in _CLOSERS:
-            depth -= 1
-        elif ch == "," and depth == 0:
-            spans.append((start, i))
-            start = i + 1
-    spans.append((start, len(text)))
-    return spans
+    commas = _top_level(text, ",")
+    return [(a + 1, b) for a, b in itertools.pairwise([-1, *commas, len(text)])]
 
 
 def replace_defaults(signature: str, defaults: "Mapping[str, tuple[str, str]]") -> str:
@@ -514,6 +521,55 @@ def replace_defaults(signature: str, defaults: "Mapping[str, tuple[str, str]]") 
         if any(stripped.endswith(separator + shown) for separator in (" = ", "=")):
             at = start + len(stripped) - len(shown)
             inner = inner[:at] + valid + inner[at + len(shown) :]
+    return f"({inner})"
+
+
+def single_none(annotation: str) -> str:
+    """Return *annotation* with a repeated top-level ``None`` in its union shown once.
+
+    Dropping CLI metadata (:func:`drop_annotated_markers`) can leave one:
+    ``user: Annotated[str | None, Opt(...)] = None`` is read as
+    ``Optional[Annotated[str | None, ...]]`` (``get_type_hints`` on 3.10, or
+    an explicit ``| None``), which renders ``str | None | None`` once the
+    ``Annotated`` is gone. A ``None`` inside brackets (``dict[str, int |
+    None]``) or a string literal is not part of this union and stays. An
+    annotation with no repeat is returned as it was; one with a repeat has its
+    union written back with `` | `` between its members.
+    """
+    bars = _top_level(annotation, "|")
+    if not bars:
+        return annotation
+    bounds = [-1, *bars, len(annotation)]
+    members = [annotation[a + 1 : b].strip() for a, b in itertools.pairwise(bounds)]
+    kept = [m for i, m in enumerate(members) if m != "None" or "None" not in members[:i]]
+    if len(kept) == len(members):
+        return annotation
+    stripped = annotation.strip()
+    lead = annotation[: len(annotation) - len(annotation.lstrip())]
+    trail = annotation[len(lead) + len(stripped) :]
+    return lead + " | ".join(kept) + trail
+
+
+def single_none_in_signature(signature: str) -> str:
+    """Apply :func:`single_none` to each parameter's annotation in *signature*.
+
+    Only the text between a parameter's ``:`` and its default's ``=`` is
+    read, so a default (``= 'None | None'``) is never touched; a parameter
+    with no annotation, and every other character of *signature*, is kept.
+    """
+    if not (signature.startswith("(") and signature.endswith(")")):
+        return signature
+    inner = signature[1:-1]
+    for start, end in reversed(_parameter_spans(inner)):
+        part = inner[start:end]
+        marks = _top_level(part, ":=")
+        if not marks or part[marks[0]] != ":":
+            continue
+        colon = marks[0]
+        equals = next((i for i in marks[1:] if part[i] == "="), len(part))
+        annotation = single_none(part[colon + 1 : equals])
+        part = part[: colon + 1] + annotation + part[equals:]
+        inner = inner[:start] + part + inner[end:]
     return f"({inner})"
 
 

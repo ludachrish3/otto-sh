@@ -6,6 +6,9 @@ Internals page leaves it out, and a link written against its defining module
 still resolves. Stable is never marked.
 """
 
+import importlib.util
+import re
+import sys
 import types
 import typing
 
@@ -14,7 +17,9 @@ from typing_extensions import override
 
 from scripts.api_manifest import Namespace
 from scripts.docs_api_reference import (
+    REPO_ROOT,
     Home,
+    _parameter_spans,
     annotated_metadata,
     annotated_metadata_text,
     blank_string_literals,
@@ -37,6 +42,8 @@ from scripts.docs_api_reference import (
     qualify_relative_roles,
     replace_defaults,
     shows_value,
+    single_none,
+    single_none_in_signature,
     skip_member,
     stability_banner,
     trackable,
@@ -356,6 +363,156 @@ def test_sphinx_s_own_signature_of_cli_metadata_parameters_parses_as_python():
         rewritten = drop_annotated_markers(text, markers)
         assert rewritten == "(src: str, mode: int | None | None = None, quiet: bool = True)"
         signature_from_str(rewritten)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("str | None | None", "str | None"),
+        ("Expect | list[Expect] | None | None", "Expect | list[Expect] | None"),
+        ("None | str | None", "None | str"),
+        (" str | None | None ", " str | None "),
+        ("dict[str, int | None] | None", "dict[str, int | None] | None"),
+        ("list[None | None] | None", "list[None | None] | None"),
+        ("Literal['None | None'] | None", "Literal['None | None'] | None"),
+        ("str | None", "str | None"),
+        ("str", "str"),
+    ],
+)
+def test_single_none_shows_a_repeated_top_level_none_once(text, expected):
+    assert single_none(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "(self, user: str | None | None = None, force: bool = False)",
+            "(self, user: str | None = None, force: bool = False)",
+        ),
+        (
+            "(e: Expect | list[Expect] | None | None = None, *, u: str | None | None)",
+            "(e: Expect | list[Expect] | None = None, *, u: str | None)",
+        ),
+        (
+            "(d: dict[str, int | None] | None = None, s: str = 'None | None', x=None)",
+            "(d: dict[str, int | None] | None = None, s: str = 'None | None', x=None)",
+        ),
+        ("user: str | None | None", "user: str | None | None"),
+        ("()", "()"),
+    ],
+)
+def test_single_none_in_signature_reads_only_each_annotation(text, expected):
+    assert single_none_in_signature(text) == expected
+
+
+def test_sphinx_s_own_signature_of_a_none_defaulted_cli_parameter_shows_one_none():
+    """``BaseHost.login``'s shape: autodoc wraps a ``None``-defaulted ``Annotated`` in Optional.
+
+    On 3.10 Sphinx's ``signature`` does it for ``user`` (``get_type_hints``);
+    ``mode`` and the return spell the outer ``| None`` out, so every version
+    renders a repeat once the CLI metadata is dropped.
+    """
+    from typing import Annotated
+
+    from sphinx.util.inspect import signature, signature_from_str, stringify_signature
+
+    from otto.utils import Exclude, Opt
+
+    def login(
+        user: Annotated[str | None, Opt(help="As this user, e.g. [a, b].")] = None,
+        mode: Annotated[int | None, Opt(help="Octal [bits]")] | None = None,
+        tags: Annotated[dict[str, int | None] | None, Exclude] = None,
+        pattern: str = "None | None",
+    ) -> Annotated[str | None, Exclude] | None:
+        raise NotImplementedError
+
+    sig = signature(login)
+    metadata = annotated_metadata(
+        [p.annotation for p in sig.parameters.values()] + [sig.return_annotation]
+    )
+    markers = [repr(Exclude)] + [
+        text for meta in metadata if meta is not Exclude for text in annotated_metadata_text(meta)
+    ]
+    for unqualified in (True, False):
+        text = stringify_signature(sig, unqualified_typehints=unqualified)
+        params, returns = text.split(" -> ")
+        params = single_none_in_signature(drop_annotated_markers(params, markers))
+        returns = single_none(drop_annotated_markers(returns, markers))
+        assert params == (
+            "(user: str | None = None, mode: int | None = None,"
+            " tags: dict[str, int | None] | None = None, pattern: str = 'None | None')"
+        )
+        assert returns == "str | None"
+        signature_from_str(f"{params} -> {returns}")
+
+
+@pytest.fixture
+def docs_conf(monkeypatch):
+    """``docs/conf.py`` loaded as Sphinx loads it, its import side effects undone afterwards.
+
+    A Read the Docs version type stands in for ``git describe``: the build
+    stamp is all it decides, and no subprocess runs.
+    """
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setenv("READTHEDOCS_VERSION_TYPE", "branch")
+    spec = importlib.util.spec_from_file_location(
+        "_otto_docs_conf_under_test", REPO_ROOT / "docs" / "conf.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_conf_s_signature_rewrites_show_a_none_defaulted_cli_parameter_with_one_none(docs_conf):
+    """The rewrite chain autodoc runs (``_process_signature``), on ``BaseHost.login``'s shape.
+
+    Fails if ``_drop_cli_metadata`` stops collapsing the repeated ``None``,
+    in the parameters or the return annotation.
+    """
+    from typing import Annotated
+
+    from sphinx.util.inspect import signature, stringify_signature
+
+    from otto.utils import Exclude, Opt
+
+    def login(
+        user: Annotated[str | None, Opt(help="As this user, e.g. [a, b].")] = None,
+        mode: Annotated[int | None, Opt(help="Octal [bits]")] | None = None,
+        force: bool = False,
+    ) -> Annotated[str | None, Exclude] | None:
+        raise NotImplementedError
+
+    # Autodoc's own split of its formatted text into the event's two arguments.
+    text = stringify_signature(signature(login), unqualified_typehints=True)
+    matched = re.match(r"^(\(.*\))\s+->\s+(.*)$", text)
+    assert matched is not None, text
+    result = docs_conf._process_signature(
+        None, "function", "login", login, None, matched.group(1), matched.group(2)
+    )
+    assert result == (
+        "(user: str | None = None, mode: int | None = None, force: bool = False)",
+        "str | None",
+    )
+
+
+def test_a_dict_literal_default_keeps_one_parameter_span():
+    """A brace nests like a bracket: the commas and colon of ``{'a': 1, 'b': 2}`` are its own.
+
+    Split at the dict's commas, ``'b': None | None`` would read as an
+    annotation, and the default would be rewritten.
+    """
+    text = "d: dict = {'a': 1, 'b': 2}, x: int = 1"
+    assert [text[a:b].strip() for a, b in _parameter_spans(text)] == [
+        "d: dict = {'a': 1, 'b': 2}",
+        "x: int = 1",
+    ]
+    signature = "(d={'a': 1, 'b': None | None, 'c': 2}, u: str | None | None = None)"
+    assert single_none_in_signature(signature) == (
+        "(d={'a': 1, 'b': None | None, 'c': 2}, u: str | None = None)"
+    )
 
 
 def test_annotated_metadata_is_found_wherever_the_annotated_is_nested():

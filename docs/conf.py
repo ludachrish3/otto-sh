@@ -510,6 +510,11 @@ def _drop_cli_metadata(
     that changes every build, and an ``Arg``/``Opt`` prints its help text
     unquoted, which is not Python, so Sphinx cannot parse the signature and
     shows it as raw text (``docs_api_reference.drop_annotated_markers``).
+    A ``None``-defaulted ``Annotated[T | None, Opt(...)]`` gains an outer
+    ``Optional`` on Python 3.10 (``get_type_hints``), as it does everywhere
+    when the source spells ``| None`` out, so dropping the metadata leaves
+    ``T | None | None``: the repeated ``None`` is shown once
+    (``docs_api_reference.single_none``).
     """
     from otto.utils import Arg, Exclude, Opt
 
@@ -523,9 +528,17 @@ def _drop_cli_metadata(
         for meta in docs_api_reference.annotated_metadata(annotations):
             if meta is Exclude or isinstance(meta, (Arg, Opt)):
                 markers.extend(docs_api_reference.annotated_metadata_text(meta))
-    rewritten = tuple(
-        docs_api_reference.drop_annotated_markers(text, markers) if text else text
-        for text in (signature, return_annotation)
+    rewritten = (
+        docs_api_reference.single_none_in_signature(
+            docs_api_reference.drop_annotated_markers(signature, markers)
+        )
+        if signature
+        else signature,
+        docs_api_reference.single_none(
+            docs_api_reference.drop_annotated_markers(return_annotation, markers)
+        )
+        if return_annotation
+        else return_annotation,
     )
     return None if rewritten == (signature, return_annotation) else rewritten
 
