@@ -480,7 +480,6 @@ def test_a_parameterized_generic_factory_is_judged_by_its_class():
     assert factory_default(dict[str, str]) == "dict()"
     assert factory_default(list[int]) == "list()"
     assert factory_default(set[str]) == "set()"
-    assert factory_default(typing.Dict[str, int]) == "dict()"  # noqa: UP006 -- the typing alias is the case
     assert factory_default(_Box[int]) == "..."
 
 

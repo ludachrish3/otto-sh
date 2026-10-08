@@ -529,10 +529,10 @@ def factory_default(factory: object) -> str:
     reader cannot name it, a class whose signature cannot be read, and a class
     that requires an argument (pydantic passes a one-argument factory the
     validated data, so a bare call would misstate the default). A
-    parameterized generic (``dict[str, Any]``) is judged by its class: calling
-    it builds that class, so it shows ``dict()``. An ``Annotated[T, ...]``
-    factory is judged by ``T``, whose call it makes: ``Annotated[list, m]``
-    shows ``list()``.
+    parameterized generic (``dict[str, Any]``) is judged by its origin class,
+    and an ``Annotated[T, ...]`` by ``T``: the call shown names the default's
+    value, that class called bare (``dict()``, ``list()``), not a call the
+    factory itself could make (calling ``typing.Dict[str, int]`` raises).
     """
     while typing.get_origin(factory) is typing.Annotated:
         factory = typing.get_args(factory)[0]
