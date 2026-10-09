@@ -751,6 +751,7 @@ judged against the first parent, as for every other record (§9).
 | Coverage capture | reads 3; writes 3 by default, though a caller can override the stamp today | yes |
 | Monitor database | reads/writes 2 (`PRAGMA user_version`; existing v2 files also differ by columns) | yes |
 | Monitor JSON export | reads/writes 1 (Python and the browser) | yes |
+| Monitor live stream (server-sent-event fragments) | reads/writes 1 (otto emits; the browser reads, and builds its own fragments) | yes, added 2026-10-08: the owner gave the stream its own number, distinct from the export's |
 | Reservations JSON | reads 1 (user-maintained input) | yes |
 | `tickets.json` | writes 2 | yes |
 | `otto check` report | writes `"otto-check/1"` | yes |
@@ -771,7 +772,6 @@ judged against the first parent, as for every other record (§9).
 They get no invented version constants here.
 
 **Other emitted formats, out of scope:**
-- monitor server-sent-event fragments;
 - generated JSON Schemas;
 - coverage-report JavaScript chunks, which are bundled implementation;
 - JUnit results, an external standard.
