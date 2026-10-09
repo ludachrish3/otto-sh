@@ -1,6 +1,6 @@
 // The monitor-export versions the browser reads and writes. A mirror of the
 // declared lists in otto.models.formats (dump spec §13.1), which TypeScript
-// cannot import; tests/unit/models/test_export_format_mirror.py fails when
+// cannot import; tests/unit/models/test_browser_format_mirrors.py fails when
 // the two differ. `satisfies` ties both to `Format`, the type export.gen.ts
 // generates from the Python read list.
 import type { Format } from "../api/export.gen";

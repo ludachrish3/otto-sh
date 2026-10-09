@@ -1,20 +1,21 @@
-"""The two pydantic version fields mirror their declared lists (dump spec §13.1).
+"""The three pydantic version fields mirror their declared lists (dump spec §13.1).
 
-``MonitorExport.format`` and ``ReservationFile.version`` keep pydantic's
-native ``Literal``. Their modules load on budgeted CLI surfaces, so they do
-not import ``otto.models.formats``. Instead, this file holds each field's
-``Literal`` arguments equal to the declared read list, as
-``test_export_format_mirror.py`` does for the browser. A version added to or
-dropped from either side fails here.
+``MonitorExport.format``, ``MonitorSessionFragment.format`` and
+``ReservationFile.version`` keep pydantic's native ``Literal``. Their modules
+load on budgeted CLI surfaces, so they do not import ``otto.models.formats``.
+Instead, this file holds each field's ``Literal`` arguments equal to the
+declared read list, as ``test_browser_format_mirrors.py`` does for the
+browser. A version added to or dropped from either side fails here.
 
 The differential compares each field with a ``Literal`` over the declared
 list, built with the same config, on every validation path:
 ``model_validate`` and ``model_validate_json``, each lax and strict. It
 compares the verdict, the value and type returned, the error type and
-message, and the JSON Schema. Re-spelling a field as anything that judges
-differently fails here. For example, a before-validator feeding an ``int``
-field refuses ``True`` and ``1.0`` under strict validation, while ``Literal``
-accepts both as ``1``.
+message, and the JSON Schema. The reference keeps the field's default, so the
+fragment's defaulted ``format`` compares like for like. Re-spelling a field as
+anything that judges differently fails here. For example, a before-validator
+feeding an ``int`` field refuses ``True`` and ``1.0`` under strict
+validation, while ``Literal`` accepts both as ``1``.
 """
 
 import json
@@ -25,12 +26,19 @@ import pytest
 from pydantic import ValidationError, create_model
 
 from otto.models import formats
-from otto.models.monitor import MonitorExport
+from otto.models.monitor import MonitorExport, MonitorSessionFragment
 from otto.models.settings import ReservationFile
 
 FIELDS = [
     pytest.param(
         MonitorExport, "format", "MONITOR_EXPORT_READ_VERSIONS", {"sessions": []}, id="export"
+    ),
+    pytest.param(
+        MonitorSessionFragment,
+        "format",
+        "MONITOR_STREAM_READ_VERSIONS",
+        {"session": "s"},
+        id="stream",
     ),
     pytest.param(
         ReservationFile,
@@ -56,7 +64,7 @@ TODAY = {
     "2": ("refused", "literal_error", "Input should be 1"),
     "0": ("refused", "literal_error", "Input should be 1"),
 }
-"""Today's verdicts with read list ``[1]``, the same on all four paths for both fields."""
+"""Today's verdicts with read list ``[1]``, the same on all four paths for every field."""
 
 
 def _judge(model, field, payload, path, strict):
@@ -75,8 +83,10 @@ def _judge(model, field, payload, path, strict):
 
 def _reference(model, field, constant):
     allowed = tuple(getattr(formats, constant))
+    declared = model.model_fields[field]
+    default = ... if declared.is_required() else declared.default
     return create_model(
-        "Reference", __config__=model.model_config, **{field: (Literal[allowed], ...)}
+        "Reference", __config__=model.model_config, **{field: (Literal[allowed], default)}
     )
 
 

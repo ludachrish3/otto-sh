@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ..logger.mode import LogMode
 from ..models import ChartSpec, MetricPoint, MonitorMeta, TabSpec, TunnelRecord
+from ..models.formats import MONITOR_STREAM_WRITE_VERSIONS
 from ..models.monitor import DEFAULT_MAX_SERIES_PER_CHART
 from ..result import CommandResult, Results
 from .broadcast import Broadcaster
@@ -42,6 +43,13 @@ from .store import MetricStore
 
 if TYPE_CHECKING:
     from ..host.remote_host import RemoteHost
+
+[STREAM_FORMAT] = MONITOR_STREAM_WRITE_VERSIONS
+"""The ``format`` every live-stream fragment this collector publishes is stamped with.
+
+It is the one declared ``monitor-live-stream`` write version, a format of its
+own and not the export document's. Every ``_publish`` payload carries it.
+"""
 
 
 class MetricView(Protocol):
@@ -521,7 +529,7 @@ class MetricCollector:
         # hydrate FRESHER than the stream, never staler (spec §2).
         if self._db:
             await self._db.write_tunnels(json.dumps(payload))
-        self._publish({"format": 1, "session": self.session_id, "tunnels": payload})
+        self._publish({"format": STREAM_FORMAT, "session": self.session_id, "tunnels": payload})
 
     async def _tunnel_loop(
         self, secs: float, start: datetime, duration: "timedelta | None"
@@ -561,8 +569,8 @@ class MetricCollector:
             if map_changed:
                 await self._db.write_chart_map(json.dumps(self._store.chart_map))
         # A fragment IS a partial SessionRecord — same field names as the payload
-        # it appends to, so the client appends instead of translating (spec §The
-        # stream speaks format:1).
+        # it appends to, so the client appends instead of translating. Its
+        # ``format`` is the declared ``monitor-live-stream`` version, STREAM_FORMAT.
         record: dict[str, Any] = {
             "timestamp": ts.isoformat(),
             "host": host_name,
@@ -572,7 +580,7 @@ class MetricCollector:
         if dp.meta is not None:
             record["meta"] = dp.meta
         frag: dict[str, Any] = {
-            "format": 1,
+            "format": STREAM_FORMAT,
             "session": self.session_id,
             "metrics": [record],
         }
@@ -600,7 +608,7 @@ class MetricCollector:
                 await self._db.write_log_event(ev.ts, host_name, tab, ev.fields)
         self._publish(
             {
-                "format": 1,
+                "format": STREAM_FORMAT,
                 "session": self.session_id,
                 "log_events": [
                     {
@@ -737,7 +745,9 @@ class MetricCollector:
         )
         rowid = await self._db.write_event(event) if self._db else 0
         event = self._store.add_event(event, rowid)
-        self._publish({"format": 1, "session": self.session_id, "events": [event.to_dict()]})
+        self._publish(
+            {"format": STREAM_FORMAT, "session": self.session_id, "events": [event.to_dict()]}
+        )
         return event
 
     async def delete_event(self, event_id: int) -> bool:
@@ -746,7 +756,9 @@ class MetricCollector:
             return False
         if self._db:
             await self._db.delete_event(event_id)
-        self._publish({"format": 1, "session": self.session_id, "deleted_event_ids": [event_id]})
+        self._publish(
+            {"format": STREAM_FORMAT, "session": self.session_id, "deleted_event_ids": [event_id]}
+        )
         return True
 
     async def update_event(
@@ -779,7 +791,9 @@ class MetricCollector:
             await self._db.update_event(ev)
         # No separate "updated" kind: the client upserts events by id, so an
         # edited event is just an event. One merge rule, not two.
-        self._publish({"format": 1, "session": self.session_id, "events": [ev.to_dict()]})
+        self._publish(
+            {"format": STREAM_FORMAT, "session": self.session_id, "events": [ev.to_dict()]}
+        )
         return ev
 
     # ------------------------------------------------------------------

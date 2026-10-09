@@ -8,6 +8,7 @@
 // thrown EventApiError inline at the control that issued it.
 import type { EventCreateBody, EventRecord, EventUpdateBody } from "../api/export.gen";
 import { useReviewStore } from "./reviewStore";
+import { STREAM_FORMAT } from "./streamFormat";
 
 export class EventApiError extends Error {}
 
@@ -53,7 +54,7 @@ async function errorMessage(res: Response): Promise<string> {
 function applyRecord(sessionId: string, record: EventRecord): void {
   useReviewStore
     .getState()
-    .actions.appendFragment({ format: 1, session: sessionId, events: [record] });
+    .actions.appendFragment({ format: STREAM_FORMAT, session: sessionId, events: [record] });
 }
 
 const jsonInit = (method: string, body: unknown): RequestInit => ({
@@ -99,7 +100,9 @@ export async function updateEvent(
 
 export async function deleteEvent(sessionId: string, eventId: number): Promise<void> {
   await request(`${base(sessionId)}/${eventId}`, { method: "DELETE" });
-  useReviewStore
-    .getState()
-    .actions.appendFragment({ format: 1, session: sessionId, deleted_event_ids: [eventId] });
+  useReviewStore.getState().actions.appendFragment({
+    format: STREAM_FORMAT,
+    session: sessionId,
+    deleted_event_ids: [eventId],
+  });
 }

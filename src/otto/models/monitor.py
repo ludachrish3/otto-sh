@@ -19,10 +19,12 @@ Three seams:
   (``ts``/``end_ts``) so one model validates both seams.
 
 * :class:`MonitorSessionFragment` — the live SSE wire boundary (spec
-  2026-07-12 §The stream speaks format:1). It reuses ``MetricRecord`` /
-  ``EventRecord`` / ``LogEventRecord`` / ``SessionMeta`` verbatim rather than
-  mirroring their fields under new names, so the fragment cannot drift from
-  the ``format:1`` payload it appends to.
+  2026-07-12 §The stream speaks format:1). Its ``format`` is a declared format
+  of its own, ``monitor-live-stream`` in ``api/public.toml``, versioned apart
+  from the export document. It reuses ``MetricRecord`` / ``EventRecord`` /
+  ``LogEventRecord`` / ``SessionMeta`` verbatim rather than mirroring their
+  fields under new names, so the fragment cannot drift from the export's
+  session payload it appends to.
 
 Leaf isolation: this module imports only :mod:`otto.models.base`, pydantic,
 and the stdlib — no runtime or ``otto.monitor`` edge — so it stays a pure leaf
@@ -545,6 +547,9 @@ class MonitorSessionFragment(RowModel):
     wholesale. That is "last known state" expressed on the wire.
     """
 
+    # The Literal's arguments are MONITOR_STREAM_READ_VERSIONS (otto.models.formats,
+    # dump spec §13.1), spelled again for the same reason as MonitorExport.format;
+    # tests/unit/models/test_declared_version_fields.py holds the two equal.
     format: Literal[1] = 1
     session: str
     metrics: list[MetricRecord] = Field(default_factory=list)

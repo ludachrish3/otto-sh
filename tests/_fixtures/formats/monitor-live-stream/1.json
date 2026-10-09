@@ -1,0 +1,112 @@
+[
+  {
+    "format": 1,
+    "session": "2026-07-01T08-00-00-live",
+    "metrics": [
+      { "timestamp": "2026-07-01T08:00:05+00:00", "host": "rack1-a", "label": "cpu", "value": 12.5 }
+    ],
+    "chart_map": { "cpu": "CPU" },
+    "meta": {
+      "interval": 5.0,
+      "charts": [
+        {
+          "label": "CPU",
+          "y_title": "Usage %",
+          "unit": "%",
+          "command": "cat /proc/stat",
+          "chart": "CPU",
+          "interval": null,
+          "max_series": null
+        }
+      ],
+      "tabs": [
+        { "id": "cpu", "label": "CPU", "metrics": ["CPU"], "kind": "charts", "columns": null }
+      ]
+    }
+  },
+  {
+    "format": 1,
+    "session": "2026-07-01T08-00-00-live",
+    "metrics": [
+      { "timestamp": "2026-07-01T08:00:10+00:00", "host": "rack1-a", "label": "cpu", "value": 25.0 }
+    ]
+  },
+  {
+    "format": 1,
+    "session": "2026-07-01T08-00-00-live",
+    "events": [
+      {
+        "id": 1,
+        "timestamp": "2026-07-01T08:00:06+00:00",
+        "label": "deploy",
+        "source": "manual",
+        "color": "#888888",
+        "dash": "dash",
+        "end_timestamp": null
+      }
+    ]
+  },
+  {
+    "format": 1,
+    "session": "2026-07-01T08-00-00-live",
+    "events": [
+      {
+        "id": 1,
+        "timestamp": "2026-07-01T08:00:06+00:00",
+        "label": "deploy v2",
+        "source": "manual",
+        "color": "#111111",
+        "dash": "solid",
+        "end_timestamp": "2026-07-01T08:00:09+00:00"
+      }
+    ]
+  },
+  {
+    "format": 1,
+    "session": "2026-07-01T08-00-00-live",
+    "events": [
+      {
+        "id": 2,
+        "timestamp": "2026-07-01T08:00:07+00:00",
+        "label": "noise",
+        "source": "manual",
+        "color": "#888888",
+        "dash": "dash",
+        "end_timestamp": null
+      }
+    ]
+  },
+  {
+    "format": 1,
+    "session": "2026-07-01T08-00-00-live",
+    "deleted_event_ids": [2]
+  },
+  {
+    "format": 1,
+    "session": "2026-07-01T08-00-00-live",
+    "log_events": [
+      {
+        "timestamp": "2026-07-01T08:00:08+00:00",
+        "host": "rack1-a",
+        "tab": "syslog",
+        "fields": { "level": "error", "message": "link flap" }
+      }
+    ]
+  },
+  {
+    "format": 1,
+    "session": "2026-07-01T08-00-00-live",
+    "tunnels": [
+      {
+        "id": "t1",
+        "protocol": "udp",
+        "service_port": 4789,
+        "hops": ["rack1-a", "rack1-b"],
+        "status": "ok",
+        "carriers_present": 0,
+        "carriers_expected": 0,
+        "age_seconds": null
+      }
+    ]
+  }
+]

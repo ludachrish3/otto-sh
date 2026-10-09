@@ -1,6 +1,7 @@
 // The SSE client: buffer, flush once per frame, reconnect with backoff, resync.
 import type { MonitorSessionFragment } from "../api/export.gen";
 import { useReviewStore } from "./reviewStore";
+import { MONITOR_STREAM_READ_VERSIONS } from "./streamFormat";
 
 const FLUSH_MS = 16; // one frame
 const BACKOFF_MS = [1000, 2000, 5000, 10_000, 30_000];
@@ -21,6 +22,28 @@ function isFragment(v: unknown): v is MonitorSessionFragment {
   return ARRAY_FIELDS.every((key) => rec[key] === undefined || Array.isArray(rec[key]));
 }
 
+/** Whether this dashboard reads the fragment's `format`: one in the declared read
+ * list (streamFormat.ts), or none at all, as the Python model accepts it (its
+ * `format` has a default). */
+function isReadable(frag: MonitorSessionFragment): boolean {
+  return (
+    frag.format === undefined ||
+    (MONITOR_STREAM_READ_VERSIONS as readonly unknown[]).includes(frag.format)
+  );
+}
+
+/** The one warning for a connection whose fragments arrive in a format this
+ * dashboard does not read, such as a tab left open across an upgrade that bumped
+ * only the stream's version: its resync still reads, so it would look live while
+ * every update is dropped. */
+function unreadableFormatWarning(format: unknown, dropped: number): string {
+  return (
+    `The live stream sent ${dropped} update(s) in format ${String(format)}, but this ` +
+    `dashboard reads format ${MONITOR_STREAM_READ_VERSIONS.join(", ")}. Live updates are ` +
+    "being dropped; reload the page to get a dashboard that matches the server."
+  );
+}
+
 export function startStream(
   opts: { url?: string; resync?: () => Promise<unknown> } = {},
 ): () => void {
@@ -35,6 +58,13 @@ export function startStream(
   // cancel BOTH kinds of pending work — leaving this one untracked was the
   // bug: a stopped stream's already-scheduled reconnect fired anyway.
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // Fragments dropped for an unreadable `format`: counted until, and surfaced ONCE
+  // per connection in the warnings channel at, the next flush — not once per fragment.
+  // Reset by connect(), because the resync before a reconnect replaces the
+  // warnings channel wholesale.
+  let unreadable = 0;
+  let unreadableFormat: unknown;
+  let warnedUnreadable = false;
 
   // ~90 fragments arrive per tick (one per point). Applying each separately would
   // be ~90 store updates and ~90 render passes; one flush per frame makes it one.
@@ -46,6 +76,12 @@ export function startStream(
     const batch = buffer;
     buffer = [];
     useReviewStore.getState().actions.appendFragments(batch);
+    if (unreadable > 0 && !warnedUnreadable) {
+      warnedUnreadable = true;
+      useReviewStore
+        .getState()
+        .actions.addWarning(unreadableFormatWarning(unreadableFormat, unreadable));
+    }
   };
 
   const connect = () => {
@@ -61,6 +97,8 @@ export function startStream(
     if (useReviewStore.getState().connection !== target) {
       useReviewStore.getState().actions.setConnection(target);
     }
+    unreadable = 0;
+    warnedUnreadable = false;
     source = new EventSource(url);
 
     source.onopen = () => {
@@ -76,7 +114,14 @@ export function startStream(
         return; // not JSON — drop it
       }
       if (!isFragment(parsed)) return;
-      buffer.push(parsed);
+      if (isReadable(parsed)) {
+        buffer.push(parsed);
+      } else if (!warnedUnreadable) {
+        // Counted only until the one warning goes out, so the count it states is
+        // exactly what it counted; later unreadable fragments are dropped uncounted.
+        if (unreadable === 0) unreadableFormat = parsed.format;
+        unreadable += 1;
+      }
       if (timer === null) timer = setTimeout(flush, FLUSH_MS);
     };
 

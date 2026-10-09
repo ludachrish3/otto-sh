@@ -5356,5 +5356,6 @@ format	kmodcov-interface	I:2	-
 format	link-impairment-sentinel	S:"v1" S:"v2" S:"v3"	S:"v1" S:"v3"
 format	monitor-database	I:2	I:2
 format	monitor-export	I:1	I:1
+format	monitor-live-stream	I:1	I:1
 format	reservations-file	I:1	-
 format	tunnel-sentinel	S:"v1"	S:"v1"

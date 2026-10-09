@@ -3,7 +3,7 @@
 // shared with the Python readers) that parseExportDocument must read for
 // meaning, and every declared write version is what documentFromSessions
 // stamps. The versions come from exportFormat.ts, which
-// tests/unit/models/test_export_format_mirror.py holds equal to the Python lists.
+// tests/unit/models/test_browser_format_mirrors.py holds equal to the Python lists.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

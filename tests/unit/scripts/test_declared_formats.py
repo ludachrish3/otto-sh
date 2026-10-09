@@ -33,6 +33,7 @@ DECLARED = [
     "link-impairment-sentinel",
     "monitor-database",
     "monitor-export",
+    "monitor-live-stream",
     "reservations-file",
     "tunnel-sentinel",
 ]

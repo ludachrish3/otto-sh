@@ -103,8 +103,11 @@ back on review.
 ({class}`~otto.monitor.server.MonitorServer`) binds an OS-assigned port and
 serves the collector's buffer to the built React frontend: an initial `GET
 /api/monitor_sessions` snapshot (the same `format:1` shape review mode loads)
-plus a live `GET /api/stream` SSE feed of `format:1`-shaped fragments that
-grows an already-open tab in real time. Because the dashboard boots from that
+plus a live `GET /api/stream` SSE feed of fragments that grows an
+already-open tab in real time. A fragment is a partial session record in the
+export's vocabulary, but the stream is a versioned format of its own,
+`monitor-live-stream` in `api/public.toml`, numbered apart from the export
+document's `format`. Because the dashboard boots from that
 snapshot fetch in live and review mode alike, it also runs from a bare static
 file server with no `/api/*` routes (the docs screenshots and ad-hoc demos):
 any failure falls back to the empty Import screen. With `--db`, each run's

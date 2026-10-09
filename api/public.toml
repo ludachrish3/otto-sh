@@ -243,6 +243,10 @@ writes = "otto.monitor.formats:MONITOR_DB_WRITE_VERSIONS"
 reads = "otto.models.formats:MONITOR_EXPORT_READ_VERSIONS"
 writes = "otto.models.formats:MONITOR_EXPORT_WRITE_VERSIONS"
 
+[formats.monitor-live-stream]
+reads = "otto.models.formats:MONITOR_STREAM_READ_VERSIONS"
+writes = "otto.models.formats:MONITOR_STREAM_WRITE_VERSIONS"
+
 [formats.reservations-file]
 reads = "otto.models.formats:RESERVATIONS_READ_VERSIONS"
 
