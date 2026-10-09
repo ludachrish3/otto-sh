@@ -389,7 +389,11 @@ export interface TunnelRecord {
 /**
  * An incremental update to ONE live monitor session.
  *
- * Spec 2026-07-12 §The stream speaks format:1.
+ * The fragments of ``GET /api/stream`` are a declared format of their own,
+ * ``monitor-live-stream`` in ``api/public.toml``, versioned apart from the
+ * :class:`MonitorExport` document whose sessions they grow (spec 2026-07-12
+ * §The stream speaks format:1). An absent ``format`` reads as version 1, its
+ * default.
  *
  * A fragment is a *partial* :class:`SessionRecord`: every payload field is
  * optional and carries the SAME name and type as its counterpart there, so the
