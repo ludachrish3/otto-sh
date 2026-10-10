@@ -232,6 +232,12 @@ finally:
         reset_context(token)
 ```
 
+Skipping `check_repos` never widens a fleet walk. The context's first fleet
+walk raises {class}`~otto.session.RepoLoadError` for a load error that
+`check_repos` would have refused, and the error from a broken environment
+(such as `OTTO_SUT_DIRS` naming a directory that does not exist) propagates as
+raised.
+
 Add the checks you want back in the same order. If you add
 `select_projects`, pass its result into the context as
 `OttoContext(..., include_projects=tuple(selection.include),

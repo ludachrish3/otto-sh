@@ -118,6 +118,24 @@ class _ChainParams:
     holder: "str | None"
     exclude_projects: "list[str]" = field(default_factory=list)
     """The ``-E`` names, so the gate's hosts in play match the run's."""
+    include_projects: "list[str]" = field(default_factory=list)
+    """The ``-I`` names, so the classifier sees what the command forces active."""
+
+
+def _split_names(value: object) -> "list[str]":
+    """Split a chain's ``-I``/``-E`` list on commas, dropping blanks and non-strings.
+
+    Split here as well as in the option's callback: a value read off the chain
+    mid-TAB may not have been through it, and an unsplit ``"a,b"`` would name
+    no repo.
+    """
+    return [
+        part.strip()
+        for item in (value if isinstance(value, list) else [])
+        if isinstance(item, str)
+        for part in item.split(",")
+        if part.strip()
+    ]
 
 
 def _collect_chain_params(ctx: "typer.Context") -> _ChainParams:
@@ -139,28 +157,27 @@ def _collect_chain_params(ctx: "typer.Context") -> _ChainParams:
             break
         params = getattr(node, "params", None)
         if isinstance(params, dict):
-            for key in ("host_id", "hop", "term", "labs", "holder", "exclude_projects"):
+            for key in (
+                "host_id",
+                "hop",
+                "term",
+                "labs",
+                "holder",
+                "exclude_projects",
+                "include_projects",
+            ):
                 if key not in found and key in params:
                     found[key] = params[key]
         node = getattr(node, "parent", None)
     labs = found.get("labs")
-    excluded = found.get("exclude_projects")
     return _ChainParams(
         host_id=found.get("host_id") or "",
         hop=found.get("hop") or "",
         term=found.get("term") or None,
         labs=[x for x in labs if isinstance(x, str)] if isinstance(labs, list) else [],
         holder=found.get("holder") or None,
-        # Split here as well as in the option's callback: a value read off the
-        # chain mid-TAB may not have been through it, and an unsplit "a,b"
-        # would switch off nothing.
-        exclude_projects=[
-            part.strip()
-            for value in (excluded if isinstance(excluded, list) else [])
-            if isinstance(value, str)
-            for part in value.split(",")
-            if part.strip()
-        ],
+        exclude_projects=_split_names(found.get("exclude_projects")),
+        include_projects=_split_names(found.get("include_projects")),
     )
 
 
@@ -398,7 +415,10 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     lab-level set — and with one extra edge here: a raise would be swallowed
     by :func:`remote_path_completer`'s catch-all into an empty completion, so
     an abort on this path is not a loud failure but a dead TAB with no
-    explanation anywhere.
+    explanation anywhere. The one refusal that does reach the catch-all is a
+    repo that failed to load: the context carries the chain's ``-I`` and
+    ``-E`` so its verdicts judge the load errors as the command would, and the
+    command itself then fails loudly through ``check_repos``.
 
     Every host the user NAMED joins the fleet, even when no repo declared it —
     the target and the ``--hop``. ``otto host <id> --hop <id>`` is deliberately
@@ -423,7 +443,11 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     from ..session import build_lab
 
     lab = build_lab(get_repos(), chain.labs)
-    ctx = OttoContext(lab=lab, exclude_projects=tuple(chain.exclude_projects))
+    ctx = OttoContext(
+        lab=lab,
+        include_projects=tuple(chain.include_projects),
+        exclude_projects=tuple(chain.exclude_projects),
+    )
     token = set_context(ctx)
     try:
         named = [lab.hosts.get(h) for h in (chain.host_id, chain.hop) if h]

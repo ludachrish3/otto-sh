@@ -53,6 +53,7 @@ from otto.project import (
 from otto.registry import registering_repo
 from otto.result import CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fake_repo import fake_repo
 
 # ── doubles ──────────────────────────────────────────────────────────────
@@ -181,7 +182,10 @@ def _wire_lab(monkeypatch, tmp_path, repo_names, hosts, *, declarations=None):
     CLASS a walk dispatches through, with the fleet unnarrowed. ``sut_dir`` is
     read by the scope resolver only to name a file in an error message.
 
-    ``get_repos`` is patched alongside, with the LAST name of the walk order
+    Both lists reach otto through one patched ``bootstrap()``
+    (:func:`~tests._fixtures.bootstrap_seam.patch_bootstrap`), the one seam
+    ``get_repos``, ``get_ordered_repos`` and the context's scopes all read.
+    ``get_repos`` answers with the LAST name of the walk order
     first: bootstrap's own order heads with the DRIVING repo, which is where a
     dependent sits, while the walk order heads with a dependency. D3 reads the
     first of the former, so a lab wired with one list for both cannot tell a
@@ -204,14 +208,12 @@ def _wire_lab(monkeypatch, tmp_path, repo_names, hosts, *, declarations=None):
         fake_repo(name, project_scope=(declarations or {}).get(name), sut_dir=tmp_path / name)
         for name in repo_names
     ]
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: ordered)
     driving = repo_names[-1] if repo_names else None
-    monkeypatch.setattr(
-        "otto.bootstrap.get_repos",
-        lambda: (
-            [repo for repo in ordered if repo.name == driving]
-            + [repo for repo in ordered if repo.name != driving]
-        ),
+    patch_bootstrap(
+        monkeypatch,
+        [repo for repo in ordered if repo.name == driving]
+        + [repo for repo in ordered if repo.name != driving],
+        ordered=ordered,
     )
 
 

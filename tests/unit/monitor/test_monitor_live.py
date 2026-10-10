@@ -329,14 +329,32 @@ class TestDrivingRepoScopeGate:
         assert contacted == ["walked"]
 
     @pytest.mark.asyncio
-    async def test_a_world_with_no_repos_is_untouched(self, lab, served, monkeypatch):
+    async def test_a_world_with_no_context_is_untouched(self, lab, served, monkeypatch):
         """Monitoring a lab from outside any project is not a project activity to refuse.
 
-        A library lab, or a checkout with no ``OTTO_SUT_DIRS``: there is no
-        current repo, so there is no verdict to enforce and the gate must not
-        invent one (nor die indexing an empty list).
+        A library lab: no context is installed (the unit tree's default, asserted
+        below), so the gate returns at its context lookup with no verdict to
+        enforce, before it reads any repo.
+        """
+        from otto.context import get_context
+
+        monkeypatch.setattr("otto.bootstrap.get_repos", list)
+        with pytest.raises(RuntimeError):
+            get_context()
+
+        report = await run_live()
+
+        assert report.hosts == ["web1", "s1"]
+
+    @pytest.mark.asyncio
+    async def test_a_context_with_no_repos_is_untouched(self, lab, served, monkeypatch):
+        """A checkout with no ``OTTO_SUT_DIRS``, under a context: no current repo to refuse.
+
+        The context's verdicts are empty and ``get_repos()`` is ``[]``, so the
+        gate must not invent a verdict (nor die indexing an empty list).
         """
         monkeypatch.setattr("otto.bootstrap.get_repos", list)
+        monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(scopes={}))
 
         report = await run_live()
 
@@ -366,14 +384,9 @@ class TestDrivingRepoScopeGate:
 
         assert report.hosts == ["web1", "s1"]
 
-    @pytest.mark.asyncio
-    async def test_unreachable_repos_pass_the_gate_and_stop_at_tls(self, lab, served, monkeypatch):
-        """A ``get_repos()`` that raises is no D3 verdict, so the walk still runs.
-
-        The run itself still needs the repos to resolve the declared dashboard
-        TLS — the library always resolves it — so the lookup's own error
-        surfaces from there, never as a scope refusal.
-        """
+    @staticmethod
+    def _unreachable_repos(monkeypatch):
+        """Make ``get_repos()`` raise and record the fleet build; return the record."""
         contacted = []
 
         def _boom():
@@ -386,9 +399,41 @@ class TestDrivingRepoScopeGate:
 
         monkeypatch.setattr("otto.bootstrap.get_repos", _boom)
         monkeypatch.setattr("otto.config.fleet.all_hosts", _all_hosts)
+        return contacted
+
+    @pytest.mark.asyncio
+    async def test_unreachable_repos_without_a_context_stop_at_tls(self, lab, served, monkeypatch):
+        """With no context installed, the gate returns before it reads any repo.
+
+        The run itself still needs the repos to resolve the declared dashboard
+        TLS — the library always resolves it — so the lookup's own error
+        surfaces from there, after the walk, never as a scope refusal.
+        """
+        from otto.context import get_context
+
+        contacted = self._unreachable_repos(monkeypatch)
+        with pytest.raises(RuntimeError):
+            get_context()
 
         with pytest.raises(RuntimeError, match="no bootstrap here"):
             await run_live()
 
         assert contacted == ["walked"]
+        served.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unreachable_repos_under_a_context_stop_the_gate(self, lab, served, monkeypatch):
+        """Under a context, only the context lookup is guarded: the repo read is not.
+
+        ``get_repos()``'s error propagates out of the gate itself, before any
+        host is walked, so a guard widened around the repo read (which would
+        let the walk run and fail later, at the TLS lookup) turns this red.
+        """
+        contacted = self._unreachable_repos(monkeypatch)
+        monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(scopes={}))
+
+        with pytest.raises(RuntimeError, match="no bootstrap here"):
+            await run_live()
+
+        assert contacted == []
         served.assert_not_called()

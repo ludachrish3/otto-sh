@@ -3,8 +3,9 @@
 Spec ``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md`` §3
 and §8. The ORACLE is the walk itself: ``ctx.all_hosts(...)`` for the union and
 ``ctx.for_repo(owner).all_hosts(...)`` for one repo, on a non-sentinel context
-built on the same lab, repos and ``-E``, with the context's repo read patched to
-return those same repos. Over every generated case the query must equal the
+built on the same lab, repos and ``-E``, with the composition root the context
+reads (``otto.bootstrap.bootstrap``, through ``patch_bootstrap``) patched to
+hold those same repos. Over every generated case the query must equal the
 walk's ids, in the lab's order. The three places the two differ on purpose are
 tested on their own below.
 
@@ -30,13 +31,8 @@ from otto.config.fleet import fleet_of_interest
 from otto.config.scope import EmptySelectionError
 from otto.context import LIBRARY_LAB_NAME, OttoContext, set_context
 from otto.models.dependencies import normalize_name
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fleet import _lab, _repo, add_builtin_local, install_scoped_context
-
-_REPO_READ = "otto.bootstrap.get_ordered_repos"
-"""The repo read ``OttoContext.scopes`` makes, patched at its defining module.
-
-The fold of the accessors into ``otto.bootstrap`` re-points this target, and
-spec 4 §4 later changes the read itself to ``get_repos``."""
 
 
 def _container(parent, service, source_lab):
@@ -149,17 +145,27 @@ def oracle(world):
     stated exception, where the query answers ``[]``. The refusal is checked to
     be exactly that one — the walk's own admissible set, read without the
     refusal, is empty — so no other ``ProjectScopeError`` can hide behind it.
+
+    Module-scoped, so it runs OUTSIDE the root conftest's per-test bootstrap
+    state restore: it must never reach the real composition root, whose cached
+    discovery would outlive this module and poison later tests on the worker.
+    ``otto.bootstrap.discover`` refuses for the fixture's duration, so a future
+    reach fails loudly here instead.
     """
-    current: list = []
+
+    def _refuse_discovery():
+        raise AssertionError("the oracle reached the real composition root")
+
     results = []
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_REPO_READ, lambda: list(current))
+        mp.setattr("otto.bootstrap.discover", _refuse_discovery)
         # One INFO line per context ("fleet of interest: N of M lab hosts")
         # over thousands of cases is noise in every live-log run, and the line
         # is not under test here.
         mp.setattr(logging.getLogger("otto.context"), "disabled", True)
         for case in _cases(world):
-            current[:] = [world.repos[key] for key in case.repo_keys]
+            # The composition root is the seam ``OttoContext.scopes`` reads.
+            patch_bootstrap(mp, [world.repos[key] for key in case.repo_keys])
             ctx = OttoContext(lab=world.lab, exclude_projects=tuple(case.exclude_projects or ()))
             surface = ctx if case.owner is None else ctx.for_repo(case.owner)
             try:
@@ -381,10 +387,8 @@ def test_the_query_reads_nothing_but_its_arguments(world, monkeypatch):
     assert got == ["h1", "h1.r1.api"]
 
     # The injection is live: the read the walk makes does reach the refusal.
-    from otto.bootstrap import get_ordered_repos
-
     with pytest.raises(AssertionError, match="read the composition root"):
-        get_ordered_repos()
+        OttoContext(lab=world.lab).scopes  # noqa: B018 — the read is the act under test
 
 
 def test_every_membership_reader_consults_the_one_flag_rule(world, monkeypatch):

@@ -18,6 +18,7 @@ from otto.cli.remote_completion import (
 from otto.config.remote_completion_cache import ListingEntry
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fake_repo import fake_repo
 
 
@@ -104,10 +105,15 @@ def test_present_home_directory_keeps_tilde():
 ####################
 
 
-def _ctx(host_id="dut1", labs=("unix",), holder=None, exclude_projects=None):
+def _ctx(host_id="dut1", labs=("unix",), holder=None, exclude_projects=None, include_projects=None):
     """A mock Click context chain: leaf command -> `otto host` group -> root."""
     root = SimpleNamespace(
-        params={"labs": list(labs), "holder": holder, "exclude_projects": exclude_projects},
+        params={
+            "labs": list(labs),
+            "holder": holder,
+            "exclude_projects": exclude_projects,
+            "include_projects": include_projects,
+        },
         parent=None,
     )
     group = SimpleNamespace(params={"host_id": host_id, "hop": "", "term": None}, parent=root)
@@ -139,6 +145,11 @@ def test_chain_walk_takes_the_excluded_projects_split_on_commas():
     """``-E r2,r3 -E r4`` reaches the gate as three names, even if no callback split them."""
     chain = rc._collect_chain_params(_ctx(exclude_projects=["r2, r3", "r4"]))
     assert chain.exclude_projects == ["r2", "r3", "r4"]
+
+
+def test_chain_walk_takes_the_included_projects_split_on_commas():
+    params = rc._collect_chain_params(_ctx(include_projects=["a,b", "c"]))
+    assert params.include_projects == ["a", "b", "c"]
 
 
 def test_chain_walk_survives_a_self_referential_mock():
@@ -470,8 +481,7 @@ def test_required_for_is_scoped_to_the_fleet_of_interest(monkeypatch, tmp_path):
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
+    patch_bootstrap(monkeypatch, [repo])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",))) == {"slot-1"}
@@ -493,8 +503,7 @@ def test_required_for_drops_the_hosts_of_an_excluded_project(monkeypatch, tmp_pa
         _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"]),
         _repo(tmp_path, "r2", labs=["rig"], hosts=["slot2"]),
     ]
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: repos)
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: repos)
+    patch_bootstrap(monkeypatch, repos)
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="")) == {"slot-1", "slot-2"}
@@ -521,8 +530,7 @@ def test_required_for_adds_the_targeted_host_when_it_is_outside_the_fleet(monkey
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
+    patch_bootstrap(monkeypatch, [repo])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="slot2")) == {"slot-1", "slot-2"}
@@ -546,8 +554,7 @@ def test_required_for_ignores_a_target_the_lab_does_not_hold(monkeypatch, tmp_pa
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
+    patch_bootstrap(monkeypatch, [repo])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="typo9")) == {"slot-1"}
@@ -570,8 +577,7 @@ def test_required_for_adds_the_hop_when_it_is_outside_the_fleet(monkeypatch, tmp
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
+    patch_bootstrap(monkeypatch, [repo])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     chain = rc._ChainParams(host_id="slot1", hop="slot2", term=None, labs=["rig"], holder="carol")
@@ -598,8 +604,7 @@ def test_required_for_under_an_empty_declared_fleet_returns_the_lab_level_set(
     lab.resources = {"rack-1"}
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
+    patch_bootstrap(monkeypatch, [repo])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",))) == {"rack-1"}

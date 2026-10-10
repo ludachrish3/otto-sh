@@ -81,28 +81,33 @@ def _enforce_driving_repo_scope() -> None:
     exactly the asymmetry D3 exists to prevent (see
     :func:`otto.project.orchestrator._enforce_current_scope`, the same reading).
 
-    THE GUARD SITS ON THE LOOKUPS, NEVER AROUND THE REFUSAL. ``otto monitor``
-    runs in worlds with no repos and no bootstrap at all -- a library caller's
-    lab, a checkout with no ``OTTO_SUT_DIRS`` -- and monitoring one of those is
-    not a project activity to refuse. But a ``try`` wide enough to cover
-    :func:`~otto.config.scope.require_current_scope` would swallow the very
-    error this exists to raise.
+    THE ONLY WORLD THE GUARD SKIPS IS THE ONE WITH NO CONTEXT. A library caller
+    that installed no context has nothing to enforce D3 against, so
+    ``get_context()``'s ``RuntimeError`` returns quietly. Everything else is
+    read unguarded, the verdicts first: a repo that failed to load refuses
+    through :attr:`~otto.context.OttoContext.scopes`, whichever repo broke,
+    rather than skipping the check. A checkout with no ``OTTO_SUT_DIRS`` needs
+    no guard at all: ``get_repos()`` returns ``[]`` there, so there is no
+    current repo to enforce.
 
     Raises:
         otto.bootstrap.ProjectScopeError: The driving repo declared a
             ``[project]`` scope that admits no host here. The CLI frames it
             like the leaf's other refusals -- one line, no traceback.
+        otto.session.RepoLoadError: A repo failed to load in a way that stops
+            a run, so the verdicts cannot be known.
     """
     from ..bootstrap import get_repos
     from ..config.scope import require_current_scope
     from ..context import get_context
 
     try:
-        repos = get_repos()
-        scopes = get_context().scopes
-    except Exception as exc:  # noqa: BLE001 — no repos/context to read ⇒ no verdict to enforce
-        logger.debug(f"monitor: fleet scoping unavailable ({exc!r}); not enforcing D3")
+        ctx = get_context()
+    except RuntimeError:  # no context: a library lab, nothing to enforce D3 against
+        logger.debug("monitor: no active context; not enforcing D3")
         return
+    scopes = ctx.scopes  # a refusal propagates, whichever repo broke
+    repos = get_repos()
     if repos:
         require_current_scope(scopes, repos[0].name)
 

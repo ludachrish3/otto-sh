@@ -52,6 +52,69 @@ class RepoCheck:
     demoted: list[DemotedRepo] = dataclasses.field(default_factory=list)
 
 
+@dataclasses.dataclass(frozen=True)
+class LoadErrorVerdicts:
+    """Which bootstrap errors stop a run, and which only demote their repo."""
+
+    fatal: "list[BootstrapError]" = dataclasses.field(default_factory=list)
+    """An active repo's error, one ``include`` forces, or one no discovered repo owns."""
+    demoted: list[DemotedRepo] = dataclasses.field(default_factory=list)
+    """Errors of repos inactive before the lab: switched off, or outside its labs."""
+
+
+def classify_load_errors(
+    result: "BootstrapResult",
+    labs: list[str],
+    *,
+    include: list[str],
+    exclude: list[str],
+) -> LoadErrorVerdicts:
+    """Decide, before the lab exists, which of *result*'s errors are fatal.
+
+    The one rule :func:`check_repos` and :attr:`otto.context.OttoContext.scopes`
+    share. An error is owned by the repo whose ``sut_dir`` matches by
+    ``str()``. An unowned error (a ``settings.toml`` that would not parse) is
+    fatal: that repo's declaration cannot be known. An owned error is demoted
+    when its repo is switched off or inactive before the lab, and fatal
+    otherwise, whatever its kind.
+
+    *include* and *exclude* may be spelled any way (PEP 503 normalised here,
+    as :func:`otto.config.scope.active` does), and a name in both counts as
+    excluded, by the same exclusion-first order. *labs* are the run's component
+    lab names and are NOT normalised: lab patterns fullmatch the exact name.
+    Validating the names (unknown, overlapping) is :func:`select_projects`'s
+    job, at the CLI and ``open_context`` boundary.
+    """
+    from ..config.scope import inactive_before_lab
+    from ..models.dependencies import normalize_name
+
+    included, excluded = set(_normalised(list(include))), set(_normalised(list(exclude)))
+    by_dir = {str(repo.sut_dir): repo for repo in result.repos}
+    fatal: "list[BootstrapError]" = []
+    demoted: list[DemotedRepo] = []
+    for err in result.errors:
+        repo = by_dir.get(str(err.sut_dir))
+        if repo is None:
+            fatal.append(err)
+            continue
+        name = normalize_name(repo.name)
+        reason: Literal["excluded", "out_of_scope"]
+        if name in excluded:
+            reason = "excluded"
+        elif name in included:
+            fatal.append(err)
+            continue
+        elif inactive_before_lab(repo.project_scope, labs or None):
+            reason = "out_of_scope"
+        else:
+            fatal.append(err)
+            continue
+        demoted.append(
+            DemotedRepo(error=err, repo=repo.name, project=name, reason=reason, labs=list(labs))
+        )
+    return LoadErrorVerdicts(fatal=fatal, demoted=demoted)
+
+
 def _normalised(names: list[str]) -> list[str]:
     """PEP 503-normalise *names*, dropping repeats, keeping first-seen order."""
     from ..models.dependencies import normalize_name
@@ -132,38 +195,15 @@ def check_repos(
     Bootstrap warnings never gate.
 
     *selection* must come from :func:`select_projects`: normalised, and with
-    no name in both lists. ``include`` is tested before ``exclude`` here,
-    which agrees with :func:`otto.config.scope.active`'s exclude-first order
-    only because the two lists cannot overlap.
+    no name in both lists. The decision itself is
+    ``classify_load_errors``'s, which tests exclusion first, as
+    :func:`otto.config.scope.active` does.
     """
     if not result.errors:
         return RepoCheck()
-    from ..config.scope import inactive_before_lab
-    from ..models.dependencies import normalize_name
-
-    by_dir = {str(repo.sut_dir): repo for repo in result.repos}
-    fatal: "list[BootstrapError]" = []
-    demoted: list[DemotedRepo] = []
-    for err in result.errors:
-        repo = by_dir.get(str(err.sut_dir))
-        if repo is None:
-            fatal.append(err)
-            continue
-        name = normalize_name(repo.name)
-        reason: Literal["excluded", "out_of_scope"]
-        if name in selection.include:
-            fatal.append(err)
-            continue
-        if name in selection.exclude:
-            reason = "excluded"
-        elif inactive_before_lab(repo.project_scope, labs or None):
-            reason = "out_of_scope"
-        else:
-            fatal.append(err)
-            continue
-        demoted.append(
-            DemotedRepo(error=err, repo=repo.name, project=name, reason=reason, labs=list(labs))
-        )
-    if fatal:
-        raise RepoLoadError(fatal, demoted)
-    return RepoCheck(demoted=demoted)
+    verdicts = classify_load_errors(
+        result, labs, include=selection.include, exclude=selection.exclude
+    )
+    if verdicts.fatal:
+        raise RepoLoadError(verdicts.fatal, verdicts.demoted)
+    return RepoCheck(demoted=verdicts.demoted)

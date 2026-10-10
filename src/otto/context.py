@@ -364,6 +364,15 @@ class OttoContext:
     body building its own options class that shares fields with a bound one.
     """
 
+    _scopes_refusal: "BaseException | None" = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    """What resolving :attr:`scopes` raised, re-raised on every later read.
+
+    ``functools.cached_property`` caches a value, never an exception, so a
+    refused read would otherwise re-run the composition root on every walk.
+    """
+
     def bind_verb_options(self, verb: str, kwargs: "dict[str, Any]") -> None:
         """Build every options class registered for *verb* from the parsed *kwargs*.
 
@@ -470,8 +479,11 @@ class OttoContext:
         Never raises for a misconfiguration. A caller that only asked a
         question must not die of it, so a broken ``[coverage].hosts`` selector
         is one warning and ``False``, exactly as it is for an auto
-        ``otto test``. The sentinel library lab and unreachable repos have no
-        coverage configuration to find and answer ``False`` quietly.
+        ``otto test``. So is a repo that fails to load: the walk that finds the
+        coverage hosts refuses with :class:`otto.session.RepoLoadError`, and
+        turning coverage off is the narrowing direction, never a widening. The
+        sentinel library lab and unreachable repos have no coverage
+        configuration to find and answer ``False`` quietly.
         """
         if self.lab.name == LIBRARY_LAB_NAME:
             return False
@@ -489,6 +501,7 @@ class OttoContext:
             load_hosts_pattern,
         )
         from .config.scope import EmptySelectionError
+        from .session.errors import RepoLoadError
 
         cov_config = get_cov_config(repos)
         if not cov_config:
@@ -496,7 +509,7 @@ class OttoContext:
         try:
             pattern = load_hosts_pattern(cov_config)
             hosts = list(self.all_hosts(pattern=pattern, include_containers=True))
-        except (EmptySelectionError, CoverageConfigError, ProjectScopeError) as exc:
+        except (EmptySelectionError, CoverageConfigError, ProjectScopeError, RepoLoadError) as exc:
             from rich.markup import escape as escape_markup
 
             # escape_markup: the message quotes a literal bracket ("[coverage].hosts",
@@ -676,27 +689,61 @@ class OttoContext:
         ``Lab``), and making every one of them pay for — or fail on — a
         composition root they never asked for would be the wrong trade.
 
-        An empty mapping is the honest answer whenever the repos cannot be
-        reached, and it feeds the whole-lab fallback (§6): no declarations, no
-        narrowing, today's behavior. That covers the sentinel lab explicitly
-        and any bootstrap failure by catching it — a fleet walk must not be the
-        surface that first reports a broken composition root, which the CLI
-        entry already does with a message built for it.
-        """
-        from .config.scope import _not_switched_off, resolve_scopes
-        from .host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
+        The verdicts cover every repo whose settings parsed, a repo the
+        dependency pass skipped included: a skip changes what a repo
+        registers, never what it declared, so it cannot make a declaration
+        vanish and widen the walk. Two worlds answer an empty mapping, which
+        feeds the whole-lab fallback: the ``LIBRARY_LAB_NAME`` sentinel
+        lab, and a run with no SUT directories at all (no repos, so nothing
+        declared and nothing to narrow).
 
+        A walk never widens because the repos could not be read:
+
+        * a load error that :func:`otto.session.check_repos` would treat as
+          fatal (an unparseable ``settings.toml``, or any error of an active
+          repo) raises :class:`otto.session.RepoLoadError`, decided by the
+          same classifier, so a hand-built context that never ran
+          ``check_repos`` refuses where the CLI would have. A switched-off or
+          lab-inactive repo's error only demotes it, and its declaration
+          still counts;
+        * an environment failure (``OTTO_SUT_DIRS`` naming a directory that
+          does not exist) propagates as raised.
+
+        A refusal is cached: every later read re-raises the same exception
+        without running ``bootstrap()`` again.
+
+        Raises:
+            otto.session.RepoLoadError: A load error that stops a run.
+        """
+        if self._scopes_refusal is not None:
+            raise self._scopes_refusal
         if self.lab.name == LIBRARY_LAB_NAME:
             return {}
         try:
-            from .bootstrap import get_ordered_repos
+            return self._resolve_verdicts()
+        except Exception as exc:  # cached: a refused read must not re-run bootstrap()
+            self._scopes_refusal = exc
+            raise
 
-            repos = get_ordered_repos()
-        except Exception as exc:  # noqa: BLE001 — no repos reachable ⇒ no declarations ⇒ fallback
-            logger.debug(f"otto: fleet scoping unavailable ({exc!r}); walking the whole lab")
-            return {}
+    def _resolve_verdicts(self) -> "dict[str, ProjectScope]":
+        """Resolve every parsed repo's verdict, after refusing a load error that is fatal here."""
+        from .bootstrap import bootstrap
+        from .config.scope import _not_switched_off, resolve_scopes
+        from .host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
+        from .session.errors import RepoLoadError
+        from .session.projects import classify_load_errors
+
+        result = bootstrap()
+        verdicts = classify_load_errors(
+            result,
+            list(self.lab.component_names),
+            include=list(self.include_projects),
+            exclude=list(self.exclude_projects),
+        )
+        if verdicts.fatal:
+            raise RepoLoadError(verdicts.fatal, verdicts.demoted)
         scopes = resolve_scopes(
-            repos,
+            result.repos,  # every parsed repo: a dependency skip never hides a declaration
             self.lab.component_names,
             self.lab.hosts,
             # `local` is the runner, never fleet — and its `source_lab` is
@@ -765,6 +812,8 @@ class OttoContext:
                 own fleet is empty is not reported as the whole fleet's;
                 suppressed by ``require_nonempty=False``. Also when *owner*
                 names a repo this run never resolved, which no flag suppresses.
+            otto.session.RepoLoadError: :attr:`scopes` refused: a repo failed
+                to load in a way that stops a run. No flag suppresses it.
         """
         from .config.scope import require_nonempty_fleet, scoped_ids
 
@@ -1034,9 +1083,10 @@ class OttoContext:
                 view (:func:`otto.config.scope.scoped_ids`), where the resolved
                 set is known and the message can list it. Validating at
                 construction would make a view unbuildable in the contexts that
-                legitimately have no scopes at all — a library context, an
-                unavailable bootstrap — which are exactly the ones that walk
-                the whole lab by design.
+                legitimately have no scopes at all — a library context, a run
+                with no SUT directories — which are exactly the ones that walk
+                the whole lab by design. A bootstrap that cannot be read is not
+                one of them: it refuses at the view's first walk instead.
 
         Returns:
             The repo-scoped view.

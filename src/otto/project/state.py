@@ -112,6 +112,16 @@ class RepoScope:
     the loaded labs.
     """
 
+    skipped: bool = False
+    """Whether the dependency pass left this repo out of the run, so no walk acted on it.
+
+    The repo parsed, so its declaration still counts toward the fleet of
+    interest, but it registered nothing. Derived by the orchestrator: the repo
+    is among the parsed repos and absent from the walk order. Its row is shown
+    so that a declaration narrowing the fleet is never invisible in the display
+    that explains the fleet.
+    """
+
 
 @dataclass
 class ProjectStatus:
@@ -131,7 +141,7 @@ class ProjectStatus:
     """Per-repo state, keyed by repo name; counted and applicable repos only."""
 
     scoping: "dict[str, RepoScope]" = field(default_factory=dict)
-    """Per-repo scoping verdict, keyed by repo name, in walk order.
+    """Per-repo scoping verdict, keyed by repo name, in ``OTTO_SUT_DIRS`` order.
 
     A SEPARATE MAPPING FROM :attr:`repos`, not a richer value in it, because a
     repo this run does not apply to has no install state at all -- otto never
@@ -139,8 +149,12 @@ class ProjectStatus:
     interest. Folding the two would force either a fabricated state or an
     ``InstallState | None`` that every existing reader would have to learn.
 
-    Empty ONLY when nothing was resolved -- a library context, an unavailable
-    bootstrap. Not the whole-lab fallback, which is a different thing and does
+    Every parsed repo has a row, a repo the dependency pass skipped included
+    (marked :attr:`RepoScope.skipped`), because a skipped repo's declaration
+    still narrows the fleet.
+
+    Empty ONLY when nothing was resolved -- a library context, a run with no
+    SUT directories. Not the whole-lab fallback, which is a different thing and does
     populate this: an undeclared repo still gets a verdict (it applies to every
     loaded lab and targets every host), so a lab where no repo declared
     ``[project]`` reports a row per repo rather than nothing at all.

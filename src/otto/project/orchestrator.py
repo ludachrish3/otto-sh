@@ -487,13 +487,16 @@ def _announce_dropped_provider(
     )
 
 
-def _scope_row(scope: "ProjectScope") -> RepoScope:
+def _scope_row(scope: "ProjectScope", *, skipped: bool) -> RepoScope:
     """Project one resolved verdict into the row :func:`status` reports it as.
 
     Sorted here rather than at the renderer because two surfaces already print
     these sets and a frozenset iterates in whatever order it likes: an
     operator comparing two runs must not have to wonder whether the fleet
     changed or only the ordering did.
+
+    *skipped* is the caller's: the verdict cannot know it, because a
+    dependency skip changes what a repo registers and never what it declared.
     """
     from ..config.scope import unusable_scope
 
@@ -504,6 +507,7 @@ def _scope_row(scope: "ProjectScope") -> RepoScope:
         applicable_labs=tuple(sorted(scope.applicable_labs)),
         universe=tuple(sorted(scope.universe)),
         host_patterns=tuple(scope.host_patterns),
+        skipped=skipped,
     )
 
 
@@ -1098,7 +1102,10 @@ async def status(opts: "StatusOptions | OptionsSource | None" = None) -> Project
     But dropping it silently would leave an operator with a repo that simply
     vanished from the report meant to explain the lab, so
     :attr:`~otto.project.state.ProjectStatus.scoping` carries every repo's
-    verdict and the renderer prints "not applicable" beside it. No warning is
+    verdict and the renderer prints "not applicable" beside it. Every parsed
+    repo's, in fact: a repo the dependency pass skipped is never asked either,
+    but its declaration still narrows the fleet, so its verdict is carried
+    marked :attr:`~otto.project.state.RepoScope.skipped`. No warning is
     logged for that case, unlike the acting walks: the answer IS the display.
 
     A SWITCHED-OFF repo is left out by the same predicate and DOES get a line,
@@ -1110,6 +1117,7 @@ async def status(opts: "StatusOptions | OptionsSource | None" = None) -> Project
     would put a line in front of every operator whose lab merely does not
     include some project, which is the ordinary case and not news.
     """
+    from ..bootstrap import get_repos
     from ..config.scope import active, switched_off
     from ..models.dependencies import normalize_name
 
@@ -1122,12 +1130,18 @@ async def status(opts: "StatusOptions | OptionsSource | None" = None) -> Project
     # to the combiner is the second copy that drifts from the spec.
     entry = PROJECT_INSTRUCTIONS.get("status")
     ctx, repos = _lab()
-    states: "dict[str, InstallState]" = {}
+    # Every verdict, in OTTO_SUT_DIRS order, and not only the walked repos': a
+    # repo the dependency pass skipped still declared its fleet, and a
+    # declaration that narrows the walk must not be missing from the display
+    # that explains it. Actions and the install state walk only `repos`.
+    walked = {repo.name for repo in repos}
     scoping: "dict[str, RepoScope]" = {}
-    for repo in repos:
+    for repo in get_repos():
         scope = ctx.scopes.get(repo.name)
         if scope is not None:
-            scoping[repo.name] = _scope_row(scope)
+            scoping[repo.name] = _scope_row(scope, skipped=repo.name not in walked)
+    states: "dict[str, InstallState]" = {}
+    for repo in repos:
         # The walks' own predicate, not a copy of its condition: a repo they
         # leave out has no state to fold, and asking it for one reaches a fleet
         # that is empty by declaration -- which raises, out of a READING verb.

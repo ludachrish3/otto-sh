@@ -931,6 +931,14 @@ A repo that registers no providers and declares no `[[products]]` or
   declared universe rather than the whole loaded lab.  See
   {doc}`../cli/run/defaults` for the walk semantics, the union across repos, and
   the whole-lab fallback for repos that declare nothing.
+- **A repo that cannot load never widens a walk.**  A fleet walk resolves every
+  parsed repo's declaration, a repo the dependency pass skipped included.  A
+  load error that would stop a run (an unparseable `settings.toml`, or an
+  active repo's failure) refuses the walk with
+  {class}`otto.session.RepoLoadError`, the same error
+  {func}`otto.open_context <otto.context.open_context>` raises.  A switched-off
+  or lab-inactive repo's error only demotes it, and its declaration still
+  narrows the fleet.  See {doc}`../cli/run/defaults` for the walk semantics.
 - **It can be computed without a run.**
   {func}`otto.lab.fleet_of_interest <otto.config.fleet.fleet_of_interest>` returns the
   ids a walk would take, from a loaded lab and its repos, without connecting or

@@ -90,12 +90,15 @@ async def render_status(report: "ProjectStatus", source: "OptionsSource") -> Res
     from .options import StatusOptions
 
     full = source.build(StatusOptions).full
-    skipped = [(name, row) for name, row in report.scoping.items() if not row.usable]
-    if report.repos or skipped:
+    # A dependency-skipped repo appears only in --full's scoping table.
+    unusable = [
+        (name, row) for name, row in report.scoping.items() if not row.usable and not row.skipped
+    ]
+    if report.repos or unusable:
         table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
         for repo_name, state in report.repos.items():
             table.add_row(repo_name, f"[{_STATE_STYLES[state]}]{state.value}[/]")
-        for repo_name, row in skipped:
+        for repo_name, row in unusable:
             # A ``Text``, not a markup string like the states above, because the
             # lab names and the patterns in this cell come from a settings file:
             # a '[' in one -- and a host_patterns entry like `[a-z]+` is a
@@ -151,9 +154,11 @@ def _print_scoping(scoping: "dict[str, RepoScope]") -> None:
     loaded lab and every host, which is the true answer to "which hosts does
     this repo even mean" and the only way an operator can tell a repo that
     narrowed nothing from a repo that narrowed to everything by writing
-    ``[".*"]``. The early return below is NOT a fallback rule -- it covers a
+    ``[".*"]``. A repo the dependency pass skipped gets its row too, marked
+    in a fourth cell: its declaration narrows the fleet even though no walk
+    acts on it. The early return below is NOT a fallback rule -- it covers a
     genuinely empty mapping, which means nothing was RESOLVED (a library
-    context, an unavailable bootstrap), and an announced heading over an empty
+    context, a run with no SUT directories), and an announced heading over an empty
     table reads as a renderer that lost its data.
 
     The hosts are the resolve-time universe. It is display data by
@@ -173,6 +178,7 @@ def _print_scoping(scoping: "dict[str, RepoScope]") -> None:
             repo_name,
             Text(f"labs: {_joined(row.applicable_labs)}"),
             Text(f"hosts: {_joined(row.universe)}"),
+            Text("skipped (unmet dependencies)" if row.skipped else ""),
         )
     rprint("[bold]fleet of interest[/]")
     rprint(table)

@@ -73,6 +73,7 @@ from otto.project.commands import (
 from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.sutrepo import make_sut_repo
@@ -955,6 +956,8 @@ async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
     ctx.for_repo = lambda name: types.SimpleNamespace(_repo=name)
 
     monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, repos))
+    # The scoping rows cover every parsed repo, read from the composition root.
+    patch_bootstrap(monkeypatch, repos)
     monkeypatch.setattr(orchestrator, "_counts", lambda actions: False)
     monkeypatch.setattr(orchestrator, "cleanliness", _Recorder(_report()))
 
@@ -1022,6 +1025,8 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
     ctx.for_repo = lambda name: types.SimpleNamespace(_repo=name)
 
     monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, repos))
+    # The scoping rows cover every parsed repo, read from the composition root.
+    patch_bootstrap(monkeypatch, repos)
     monkeypatch.setattr(orchestrator, "_counts", lambda actions: False)
     monkeypatch.setattr(orchestrator, "cleanliness", _Recorder(_report()))
 
@@ -1490,12 +1495,11 @@ class TestProjectInstructionOwnOptionValidation:
     def _wire_one_repo(self, monkeypatch) -> None:
         """Make ``guarded`` a walked repo: undeclared, so it is always kept (§6).
 
-        ``project_scope=None``: :meth:`~otto.context.OttoContext.scopes` reads
-        it off every repo ``get_ordered_repos()`` returns
-        (:func:`otto.config.scope.resolve_scopes`), not only the one under
-        test, and ``None`` is the documented undeclared shape
+        The patch feeds the orchestrator's walk order (``get_ordered_repos()``).
+        ``project_scope=None`` is the documented undeclared shape
         (:func:`otto.config.scope._lab_applies`) -- the whole-lab fallback,
-        never a narrowing.
+        never a narrowing -- so whatever verdicts the context resolves, this
+        repo's walk is never narrowed away.
         """
         monkeypatch.setattr(
             "otto.bootstrap.get_ordered_repos",

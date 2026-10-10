@@ -4458,13 +4458,14 @@ member	otto.project:RepoPlan.repo	field
 abstract	otto.project:RepoPlan	-
 name	otto.project:RepoScope	class
 mro	otto.project:RepoScope	-
-call	otto.project:RepoScope	sync	PK:applicable:- PK:usable:B:true PK:loaded_labs:T:[] PK:applicable_labs:T:[] PK:universe:T:[] PK:host_patterns:T:[]
+call	otto.project:RepoScope	sync	PK:applicable:- PK:usable:B:true PK:loaded_labs:T:[] PK:applicable_labs:T:[] PK:universe:T:[] PK:host_patterns:T:[] PK:skipped:B:false
 member	otto.project:RepoScope.__eq__	method	sync	PK:other:-
 member	otto.project:RepoScope.__hash__	method	sync	-
 member	otto.project:RepoScope.applicable	field
 member	otto.project:RepoScope.applicable_labs	field
 member	otto.project:RepoScope.host_patterns	field
 member	otto.project:RepoScope.loaded_labs	field
+member	otto.project:RepoScope.skipped	field
 member	otto.project:RepoScope.universe	field
 member	otto.project:RepoScope.usable	field
 abstract	otto.project:RepoScope	-

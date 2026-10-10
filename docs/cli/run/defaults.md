@@ -316,6 +316,11 @@ fallback means. Those are the sets as they stood when the run resolved them:
 display data, not a walk's answer, since a walk re-derives membership live so a
 container that joins later is scoped rather than frozen out.
 
+A repo the dependency pass skipped gets a row too, ending in
+`skipped (unmet dependencies)`. No walk acts on it, but its declaration still
+narrows the fleet, so it is listed where the fleet is explained. The bare
+`otto run status` table leaves it out.
+
 Context creation also logs one line at INFO, and only when something actually
 narrowed: `fleet of interest: 6 of 214 lab hosts (2 repo(s), 1 excluded)`.
 

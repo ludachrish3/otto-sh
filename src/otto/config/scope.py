@@ -537,10 +537,12 @@ def active(repo_name: str, ctx: "OttoContext") -> bool:
     Pure over ``(ctx.include_projects, ctx.exclude_projects, ctx.scopes)``;
     no I/O.
 
-    A missing verdict is active on purpose: it covers the no-labs-loaded
-    invocation (``ctx.scopes`` is empty), the undeclared repo (whole-lab
-    fallback, scoping spec §6), and the library context alike — in every
-    case there is no signal that would justify leaving the repo out.
+    A missing verdict is active on purpose: it covers a run with no SUT
+    directories (``ctx.scopes`` is empty), the undeclared repo (whole-lab
+    fallback, scoping spec §6), and the library context's sentinel lab alike
+    — in every case there is no signal that would justify leaving the repo
+    out. A run whose repos cannot be read has no missing verdict to fall back
+    on: reading ``ctx.scopes`` raises its refusal, and so does this.
 
     Args:
         repo_name: The repo's declared ``Repo.name``, spelled exactly as the
@@ -550,6 +552,12 @@ def active(repo_name: str, ctx: "OttoContext") -> bool:
             holding a user-supplied spelling must map it back to a declared
             name before asking.
         ctx: The runtime context supplying the switches and the lab verdicts.
+
+    Raises:
+        otto.session.RepoLoadError: :attr:`ctx.scopes
+            <otto.context.OttoContext.scopes>` refused, because a repo failed
+            to load in a way that stops a run. An environment failure
+            propagates the same way, as raised.
     """
     from ..models.dependencies import normalize_name
 
@@ -759,12 +767,14 @@ def scoped_ids(
     Raises:
         otto.bootstrap.ProjectScopeError: *owner* names a repo that is not in
             *scopes*, while *scopes* holds verdicts. Silently falling back to
-            the whole lab there would turn a caller's typo — or a repo missing
-            from ``get_ordered_repos()`` — into exactly the quiet WIDENING this
+            the whole lab there would turn a caller's typo — or a repo this
+            run never parsed — into exactly the quiet WIDENING this
             design exists to prevent. An empty *scopes* is not that case: it
-            means the repos were never reachable (a library context, an
-            unavailable bootstrap), and every owner is unknown for a reason
-            that is not the caller's, so the fallback stands.
+            means the run has no repos to declare anything (the library
+            sentinel lab, or no SUT directories), and every owner is unknown
+            for a reason that is not the caller's, so the fallback stands.
+            Repos that could not be read never reach here as an empty
+            *scopes*: :attr:`otto.context.OttoContext.scopes` refuses first.
 
     >>> import re
     >>> import types

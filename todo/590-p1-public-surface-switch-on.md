@@ -1,8 +1,8 @@
 # #590 P1: switch the public-surface declaration on
 
-**Status (2026-10-07):** P1 landed as 14caec5b on top of the erratum f37ff1e9. What is
-left is the "After P1" commits: spec 4 commit 4 (`OttoContext.scopes` never widens silently),
-spec 2 commits 4-6, spec 3a commits 4-6, spec 3b commits 3b-1 to 3b-5, and the marked commit
+**Status (2026-10-09):** P1 landed as 14caec5b on top of the erratum f37ff1e9, and spec 4
+commit 4 (`OttoContext.scopes` never widens silently) is done. What is left is the other
+"After P1" commits: spec 2 commits 4-6, spec 3a commits 4-6, spec 3b commits 3b-1 to 3b-5, and the marked commit
 that adds the writer refusals P1 deferred (`Capture.save`, `archive_edit`).
 
 P0 built the tooling and left it dormant: no `api/public.toml`, the golden is
@@ -114,7 +114,7 @@ Spec `docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md` §2, §
 - [x] ✅ (14caec5b) The footer: retired `otto.config.scope:{resolve_scopes,scoped_ids}` and the five
   `otto.config` accessors; added `otto.lab:{fleet_of_interest,EmptySelectionError}` and the
   `otto.bootstrap` names; the ratchet and `tach.toml` delta.
-- [ ] **After P1**, its own commit: `fix(context)!:` `OttoContext.scopes` never widens silently
+- [x] ✅ (`fix(context)!: scopes never widens silently`) **After P1**, its own commit
   (spec 4 §4). Rule 1: verdicts over `get_repos()`; D3 sees a skipped first repo; `status --full`
   lists skipped repos. Rule 2: the classifier is shared with `check_repos`; the refusal is cached;
   the readers' table; remote completion carries `-I`. The unit tests that relied on the removed

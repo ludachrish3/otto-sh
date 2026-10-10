@@ -350,21 +350,16 @@ async def test_a_known_owner_that_declared_nothing_still_gets_the_whole_lab(
     assert sorted(await _contacted(ctx, _scope_owner="r2")) == ["h1", "h2"]
 
 
-def test_an_unresolvable_repo_set_leaves_every_owner_walkable(monkeypatch):
-    """No scopes at all is not "every owner is unknown" — it is "scoping is off".
-
-    A library context never bootstraps, so refusing an owner there would make
-    the repo-scoped view unusable in exactly the environment that has no
-    declarations to enforce.
-    """
+def test_an_unresolvable_repo_set_refuses_an_owner_bound_walk(monkeypatch):
+    """Spec 4 Rule 2: a walk whose repos cannot be read refuses, bound or not."""
 
     def _boom():
         raise RuntimeError("no bootstrap here")
 
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", _boom)
+    monkeypatch.setattr("otto.bootstrap.bootstrap", _boom)
     ctx = OttoContext(lab=_lab(("h1", "a"), ("h2", "a")))
-
-    assert sorted(h.id for h in ctx.all_hosts(_scope_owner="anything")) == ["h1", "h2"]
+    with pytest.raises(RuntimeError, match="no bootstrap here"):
+        list(ctx.all_hosts(_scope_owner="anything"))
 
 
 # ── -E takes a project's hosts out of play ────────────────────────────────────
@@ -739,17 +734,14 @@ def test_library_context_has_no_scopes_and_walks_everything():
     assert sorted(h.id for h in ctx.all_hosts()) == ["h1", "h2"]
 
 
-def test_unavailable_bootstrap_falls_back_to_the_whole_lab(monkeypatch):
-    """A repo set that cannot be resolved must not brick every fleet walk."""
-
+def test_an_unavailable_bootstrap_refuses_instead_of_walking_the_whole_lab(monkeypatch):
     def _boom():
         raise RuntimeError("no bootstrap here")
 
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", _boom)
+    monkeypatch.setattr("otto.bootstrap.bootstrap", _boom)
     ctx = OttoContext(lab=_lab(("h1", "a"), ("h2", "a")))
-
-    assert ctx.scopes == {}
-    assert sorted(h.id for h in ctx.all_hosts()) == ["h1", "h2"]
+    with pytest.raises(RuntimeError, match="no bootstrap here"):
+        list(ctx.all_hosts())
 
 
 # ── observability ─────────────────────────────────────────────────────────────
