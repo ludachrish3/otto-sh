@@ -495,13 +495,25 @@ def test_scratch_lock_holds_the_lock_for_the_block(tmp_path, capsys):
 def test_scratch_lock_says_it_is_waiting_then_takes_the_lock(tmp_path, capsys):
     # A second docs build waits for the first instead of deleting its scratch dir.
     lock = tmp_path / "otto-gs.lock"
+    releasing = threading.Event()
+
+    def release_holder(holder):
+        # Set BEFORE unlocking: the waiter gets past its flock only after the
+        # unlock, so inside its block the event is always set. Asserting that
+        # the Timer thread has exited instead races that thread's own exit.
+        releasing.set()
+        fcntl.flock(holder, fcntl.LOCK_UN)
+
     with lock.open("a") as holder:
         fcntl.flock(holder, fcntl.LOCK_EX)
-        release = threading.Timer(0.2, fcntl.flock, (holder, fcntl.LOCK_UN))
+        release = threading.Timer(0.2, release_holder, (holder,))
         release.start()
         try:
-            with rdc.scratch_lock(lock):
-                assert not release.is_alive()
+            with rdc.scratch_lock(lock), lock.open("a") as other:
+                assert releasing.is_set()  # it waited for the holder to let go
+                with pytest.raises(BlockingIOError):  # and now holds the lock itself
+                    fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
             release.cancel()
+            release.join()
     assert f"another capture run holds {lock}; waiting" in capsys.readouterr().err
