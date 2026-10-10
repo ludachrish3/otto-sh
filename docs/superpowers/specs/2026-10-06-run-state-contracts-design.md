@@ -1,6 +1,6 @@
 # Run-state contracts — design (spec 2 of the #590 contract-first series)
 
-**Status:** v6, **approved by the owner 2026-10-06**, on Astra's agreement with all six rulings below (two with the caveats folded into §3.1 and §3.3). **Date:** 2026-10-06.
+**Status:** v6, **approved by the owner 2026-10-06**, on Astra's agreement with all six rulings below (two with the caveats folded into §3.1 and §3.3). **Date:** 2026-10-06. **Amended 2026-10-09 (owner):** `OttoContext`'s constructor drops `dry_run`, `log_command_output` and `output_dir`; `policy=` is the only way to set them on a hand-built context (§2, §3.1, §6, §7).
 
 **Terms used below.** A **boundary** is a counted hold on a loop's host cleanup: `open_context`,
 `run_command` and each pytest runner take one (R-2, §3.3). A **sweep** (or **drain**) closes every
@@ -136,12 +136,20 @@ review of the options, and an Opus review of v1.
 **`OttoContext` members.** P1 renames none of them (spec 1 Q4: no narrowing in the cutover).
 `src/` lint selects every rule, `SLF001` included, so a member that other otto modules read cannot
 simply become private. After P1, spec 2's contract commits change these, each one marked:
-- **`dry_run`, `log_command_output`, `output_dir`** become properties backed by `ctx.policy`
-  (commit 4).
-  - The class keeps `@dataclass`, but takes a hand-written `__init__` with today's parameters,
-    order and defaults, plus a keyword-only `policy: RunPolicy | None = None` and a keyword-only
-    `bootstrap: BootstrapResult | None = None` (§4).
-  - Passing `policy=` together with any of the three flag keywords raises `TypeError`.
+- **`dry_run`, `log_command_output`, `output_dir`** become read-only properties backed by
+  `ctx.policy` (commit 4). The policy is their one writable home: `ctx.policy.dry_run = …`.
+  - The class keeps `@dataclass`, but takes a hand-written `__init__`:
+    `OttoContext(lab, *, cov_decision=None, include_projects=(), exclude_projects=(),
+    policy: RunPolicy | None = None, bootstrap: BootstrapResult | None = None)` (§4 for
+    `bootstrap`).
+  - **Owner decision, 2026-10-09.** The three flag parameters are gone from the constructor.
+    `policy=` is the only way to set them on a hand-built context, so
+    `OttoContext(lab, dry_run=True)` raises `TypeError` (an unexpected keyword), with or
+    without `policy=`. There is no refusal logic and no sentinel default. Commit 4 migrates
+    every caller that passes a flag keyword to `policy=RunPolicy(...)`.
+  - The parameters after `lab` are keyword-only. Dropping the flags would otherwise move
+    `cov_decision` into second place, and a positional call written for the old order
+    (`OttoContext(lab, True)`, meaning dry-run) would turn coverage on and run live.
   - The docstring that says the dataclass "stays plain" is rewritten: normalization of
     `include_projects` and `exclude_projects` still happens on read.
   - `repr` and equality change with the field set. `dataclasses.replace` on a context is not
@@ -178,9 +186,10 @@ computation stays in `context.py`. It is an existing import on a baseline edge, 
 where the scope computation finally lives (spec 4 §11).
 
 **What the dump sees.** Commit 4's dump diff shows three member kind changes (`field` →
-property) and a changed `__init__` call record, plus the added `policy`. Commits 5 and 6 show
-the removed `scope_for`, `abandon_closed_loops` and `scopes`, and the added `repos` and
-`ordered_repos`. Each of those commits is marked.
+read-only property), a changed `__init__` call record (the three flag parameters gone, the rest
+after `lab` keyword-only, `policy` and `bootstrap` added), plus the added `policy` member.
+Commits 5 and 6 show the removed `scope_for`, `abandon_closed_loops` and `scopes`, and the added
+`repos` and `ordered_repos`. Each of those commits is marked.
 
 ## 3. The contracts (leaf module `otto.invocation`)
 
@@ -209,8 +218,9 @@ guard.
   - `OttoContext(...)` without `policy=` gets a new `RunPolicy`. Its `variant` and
     `teardown_deadline` are copied from `current_policy()`: those two were ambient before this
     spec (the variant was its own ContextVar, the deadline came from the environment). Its
-    `dry_run`, `log_command_output` and `output_dir` come from the constructor keywords, with
-    today's defaults. A fresh context never inherits another context's flags, as today.
+    `dry_run`, `log_command_output` and `output_dir` are `RunPolicy`'s defaults (`False`,
+    `True`, `None`); a hand-built context that needs others passes `policy=RunPolicy(...)`.
+    A fresh context never inherits another context's flags, as today.
   - That keeps the documented manual pattern (`python-library.md`) working:
     `set_variant("field")`, then `OttoContext(lab=lab)`, then `set_context(ctx)` runs with
     `"field"`. So do the library `run_tests` sentinel context and remote completion's contexts.
@@ -224,11 +234,15 @@ guard.
   - The library `run_tests` is a third preparation point: before it builds its sentinel context,
     it installs a policy whose deadline it fills the same way. Today its runner sweep reads
     `OTTO_TEARDOWN_DEADLINE` itself (`suite/loops.py`), so that setting keeps working.
+    When a context is already active, `run_tests` builds none: it writes its log directory to
+    `active.output_dir` when that is unset, and restores the prior value on the way out, as it
+    restores `cov_decision` (`suite/run.py`). The property is read-only, so both writes go
+    through `active.policy.output_dir`.
   - The context built afterwards carries the same object as `ctx.policy`. On the CLI that means:
     the root callback puts the variant and `dry_run` (today's only root flag) on the policy it
-    installs; `ensure_lab_context` builds `OttoContext(..., policy=installed_policy())` with no
-    flag keywords; and the later `get_context().output_dir = …` write in `create_output_dir`
-    reaches the same object through the forwarding property. `set_context` installs that object
+    installs; `ensure_lab_context` builds `OttoContext(..., policy=installed_policy())`; and the
+    later write in `create_output_dir` becomes `get_context().policy.output_dir = …`, on the
+    same object (the context's properties are read-only). `set_context` installs that object
     again, which changes nothing.
   - Preparation installs its policy directly through `otto.invocation`. It never calls the public
     `set_variant`, so a nested `open_context` is not refused (today it calls `set_variant`).
@@ -250,7 +264,7 @@ guard.
     `ContextBinding` (§3.4) holding one token; `reset_variant(binding)` restores the previous
     policy.
   - Why the refusal: inside a context, a copied policy would split `ctx.policy` (which the
-    forwarding properties write) from the installed policy (which hosts read), and a
+    context's properties read) from the installed policy (which hosts read), and a
     `SuppressCommandOutput` interleaved with it would leak or end early. Its remaining public
     use is the manual pattern's step 4, which is pre-context. From commit 4 the CLI root callback
     and `open_context` install their policy through the leaf instead (see "Preparation"; §5). To run under another variant mid-run, open a nested
@@ -358,6 +372,15 @@ guard.
     abandon callback acts only if the host's generation still matches the record's and its owner
     is that loop or none, and the record is removed either way. No record outlives an expired
     sweep, and abandonment registers none.
+    - **It also abandons the closes it cut short.** A close whose task the expiry cancelled, or
+      that is not done, is abandoned at its record's own generation, even though the close's
+      `finally` may already have unregistered that record: the close's connections are still
+      half-closed. A cut record that a newer registration of the same host replaced is left to
+      the newer record's abandonment.
+    - Abandonment is generation-checked, so a stale one (the host has reconnected since) is a
+      no-op.
+    - **The expiry warning names only the abandons that acted,** never a stale no-op.
+
     The registry then returns to `open`.
   - **An acquisition on a `draining` loop waits for the drain to end.** Only `open_context` can
     meet one: it acquires from a task on the running loop, so it awaits. The pytest
@@ -528,7 +551,7 @@ The ratchet's `BASELINE` shrinks by exactly the edges the inventory proves gone.
 | 1 | `docs(spec)`: this spec and the spec 1 amendments (§10) | now |
 | 2 | `fix(cli)`: the CLI's resets run on Click's close (§5) | before P1 |
 | 3 | `otto.context`'s first `__all__` (§2) | inside P1's single marked commit |
-| 4 | `feat(context)!`: `otto.invocation` with `RunPolicy` (single variant source, `set_variant`'s refusal), `HostResolver`, `ContextBinding`; `ctx.policy`, the hand-written `__init__` and the forwarding properties; the host layer reads policy and resolver through the leaf; every teardown-deadline reader on the policy and `_resolve_teardown_deadline` deleted; the three names declared at `otto.context` | after P1 |
+| 4 | `feat(context)!`: `otto.invocation` with `RunPolicy` (single variant source, `set_variant`'s refusal), `HostResolver`, `ContextBinding`; `ctx.policy`, the hand-written `__init__` without the three flag parameters, and the read-only properties; the host layer reads policy and resolver through the leaf; every teardown-deadline reader on the policy and `_resolve_teardown_deadline` deleted; the three names declared at `otto.context` | after P1 |
 | 5 | `fix(context)!`: loop-owned registrations, counted boundaries with the draining protocol, generation-scoped closes, context-less connects registered, `sweep_loop`'s refusal; `scope_for`, `abandon_closed_loops` and `HostScope` go; `host → context` and `lifecycle → context` cut | after commit 4 |
 | 6 | `refactor!`: `ctx.repos` and `ctx.ordered_repos` over one `BootstrapResult`; `scopes` → `config.scope.scopes_of(ctx)`; `_admissible_ids` deleted; S-5's remaining edges retired per the inventory | after commit 5 and spec 4's commit 4 |
 
@@ -548,7 +571,9 @@ refusal and the deadline change.
   - the `pending = "spec 2 …"` note in `scripts/api_public_preview.toml` is removed.
 - **Commit 4:**
   - `docs/cookbook/python-library.md` steps 4, 7 and 10 (`set_variant` before any context; a
-    hand-built context copies the variant);
+    hand-built context copies the variant), and its smallest-version example
+    (`python-library.md:223`), whose `OttoContext(lab=lab, dry_run=False)` passes the flag
+    through `policy=RunPolicy(dry_run=False)`;
   - `docs/configuration/declared-products-tools.md` (`set_variant`'s refusal inside a context);
   - the teardown-deadline row of `docs/cli/index.md`;
   - `tach.toml` gains `otto.invocation`, and `docs/architecture/modules.md` is regenerated.
@@ -581,7 +606,10 @@ refusal and the deadline change.
   - The manual pattern: `set_variant("field")`, a hand-built context, `set_context`; the body
     reads `"field"`. The library `run_tests` sentinel under `set_variant("field")` also reads
     `"field"`.
-  - A context built with `policy=` and a flag keyword raises `TypeError`.
+  - A context built with any of the three flag keywords raises `TypeError`, with or without
+    `policy=`; so does a positional flag; the three properties are read-only, and
+    `ctx.policy.<flag> = …` is read live. Every caller passing a flag keyword at the commit's
+    base migrates to `policy=RunPolicy(...)`.
   - `set_variant` inside an installed context raises.
   - A `--field` run's ingest sees `variant == "field"`: declared entries pick the field variant.
   - A nested `open_context` restores the outer policy on exit, including after its setup fails.
@@ -618,6 +646,9 @@ refusal and the deadline change.
     closed before the parent;
   - on expiry, a host re-registered at a new generation while its old close is still in flight
     is abandoned too: the registry is empty after an expired sweep, and abandonment adds no record;
+  - on expiry, a close the sweep cut short is abandoned at its own generation even after its
+    `finally` unregistered it; a cut record a newer registration replaced is left to that record;
+    a stale abandonment is a no-op; and the warning names only the abandons that acted;
   - an `open_context` waiting on a drain is admitted when it ends, even while other tasks keep
     opening and closing short boundaries on the same loop; a waiter cancelled after its grant
     releases it;
