@@ -8,7 +8,6 @@ import pytest
 from otto import bootstrap as bs
 from otto.context import (
     LIBRARY_LAB_NAME,
-    HostScope,
     OttoContext,
     get_context,
     reset_context,
@@ -16,8 +15,11 @@ from otto.context import (
     try_get_context,
 )
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+from otto.invocation import RunPolicy
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
 from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.registry import DuckHost, register_duck, registered_ids
 
 
 class _FakeHost:
@@ -32,56 +34,19 @@ class _FakeHost:
 
 
 @pytest.mark.asyncio
-async def test_hostscope_sweep_closes_every_registered_host_and_names_them():
-    """Registration already means the host connected on this loop, so the sweep
-    closes each one (close() on an idle host is a cheap no-op) and returns their ids."""
-    scope = HostScope()
-    a, b = _FakeHost("a"), _FakeHost("b")
-    scope.register(a)
-    scope.register(b)
-    assert await scope.sweep() == ["a", "b"]
-    assert (a.close_calls, b.close_calls) == (1, 1)
-
-
-@pytest.mark.asyncio
-async def test_hostscope_register_is_deduped():
-    scope = HostScope()
-    h = _FakeHost("a")
-    scope.register(h)
-    scope.register(h)
-    assert await scope.sweep() == ["a"]
-    assert h.close_calls == 1
-
-
-@pytest.mark.asyncio
-async def test_hostscope_isolates_errors():
-    class _Boom(_FakeHost):
-        async def close(self):
-            raise RuntimeError("boom")
-
-    boom = _Boom("boom")
-    ok = _FakeHost("ok")
-    scope = HostScope()
-    scope.register(boom)
-    scope.register(ok)
-    assert await scope.sweep() == ["ok"]
-    assert ok.close_calls == 1
-
-
-@pytest.mark.asyncio
-async def test_hostscope_sweep_skips_a_host_another_loop_now_owns():
+async def test_sweep_loop_skips_a_host_another_loop_now_owns():
     """A host closed on this loop and since claimed by another is that loop's to close."""
+    loop = asyncio.get_running_loop()
     other = asyncio.new_event_loop()
     try:
-        moved = _FakeHost("moved")
-        moved._owner_loop = other
-        mine = _FakeHost("mine")
-        mine._owner_loop = asyncio.get_running_loop()
-        scope = HostScope()
-        scope.register(moved)
-        scope.register(mine)
-        assert await scope.sweep() == ["mine"]
-        assert moved.close_calls == 0
+        moved, mine = DuckHost("moved"), DuckHost("mine")
+        moved.claim(loop)
+        mine.claim(loop)
+        moved.owner = other  # since claimed by another loop, its record here left behind
+        ctx = OttoContext(lab=Lab(name="t"))
+        assert await ctx.sweep_loop(loop, label="t") == ["mine"]
+        assert moved.closes_started == 0
+        assert registered_ids(loop) == []
     finally:
         other.close()
 
@@ -162,12 +127,12 @@ def test_context_get_host_and_all_hosts_resolve_from_lab():
 
 @pytest.mark.asyncio
 async def test_context_all_hosts_registers_nothing_until_a_host_connects():
-    """A host joins the scope of the loop it first connects on, not the one that listed it."""
+    """A host registers with the loop it first connects on, not the one that listed it."""
     lab = _lab_with("test1")
     ctx = OttoContext(lab=lab)
     hosts = list(ctx.all_hosts())
     assert hosts
-    assert ctx.scope_for(asyncio.get_running_loop())._hosts == []
+    assert registered_ids(asyncio.get_running_loop()) == []
 
 
 def test_set_and_reset_context_round_trips():
@@ -237,30 +202,23 @@ async def test_run_on_all_hosts_normalizes_str_to_list():
 
 
 def test_for_repo_is_a_facade_over_the_same_context_not_a_copy(tmp_path):
-    """``for_repo`` narrows walks and nothing else — same lab, same scope, live flags.
+    """``for_repo`` narrows walks and nothing else — same lab, live flags.
 
     A view that COPIED the context would pass every scoping test in
-    ``tests/unit/config/test_fleet_scoping.py`` and still be wrong twice over:
-    hosts handed out by the view would register into a second set of per-loop
-    :class:`~otto.context.HostScope` objects that nothing sweeps, and a flag set on the
-    context after the view was built (``output_dir``, which the CLI stamps
-    per-run) would never reach the repo acting under it.
+    ``tests/unit/config/test_fleet_scoping.py`` and still be wrong: a flag set
+    on the context after the view was built (``output_dir``, which the CLI
+    stamps per-run) would never reach the repo acting under it.
     """
     lab = _lab_with("test1")
-    ctx = OttoContext(lab=lab, dry_run=True)
+    ctx = OttoContext(lab=lab, policy=RunPolicy(dry_run=True))
     view = ctx.for_repo("acme")
 
     assert view.lab is ctx.lab
-    loop = asyncio.new_event_loop()
-    try:
-        assert view.scope_for(loop) is ctx.scope_for(loop)  # ONE scope per loop, or hosts leak
-    finally:
-        loop.close()
     assert view.dry_run is True
     first_id = next(iter(lab.hosts))
     assert view.get_host(first_id) is lab.hosts[first_id]  # explicit targeting delegates
 
-    ctx.output_dir = tmp_path  # a snapshot would go stale here
+    ctx.policy.output_dir = tmp_path  # a snapshot would go stale here
     assert view.output_dir == tmp_path
 
 
@@ -268,8 +226,9 @@ def test_context_runtime_flags_default_and_override():
     lab = _lab_with("test1")
     assert OttoContext(lab=lab).dry_run is False
     assert OttoContext(lab=lab).log_command_output is True
-    assert OttoContext(lab=lab, dry_run=True).dry_run is True
-    assert OttoContext(lab=lab, log_command_output=False).log_command_output is False
+    assert OttoContext(lab=lab, policy=RunPolicy(dry_run=True)).dry_run is True
+    policy = RunPolicy(log_command_output=False)
+    assert OttoContext(lab=lab, policy=policy).log_command_output is False
     assert OttoContext(lab=lab).cov_decision is None  # undecided: detected on first read
     assert OttoContext(lab=lab, cov_decision=True).cov is True
     assert OttoContext(lab=lab, cov_decision=False).cov is False
@@ -289,22 +248,6 @@ def test_bare_accessors_delegate_to_active_context():
         assert cm.get_host(first) is lab.hosts[first]
     finally:
         reset_context(token)
-
-
-def test_admissible_ids_is_public_and_the_private_name_is_an_alias(monkeypatch):
-    """The fleet of interest has a public name now (spec 2026-08-28
-    three-level-reservations §5).
-
-    The reservation gate reads the same set every fleet walk starts from, so it
-    cannot be reached through an underscored method; the private spelling stays
-    as an alias for one release rather than breaking any caller that has it.
-    """
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", list)
-    ctx = OttoContext(lab=_lab_with("test1"))
-
-    assert ctx.admissible_ids() == {"test1"}
-    # The private spelling is the alias, deliberately reached here by that name.
-    assert ctx._admissible_ids(None) == ctx.admissible_ids(None)
 
 
 def test_addhost_wires_lab_backref_and_survives_override_copy():
@@ -458,103 +401,58 @@ async def test_run_on_all_hosts_accepts_option_overrides():
     assert results2["h1"] == "ok"
 
 
-def test_otto_context_output_dir_defaults_none_and_is_settable():
+def test_otto_context_output_dir_defaults_none_and_is_set_on_the_policy():
     # OttoContext requires a lab; use a minimal stand-in via the dataclass.
     ctx = OttoContext(lab=None)  # type: ignore[arg-type]
     assert ctx.output_dir is None
-    ctx.output_dir = Path("/tmp/otto-run-xyz")
+    ctx.policy.output_dir = Path("/tmp/otto-run-xyz")
     assert ctx.output_dir == Path("/tmp/otto-run-xyz")
 
 
-@pytest.mark.asyncio
-async def test_hostscope_sweep_drains_registered_hosts():
-    """A sweep closes AND forgets: a second sweep of the same scope (a loop
-    swept twice) must not re-close hosts the first one closed."""
-    scope = HostScope()
-    h = _FakeHost("a")
-    scope.register(h)
-    assert await scope.sweep() == ["a"]
-    assert h.close_calls == 1
-    assert await scope.sweep() == []
-    assert h.close_calls == 1
+def _noting(host: DuckHost, order: "list[str]") -> DuckHost:
+    async def note() -> None:
+        order.append(host.id)
 
-
-class _ScopedHost:
-    """Standalone fake for ranked-sweep tests: records close order into a shared list."""
-
-    def __init__(
-        self,
-        name: str,
-        order: "list[str]",
-        *,
-        parent: "object | None" = None,
-        fail: bool = False,
-        yields: int = 0,
-    ) -> None:
-        self.id = name
-        self._order = order
-        self._fail = fail
-        self._yields = yields
-        if parent is not None:
-            self.parent = parent
-
-    async def close(self) -> None:
-        for _ in range(self._yields):
-            await asyncio.sleep(0)
-        self._order.append(self.id)
-        if self._fail:
-            raise RuntimeError(f"{self.id}: close blew up")
+    host.on_close = note
+    return host
 
 
 @pytest.mark.asyncio
-async def test_hostscope_closes_children_before_their_parent():
-    """DockerContainerHost.close documents close-before-parent (its docker
-    exec channel drains over the parent's still-open transport); the sweep
-    must honor it. The child here closes SLOWER than its parent would, so a
-    naive concurrent gather finishes the parent first."""
+async def test_sweep_loop_closes_a_three_level_parent_chain_leaf_first():
+    loop = asyncio.get_running_loop()
     order: "list[str]" = []
-    parent = _ScopedHost("parent", order)
-    child = _ScopedHost("child", order, parent=parent, yields=2)
-    scope = HostScope()
-    scope.register(child)
-    scope.register(parent)
-    assert await scope.sweep() == ["child", "parent"]
-    assert order == ["child", "parent"]
-
-
-@pytest.mark.asyncio
-async def test_hostscope_ranks_a_three_level_parent_chain():
-    order: "list[str]" = []
-    top = _ScopedHost("top", order)
-    mid = _ScopedHost("mid", order, parent=top, yields=1)
-    leaf = _ScopedHost("leaf", order, parent=mid, yields=2)
-    scope = HostScope()
-    scope.register(top)
-    scope.register(mid)
-    scope.register(leaf)
-    assert await scope.sweep() == ["leaf", "mid", "top"]
+    top = _noting(DuckHost("top"), order)
+    mid = _noting(DuckHost("mid", parent=top), order)
+    leaf = _noting(DuckHost("leaf", parent=mid), order)
+    for host in (top, mid, leaf):
+        host.claim(loop)
+    assert await OttoContext(lab=Lab(name="t")).sweep_loop(loop, label="t") == [
+        "leaf",
+        "mid",
+        "top",
+    ]
     assert order == ["leaf", "mid", "top"]
 
 
 @pytest.mark.asyncio
-async def test_hostscope_child_close_failure_still_closes_the_parent(caplog):
+async def test_sweep_loop_child_close_failure_still_closes_the_parent(caplog):
     """One host's close dying must be LOGGED (named) and must not stop the
-    remaining ranks — silent swallowing is what this plan removes."""
+    hosts that wait on it — silent swallowing is what this rules out."""
+    loop = asyncio.get_running_loop()
     order: "list[str]" = []
-    parent = _ScopedHost("parent", order)
-    child = _ScopedHost("child", order, parent=parent, fail=True)
-    scope = HostScope()
-    scope.register(child)
-    scope.register(parent)
-    with caplog.at_level(logging.WARNING, logger="otto.context"):
-        closed = await scope.sweep()
+    parent = _noting(DuckHost("parent"), order)
+    child = _noting(DuckHost("child", parent=parent, fail=RuntimeError("close blew up")), order)
+    child.claim(loop)
+    parent.claim(loop)
+    with caplog.at_level(logging.WARNING, logger="otto.invocation"):
+        closed = await OttoContext(lab=Lab(name="t")).sweep_loop(loop, label="t")
     assert closed == ["parent"]
     assert order == ["child", "parent"]
     assert any("'child'" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_hostscope_sweep_chain():
+async def test_sweep_loop_chain():
     """Tier-1 sweep: one host's close dying (drop OR injected cancel) never
     skips the other hosts — per-rank gather captures per-host failures."""
     names = ["h1", "h2", "h3"]
@@ -568,10 +466,10 @@ async def test_hostscope_sweep_chain():
             await self._points.point(self.id, surface=Surface.NETWORK)
 
     async def scenario(points: ChaosPoints) -> None:
-        scope = HostScope()
+        loop = asyncio.get_running_loop()
         for name in names:
-            scope.register(_PointHost(name, points))
-        await scope.sweep()
+            register_duck(_PointHost(name, points), loop)
+        await OttoContext(lab=Lab(name="t")).sweep_loop(loop, label="t")
 
     def oracle(points, outcome, exc_type, k) -> None:
         # Both variants: an injected failure inside ONE host's close is
@@ -621,7 +519,9 @@ def cov_detection(monkeypatch):
             for i, verdict in enumerate(state["instrumented"])
         ]
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: state["repos"])
+    # The seam a context's first ``repos`` read goes through, read at call time
+    # so a test may swap ``state["repos"]`` before it asks.
+    monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: fake_bootstrap_result(state["repos"]))
     monkeypatch.setattr(OttoContext, "all_hosts", _all_hosts)
     return state
 
@@ -661,12 +561,18 @@ def test_a_decision_wins_over_detection(cov_detection):
 
 
 def test_cov_on_the_library_sentinel_lab_is_false_without_touching_repos(monkeypatch):
+    # Counted, not raised: ``_detect_cov`` turns any exception from the repos
+    # read into ``False``, so a raising stand-in would pass with the sentinel
+    # check deleted.
+    calls: list[str] = []
 
-    def _boom():
-        raise AssertionError("the sentinel lab must not reach the repos")
+    def _record():
+        calls.append("bootstrap")
+        return fake_bootstrap_result([])
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", _boom)
+    monkeypatch.setattr("otto.bootstrap.bootstrap", _record)
     assert OttoContext(lab=Lab(name=LIBRARY_LAB_NAME)).cov is False
+    assert calls == []
 
 
 def test_cov_detection_failure_is_false_with_one_warning(cov_detection, caplog):
@@ -686,7 +592,7 @@ def test_cov_detection_with_unreachable_repos_is_false(monkeypatch):
     def _unreachable():
         raise RuntimeError("no bootstrap")
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", _unreachable)
+    monkeypatch.setattr("otto.bootstrap.bootstrap", _unreachable)
     assert OttoContext(lab=_lab_with("test1")).cov is False
 
 

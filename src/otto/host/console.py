@@ -597,7 +597,7 @@ class ConsoleClient:
         """Release the transport now, synchronously, with no logout. Never raises.
 
         For a caller that cannot await, such as
-        :meth:`~otto.host.unix_host.UnixHost.rebuild_connections` dropping a
+        :meth:`~otto.host.host.BaseHost.rebuild_connections` dropping a
         manager after a reboot: the client it drops would otherwise keep the
         console server's single-client slot, and every fresh dial after it
         would be refused as busy. The device has rebooted (or is about to),

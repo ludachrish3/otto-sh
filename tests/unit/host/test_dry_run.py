@@ -29,6 +29,7 @@ from otto.logger import management
 from otto.logger.mode import LogMode
 from otto.result import CommandNotRunError, CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fake_shell import ShellModel
 from tests.conftest import active_context
 
@@ -2435,8 +2436,8 @@ class TestADeclineNeverResurfacesAsAFabricatedFailure:
     plausible refactor away (a cached container id, or a second caller that
     skips the probe).
 
-    Nothing contacts a device: `compose_up`, `get_repos` and `get_lab` are all
-    spies, and the parent host is never asked anything.
+    Nothing contacts a device: `compose_up`, the composition root and
+    `get_lab` are all stubbed, and the parent host is never asked anything.
     """
 
     @staticmethod
@@ -2454,7 +2455,7 @@ class TestADeclineNeverResurfacesAsAFabricatedFailure:
         """`_auto_up`'s two late imports, stubbed so nothing reads a real lab.
 
         ``docker_settings.use_cases`` is present (empty) rather than omitted:
-        `_auto_up` now checks `declared_use_cases(get_repos())` before the
+        `_auto_up` asks `is_declared_use_case` (over the run's repos) before the
         legacy per-repo route, and a bare name-only stub would AttributeError
         there instead of taking this test's legacy-route path.
         """
@@ -2462,7 +2463,7 @@ class TestADeclineNeverResurfacesAsAFabricatedFailure:
         repo = dataclasses.make_dataclass("Repo", ["name", "docker_settings"])(
             name="repo1", docker_settings=docker_settings
         )
-        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+        patch_bootstrap(monkeypatch, [repo])
         # `_auto_up` hands the lab straight to the spied `compose_up` and
         # never looks inside it, so an opaque object is the honest stub.
         monkeypatch.setattr("otto.config.fleet.get_lab", object)

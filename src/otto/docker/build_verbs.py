@@ -30,11 +30,11 @@ if TYPE_CHECKING:
 
 def _select_docker_repos(repo: "str | None") -> "list[Repo]":
     """Every loaded repo with a ``[docker]`` section, narrowed to *repo* when given."""
-    from ..bootstrap import get_repos
+    from ..config.fleet import current_repos
 
     docker_repos = [
         r
-        for r in get_repos()
+        for r in current_repos()
         if r.docker_settings.images or r.docker_settings.composes or r.docker_settings.use_cases
     ]
     if repo is None:
@@ -115,9 +115,9 @@ def _check_images(repos: "Sequence[Repo]", images: "Sequence[str] | None") -> No
 
 def _dependency_order(repos: "Sequence[Repo]") -> "list[Repo]":
     """*repos* in bootstrap dependency order; a repo the order omits sorts last."""
-    from ..bootstrap import get_ordered_repos
+    from ..config.fleet import current_ordered_repos
 
-    order = {r.name: i for i, r in enumerate(get_ordered_repos())}
+    order = {r.name: i for i, r in enumerate(current_ordered_repos())}
     return sorted(repos, key=lambda r: order.get(r.name, len(order)))
 
 

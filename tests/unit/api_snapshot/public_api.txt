@@ -169,29 +169,38 @@ name	otto.config:load_user_settings	function
 call	otto.config:load_user_settings	sync	PK:path:N
 name	otto.config:user_settings_path	function
 call	otto.config:user_settings_path	sync	-
+name	otto.context:ContextBinding	class
+mro	otto.context:ContextBinding	-
+call	otto.context:ContextBinding	sync	-
+abstract	otto.context:ContextBinding	-
+name	otto.context:HostResolver	protocol
+mro	otto.context:HostResolver	-
+member	otto.context:HostResolver.hosts	property:g--
+member	otto.context:HostResolver.name	property:g--
+requires	otto.context:HostResolver	hosts name
 name	otto.context:OttoContext	class
 mro	otto.context:OttoContext	-
-call	otto.context:OttoContext	sync	PK:lab:- PK:dry_run:B:false PK:log_command_output:B:true PK:output_dir:N PK:cov_decision:N PK:include_projects:T:[] PK:exclude_projects:T:[]
+call	otto.context:OttoContext	sync	PK:lab:- KO:cov_decision:N KO:include_projects:T:[] KO:exclude_projects:T:[] KO:policy:N KO:bootstrap:N
 member	otto.context:OttoContext.__eq__	method	sync	PK:other:-
-member	otto.context:OttoContext.abandon_closed_loops	method	sync	-
 member	otto.context:OttoContext.admissible_ids	method	sync	PK:owner:N KO:require_nonempty:B:true
 member	otto.context:OttoContext.all_hosts	method	sync	PK:pattern:N KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:overrides:-
 member	otto.context:OttoContext.bind_verb_options	method	sync	PK:verb:- PK:kwargs:-
 member	otto.context:OttoContext.cov	property:g--
 member	otto.context:OttoContext.cov_decision	field
 member	otto.context:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N KO:_scope_owner:N VK:kwargs:-
-member	otto.context:OttoContext.dry_run	field
+member	otto.context:OttoContext.dry_run	property:g--
 member	otto.context:OttoContext.exclude_projects	field
 member	otto.context:OttoContext.for_repo	method	sync	PK:repo_name:-
 member	otto.context:OttoContext.get_host	method	sync	PK:host_id:- VK:overrides:-
 member	otto.context:OttoContext.include_projects	field
 member	otto.context:OttoContext.lab	field
-member	otto.context:OttoContext.log_command_output	field
+member	otto.context:OttoContext.log_command_output	property:g--
 member	otto.context:OttoContext.options	method	sync	PK:cls:-
-member	otto.context:OttoContext.output_dir	field
+member	otto.context:OttoContext.ordered_repos	property:g--
+member	otto.context:OttoContext.output_dir	property:g--
+member	otto.context:OttoContext.policy	field
+member	otto.context:OttoContext.repos	property:g--
 member	otto.context:OttoContext.run_on_all_hosts	method	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:_scope_owner:N KO:include_containers:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
-member	otto.context:OttoContext.scope_for	method	sync	PK:loop:-
-member	otto.context:OttoContext.scopes	property:g--
 member	otto.context:OttoContext.sweep_loop	method	coroutine	PK:loop:- KO:label:- KO:deadline:N
 member	otto.context:OttoContext.verb	field
 member	otto.context:OttoContext.verb_binding_preserved	method	sync	-
@@ -204,6 +213,16 @@ member	otto.context:ProjectContextView.all_hosts	method	sync	VP:args:- VK:kwargs
 member	otto.context:ProjectContextView.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:with_owner:B:true VK:kwargs:-
 member	otto.context:ProjectContextView.run_on_all_hosts	method	coroutine	VP:args:- VK:kwargs:-
 abstract	otto.context:ProjectContextView	-
+name	otto.context:RunPolicy	class
+mro	otto.context:RunPolicy	-
+call	otto.context:RunPolicy	sync	PK:dry_run:B:false PK:log_command_output:B:true PK:output_dir:N PK:variant:S:"debug" PK:teardown_deadline:F:0x1.4000000000000p+3
+member	otto.context:RunPolicy.__eq__	method	sync	PK:other:-
+member	otto.context:RunPolicy.dry_run	field
+member	otto.context:RunPolicy.log_command_output	field
+member	otto.context:RunPolicy.output_dir	field
+member	otto.context:RunPolicy.teardown_deadline	field
+member	otto.context:RunPolicy.variant	field
+abstract	otto.context:RunPolicy	-
 name	otto.context:Variant	alias
 name	otto.context:get_context	function
 call	otto.context:get_context	sync	-
@@ -1320,6 +1339,7 @@ member	otto.host:BaseHost.power_control	field
 member	otto.host:BaseHost.products	field
 member	otto.host:BaseHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- PK:mode:N PK:user:N PK:show_progress:B:true PK:recursive:B:false PK:concurrent:B:true
 member	otto.host:BaseHost.reboot	method	coroutine	PK:hard:B:false PK:wait:B:false PK:timeout:F:0x1.2c00000000000p+9 PK:down_timeout:F:0x1.e000000000000p+5 PK:poll_interval:F:0x1.0000000000000p+1
+member	otto.host:BaseHost.rebuild_connections	method	sync	-
 member	otto.host:BaseHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:BaseHost.resources	field
 member	otto.host:BaseHost.run	method	coroutine	PK:cmds:- PK:expects:N PK:timeout:F:0x1.e000000000000p+4 PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" PK:sudo:B:false PK:user:N
@@ -2232,6 +2252,7 @@ member	otto.host:RemoteHost.products	field
 member	otto.host:RemoteHost.put	method	coroutine	PK:src_files:- PK:dest_dir:- PK:mode:N PK:user:N PK:show_progress:B:true PK:recursive:B:false PK:concurrent:B:true
 member	otto.host:RemoteHost.rack	field
 member	otto.host:RemoteHost.reboot	method	coroutine	PK:hard:B:false PK:wait:B:false PK:timeout:F:0x1.2c00000000000p+9 PK:down_timeout:F:0x1.e000000000000p+5 PK:poll_interval:F:0x1.0000000000000p+1
+member	otto.host:RemoteHost.rebuild_connections	method	sync	-
 member	otto.host:RemoteHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:RemoteHost.resources	field
 member	otto.host:RemoteHost.run	method	coroutine	PK:cmds:- PK:expects:N PK:timeout:F:0x1.e000000000000p+4 PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" PK:sudo:B:false PK:user:N
@@ -5184,27 +5205,27 @@ enum	otto:InstallState	PARTIAL	S:"partial"
 enum	otto:InstallState	UNINSTALLED	S:"uninstalled"
 name	otto:OttoContext	class
 mro	otto:OttoContext	-
-call	otto:OttoContext	sync	PK:lab:- PK:dry_run:B:false PK:log_command_output:B:true PK:output_dir:N PK:cov_decision:N PK:include_projects:T:[] PK:exclude_projects:T:[]
+call	otto:OttoContext	sync	PK:lab:- KO:cov_decision:N KO:include_projects:T:[] KO:exclude_projects:T:[] KO:policy:N KO:bootstrap:N
 member	otto:OttoContext.__eq__	method	sync	PK:other:-
-member	otto:OttoContext.abandon_closed_loops	method	sync	-
 member	otto:OttoContext.admissible_ids	method	sync	PK:owner:N KO:require_nonempty:B:true
 member	otto:OttoContext.all_hosts	method	sync	PK:pattern:N KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:overrides:-
 member	otto:OttoContext.bind_verb_options	method	sync	PK:verb:- PK:kwargs:-
 member	otto:OttoContext.cov	property:g--
 member	otto:OttoContext.cov_decision	field
 member	otto:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N KO:_scope_owner:N VK:kwargs:-
-member	otto:OttoContext.dry_run	field
+member	otto:OttoContext.dry_run	property:g--
 member	otto:OttoContext.exclude_projects	field
 member	otto:OttoContext.for_repo	method	sync	PK:repo_name:-
 member	otto:OttoContext.get_host	method	sync	PK:host_id:- VK:overrides:-
 member	otto:OttoContext.include_projects	field
 member	otto:OttoContext.lab	field
-member	otto:OttoContext.log_command_output	field
+member	otto:OttoContext.log_command_output	property:g--
 member	otto:OttoContext.options	method	sync	PK:cls:-
-member	otto:OttoContext.output_dir	field
+member	otto:OttoContext.ordered_repos	property:g--
+member	otto:OttoContext.output_dir	property:g--
+member	otto:OttoContext.policy	field
+member	otto:OttoContext.repos	property:g--
 member	otto:OttoContext.run_on_all_hosts	method	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:_scope_owner:N KO:include_containers:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
-member	otto:OttoContext.scope_for	method	sync	PK:loop:-
-member	otto:OttoContext.scopes	property:g--
 member	otto:OttoContext.sweep_loop	method	coroutine	PK:loop:- KO:label:- KO:deadline:N
 member	otto:OttoContext.verb	field
 member	otto:OttoContext.verb_binding_preserved	method	sync	-

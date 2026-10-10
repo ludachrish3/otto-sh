@@ -17,6 +17,7 @@ from otto.docker.reports import BuildReport, ImageBuild
 from otto.docker.resolve import Displacement, SelectedFragment, Selection, UseCaseResolutionError
 from otto.result import CommandNotRunError, CommandResult
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.fake_repo import fake_repo
 
 from .test_deploy import _frag, _host, _lab
@@ -64,10 +65,9 @@ def install(lab):
     def _install(repos, ordered=None):
         with (
             patch("otto.config.fleet.get_lab", lambda: lab),
-            patch.multiple(
-                "otto.bootstrap",
-                get_repos=lambda: list(repos),
-                get_ordered_repos=lambda: list(ordered or repos),
+            patch(
+                "otto.bootstrap.bootstrap",
+                return_value=fake_bootstrap_result(repos, ordered=ordered or None),
             ),
         ):
             yield

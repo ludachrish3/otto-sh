@@ -75,10 +75,14 @@ def _dry_run() -> "Iterator[None]":
     """Install a dry-run :class:`~otto.context.OttoContext` for the block.
 
     A fresh context rather than a copy of whatever is active: the probe wants
-    ``dry_run=True`` and nothing else from the caller's environment, and the
-    token restores the previous context (including none) on the way out.
+    a dry-run policy and nothing else from the caller's environment, and the
+    binding restores the previous context (including none) on the way out.
     """
-    token = set_context(OttoContext(lab=Lab(name="otto-conformance"), dry_run=True))
+    from ..invocation import RunPolicy
+
+    token = set_context(
+        OttoContext(lab=Lab(name="otto-conformance"), policy=RunPolicy(dry_run=True))
+    )
     try:
         yield
     finally:

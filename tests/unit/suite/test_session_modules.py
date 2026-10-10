@@ -18,6 +18,7 @@ import pytest
 from otto.config.collected_tests import classify, read_table
 from otto.suite import run_tests
 from otto.suite.run import selected_tests
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 
 _ONE = "def test_one():\n    pass\n"
 _TWO = _ONE + "\ndef test_two():\n    pass\n"
@@ -141,7 +142,7 @@ def _lib_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, 
         tmp_path / "sut", name="sut", tests=["tests"], extra='libs = ["pylib"]\n', files=files
     )
     repo = Repo(sut_dir=sut)
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+    patch_bootstrap(monkeypatch, [repo])
     monkeypatch.syspath_prepend(str(sut / "pylib"))
     return sut
 
@@ -255,7 +256,7 @@ def test_a_session_keeps_what_it_imported_from_outside_the_test_directories(tmp_
         },
     )
     repo = Repo(sut_dir=sut)
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+    patch_bootstrap(monkeypatch, [repo])
     monkeypatch.syspath_prepend(str(sut / "pylib"))
     try:
         assert run_tests(["test_l"], output_dir=tmp_path / "out").exit_code == 0

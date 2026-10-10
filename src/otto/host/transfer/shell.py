@@ -297,7 +297,8 @@ The ordinary failure paths keep the host's own
 :data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT` (30 s), which is the right
 bound when nothing is racing them; the interrupted path runs inside the
 graceful window an interrupt promises (``otto.lifecycle`` runs teardown
-under a 10 s ``DEFAULT_TEARDOWN_DEADLINE``), where 30 s is not a bound at
+under the default teardown deadline (10 s, ``RunPolicy.teardown_deadline``)),
+where 30 s is not a bound at
 all -- one hung ``rm`` on a session that is itself dying would hold teardown
 three times past the deadline otto just told the operator about, which is a
 worse bug than the leak this cleanup exists to close.
@@ -1695,7 +1696,7 @@ class ShellFileTransfer(UnixFileTransfer):
         the shielded ``rm``, joins it, and returns. No ``deadline=`` rides
         along with it, deliberately: that bound is armed by the first HELD
         cancellation, so an equal one could only ever expire LATER than this
-        one, and the default it resolves to (``OTTO_TEARDOWN_DEADLINE``) is
+        one, and the run policy's deadline it reads (``OTTO_TEARDOWN_DEADLINE``) is
         the very window this bound exists to fit inside.
 
         Expiry is not a raise: the cleanup is abandoned with a WARNING naming

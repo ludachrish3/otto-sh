@@ -124,14 +124,12 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
     """
     if name not in PREVIEWABLE_INSTRUCTIONS:
         raise ValueError(f"{name!r} has no install preview")
-    from ..bootstrap import get_ordered_repos
-
     source = OptionsSource.from_kwargs(kwargs)
     install = source.build(InstallOptions) if name == "install" else None
     logs = source.build(UninstallOptions) if name == "uninstall" else None
     tools = source.build(InstallToolsOptions) if name == "install-tools" else None
     plans: list[RepoPlan] = []
-    for repo, actions, body in _walk_order(name, ctx, get_ordered_repos(), announce=False):
+    for repo, actions, body in _walk_order(name, ctx, ctx.ordered_repos, announce=False):
         repo_plan = RepoPlan(repo.name)
         # The converge runs lab-wide before any body, so an overriding repo is covered too.
         if install is not None and install.ensure:

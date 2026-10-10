@@ -764,27 +764,22 @@ def test_live_listing_runs_under_the_lifecycle_not_a_bare_asyncio_run(monkeypatc
     assert seen == {"teardown_deadline": rc.LIST_DEADLINE_SECONDS}
 
 
-def test_live_listing_lets_the_host_scope_sweep_the_connection():
-    """``run_command`` sweeps the command loop's host scope, so a host that
-    connected on that loop is swept at loop exit as well as closed explicitly
-    (belt and suspenders). A bare ``asyncio.run`` would close it once, never sweeping."""
-    from otto.context import OttoContext, reset_context, set_context
-
-    ctx = OttoContext(lab=SimpleNamespace(name="t", hosts={}))  # type: ignore[arg-type]
+def test_live_listing_lets_the_command_boundary_close_the_connection():
+    """``run_command``'s cleanup boundary closes the hosts registered on the
+    command loop, context or not, so a host that connected on that loop is
+    closed at loop exit as well as explicitly (belt and suspenders). A bare
+    ``asyncio.run`` would close it once, never sweeping."""
+    from tests._fixtures.registry import register_duck
 
     class _ClaimingHost(_ExecHost):
         async def exec(self, cmd, timeout=None, log=None):
             # What a real host's loop claim does on its first connection.
-            ctx.scope_for(asyncio.get_running_loop()).register(self)  # type: ignore[arg-type]
+            register_duck(self, asyncio.get_running_loop())
             return await super().exec(cmd, timeout=timeout, log=log)
 
     host = _ClaimingHost(CommandResult(Status.Success, value="", command="ls"))
-    token = set_context(ctx)
-    try:
-        assert rc._live_listing(host, "/var") == []
-    finally:
-        reset_context(token)
-    assert host.closed == 2, "expected the explicit close AND the scope sweep"
+    assert rc._live_listing(host, "/var") == []
+    assert host.closed == 2, "expected the explicit close AND the loop's sweep"
 
 
 def _interrupt_run_command(monkeypatch):

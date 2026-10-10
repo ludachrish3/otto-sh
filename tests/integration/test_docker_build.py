@@ -19,6 +19,7 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.paths import TESTS_ROOT
+from tests._fixtures.scope_boundary import held_for_scope
 
 REPO1_DIR = TESTS_ROOT / "repo1"
 
@@ -48,18 +49,21 @@ async def parent(test3_lease):
 
     Module-scoped so the three tests in this file share a single SSH
     connection — the connection has no per-test state, and the savings
-    are real (~1s of asyncssh handshake per test)."""
-    h = UnixHost(
-        ip="10.10.200.13",
-        element=Element("test3"),
-        creds=[Cred(login="vagrant", password="vagrant")],
-        is_virtual=True,
-        term="ssh",
-        transfer="scp",
-        docker_capable=True,
-    )
-    yield h
-    await h.close()
+    are real (~1s of asyncssh handshake per test). The host outlives the test
+    that connected it, so the fixture holds the module loop's cleanup boundary
+    for its scope (``held_for_scope``)."""
+    async with held_for_scope("test_docker_build.py's loop"):
+        h = UnixHost(
+            ip="10.10.200.13",
+            element=Element("test3"),
+            creds=[Cred(login="vagrant", password="vagrant")],
+            is_virtual=True,
+            term="ssh",
+            transfer="scp",
+            docker_capable=True,
+        )
+        yield h
+        await h.close()
 
 
 @pytest.fixture

@@ -23,6 +23,7 @@ from otto.suite.run import (
     resolve_output_dir,
     run_tests,
 )
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result, patch_bootstrap
 from tests._fixtures.gitrepo import TmpGitRepo
 from tests._fixtures.sut_repos import DOUBLE_TEST_NAME as _ALPHA
 from tests._fixtures.sut_repos import collected, pytest_main_returning
@@ -32,7 +33,7 @@ from tests._fixtures.sut_repos import repo_double as _stub_repo
 def _use_repo(monkeypatch, repo: MagicMock) -> MagicMock:
     """Make *repo* the lab's only repo."""
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+    patch_bootstrap(monkeypatch, [repo])
     return repo
 
 
@@ -111,8 +112,9 @@ def test_resolve_output_dir_falls_back_to_cwd(monkeypatch, tmp_path):
 def test_resolve_output_dir_uses_context_output_dir(tmp_path):
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.invocation import RunPolicy
 
-    token = set_context(OttoContext(lab=Lab(name="test"), output_dir=tmp_path))
+    token = set_context(OttoContext(lab=Lab(name="test"), policy=RunPolicy(output_dir=tmp_path)))
     try:
         assert resolve_output_dir(None) == tmp_path
     finally:
@@ -918,7 +920,7 @@ def test_run_tests_raises_value_error_when_nothing_matches(monkeypatch):
     no-typer contract.
     """
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", list)
+    patch_bootstrap(monkeypatch, [])
 
     with pytest.raises(ValueError, match="No tests matched"):
         run_tests(["test_nonexistent_zzz"])
@@ -932,7 +934,7 @@ def test_run_tests_no_match_raises_no_tests_matched_error(monkeypatch):
     matched the selection."
     """
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", list)
+    patch_bootstrap(monkeypatch, [])
 
     with pytest.raises(NoTestsMatchedError, match="No tests matched"):
         run_tests(["test_nonexistent_zzz"])
@@ -946,8 +948,8 @@ def test_run_tests_empty_options_raises(monkeypatch):
     match every test in every repo.
     """
 
-    # Guard fires before get_repos, but stub it so a regression can't run pytest.
-    monkeypatch.setattr("otto.bootstrap.get_repos", list)
+    # Guard fires before any repo read, but stub the root so a regression can't run pytest.
+    patch_bootstrap(monkeypatch, [])
 
     with pytest.raises(ValueError, match=r"at least one test name or run_options\.markers"):
         run_tests()
@@ -956,7 +958,7 @@ def test_run_tests_empty_options_raises(monkeypatch):
 def test_run_tests_marker_alone_raises_when_no_repo_matches(monkeypatch):
     """The -m-alone path funnels through the same "nothing matched" ValueError."""
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", list)
+    patch_bootstrap(monkeypatch, [])
 
     with pytest.raises(ValueError, match="No tests matched"):
         run_tests(run_options=RunOptions(markers="not-a-real-marker"))
@@ -1031,7 +1033,7 @@ def test_run_tests_multi_repo_junit_fan_out(tmp_path, monkeypatch):
         )
         for name in ("repoA", "repoB")
     ]
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: repos)
+    patch_bootstrap(monkeypatch, repos)
     layouts = _captured_layouts(monkeypatch)
 
     # A marker run: each repo's one session, with no collection before it.
@@ -1066,7 +1068,7 @@ def test_run_tests_a_repo_with_no_test_directory_is_not_searched(tmp_path, monke
     )
     bare = _stub_repo(tmp_path, name="repoB", sut_dir=tmp_path / "repoB", tests=[])
     bare.tests = [tmp_path / "repoB" / "tests"]
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [searched, bare])
+    patch_bootstrap(monkeypatch, [searched, bare])
     layouts = _captured_layouts(monkeypatch)
 
     result = run_tests([_ALPHA], output_dir=tmp_path)
@@ -1141,13 +1143,14 @@ def test_run_tests_leaves_active_context_output_dir_untouched(sut_repo, tmp_path
     """A context that already has an output_dir is never mutated by run_tests."""
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.invocation import RunPolicy
 
     sut_repo(files={"tests/test_ctx_probe_c.py": _PROBE})
     ctx_dir = tmp_path / "ctx_dir"
     ctx_dir.mkdir()
     out = tmp_path / "out"
     out.mkdir()
-    ctx = OttoContext(lab=Lab(name="test"), output_dir=ctx_dir)
+    ctx = OttoContext(lab=Lab(name="test"), policy=RunPolicy(output_dir=ctx_dir))
     token = set_context(ctx)
     try:
         result = run_tests(["test_marker"], output_dir=out)
@@ -1213,7 +1216,7 @@ def test_run_tests_restores_the_callers_verb_binding(tmp_path, monkeypatch, sess
 
     register_options(RunOpts, verbs=["run"])
     register_options(FirmwareOpts, verbs=["test"])
-    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    repo = _stub_repo(tmp_path)
     seen: list = []
 
     def fake_main(_args, plugins=(), **_kwargs):
@@ -1227,7 +1230,7 @@ def test_run_tests_restores_the_callers_verb_binding(tmp_path, monkeypatch, sess
 
     monkeypatch.setattr("pytest.main", fake_main)
 
-    ctx = OttoContext(lab=Lab(name="test"))
+    ctx = OttoContext(lab=Lab(name="test"), bootstrap=fake_bootstrap_result([repo]))
     ctx.bind_verb_options("run", {"lab_env": "prod"})
     before = ctx.options(RunOpts)
     token = set_context(ctx)
@@ -1283,9 +1286,9 @@ def test_run_tests_restores_prior_output_dir_on_exception(tmp_path, monkeypatch)
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
 
-    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    repo = _stub_repo(tmp_path)
     _raising_session(monkeypatch)
-    ctx = OttoContext(lab=Lab(name="test"))
+    ctx = OttoContext(lab=Lab(name="test"), bootstrap=fake_bootstrap_result([repo]))
     assert ctx.output_dir is None
     token = set_context(ctx)
     try:
@@ -1597,46 +1600,31 @@ def test_run_tests_abandons_hosts_left_on_the_inner_sessions_closed_loops(tmp_pa
     holds state no loop can drive. After the session run_tests drops it
     (``abandon_closed_loops``) and never attempts a cross-loop close."""
     from otto.config.lab import Lab
-    from otto.context import OttoContext, reset_context, set_context, try_get_context
+    from otto.context import OttoContext, reset_context, set_context
+    from tests._fixtures.registry import DuckHost
 
-    _use_repo(monkeypatch, _stub_repo(tmp_path))
-    events: "list[str]" = []
-
-    class _SuiteHost:
-        id = "bed1"
-
-        def __init__(self) -> None:
-            self._owner_loop: "asyncio.AbstractEventLoop | None" = None
-
-        def _drop_dead_connections(self) -> None:
-            events.append("drop")
-
-        async def close(self) -> None:
-            events.append("close")
-
-    host = _SuiteHost()
+    repo = _stub_repo(tmp_path)
+    host = DuckHost("bed1")
 
     def fake_pytest_main(args, plugins=(), **_kw):
         collected(plugins)
         # A test connects the host on pytest's loop, which closes with nobody sweeping it.
-        active = try_get_context()
-        assert active is not None
         loop = asyncio.new_event_loop()
-        host._owner_loop = loop
-        active.scope_for(loop).register(host)
+        host.claim(loop)
         loop.close()
         return pytest.ExitCode.OK
 
     monkeypatch.setattr("pytest.main", fake_pytest_main)
 
-    token = set_context(OttoContext(lab=Lab(name="test")))
+    token = set_context(OttoContext(lab=Lab(name="test"), bootstrap=fake_bootstrap_result([repo])))
     try:
         run_tests([_ALPHA], output_dir=tmp_path)
     finally:
         reset_context(token)
 
-    assert events == ["drop"], "a host on a closed loop is abandoned, never closed cross-loop"
-    assert host._owner_loop is None
+    assert host.abandoned == [1], "a host on a closed loop is abandoned"
+    assert host.closes_started == 0, "never closed cross-loop"
+    assert host.owner is None
 
 
 # ── One session-wide event loop (spec §6.6) ──────────────────────────────────
@@ -1857,11 +1845,16 @@ def test_run_tests_restores_prior_cov_on_an_active_context(tmp_path, monkeypatch
     """A caller's own context gets its cov back after the run."""
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.invocation import RunPolicy
 
-    _use_repo(monkeypatch, _stub_repo(tmp_path))
+    repo = _stub_repo(tmp_path)
     seen = _record_ctx_cov_during_session(monkeypatch, decision=True)
 
-    ctx = OttoContext(lab=Lab(name="test"), output_dir=tmp_path)
+    ctx = OttoContext(
+        lab=Lab(name="test"),
+        policy=RunPolicy(output_dir=tmp_path),
+        bootstrap=fake_bootstrap_result([repo]),
+    )
     token = set_context(ctx)
     try:
         run_tests([_ALPHA], output_dir=tmp_path)

@@ -58,6 +58,7 @@ from .log_haul import haul_globs
 from .toolchain import Toolchain
 
 if TYPE_CHECKING:
+    from ..invocation import HostRegistration
     from .app_shell import AppShell
     from .capability_grid import HostCapabilities
     from .dev_tool import DevTool
@@ -132,19 +133,17 @@ logger = getLogger(__name__)
 
 
 def get_logging_command_output_enabled() -> bool:
-    """Return True if command-output logging is enabled on the active context."""
-    from ..context import try_get_context
+    """Return True if command-output logging is enabled by the installed run policy."""
+    from ..invocation import current_policy
 
-    ctx = try_get_context()
-    return ctx.log_command_output if ctx is not None else True
+    return current_policy().log_command_output
 
 
 def is_dry_run() -> bool:
-    """Return True if dry-run mode is enabled on the active context."""
-    from ..context import try_get_context
+    """Return True if dry-run mode is enabled by the installed run policy."""
+    from ..invocation import current_policy
 
-    ctx = try_get_context()
-    return ctx.dry_run if ctx is not None else False
+    return current_policy().dry_run
 
 
 def refuse_declined_fact(result: "Result", *, asked: str) -> None:
@@ -1206,9 +1205,18 @@ class BaseHost(ABC):
     )
     """The event loop this host's connection belongs to; ``None`` until first use.
 
-    Set by :meth:`_claim_loop`, cleared by :meth:`close`. ``init=False`` so a
-    copy (``dataclasses.replace``, which is how option overrides build one)
+    Set by :meth:`_claim_loop`. Cleared by :meth:`close` and by abandonment
+    (:meth:`_abandon_registration`); a close that resumes after the host
+    reconnected leaves the newer owner in place. ``init=False`` so a copy
+    (``dataclasses.replace``, which is how option overrides build one)
     starts unowned, with its own freshly built managers."""
+
+    _generation: int = field(default=0, init=False, repr=False, compare=False)
+    """This host's connection epoch: bumped whenever its connection managers are replaced
+    (:meth:`rebuild_connections`, abandonment) and whenever a loop takes ownership.
+
+    A close that was started at one generation never changes host state at a later
+    one, so a close still running after a reconnect cannot touch the new connection."""
 
     @override
     def __str__(self) -> str:
@@ -2099,8 +2107,8 @@ class BaseHost(ABC):
           only be driven by that loop, even while it sits idle;
         - the owner closed: drop its dead connection state and fall through;
         - otherwise the running loop becomes the owner, and the host
-          registers with that loop's host scope in the active context, which
-          closes it when the loop ends.
+          registers with that loop's registry (``otto.invocation``), context
+          or not; the loop's cleanup closes it.
         """
         try:
             loop = asyncio.get_running_loop()
@@ -2116,17 +2124,76 @@ class BaseHost(ABC):
         if owner is not None:
             self._drop_dead_connections()
         self._owner_loop = loop
-        from ..context import try_get_context  # function-local: otto.context imports this module
+        self._generation += 1
+        from ..invocation import register  # function-scope: the leaf is read when a loop is claimed
 
-        ctx = try_get_context()
-        if ctx is not None:
-            ctx.scope_for(loop).register(self)
+        register(loop, self._registration())
+
+    def _registration(self) -> "HostRegistration":
+        """Build this host's record for its loop's registry, at its current generation."""
+        from ..invocation import HostRegistration  # function-scope: read when a loop is claimed
+
+        parent = getattr(self, "parent", None)
+        return HostRegistration(
+            key=id(self),
+            display_id=self.id,
+            depends_on=[] if parent is None else [id(parent)],
+            generation=self._generation,
+            close=self.close,
+            owned_by=lambda loop: self._owner_loop is loop,
+            abandon=self._abandon_registration,
+        )
+
+    @final
+    def rebuild_connections(self) -> None:
+        """Replace this host's connection managers, dropping the old ones unclosed.
+
+        How a host leaves a closed event loop or a rebooted device, and
+        what to call after changing its ``hop``: the next use dials fresh.
+        Bumps the host's connection epoch first, so a close still running
+        on the old managers cannot touch the new ones. A host whose owning
+        loop is still open stays owned, and its record in that loop's
+        registry moves to the new epoch. Families implement
+        ``_rebuild_connections``; this method is not overridden.
+        """
+        self._generation += 1
+        self._rebuild_connections()
+        owner = self._owner_loop
+        if owner is not None and not owner.is_closed():
+            from ..invocation import register
+
+            register(owner, self._registration())  # one record per host, at its new generation
+
+    def _rebuild_connections(self) -> None:  # noqa: B027 — an empty default is the POINT: a family with no connections has nothing to rebuild
+        """Replace the family's connection state. Families with connections override it."""
 
     def _drop_dead_connections(self) -> None:
-        """Abandon connection state bound to a closed loop (``rebuild_connections``), if any."""
-        rebuild = getattr(self, "rebuild_connections", None)
-        if rebuild is not None:
-            rebuild()
+        """Abandon connection state no loop can close, with no I/O.
+
+        The owner is cleared first, then the old record is unregistered at its
+        generation, then the connections are rebuilt (which registers nothing,
+        since no loop owns the host now).
+        """
+        owner, generation = self._owner_loop, self._generation
+        self._owner_loop = None  # first, so the rebuild below registers nothing
+        if owner is not None:
+            from ..invocation import unregister
+
+            unregister(owner, id(self), generation)
+        self.rebuild_connections()
+
+    def _abandon_registration(self, loop: "asyncio.AbstractEventLoop", generation: int) -> bool:
+        """Drop this host's connections with no I/O, if *generation* is current and *loop* owns it.
+
+        Returns whether it dropped them. A stale abandonment (the host
+        reconnected since, or another loop owns it now) is a no-op.
+        """
+        if generation != self._generation:
+            return False
+        if self._owner_loop is not None and self._owner_loop is not loop:
+            return False
+        self._drop_dead_connections()
+        return True
 
     def _live_session_mgr(self) -> "SessionManager":
         """Return the session manager, after claiming the running loop (see :meth:`_claim_loop`)."""
@@ -2142,14 +2209,16 @@ class BaseHost(ABC):
         :class:`~otto.host.loop_owner.HostLoopError`. When the owning loop has
         already closed there is nothing left to close gracefully, so the dead
         connection state is dropped without any I/O. Either way the host is
-        unowned afterwards, even when the close itself raised.
+        unowned afterwards, even when the close itself raised. A close that
+        resumes after the host reconnected (a rebuild or an abandonment since
+        it started) leaves the new connection and its owner alone.
 
         Families implement ``_close``; this wrapper is not overridden.
         """
+        generation = self._generation
         owner = self._owner_loop
         if owner is not None and owner.is_closed():
             self._drop_dead_connections()
-            self._owner_loop = None
             return
         if owner is not None:
             loop = asyncio.get_running_loop()
@@ -2160,7 +2229,13 @@ class BaseHost(ABC):
         try:
             await self._close()
         finally:
-            self._owner_loop = None
+            # After a reconnect since this close started, the owner is a later one's: keep it.
+            if self._generation == generation:
+                self._owner_loop = None
+                if owner is not None:
+                    from ..invocation import unregister
+
+                    unregister(owner, id(self), generation)
 
     async def _close(self) -> None:
         """Release this host's sessions and transports. Idempotent. Families override."""
@@ -2337,19 +2412,16 @@ class BaseHost(ABC):
     def log_dest(self, dest: "Path | None" = None) -> Path:
         """Local root for this host's retrieved logs: ``<base>/logs/<host-id>``.
 
-        *base* is *dest* when given, else the active command's output
+        *base* is *dest* when given, else the installed run policy's output
         directory, else the CWD. The subtree below is the run-tree contract in
         :mod:`otto.layout` (``<product>/product/``, ``<product>/debug/``,
         ``debug/``), the mirror of the coverage tree's keying, so consumers may
         read it by path.
         """
-        from ..context import try_get_context  # lazy — host must not import context at import time
+        from ..invocation import current_policy
 
-        ctx = try_get_context()
-        if dest is not None:
-            base = dest
-        else:
-            base = ctx.output_dir if ctx and ctx.output_dir else Path.cwd()
+        output_dir = current_policy().output_dir
+        base = dest if dest is not None else (output_dir or Path.cwd())
         return layout.host_logs_dir(base, self.id)
 
     def _log_base(self, dest: "Path | None") -> Path:
@@ -2863,9 +2935,8 @@ class BaseHost(ABC):
         # still drops live transports here — unavoidable at issue time,
         # because the disconnect race makes the command's own result
         # untrustworthy.
-        rebuild = getattr(self, "rebuild_connections", None)
-        if result.is_ok and rebuild is not None:
-            rebuild()
+        if result.is_ok:
+            self.rebuild_connections()
         if result.is_ok and wait:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
@@ -3066,9 +3137,9 @@ class SuppressCommandOutput:
     one — and makes concurrent per-host suppressions race-free, since
     each context only touches its own host's ``log`` attribute.
 
-    The no-host (global) path mutates ``log_command_output`` on the active
-    :class:`~otto.context.OttoContext` when one is present. When no context
-    is active the call is a no-op (there is nothing to suppress). Prefer the
+    The no-host (global) path mutates ``log_command_output`` on the installed
+    run policy (:class:`otto.context.RunPolicy`) when one is present. When no
+    policy is installed the call is a no-op (there is nothing to suppress). Prefer the
     per-host form when suppressing work that runs concurrently.
     """
 
@@ -3080,15 +3151,17 @@ class SuppressCommandOutput:
             self._prev_host_log = self.host.log
             self.host.log = LogMode.QUIET
         else:
-            from ..context import try_get_context
+            from ..invocation import installed_policy
 
-            self._ctx = try_get_context()
-            self._prev_global = self._ctx.log_command_output if self._ctx is not None else True
-            if self._ctx is not None:
-                self._ctx.log_command_output = False
+            self._policy = installed_policy()
+            self._prev_global = (
+                self._policy.log_command_output if self._policy is not None else True
+            )
+            if self._policy is not None:
+                self._policy.log_command_output = False
 
     def __exit__(self, *_: object) -> None:
         if self.host is not None:
             self.host.log = self._prev_host_log
-        elif self._ctx is not None:
-            self._ctx.log_command_output = self._prev_global
+        elif self._policy is not None:
+            self._policy.log_command_output = self._prev_global

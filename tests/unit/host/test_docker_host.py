@@ -23,6 +23,7 @@ from otto.host.login_proxy import Cred
 from otto.host.mount import Mount
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fake_repo import fake_repo
 from tests.conftest import active_context
 
@@ -891,7 +892,7 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
+    patch_bootstrap(monkeypatch, _mock_repos())
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     result = await h.exec("echo hi")
@@ -913,7 +914,7 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
 async def test_placeholder_no_repo_raises(monkeypatch):
     """No configured repo to auto-start -> clear 'not running' error."""
     h = _make_container(container_id="")
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: _mock_repos(repo_name=None))
+    patch_bootstrap(monkeypatch, _mock_repos(repo_name=None))
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
         await h.exec("echo hi")
@@ -925,7 +926,7 @@ async def test_placeholder_auto_up_failure_raises(monkeypatch):
     h = _make_container(container_id="")
     compose_up = AsyncMock(side_effect=RuntimeError("compose boom"))
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
+    patch_bootstrap(monkeypatch, _mock_repos())
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
         await h.exec("echo hi")
@@ -959,7 +960,7 @@ async def test_placeholder_use_case_project_auto_starts_via_deploy(monkeypatch):
     compose_up = AsyncMock()
     monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [uc_repo])
+    patch_bootstrap(monkeypatch, [uc_repo])
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     result = await h.exec("echo hi")
@@ -1008,7 +1009,7 @@ async def test_use_case_auto_up_picks_the_container_of_its_own_parent(monkeypatc
     )
     deploy = AsyncMock(return_value=stack)
     monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
-    monkeypatch.setattr("otto.bootstrap.get_repos", _uc_repos)
+    patch_bootstrap(monkeypatch, _uc_repos())
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     await h.exec("echo hi")
@@ -1037,7 +1038,7 @@ async def test_use_case_auto_up_hands_a_decline_back_unwrapped(monkeypatch):
         raise declined
 
     monkeypatch.setattr("otto.docker.deployment.deploy", declining_deploy)
-    monkeypatch.setattr("otto.bootstrap.get_repos", _uc_repos)
+    patch_bootstrap(monkeypatch, _uc_repos())
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(CommandNotRunError) as exc:
@@ -1065,7 +1066,7 @@ async def test_use_case_auto_up_wraps_a_real_deploy_failure(monkeypatch):
         raise HostCommandError("docker compose up failed: no such image")
 
     monkeypatch.setattr("otto.docker.deployment.deploy", failing_deploy)
-    monkeypatch.setattr("otto.bootstrap.get_repos", _uc_repos)
+    patch_bootstrap(monkeypatch, _uc_repos())
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(RuntimeError, match="not running, and auto-start failed") as exc:
@@ -1092,7 +1093,7 @@ async def test_use_case_auto_up_no_container_for_service_is_refused(monkeypatch)
     stack = SimpleNamespace(hosts={}, by_host={})
     deploy = AsyncMock(return_value=stack)
     monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
-    monkeypatch.setattr("otto.bootstrap.get_repos", _uc_repos)
+    patch_bootstrap(monkeypatch, _uc_repos())
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(
@@ -1111,7 +1112,7 @@ async def test_legacy_auto_up_with_no_repo_names_the_building_remedy(monkeypatch
     """No repo named ``repo1`` is configured: the remedy builds, because an
     unbuilt image is the usual reason a bring-up is needed at all."""
     h = _make_container(container_id="")
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: _mock_repos(None))
+    patch_bootstrap(monkeypatch, _mock_repos(None))
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(RuntimeError, match="no repo named 'repo1'") as exc:
@@ -1129,7 +1130,7 @@ async def test_legacy_auto_up_wide_arm_names_the_building_remedy(monkeypatch):
         raise HostCommandError("docker compose up failed: no such image")
 
     monkeypatch.setattr("otto.docker.compose.compose_up", failing_compose_up)
-    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
+    patch_bootstrap(monkeypatch, _mock_repos())
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(RuntimeError, match="auto-start failed") as exc:
@@ -1143,7 +1144,7 @@ async def test_legacy_auto_up_with_no_service_container_names_the_building_remed
     """``compose_up`` succeeds but never produced this service's container."""
     h = _make_container(container_id="")
     monkeypatch.setattr("otto.docker.compose.compose_up", AsyncMock(return_value={}))
-    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
+    patch_bootstrap(monkeypatch, _mock_repos())
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     with pytest.raises(RuntimeError, match="did not produce a container") as exc:
@@ -1163,7 +1164,7 @@ async def test_concurrent_access_triggers_single_auto_up(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
+    patch_bootstrap(monkeypatch, _mock_repos())
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     await asyncio.gather(h.exec("echo a"), h.exec("echo b"))
@@ -1231,7 +1232,7 @@ async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.bootstrap.get_repos", _mock_repos)
+    patch_bootstrap(monkeypatch, _mock_repos())
     monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
 
     status, _ = _sm(await h.put([f], Path("/tmp")))

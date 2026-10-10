@@ -527,6 +527,17 @@ def _switched(names: "tuple[str, ...]") -> "frozenset[str]":
     return frozenset(normalize_name(n) for n in names)
 
 
+def scopes_of(ctx: "OttoContext") -> "dict[str, ProjectScope]":
+    """Return *ctx*'s per-repo scope verdicts, keyed by ``Repo.name``; the one way to read them.
+
+    Resolved once per context, over the context's one bootstrap result, and
+    cached with any refusal (``otto.session.RepoLoadError`` for a fatal load
+    error, or the environment's own failure). Empty for the library sentinel
+    lab and for a run with no SUT directories.
+    """
+    return ctx._resolve_scopes()  # noqa: SLF001 — the context computes and caches them; this is their one reader
+
+
 def active(repo_name: str, ctx: "OttoContext") -> bool:
     """Report whether *repo_name* participates in this invocation — THE authority.
 
@@ -534,19 +545,19 @@ def active(repo_name: str, ctx: "OttoContext") -> bool:
     :func:`inactive_before_lab`'s projection, the orchestrator walks,
     instruction dispatch) consults this one predicate, so the resolution
     order is stated once: explicit switch > lab inference > default-on.
-    Pure over ``(ctx.include_projects, ctx.exclude_projects, ctx.scopes)``;
+    Pure over ``(ctx.include_projects, ctx.exclude_projects, scopes_of(ctx))``;
     no I/O.
 
     A missing verdict is active on purpose: it covers a run with no SUT
-    directories (``ctx.scopes`` is empty), the undeclared repo (whole-lab
+    directories (``scopes_of(ctx)`` is empty), the undeclared repo (whole-lab
     fallback, scoping spec §6), and the library context's sentinel lab alike
     — in every case there is no signal that would justify leaving the repo
     out. A run whose repos cannot be read has no missing verdict to fall back
-    on: reading ``ctx.scopes`` raises its refusal, and so does this.
+    on: reading ``scopes_of(ctx)`` raises its refusal, and so does this.
 
     Args:
         repo_name: The repo's declared ``Repo.name``, spelled exactly as the
-            repo declares it. ``ctx.scopes`` is keyed by that raw name, so a
+            repo declares it. ``scopes_of(ctx)`` is keyed by that raw name, so a
             user-typed variant (different case, ``_`` for ``-``) finds no
             verdict and therefore fails OPEN — resolving ACTIVE. Callers
             holding a user-supplied spelling must map it back to a declared
@@ -554,8 +565,7 @@ def active(repo_name: str, ctx: "OttoContext") -> bool:
         ctx: The runtime context supplying the switches and the lab verdicts.
 
     Raises:
-        otto.session.RepoLoadError: :attr:`ctx.scopes
-            <otto.context.OttoContext.scopes>` refused, because a repo failed
+        otto.session.RepoLoadError: :func:`scopes_of` refused, because a repo failed
             to load in a way that stops a run. An environment failure
             propagates the same way, as raised.
     """
@@ -566,13 +576,13 @@ def active(repo_name: str, ctx: "OttoContext") -> bool:
         return False
     if name in _switched(ctx.include_projects):
         return True
-    # RAW name, deliberately: ``ctx.scopes`` is keyed by ``Repo.name`` exactly as
+    # RAW name, deliberately: ``scopes_of(ctx)`` is keyed by ``Repo.name`` exactly as
     # written, so normalizing this key would miss the verdict of every repo whose
     # name holds an ``_``, a ``.`` or a capital — and a missing verdict resolves
     # ACTIVE, i.e. it would fail OPEN into the silent widening D6 refuses. The
     # switches above normalize because they carry USER-typed names; this does not
     # because it carries a declared one.
-    verdict = ctx.scopes.get(repo_name)
+    verdict = scopes_of(ctx).get(repo_name)
     if verdict is None:
         return True
     return not unusable_scope(verdict)
@@ -774,7 +784,7 @@ def scoped_ids(
             sentinel lab, or no SUT directories), and every owner is unknown
             for a reason that is not the caller's, so the fallback stands.
             Repos that could not be read never reach here as an empty
-            *scopes*: :attr:`otto.context.OttoContext.scopes` refuses first.
+            *scopes*: :func:`scopes_of` refuses first.
 
     >>> import re
     >>> import types

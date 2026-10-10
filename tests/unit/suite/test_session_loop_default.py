@@ -3,7 +3,7 @@
 Each test runs a real inner pytest session with ``otto test``'s own loop-scope
 arguments, through ``tests/unit/suite/_inner.py``. The hosts are real
 ``LocalHost`` shells (``FAKE_HOSTS``), which claim the running loop on first
-use and so join that loop's host scope with no test wiring.
+use and so register with that loop with no test wiring.
 """
 
 import pytest

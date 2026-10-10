@@ -9,6 +9,7 @@ import pytest
 from otto.coverage.config import DestinationError
 from otto.params import OptionsValidationError
 from otto.suite.run import RunOptions, prepare_run
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 
 
 def _repo_with_tickets(monkeypatch, tickets: bool) -> None:
@@ -20,7 +21,7 @@ def _repo_with_tickets(monkeypatch, tickets: bool) -> None:
         if tickets
         else {}
     )
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [MagicMock()])
+    patch_bootstrap(monkeypatch, [MagicMock()])
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: cov)
 
 
@@ -84,7 +85,7 @@ def test_tickets_json_with_a_tickets_table_passes(monkeypatch, tmp_path):
 
 
 def test_no_destinations_means_no_work(tmp_path, monkeypatch):
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: pytest.fail("repos must not be read"))
+    monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: pytest.fail("repos must not be read"))
     prepare_run(RunOptions())
 
 
@@ -105,7 +106,7 @@ def test_a_bad_cov_dir_short_circuits_before_the_report_dir_is_touched(tmp_path)
 
 
 def test_tickets_json_with_no_repos_is_refused(monkeypatch, tmp_path):
-    monkeypatch.setattr("otto.bootstrap.get_repos", list)
+    patch_bootstrap(monkeypatch, [])
     with pytest.raises(
         OptionsValidationError, match=r"cov_tickets_json requires \[coverage.tickets\]"
     ):

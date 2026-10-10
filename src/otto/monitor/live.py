@@ -74,8 +74,8 @@ def _enforce_driving_repo_scope() -> None:
     project's own "this lab is not my world" verdict would go unread and the
     dashboard would quietly monitor the dependency's machines.
 
-    THE DRIVING REPO IS ``bootstrap().repos[0]`` -- the first ``OTTO_SUT_DIRS``
-    entry -- and NOT the head of ``get_ordered_repos()``, which is a
+    THE DRIVING REPO IS ``ctx.repos[0]`` -- the first ``OTTO_SUT_DIRS``
+    entry -- and NOT the head of ``ctx.ordered_repos``, which is a
     topological reorder whose first element is a dependency. Gating on that one
     would let a dependency's declaration veto this project's run, which is
     exactly the asymmetry D3 exists to prevent (see
@@ -85,10 +85,10 @@ def _enforce_driving_repo_scope() -> None:
     that installed no context has nothing to enforce D3 against, so
     ``get_context()``'s ``RuntimeError`` returns quietly. Everything else is
     read unguarded, the verdicts first: a repo that failed to load refuses
-    through :attr:`~otto.context.OttoContext.scopes`, whichever repo broke,
+    through :func:`~otto.config.scope.scopes_of`, whichever repo broke,
     rather than skipping the check. A checkout with no ``OTTO_SUT_DIRS`` needs
-    no guard at all: ``get_repos()`` returns ``[]`` there, so there is no
-    current repo to enforce.
+    no guard at all: the context's :attr:`~otto.context.OttoContext.repos` is
+    ``[]`` there, so there is no current repo to enforce.
 
     Raises:
         otto.bootstrap.ProjectScopeError: The driving repo declared a
@@ -97,8 +97,7 @@ def _enforce_driving_repo_scope() -> None:
         otto.session.RepoLoadError: A repo failed to load in a way that stops
             a run, so the verdicts cannot be known.
     """
-    from ..bootstrap import get_repos
-    from ..config.scope import require_current_scope
+    from ..config.scope import require_current_scope, scopes_of
     from ..context import get_context
 
     try:
@@ -106,8 +105,8 @@ def _enforce_driving_repo_scope() -> None:
     except RuntimeError:  # no context: a library lab, nothing to enforce D3 against
         logger.debug("monitor: no active context; not enforcing D3")
         return
-    scopes = ctx.scopes  # a refusal propagates, whichever repo broke
-    repos = get_repos()
+    scopes = scopes_of(ctx)  # a refusal propagates, whichever repo broke
+    repos = ctx.repos
     if repos:
         require_current_scope(scopes, repos[0].name)
 
@@ -135,8 +134,7 @@ async def run_live(
         NoMonitorableHostsError: nothing selected can be sampled.
         MonitorTlsError: the repos' declared TLS cannot be served.
     """
-    from ..bootstrap import get_repos
-    from ..config.fleet import get_lab
+    from ..config.fleet import current_repos, get_lab
     from ..tunnel.records import discover_tunnel_records
     from .server import MonitorServer
     from .session import MonitorSession
@@ -148,7 +146,7 @@ async def run_live(
         raise MonitorInputError(str(exc), field="interval") from exc
     _enforce_driving_repo_scope()
     selected = select_monitor_hosts(hosts)
-    tls = resolve_monitor_tls(get_repos())
+    tls = resolve_monitor_tls(current_repos())
     active_lab = get_lab()
     session = MonitorSession.build(
         selected,

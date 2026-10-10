@@ -273,7 +273,7 @@ def test_star_import_binds_exactly_the_new_all(module):
 
 def test_star_import_of_otto_context_no_longer_binds_its_internals():
     """Before its first ``__all__``, ``from otto.context import *`` bound these too."""
-    leaked = {"ContextVar", "HostScope", "LIBRARY_LAB_NAME"} & set(_star("otto.context")["bound"])
+    leaked = {"ContextVar", "LIBRARY_LAB_NAME"} & set(_star("otto.context")["bound"])
     assert leaked == set()
 
 

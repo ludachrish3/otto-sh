@@ -25,6 +25,7 @@ from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from scripts.lab_health import _run_ssh, _ssh_user_pass
 from tests._fixtures.labdata import flat_hosts, host_data
+from tests._fixtures.run_state import preserved_run_state
 from tests.conftest import BUSYBOX_BED_GROUP
 
 _BED_ROOT = Path(__file__).parent
@@ -82,11 +83,15 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(autouse=True, scope="module")
 def _load_lab():
-    """Install test1 so hop resolution finds test1 (snapshot/restore
-    per tests/integration/host/conftest.py's discipline)."""
-    from otto.context import _active
+    """Install test1 so hop resolution finds test1, restoring the run state at
+    module end (per tests/integration/host/conftest.py's discipline)."""
+    with preserved_run_state():
+        set_context(OttoContext(lab=_busybox_bed_lab()))
+        yield
 
-    snapshot = _active.get()
+
+def _busybox_bed_lab() -> Lab:
+    """The one-host lab the bed's guests resolve their ``test1`` hop in."""
     lab = Lab(name="busybox_bed")
     data = host_data("test1")
     lab.add_host(
@@ -99,9 +104,7 @@ def _load_lab():
             log=LogMode.QUIET,
         )
     )
-    set_context(OttoContext(lab=lab))
-    yield
-    _active.set(snapshot)
+    return lab
 
 
 _bed_state: dict = {}

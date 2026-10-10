@@ -18,7 +18,7 @@ def check_instruction_active(name: str, owner: "str | None", ctx: "OttoContext")
     """
     if owner is None:
         return
-    from ..config.scope import active, switched_off
+    from ..config.scope import active, scopes_of, switched_off
 
     if active(owner, ctx):
         return
@@ -30,7 +30,7 @@ def check_instruction_active(name: str, owner: "str | None", ctx: "OttoContext")
     # Not switched off, yet inactive: `active()` reaches that verdict only by
     # finding an unusable ProjectScope under the repo's declared name, so the
     # lookup cannot miss.
-    scope = ctx.scopes[owner]
+    scope = scopes_of(ctx)[owner]
     raise InstructionInactiveError(
         name,
         owner,

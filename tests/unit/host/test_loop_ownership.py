@@ -1,4 +1,4 @@
-"""A host's connection belongs to one event loop, and each loop's scope closes what it owns."""
+"""A host's connection belongs to one event loop, and each loop's registry closes what it owns."""
 
 import asyncio
 import dataclasses
@@ -8,11 +8,13 @@ import time
 
 import pytest
 
+from otto import invocation as inv
 from otto.context import reset_context, set_context
 from otto.host.docker_host import DockerContainerHost
 from otto.host.local_host import LocalHost
 from otto.host.loop_owner import LOOP_LABELS, HostLoopError, loop_label
 from otto.host.options import SshOptions
+from tests._fixtures.registry import registered_ids
 from tests.conftest import make_host
 
 
@@ -49,7 +51,7 @@ def test_first_use_registers_with_the_running_loops_scope(ctx):
     async def use():
         await host.run("true")
         loop = asyncio.get_running_loop()
-        assert ctx.scope_for(loop)._hosts == [host]
+        assert registered_ids(loop) == [host.id]
         return await ctx.sweep_loop(loop, label="probe's loop")
 
     assert asyncio.run(use()) == [host.id]
@@ -211,10 +213,7 @@ def test_override_copies_are_owned_and_swept_separately(ctx_with_local_lab):
         await b.run("true")
         assert a is not b
         loop = asyncio.get_running_loop()
-        owned = ctx.scope_for(loop)._hosts
-        assert len(owned) == 2
-        assert owned[0] is a
-        assert owned[1] is b
+        assert registered_ids(loop) == [a.id, b.id]  # one record per object, same id
         closed = await ctx.sweep_loop(loop, label="x")
         assert closed == [a.id, b.id]
 
@@ -237,10 +236,7 @@ def test_an_override_copy_starts_unowned_with_its_own_managers(make_otto_context
             assert b._connections is not a._connections
             b._claim_loop()
             loop = asyncio.get_running_loop()
-            owned = ctx.scope_for(loop)._hosts
-            assert len(owned) == 2
-            assert owned[0] is a
-            assert owned[1] is b
+            assert registered_ids(loop) == [a.id, b.id]  # one record per object, same id
 
         asyncio.run(use())
     finally:
@@ -253,7 +249,7 @@ def test_get_host_alone_registers_nothing(ctx_with_local_lab):
     async def use():
         ctx.get_host("local")
         list(ctx.all_hosts(include_local=True))
-        assert ctx.scope_for(asyncio.get_running_loop())._hosts == []
+        assert registered_ids(asyncio.get_running_loop()) == []
 
     asyncio.run(use())
 
@@ -268,8 +264,12 @@ def test_the_sweep_logs_one_debug_line_naming_the_hosts(ctx, caplog):
             await ctx.sweep_loop(asyncio.get_running_loop(), label="TestRouter's loop")
 
     asyncio.run(use())
-    ids = ", ".join(h.id for h in hosts)
-    assert f"closed 2 hosts at end of TestRouter's loop: {ids}" in caplog.text
+    # Named in completion order; the two closes run concurrently.
+    assert re.search(
+        r"closed 2 hosts at end of TestRouter's loop: (dut1, dut2|dut2, dut1)$",
+        caplog.text,
+        re.MULTILINE,
+    ), caplog.text
 
 
 def test_a_failed_close_is_a_warning_and_the_rest_still_close(ctx, caplog, monkeypatch):
@@ -399,11 +399,11 @@ def test_abandon_closed_loops_drops_what_nobody_swept(ctx, caplog):
     stale_mgr = host._session_mgr
 
     with caplog.at_level(logging.DEBUG, logger="otto"):
-        assert ctx.abandon_closed_loops() == ["dut1"]
+        assert inv.abandon_closed_loops() == ["dut1"]
     assert "abandoned 1 host left on closed loops: dut1" in caplog.text
     assert host._owner_loop is None
     assert host._session_mgr is not stale_mgr
-    assert ctx.abandon_closed_loops() == []
+    assert inv.abandon_closed_loops() == []
 
 
 def test_a_sweep_of_a_loop_with_no_hosts_is_empty_and_silent(ctx, caplog):
@@ -426,7 +426,7 @@ def test_abandon_leaves_a_host_that_moved_to_a_live_loop_alone(ctx):
         second.run_until_complete(host.run("true"))
         live_mgr = host._session_mgr
 
-        assert ctx.abandon_closed_loops() == []
+        assert inv.abandon_closed_loops() == []
         assert host._owner_loop is second
         assert host._session_mgr is live_mgr
         assert second.run_until_complete(ctx.sweep_loop(second, label="x")) == ["dut1"]
@@ -532,18 +532,18 @@ def test_sweep_loop_refuses_a_loop_that_is_not_the_running_one(ctx):
 
         with pytest.raises(RuntimeError, match=r"sweep_loop.*running"):
             asyncio.run(sweep_the_wrong_loop())
-        assert ctx.scope_for(other)._hosts == [host]  # refused before draining anything
+        assert registered_ids(other) == [host.id]  # refused before draining anything
         assert other.run_until_complete(ctx.sweep_loop(other, label="other")) == ["dut1"]
     finally:
         other.close()
 
 
-def test_many_loops_under_one_context_do_not_grow_the_scope_table(ctx):
-    """``scope_for`` prunes closed loops' entries, so a long-lived context stays bounded."""
+def test_many_loops_do_not_grow_the_registry_table(ctx):
+    """Registering prunes closed loops' registries, so a long-lived process stays bounded."""
 
     async def touch():
-        ctx.scope_for(asyncio.get_running_loop())
+        _local("dut1")._claim_loop()
 
     for _ in range(20):
         asyncio.run(touch())
-    assert len(ctx._loop_scopes) == 1
+    assert sum(loop.is_closed() for loop in inv._REGISTRIES) == 1  # only the last one

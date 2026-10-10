@@ -195,10 +195,9 @@ class _SessionLogFile:
 
 def _session_log_path() -> Path | None:
     """Return the path to the current invocation's ``session.log``, if any."""
-    from ..context import try_get_context
+    from ..invocation import current_policy
 
-    ctx = try_get_context()
-    output_dir = ctx.output_dir if ctx is not None else None
+    output_dir = current_policy().output_dir
     if output_dir is None:
         return None
     return Path(output_dir) / "session.log"

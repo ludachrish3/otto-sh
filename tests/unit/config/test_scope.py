@@ -2,20 +2,23 @@
 
 import re
 import textwrap
-from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
+from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.config.scope import (
     ProjectScopeConfig,
     active,
     inactive_before_lab,
     repo_targets,
+    scopes_of,
     switched_off,
 )
+from otto.context import OttoContext
 from otto.host.element import Element
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.scoping import verdict
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -538,11 +541,14 @@ def test_scope_for_repo_admits_when_config_answers_with_no_repos(monkeypatch):
 
 
 def _ctx(include=(), exclude=(), scopes=None):
-    return SimpleNamespace(
+    ctx = OttoContext(
+        lab=Lab(name="t"),
         include_projects=tuple(include),
         exclude_projects=tuple(exclude),
-        scopes=dict(scopes or {}),
+        bootstrap=fake_bootstrap_result([]),
     )
+    seed_scope_verdicts(ctx, scopes or {})
+    return ctx
 
 
 class TestActive:
@@ -568,7 +574,7 @@ class TestActive:
         assert active("repo-a", ctx) is False
 
     def test_the_verdict_lookup_uses_the_raw_repo_name(self):
-        # `ctx.scopes` is keyed by `Repo.name` as written, so the lookup must NOT
+        # `scopes_of(ctx)` is keyed by `Repo.name` as written, so the lookup must NOT
         # normalize — and the name here is deliberately not normalization-invariant
         # (`repo_a` -> `repo-a`) with no switch set, so the verdict branch is the
         # one under test. A normalized lookup misses the verdict entirely and
@@ -625,7 +631,7 @@ class TestSwitchedOff:
 
 #: One repo name per spelling class the two predicates must agree about: one
 #: already normalized, and one whose raw form differs. ``active`` keys its
-#: ``ctx.scopes`` lookup RAW while both switch tests normalize — that asymmetry
+#: ``scopes_of(ctx)`` lookup RAW while both switch tests normalize — that asymmetry
 #: is the seam where a disagreement between them would hide.
 _INVARIANT_NAMES = ["repo-a", "Repo_A"]
 
@@ -634,12 +640,12 @@ class TestInactiveImpliesAttributable:
     """Whenever ``active`` says False, the CALLER can always say WHY.
 
     ``otto.session.check_instruction_active`` reads
-    ``ctx.scopes[owner]`` — subscript, not ``.get`` — on the arm where
+    ``scopes_of(ctx)[owner]`` — subscript, not ``.get`` — on the arm where
     :func:`active` returned False and :func:`switched_off` returned False. That
     is sound only because of an invariant spanning the two functions: ``active``
     reaches False either through the ``_switched(exclude)`` test (which IS
     ``switched_off``'s body) or through ``unusable_scope(verdict)``, which it
-    can only reach after ``ctx.scopes.get(repo_name)`` returned a verdict. So
+    can only reach after ``scopes_of(ctx).get(repo_name)`` returned a verdict. So
     "inactive and not switched off" implies "a verdict is present under that
     exact key".
 
@@ -699,9 +705,9 @@ class TestInactiveImpliesAttributable:
                         f"name={name!r} verdict={verdict_kind} scopes={scope_label} "
                         f"include={include} exclude={exclude}"
                     )
-                    assert switched_off(name, ctx) or name in ctx.scopes, (
+                    assert switched_off(name, ctx) or name in scopes_of(ctx), (
                         f"active() returned False with no attributable cause ({where}). "
-                        "check_instruction_active subscripts ctx.scopes[owner] on "
+                        "check_instruction_active subscripts scopes_of(ctx)[owner] on "
                         "exactly this arm and would raise KeyError at the user."
                     )
         # The loop above is an IMPLICATION, so it passes vacuously if nothing in

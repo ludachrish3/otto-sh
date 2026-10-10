@@ -581,15 +581,14 @@ def resolve_use_case(
             (``field="parent"``).
         ~otto.docker.resolve.UseCaseResolutionError: the selection refused.
     """
-    from ..bootstrap import get_ordered_repos, get_repos
-    from ..config.fleet import get_lab
+    from ..config.fleet import current_ordered_repos, current_repos, get_lab
     from .observe import docker_parent
 
     lab = get_lab()
     host = docker_parent(lab, parent)
-    selection = select_fragments(use_case, get_repos(), provide=provide)
+    selection = select_fragments(use_case, current_repos(), provide=provide)
     placed = place(selection, host)
-    order = {repo.name: i for i, repo in enumerate(get_ordered_repos())}
+    order = {repo.name: i for i, repo in enumerate(current_ordered_repos())}
     return UseCaseResolution(lab, selection, host, placed, order)
 
 

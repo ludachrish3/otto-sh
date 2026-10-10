@@ -92,11 +92,11 @@ def _lab_declaring(*resources: str) -> Lab:
 
 
 class TestReservationGateResultMatrix:
-    def test_skip_check_returns_skipped_outcome_with_warning(self, caplog, monkeypatch):
+    def test_skip_check_returns_skipped_outcome_with_warning(self, caplog):
         import logging
 
         lab = _lab_with_resources()
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         backend = _FakeBackend(owners={})  # would fail the check if it ran
         identity = ResolvedIdentity(username="alice", source="$USER")
         gate = ReservationGate(backend=backend, identity=identity, skip_check=True)
@@ -115,11 +115,11 @@ class TestReservationGateResultMatrix:
         assert "[bold red]" not in outcome.warning
         assert any("skipped" in rec.message.lower() for rec in caplog.records)
 
-    def test_skip_check_warns_even_when_backend_none(self, caplog, monkeypatch):
+    def test_skip_check_warns_even_when_backend_none(self, caplog):
         import logging
 
         lab = _lab_with_resources()
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         identity = ResolvedIdentity(username="alice", source="$USER")
         # backend=None models the -R break-glass path: construction skipped.
         gate = ReservationGate(backend=None, identity=identity, skip_check=True)
@@ -137,9 +137,9 @@ class TestReservationGateResultMatrix:
         outcome = gate.evaluate()
         assert outcome == ReservationGateResult(checked=False, skipped=False, warning=None)
 
-    def test_backend_missing_resource_raises(self, monkeypatch):
+    def test_backend_missing_resource_raises(self):
         lab = _lab_with_resources()
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         backend = _FakeBackend(owners={}, username="alice")  # no one has anything
         identity = ResolvedIdentity(username="alice", source="$USER")
         gate = ReservationGate(backend=backend, identity=identity, skip_check=False)
@@ -147,7 +147,7 @@ class TestReservationGateResultMatrix:
         with pytest.raises(MissingReservationError):
             gate.evaluate()
 
-    def test_backend_fully_held_returns_checked(self, monkeypatch):
+    def test_backend_fully_held_returns_checked(self):
         lab = _lab_declaring("rack1", "test1", "test2")
         backend = _FakeBackend(
             owners={
@@ -158,7 +158,7 @@ class TestReservationGateResultMatrix:
             username="alice",
         )
         identity = ResolvedIdentity(username="alice", source="$USER")
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         gate = ReservationGate(backend=backend, identity=identity, skip_check=False)
 
         outcome = gate.evaluate()
@@ -167,9 +167,9 @@ class TestReservationGateResultMatrix:
             checked=True, skipped=False, warning=None
         )
 
-    def test_backend_configured_but_identity_none_raises_runtime_error(self, monkeypatch):
+    def test_backend_configured_but_identity_none_raises_runtime_error(self):
         lab = _lab_with_resources()
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         backend = _FakeBackend(owners={})
         gate = ReservationGate(backend=backend, identity=None, skip_check=False)
 
@@ -191,10 +191,10 @@ def _slot_lab():
     return lab
 
 
-def test_gate_requires_only_the_fleet_in_play(tmp_path, monkeypatch):
+def test_gate_requires_only_the_fleet_in_play(tmp_path):
     """Mutation: make evaluate() pass host_ids=None and this goes red — slot-2 would be demanded."""
     lab = _slot_lab()
-    install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
     gate = ReservationGate(
         backend=_FakeBackend({"slot-1": "chris"}, username="chris"),
         identity=ResolvedIdentity(username="chris", source="$USER"),
@@ -206,10 +206,10 @@ def test_gate_requires_only_the_fleet_in_play(tmp_path, monkeypatch):
     )
 
 
-def test_gate_demands_every_host_when_no_repo_declares_a_fleet(tmp_path, monkeypatch):
+def test_gate_demands_every_host_when_no_repo_declares_a_fleet(tmp_path):
     """The whole-lab fallback is unchanged: no declaration, no narrowing."""
     lab = _slot_lab()
-    install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1")])
+    install_scoped_context(lab, [_repo(tmp_path, "r1")])
     gate = ReservationGate(
         backend=_FakeBackend({"slot-1": "chris"}, username="chris"),
         identity=ResolvedIdentity(username="chris", source="$USER"),
@@ -219,10 +219,10 @@ def test_gate_demands_every_host_when_no_repo_declares_a_fleet(tmp_path, monkeyp
         gate.evaluate()
 
 
-def test_skip_warning_lists_the_in_play_requirement(tmp_path, monkeypatch):
+def test_skip_warning_lists_the_in_play_requirement(tmp_path):
     """-R must announce the SAME requirement the check would have made, not a wider one."""
     lab = _slot_lab()
-    install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
 
     result = ReservationGate(
         skip_check=True, identity=ResolvedIdentity(username="chris", source="$USER")
@@ -247,7 +247,7 @@ def _empty_fleet_repo(tmp_path):
     return _repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
 
 
-def test_empty_declared_fleet_requires_the_lab_level_only_under_skip(tmp_path, monkeypatch):
+def test_empty_declared_fleet_requires_the_lab_level_only_under_skip(tmp_path):
     """Zero hosts in play is a requirement of the LAB's own set — never an abort here.
 
     An empty declared fleet means nothing is in play, so the requirement is the
@@ -259,7 +259,7 @@ def test_empty_declared_fleet_requires_the_lab_level_only_under_skip(tmp_path, m
     and this goes red with ``ProjectScopeError``.
     """
     lab = _three_level_lab()
-    install_scoped_context(monkeypatch, lab, [_empty_fleet_repo(tmp_path)])
+    install_scoped_context(lab, [_empty_fleet_repo(tmp_path)])
 
     result = ReservationGate(
         skip_check=True, identity=ResolvedIdentity(username="chris", source="$USER")
@@ -272,10 +272,10 @@ def test_empty_declared_fleet_requires_the_lab_level_only_under_skip(tmp_path, m
     assert "slot-2" not in result.warning
 
 
-def test_empty_declared_fleet_checks_the_lab_level_only(tmp_path, monkeypatch):
+def test_empty_declared_fleet_checks_the_lab_level_only(tmp_path):
     """The checked path reaches a verdict too: hold the lab's set and the gate passes."""
     lab = _three_level_lab()
-    install_scoped_context(monkeypatch, lab, [_empty_fleet_repo(tmp_path)])
+    install_scoped_context(lab, [_empty_fleet_repo(tmp_path)])
     gate = ReservationGate(
         backend=_FakeBackend({"rack-1": "chris"}, username="chris"),
         identity=ResolvedIdentity(username="chris", source="$USER"),
@@ -287,7 +287,7 @@ def test_empty_declared_fleet_checks_the_lab_level_only(tmp_path, monkeypatch):
     )
 
 
-def test_the_gate_ignores_resources_declared_on_the_builtin_local_host(monkeypatch):
+def test_the_gate_ignores_resources_declared_on_the_builtin_local_host():
     """Reaching the runner never needs a slot (spec 2026-08-28 §5).
 
     The built-in host is handed a resource it would never carry in production:
@@ -296,7 +296,7 @@ def test_the_gate_ignores_resources_declared_on_the_builtin_local_host(monkeypat
     backend is never asked — which is the whole point of the exemption.
     """
     lab = add_builtin_local(fleet_lab(("h1", "a")), resources={"runner-slot"})
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     gate = ReservationGate(
         backend=_FakeBackend(owners={}, username="alice"),
         identity=ResolvedIdentity(username="alice", source="$USER"),
@@ -308,7 +308,7 @@ def test_the_gate_ignores_resources_declared_on_the_builtin_local_host(monkeypat
     )
 
 
-def test_the_gate_still_enforces_a_lab_declared_local_host(monkeypatch):
+def test_the_gate_still_enforces_a_lab_declared_local_host():
     """The other direction, so the exemption cannot be read as "ignore the id `local`".
 
     A lab may define its own ``local`` entry, and ``load_lab`` then injects no
@@ -317,7 +317,7 @@ def test_the_gate_still_enforces_a_lab_declared_local_host(monkeypatch):
     """
     lab = fleet_lab(("local", "a"), ("h2", "a"))
     lab.hosts["local"].resources = frozenset({"runner-slot"})
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     gate = ReservationGate(
         backend=_FakeBackend(owners={"runner-slot": "dana"}, username="alice"),
         identity=ResolvedIdentity(username="alice", source="$USER"),
@@ -349,12 +349,12 @@ def _soon(minutes):
     return datetime.now(timezone.utc) + timedelta(minutes=minutes)
 
 
-def test_gate_warns_when_a_required_reservation_is_expiring(caplog, monkeypatch):
+def test_gate_warns_when_a_required_reservation_is_expiring(caplog):
     """Held, so no refusal — but ending inside the window, so a warning."""
     import logging
 
     lab = _lab_declaring("rack1")
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     gate = ReservationGate(
         backend=_FakeBackend(owners={"rack1": "alice"}, username="alice", ends={"rack1": _soon(1)}),
         identity=ResolvedIdentity(username="alice", source="$USER"),
@@ -368,12 +368,12 @@ def test_gate_warns_when_a_required_reservation_is_expiring(caplog, monkeypatch)
     assert "expires" in caplog.text.lower()
 
 
-def test_gate_is_silent_when_the_reservation_runs_well_past_the_window(caplog, monkeypatch):
+def test_gate_is_silent_when_the_reservation_runs_well_past_the_window(caplog):
     """The negative half of the pair: a healthy booking says nothing at all."""
     import logging
 
     lab = _lab_declaring("rack1")
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     gate = ReservationGate(
         backend=_FakeBackend(
             owners={"rack1": "alice"}, username="alice", ends={"rack1": _soon(90)}
@@ -387,7 +387,7 @@ def test_gate_is_silent_when_the_reservation_runs_well_past_the_window(caplog, m
     assert "expires" not in caplog.text.lower()
 
 
-def test_skip_check_suppresses_the_warning(caplog, monkeypatch):
+def test_skip_check_suppresses_the_warning(caplog):
     """``-R`` short-circuits evaluate() above the helper.
 
     The skip path returns before the check, so the expiry line is never
@@ -399,7 +399,7 @@ def test_skip_check_suppresses_the_warning(caplog, monkeypatch):
     import logging
 
     lab = _lab_declaring("rack1")
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     gate = ReservationGate(
         backend=_FakeBackend(owners={"rack1": "alice"}, username="alice", ends={"rack1": _soon(1)}),
         identity=ResolvedIdentity(username="alice", source="$USER"),
@@ -413,9 +413,7 @@ def test_skip_check_suppresses_the_warning(caplog, monkeypatch):
     assert "expires" not in caplog.text.lower()
 
 
-def test_gate_does_not_warn_about_a_resource_outside_the_fleet_requirement(
-    caplog, monkeypatch, tmp_path
-):
+def test_gate_does_not_warn_about_a_resource_outside_the_fleet_requirement(caplog, tmp_path):
     """Scope is what the gate demanded, not everything the user holds.
 
     ``slot2`` is outside the declared fleet, so ``slot-2`` was never required
@@ -425,7 +423,7 @@ def test_gate_does_not_warn_about_a_resource_outside_the_fleet_requirement(
     import logging
 
     lab = _slot_lab()
-    install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
     gate = ReservationGate(
         backend=_FakeBackend(
             {"slot-1": "chris", "slot-2": "chris"},
@@ -457,7 +455,7 @@ class _ExplodingNullBackend(NullReservationBackend):
         raise AssertionError("the null backend was queried; the is_null_backend guard is missing")
 
 
-def test_the_null_backend_gate_never_reaches_the_expiry_helper(caplog, monkeypatch):
+def test_the_null_backend_gate_never_reaches_the_expiry_helper(caplog):
     """A lab with a scheduler configured to ``none`` warns about nothing.
 
     The guard matters because the helper's argument is a live fetch: reaching
@@ -470,7 +468,7 @@ def test_the_null_backend_gate_never_reaches_the_expiry_helper(caplog, monkeypat
     import logging
 
     lab = _lab_declaring("rack1")
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     gate = ReservationGate(
         # WITH the username the check is for: without it the fetch this test
         # is trying to prove unreachable would fail on the base class's "no
@@ -488,7 +486,7 @@ def test_the_null_backend_gate_never_reaches_the_expiry_helper(caplog, monkeypat
     assert "expires" not in caplog.text.lower()
 
 
-def test_an_empty_requirement_never_reaches_the_expiry_helper(caplog, monkeypatch):
+def test_an_empty_requirement_never_reaches_the_expiry_helper(caplog):
     """Same guard from the other side: a lab needing nothing asks nothing.
 
     The backend here raises on any fetch, which is the assertion: a run that
@@ -507,7 +505,7 @@ def test_an_empty_requirement_never_reaches_the_expiry_helper(caplog, monkeypatc
 
     lab = Lab(name="test_lab")
     assert not lab.resources  # the premise, stated
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     gate = ReservationGate(
         backend=_ExplodingBackend(username="alice"),
         identity=ResolvedIdentity(username="alice", source="$USER"),
@@ -530,9 +528,9 @@ class TestGateReportAndHosts:
         assert outcome.report is not None
         assert outcome.report.covered
 
-    def test_evaluate_refusal_carries_the_report(self, monkeypatch):
+    def test_evaluate_refusal_carries_the_report(self):
         lab = _lab_with_resources()
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         gate = ReservationGate(
             backend=_FakeBackend(owners={}, username="alice"),
             identity=ResolvedIdentity(username="alice", source="$USER"),
@@ -602,7 +600,7 @@ class TestGateReportAndHosts:
         lab = fleet_lab(("h-in", "a"), ("h-bare", "a"))
         lab.hosts["h-in"].resources = frozenset({"slot-in"})
         lab.resources = {"rack1"}  # a real requirement, so a stray query would reach the backend
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         gate, backend = self._gate({})
         monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
         assert gate.check_hosts(lab, [lab.hosts["h-in"], lab.hosts["h-bare"]]) is None
@@ -617,7 +615,7 @@ class TestGateReportAndHosts:
         lab = fleet_lab(("h-in", "a"), ("h-out", "a"))
         lab.resources = {"rack1"}
         lab.hosts["h-out"].resources = frozenset({"slot-out"})
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
         backend = _FakeBackend(
             owners={"rack1": "alice"}, username="alice", ends={"rack1": _soon(1)}
@@ -641,7 +639,7 @@ class TestGateReportAndHosts:
         lab = fleet_lab(("h-in", "a"), ("h-a", "a"), ("h-b", "a"))
         lab.hosts["h-a"].resources = frozenset({"slot-a"})
         lab.hosts["h-b"].resources = frozenset({"slot-b"})
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
         gate, backend = self._gate({})
         with pytest.raises(MissingReservationError) as exc:
@@ -653,21 +651,21 @@ class TestGateReportAndHosts:
         # The built-in host is handed a resource: the hostile condition that
         # makes the exclusion falsifiable (see add_builtin_local).
         lab = add_builtin_local(Lab(name="test_lab"), resources={"x"})
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", set)
         gate, _ = self._gate({})
         assert gate.check_hosts(lab, [lab.hosts["local"]]) is None
 
         own = fleet_lab(("local", "a"))
         own.hosts["local"].resources = frozenset({"x"})
-        install_scoped_context(monkeypatch, own, [])
+        install_scoped_context(own, [])
         with pytest.raises(MissingReservationError):
             gate.check_hosts(own, [own.hosts["local"]])
 
-    def test_check_hosts_is_a_no_op_under_skip(self, monkeypatch):
+    def test_check_hosts_is_a_no_op_under_skip(self):
         lab = fleet_lab(("h-a", "a"))
         lab.hosts["h-a"].resources = frozenset({"x"})
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         gate = ReservationGate(
             backend=_FakeBackend(owners={}, username="alice"),
             identity=ResolvedIdentity(username="alice", source="$USER"),
@@ -688,7 +686,7 @@ class TestGateReportAndHosts:
         lab = fleet_lab(("h-in", "a"), ("h-out", "a"))
         lab.resources = {"rack1"}
         lab.hosts["h-out"].resources = frozenset({"slot"})
-        install_scoped_context(monkeypatch, lab, [])
+        install_scoped_context(lab, [])
         monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
         backend = _FakeBackend(
             owners={"rack1": "alice", "slot": "alice"}, username="alice", ends={"rack1": end}

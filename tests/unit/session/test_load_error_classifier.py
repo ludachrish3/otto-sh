@@ -1,6 +1,6 @@
 """One classifier decides which bootstrap errors stop a run (spec 4 §4 Rule 2).
 
-``check_repos`` (the CLI and ``open_context``) and ``OttoContext.scopes`` (a
+``check_repos`` (the CLI and ``open_context``) and ``scopes_of(ctx)`` (a
 hand-built context) both ask it, so the two can never disagree about a repo.
 """
 

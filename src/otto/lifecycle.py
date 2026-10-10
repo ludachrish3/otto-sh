@@ -2,9 +2,9 @@
 
 Every command-path ``asyncio.run`` in otto goes through :func:`run_command` —
 a unit guard (tests/unit/test_no_bare_asyncio_run.py) enforces this. It
-sweeps the command loop's host scope in the active ``OttoContext``, so hosts
-that connected during the command are closed before the command's loop exits
-(sync command paths used to skip this entirely), and owns the two-stage
+holds a cleanup boundary on the command's loop, so hosts that connected
+during the command are closed before the command's loop exits, with or
+without an ``OttoContext``, and owns the two-stage
 SIGINT/SIGTERM interrupt policy
 (chaos spec: docs/superpowers/specs/2026-07-30-chaos-hardening-design.md).
 
@@ -31,9 +31,6 @@ from typing import Any, TypeVar, overload
 R = TypeVar("R")
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_TEARDOWN_DEADLINE = 10.0
-"""Fallback graceful-teardown bound (seconds) when ``OTTO_TEARDOWN_DEADLINE`` is unset."""
 
 _force_exit_hooks: "list[Callable[[], None]]" = []
 
@@ -419,8 +416,8 @@ def sync_phase(
     The sibling of :func:`run_command` for phases that own their own event
     loops (the in-process pytest session): the first signal raises
     ``KeyboardInterrupt`` (:class:`SyncPhaseInterrupt`) into the phase — its
-    graceful teardown — and arms the teardown deadline
-    (``OTTO_TEARDOWN_DEADLINE`` unless *deadline* is given); a second signal,
+    graceful teardown — and arms the teardown deadline (*deadline*, else the
+    installed run policy's ``teardown_deadline``); a second signal,
     or the deadline expiring, makes a watchdog thread run the force-exit
     hooks, flush the log listener (bounded), and ``os._exit(128 + signum)``.
     The watchdog is spawned at entry in normal context so the force path
@@ -441,9 +438,10 @@ def sync_phase(
     its deadline expires may still take the force path — same exit code,
     hooks are idempotent, harmless.
     """
+    from .invocation import current_policy
     from .logger.management import shutdown_listener
 
-    bound = _resolve_teardown_deadline() if deadline is None else deadline
+    bound = current_policy().teardown_deadline if deadline is None else deadline
 
     def _bounded_flush() -> None:
         # Resolved to a concrete callable here, in normal context; only the
@@ -613,8 +611,8 @@ async def compensate(
     STARTS, which is what the two names say:
 
     *deadline* is TEARDOWN PRESSURE. It is armed by the FIRST HELD
-    CANCELLATION and by nothing else (``None`` resolves
-    ``OTTO_TEARDOWN_DEADLINE``): with nobody interrupting, a compensating
+    CANCELLATION and by nothing else (``None`` reads the installed run
+    policy's ``teardown_deadline``): with nobody interrupting, a compensating
     action is allowed to take as long as it takes, because a rollback torn
     off half-run is worse than a slow one. A caller that passes neither bound
     gets exactly that, forever.
@@ -692,7 +690,9 @@ async def compensate(
                     # cancellation, keep the work running, bound it.
                     if held is None:
                         held = exc
-                        bound = _resolve_teardown_deadline() if deadline is None else deadline
+                        from .invocation import current_policy
+
+                        bound = current_policy().teardown_deadline if deadline is None else deadline
                         deadline_timer = asyncio.get_running_loop().call_later(bound, task.cancel)
                     continue
                 # The deadline (or loop shutdown) cancelled the work itself.
@@ -795,9 +795,13 @@ class _CommandRun:
         raise _ForcedAbandon
 
     async def _main(self, coro: "Coroutine[Any, Any, R]") -> R:
-        from .context import try_get_context
+        from .invocation import acquire_boundary
 
         loop = asyncio.get_running_loop()
+        # First, before the body: this fresh loop has no sweep in progress. The
+        # last release (this one, unless a nested boundary is still held) closes
+        # every host that connected on the loop, context or not.
+        boundary = acquire_boundary(loop, deadline=self.teardown_deadline)
         installed: "list[int]" = []
         if self.install_handlers:
             for signum in (signal.SIGINT, signal.SIGTERM):
@@ -808,7 +812,6 @@ class _CommandRun:
                     # Non-main thread or unsupported platform: default
                     # dispositions stay — exactly today's behavior.
                     break
-        ctx = try_get_context()
         # Names the loop in the sweep's debug line. Not registered in
         # ``otto.host.loop_owner.LOOP_LABELS``: that import is kept off every
         # command's path (the import budget), and only a HostLoopError reads it.
@@ -860,11 +863,11 @@ class _CommandRun:
                 pass
             except BaseException as exc:  # noqa: BLE001 — body outcome deferred past the sweep
                 body_error = exc
-            if ctx is not None and not self.forced:
+            # A forced run never releases: its loop closes with the boundary still
+            # held, and the next registration on any loop forgets that registry.
+            if not self.forced:
                 with contextlib.suppress(_ForcedAbandon):
-                    await self._race_force(
-                        ctx.sweep_loop(loop, label=label, deadline=self.teardown_deadline)
-                    )
+                    await self._race_force(boundary.release(label=label))
         finally:
             if self._deadline_handle is not None:
                 self._deadline_handle.cancel()
@@ -877,16 +880,6 @@ class _CommandRun:
         return result  # type: ignore[no-any-return]  # None only reachable on the raise paths above
 
 
-def _resolve_teardown_deadline() -> float:
-    """``OTTO_TEARDOWN_DEADLINE`` via the typed env settings, else the default."""
-    try:
-        from .bootstrap import get_env
-
-        return get_env().teardown_deadline
-    except Exception:  # noqa: BLE001 — discovery unavailable (bare library use): fall back
-        return DEFAULT_TEARDOWN_DEADLINE
-
-
 def run_command(
     coro: "Coroutine[Any, Any, R]",
     *,
@@ -895,16 +888,23 @@ def run_command(
 ) -> R:
     """Run *coro* as a command body under otto's lifecycle policy.
 
-    Sweeps the command loop's host scope in the active ``OttoContext`` (when
-    one is installed), so hosts that connected on that loop are closed before
-    it exits. On interruption
-    raises ``SystemExit(128 + signum)`` — 130 for SIGINT, 143 for SIGTERM —
-    after the graceful sweep, or after abandoning it on a second signal /
+    Holds a cleanup boundary on the command's loop for the body's duration;
+    releasing it closes every host that connected on that loop, context or
+    not, before the loop exits. On interruption raises
+    ``SystemExit(128 + signum)`` — 130 for SIGINT, 143 for SIGTERM — after
+    the graceful sweep, or after abandoning it on a second signal /
     teardown-deadline expiry (then the registered force-exit hooks run, after
-    the loop has closed). ``_controller`` is a test seam: tier-1 tests inject
+    the loop has closed). With no explicit *teardown_deadline*, it reads the
+    installed run policy's, which the run filled from
+    ``OTTO_TEARDOWN_DEADLINE`` when it was prepared (10 s when no policy is
+    installed). ``_controller`` is a test seam: tier-1 tests inject
     a ``_CommandRun(install_handlers=False)`` they hold a reference to.
     """
-    deadline = _resolve_teardown_deadline() if teardown_deadline is None else teardown_deadline
+    from .invocation import current_policy
+
+    deadline = (
+        current_policy().teardown_deadline if teardown_deadline is None else teardown_deadline
+    )
     ctrl = (
         _controller
         if _controller is not None

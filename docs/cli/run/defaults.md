@@ -46,8 +46,8 @@ otto --lab my_lab run install
 
 That walk is:
 
-1. Otto resolves the configured repos in dependency order (bootstrap already
-   computes it).
+1. Otto takes the run's repos in dependency order from the run's context
+   (`ctx.ordered_repos`), one snapshot of what bootstrap computed.
 2. Each repo gets its `ProjectActions` — the subclass it registered, or otto's
    default — constructed with that repo and that repo's *view* of the live
    context.

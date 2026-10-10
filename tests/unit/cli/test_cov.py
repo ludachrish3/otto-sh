@@ -377,11 +377,12 @@ class TestCovReportSuccess:
     ):
         from otto.config.lab import Lab
         from otto.context import OttoContext, reset_context, set_context
+        from otto.invocation import RunPolicy
 
         mock, _ = mock_run_report
         run_dir = tmp_path / "xdir" / "cov" / "20260703_120000_000_report"
         run_dir.mkdir(parents=True)
-        token = set_context(OttoContext(lab=Lab(name="t"), output_dir=run_dir))
+        token = set_context(OttoContext(lab=Lab(name="t"), policy=RunPolicy(output_dir=run_dir)))
         try:
             result = runner.invoke(cov_app, ["report", str(cov_tree)])
         finally:
@@ -408,9 +409,10 @@ class TestCovReportSuccess:
     def test_report_without_an_output_dir_or_dir_fails_naming_dir(self, cov_tree, mock_run_report):
         from otto.config.lab import Lab
         from otto.context import OttoContext, reset_context, set_context
+        from otto.invocation import RunPolicy
 
         mock, _ = mock_run_report
-        token = set_context(OttoContext(lab=Lab(name="t"), output_dir=None))
+        token = set_context(OttoContext(lab=Lab(name="t"), policy=RunPolicy(output_dir=None)))
         try:
             result = runner.invoke(cov_app, ["report", str(cov_tree)])
         finally:

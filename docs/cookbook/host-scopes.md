@@ -175,6 +175,17 @@ you want the connection closed earlier than its loop ends: to reconnect
 fresh for the next class, or to free a single-client console for someone
 else.
 
+The loop, not your code, decides when its hosts close. An `open_context`
+inside a test therefore leaves the hosts it connected open until that test's
+runner loop shuts down: the end of the session by default, sooner for a
+narrower `loop_scope`. Its exit restores the outer context and closes
+nothing.
+
+A loop you drive yourself, outside `otto test`, `run_command` and
+`open_context`, has nothing that closes its hosts for you. Run your work in
+an `open_context` on that loop, call `ctx.sweep_loop(...)` with a hand-built
+context before the loop ends, or close your hosts.
+
 ## Shared connections share shell state
 
 A shared host keeps one shell session, so a `cd` or an exported variable in

@@ -43,7 +43,7 @@ digraph bigpicture {
         label="shared lifecycle machinery";
         cli [label="CLI registry + lazy dispatch"];
         boot [label="bootstrap\n(discovery + registration)"];
-        ctx [label="OttoContext + HostScope"];
+        ctx [label="OttoContext + loop registries"];
     }
 
     subgraph cluster_subsystems {

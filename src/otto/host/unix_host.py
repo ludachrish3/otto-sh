@@ -496,13 +496,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     #  Connection
     ####################
 
-    def rebuild_connections(self) -> None:
+    @override
+    def _rebuild_connections(self) -> None:
         """Recreate the ConnectionManager and dependents.
 
-        Useful after changing ``hop`` or when the host must reconnect on a
-        new event loop: ``_claim_loop`` calls it when the loop that owned the
-        connection has closed, so the next use dials fresh on the loop it
-        runs on.
+        This family's hook for :meth:`~otto.host.host.BaseHost.rebuild_connections`,
+        which ``_claim_loop`` reaches when the loop that owned the connection
+        has closed, so the next use dials fresh on the loop it runs on.
 
         The old manager is dropped, not closed (its transports may belong to
         a dead loop or a rebooted device), except for a cached console

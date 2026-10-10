@@ -360,9 +360,9 @@ class KindRegistry(Registry[Callable[[DeclaredEntry, Any], T]], Generic[T]):
         right where a kind is looked up, for the same reason a kind is —
         a bad class path fails every ingest, whatever the match.
         """
-        from . import context  # function-scope: otto.context imports otto.host at module end
+        from .invocation import current_policy  # function-scope: the leaf is read when ingest runs
 
-        run = context.variant()
+        run = current_policy().variant
         out: list[T] = []
         taken: set[str] = set()
         for entry in entries:

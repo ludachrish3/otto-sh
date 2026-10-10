@@ -19,13 +19,14 @@ import pytest_asyncio
 
 from otto.config.env import SUT_DIRS_ENV_VAR
 from otto.config.lab import Lab
-from otto.context import OttoContext, _active, set_context
+from otto.context import OttoContext, set_context
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_data_path
 from tests._fixtures.paths import default_sut_dir
+from tests._fixtures.run_state import preserved_run_state
 from tests.conftest import BUSYBOX_BED_GROUP, BUSYBOX_PARAM_TOKENS
 
 _INTEGRATION_ROOT = Path(__file__).parent
@@ -126,7 +127,7 @@ def sut_dirs_env_module():
     tree that reach otto's config themselves — ``test_docker_run_get_put.stack``
     is the live case: its ``compose_up`` walks ``get_repos()``. The others take
     a flock or hand-build a ``UnixHost``/``Lab``, neither of which reads the env
-    or bootstraps (``OttoContext.scopes`` is a lazy property), so they do not ask.
+    or bootstraps (a context reads its repos lazily), so they do not ask.
 
     Brackets the bootstrap memo too. A module fixture primes it BEFORE the root
     conftest's per-test ``_restore_bootstrap_state`` takes its snapshot, so
@@ -512,7 +513,6 @@ async def hop_on_this_loop(request):
             f"HOP_ID naming the hop its hosts are reached through.",
             pytrace=False,
         )
-    snapshot = _active.get()
     data = host_data(hop_id)
     hop = UnixHost(
         ip=data["ip"],
@@ -523,9 +523,9 @@ async def hop_on_this_loop(request):
     )
     lab = Lab(name="hop_on_this_loop")
     lab.add_host(hop)
-    set_context(OttoContext(lab=lab))
-    try:
-        yield hop
-    finally:
-        await hop.close()
-        _active.set(snapshot)
+    with preserved_run_state():
+        set_context(OttoContext(lab=lab))
+        try:
+            yield hop
+        finally:
+            await hop.close()

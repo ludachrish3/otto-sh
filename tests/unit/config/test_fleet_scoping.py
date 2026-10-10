@@ -20,13 +20,13 @@ import pytest
 
 from otto.bootstrap import ProjectScopeError
 from otto.config.lab import Lab
-from otto.config.scope import EmptySelectionError
+from otto.config.scope import EmptySelectionError, scopes_of
 from otto.context import OttoContext
 from tests._fixtures.fleet import _lab, _repo, add_builtin_local, install_scoped_context
 
 
 @pytest.fixture
-def scoped_context(monkeypatch):
+def scoped_context():
     """Build and install an ``OttoContext`` whose scopes resolve over given repos.
 
     A thin wrapper over :func:`tests._fixtures.fleet.install_scoped_context`,
@@ -35,7 +35,7 @@ def scoped_context(monkeypatch):
     """
 
     def _install(lab, repos, *, exclude_projects=()):
-        return install_scoped_context(monkeypatch, lab, repos, exclude_projects=exclude_projects)
+        return install_scoped_context(lab, repos, exclude_projects=exclude_projects)
 
     return _install
 
@@ -72,7 +72,7 @@ async def test_no_declarations_means_whole_lab(tmp_path, scoped_context):
     repo = _repo(tmp_path, "r1")
     ctx = scoped_context(lab, [repo])
 
-    assert not ctx.scopes["r1"].declared
+    assert not scopes_of(ctx)["r1"].declared
     assert sorted(await _contacted(ctx)) == ["h1", "h2", "h3"]
 
 
@@ -108,8 +108,8 @@ async def test_a_visible_undeclared_repo_demands_nothing_new_from_hosts(tmp_path
     lab.hosts["h1"] = bare
     ctx = scoped_context(lab, [_repo(tmp_path, "r1")])
 
-    assert not ctx.scopes["r1"].declared
-    assert ctx.scopes["r1"].universe == frozenset({"h1"})
+    assert not scopes_of(ctx)["r1"].declared
+    assert scopes_of(ctx)["r1"].universe == frozenset({"h1"})
 
     async def _verb(host):
         await host.poke()
@@ -535,7 +535,7 @@ async def test_late_joining_container_is_scoped_live(tmp_path, scoped_context):
     lab = _lab(("h1", "a"))
     repo = _repo(tmp_path, "r1", labs=["a"], hosts=["h1", r"h1\.r1\.api"])
     ctx = scoped_context(lab, [repo])
-    assert ctx.scopes["r1"].universe == frozenset({"h1"})  # the snapshot, pre-container
+    assert scopes_of(ctx)["r1"].universe == frozenset({"h1"})  # the snapshot, pre-container
 
     parent = lab.hosts["h1"]
     lab.add_host(_container(parent, "api", "a"))
@@ -558,7 +558,7 @@ def test_local_is_kept_out_of_the_resolved_universe(tmp_path, scoped_context):
     ctx = scoped_context(lab, [repo])
 
     assert BUILTIN_LOCAL_HOST_ID in lab.hosts  # `.*` really would admit it
-    assert ctx.scopes["r1"].universe == frozenset({"h1"})
+    assert scopes_of(ctx)["r1"].universe == frozenset({"h1"})
 
 
 @pytest.mark.asyncio
@@ -730,7 +730,7 @@ def test_library_context_has_no_scopes_and_walks_everything():
     lab.name = LIBRARY_LAB_NAME
     ctx = OttoContext(lab=lab)
 
-    assert ctx.scopes == {}
+    assert scopes_of(ctx) == {}
     assert sorted(h.id for h in ctx.all_hosts()) == ["h1", "h2"]
 
 
@@ -754,8 +754,8 @@ def test_declaring_run_logs_the_fleet_of_interest_once(tmp_path, scoped_context,
     ctx = scoped_context(lab, [repo])
 
     with caplog.at_level(logging.INFO, logger="otto.context"):
-        first = ctx.scopes
-        second = ctx.scopes
+        first = scopes_of(ctx)
+        second = scopes_of(ctx)
     assert first is second  # resolution is cached, so the line cannot repeat
     lines = [r.message for r in caplog.records if "fleet of interest" in r.message]
     assert lines == ["fleet of interest: 1 of 3 lab hosts (1 repo(s), 0 excluded)"]
@@ -766,7 +766,7 @@ def test_undeclared_run_says_nothing(tmp_path, scoped_context, caplog):
     ctx = scoped_context(_lab(("h1", "a")), [_repo(tmp_path, "r1")])
 
     with caplog.at_level(logging.INFO, logger="otto.context"):
-        assert ctx.scopes["r1"].declared is False
+        assert scopes_of(ctx)["r1"].declared is False
     assert not [r for r in caplog.records if "fleet of interest" in r.message]
 
 

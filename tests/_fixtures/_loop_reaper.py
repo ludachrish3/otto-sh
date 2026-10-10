@@ -33,6 +33,10 @@ class LeakedRunningLoopError(AssertionError):
     """
 
 
+class LeakedRegistrationError(Exception):
+    """A test left hosts registered on an open event loop that no cleanup boundary holds."""
+
+
 class LeakedProductLoopError(AssertionError):
     """Raised when an event loop created by ``otto/`` product code is found
     open at a test boundary — a real product resource leak that must not be

@@ -701,25 +701,31 @@ def test_lab_rows_answer_instrumented_from_the_built_product(ingest, tmp_path):
     ]
 
 
-def test_lab_rows_show_the_variant_the_entry_declared(ingest, monkeypatch):
-    from otto import context
+def test_lab_rows_show_the_variant_the_entry_declared(ingest):
+    from otto.invocation import RunPolicy, install_policy, reset_binding
 
-    monkeypatch.setattr(context, "variant", lambda: "field")
     field = _entry("repo1", "fw", artifact="field.bin", variant="field")
     repos = [_repo("repo1", products=[field, _entry("repo1", "fw", artifact="any.bin")])]
-    lab = ingest(repos, [_host("test1")])
-    rows = listing.lab_rows(lab, repos, "products").rows
+    binding = install_policy(RunPolicy(variant="field"))  # the run's variant, as ingest reads it
+    try:
+        lab = ingest(repos, [_host("test1")])
+        rows = listing.lab_rows(lab, repos, "products").rows
+    finally:
+        reset_binding(binding)
     assert [(r.name, r.variant, r.artifact) for r in rows] == [("fw", "field", "field.bin")]
 
 
-def test_a_variant_skipped_entry_is_unused_with_the_run_named(ingest, monkeypatch):
-    from otto import context
+def test_a_variant_skipped_entry_is_unused_with_the_run_named(ingest):
+    from otto.invocation import RunPolicy, install_policy, reset_binding
 
-    monkeypatch.setattr(context, "variant", lambda: "debug")
     field = _entry("repo1", "fw", artifact="field.bin", variant="field")
     repos = [_repo("repo1", products=[field, _entry("repo1", "fw", artifact="any.bin")])]
-    lab = ingest(repos, [_host("test1")])
-    result = listing.lab_rows(lab, repos, "products")
+    binding = install_policy(RunPolicy(variant="debug"))  # the run's variant, as ingest reads it
+    try:
+        lab = ingest(repos, [_host("test1")])
+        result = listing.lab_rows(lab, repos, "products")
+    finally:
+        reset_binding(binding)
     assert [(u.name, u.reason) for u in result.unused] == [("fw", "variant 'field' (run is debug)")]
 
 

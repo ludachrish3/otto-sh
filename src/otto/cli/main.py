@@ -706,9 +706,10 @@ def main(  # noqa: PLR0913 — CLI command params
     ``--show-lab`` / ``--list-hosts``, which inspect live lab state and so load
     it inline here before printing and exiting, and ``--list-products`` /
     ``--list-tools``, which do the same only when ``--lab`` is given.
-    It also sets the run's variant (``--field``/``--debug``) and registers the
-    reset on the root context's ``call_on_close``, so the variant never outlives
-    the invocation.
+    It installs the run's policy (``--field``/``--debug`` and ``--dry-run``,
+    with the teardown deadline from ``OTTO_TEARDOWN_DEADLINE``) and registers
+    its reset on the root context's ``call_on_close``, so the policy never
+    outlives the invocation.
     """
     if ctx.resilient_parsing:
         return
@@ -733,14 +734,20 @@ def main(  # noqa: PLR0913 — CLI command params
     global _root_log_level  # noqa: PLW0603 — one per-invocation value, read by entry()'s frame
     _root_log_level = log_level
 
-    from ..context import reset_variant, set_variant
+    from ..bootstrap import discovered_teardown_deadline
+    from ..invocation import RunPolicy, install_policy, reset_binding
 
-    variant_token = set_variant("field" if field else "debug")
-    # Undone when Click closes this invocation's root context: exactly once,
-    # on this thread and in this execution context, for the console script and
-    # for app() / CliRunner alike. Close callbacks run last-in first-out, so the
-    # context ensure_lab_context installs later is reset before this variant.
-    ctx.find_root().call_on_close(lambda: reset_variant(variant_token))
+    policy = RunPolicy(dry_run=dry_run, variant="field" if field else "debug")
+    policy_binding = install_policy(policy)
+    # Undone when Click closes this invocation's root context: exactly once, on this
+    # thread and in this execution context, for the console script and app() /
+    # CliRunner alike. Registered before anything else runs, so an interrupt
+    # escaping discovery still resets it. Close callbacks run last-in first-out,
+    # so the context ensure_lab_context installs later is reset before this policy.
+    ctx.find_root().call_on_close(lambda: reset_binding(policy_binding))
+    deadline = discovered_teardown_deadline()  # after installing: a failed discovery leaves 10 s
+    if deadline is not None:
+        policy.teardown_deadline = deadline
 
     ctx.meta["_otto_root_options"] = RootOptions(
         labs=labs,

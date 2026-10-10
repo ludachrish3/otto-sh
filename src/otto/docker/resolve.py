@@ -79,6 +79,18 @@ def declared_use_cases(repos: "list[Repo]") -> "dict[str, list[SelectedFragment]
     return out
 
 
+def is_declared_use_case(name: str) -> bool:
+    """Whether any of the run's repos declares a docker use-case called *name*.
+
+    Answers with or without a context, through the run's repos
+    (:func:`otto.config.fleet.current_repos`); the container host's auto-start
+    asks it, so the host layer never reads the composition root.
+    """
+    from ..config.fleet import current_repos  # function-scope: read when called
+
+    return name in declared_use_cases(current_repos())
+
+
 def select_fragments(
     use_case: str,
     repos: "list[Repo]",

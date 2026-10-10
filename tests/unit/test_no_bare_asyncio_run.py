@@ -1,6 +1,6 @@
 """Every command-path ``asyncio.run`` must go through ``otto.lifecycle.run_command``.
 
-A bare ``asyncio.run`` bypasses the host-scope sweep and the two-stage
+A bare ``asyncio.run`` bypasses the command's cleanup boundary and the two-stage
 interrupt policy — the exact bug class chaos plan 1 closed (sync command
 paths never swept their hosts). AST-based: docstring example snippets (e.g.
 ``otto/monitor/__init__.py``) are string constants, not Call nodes.
@@ -19,7 +19,7 @@ SRC = PROJECT_ROOT / "src" / "otto"
 #
 # `testing/conformance_host.py` is not a command path at all: it is a helper a
 # backend author calls from their own SYNCHRONOUS pytest test, and its probes
-# await one host verb under a dry run. There is no host scope to sweep -- the
+# await one host verb under a dry run. There is no command boundary to hold -- the
 # caller built the instance and closes it -- and installing the two-stage
 # interrupt policy from inside an assertion helper would take pytest's own
 # signal handling away for the duration. Routing it through `run_command` would

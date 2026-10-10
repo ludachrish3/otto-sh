@@ -2,12 +2,10 @@
 
 Each test runs a real inner pytest session under otto's plugins. The hosts are
 ``LocalHost`` subclasses: they claim the running loop on first use, as every
-host does, so they join that loop's host scope without any test wiring. Each
+host does, so they register with that loop without any test wiring. Each
 close is logged with whether its loop was still open, which is what lets a
 clean shutdown flush a device's coverage data and free a single-client console.
 """
-
-import time
 
 import pytest
 
@@ -146,7 +144,7 @@ def test_a_failed_close_warns_and_the_other_hosts_still_close(pytester, otto_plu
     result.assert_outcomes(passed=1)
     result.stdout.fnmatch_lines(
         [
-            "*closing host 'bad1' failed during scope sweep: RuntimeError('boom')*",
+            "*closing host 'bad1' failed during the loop's sweep: RuntimeError('boom')*",
             "*closed 1 host at end of TestBoth's loop: good1*",
         ]
     )
@@ -155,22 +153,35 @@ def test_a_failed_close_warns_and_the_other_hosts_still_close(pytester, otto_plu
 def test_a_close_that_outlasts_the_teardown_deadline_is_abandoned(
     pytester, otto_plugins, monkeypatch
 ):
-    """The sweep is bounded by the teardown deadline; the stuck host is named and dropped."""
-    monkeypatch.setattr("otto.lifecycle._resolve_teardown_deadline", lambda: 0.2)
+    """The policy's teardown deadline bounds the sweep; the stuck host is named and dropped."""
+    from otto import invocation as inv
+    from otto.invocation import RunPolicy, install_policy, reset_binding
+
+    deadlines: dict[str, float | None] = {}
+    real_shut_down = inv.shut_down
+
+    async def recording_shut_down(loop, *, label, deadline):
+        deadlines[label] = deadline
+        return await real_shut_down(loop, label=label, deadline=deadline)
+
+    # The runner imports shut_down when it sweeps, so the spy is what it calls.
+    monkeypatch.setattr(inv, "shut_down", recording_shut_down)
     pytester.makepyfile(fakehost=_FAKE)
-    started = time.monotonic()
-    result = run_inner(
-        pytester,
-        otto_plugins,
-        test_slow=(
-            _CLASS_LOOPS + "from fakehost import SlowHost, RecordingHost\n"
-            "class TestSlow:\n"
-            "    async def test_x(self):\n"
-            "        await SlowHost('slow1').run('true')\n"
-            "        await RecordingHost('quick1').run('true')\n"
-        ),
-    )
-    elapsed = time.monotonic() - started
+    binding = install_policy(RunPolicy(teardown_deadline=0.2))
+    try:
+        result = run_inner(
+            pytester,
+            otto_plugins,
+            test_slow=(
+                _CLASS_LOOPS + "from fakehost import SlowHost, RecordingHost\n"
+                "class TestSlow:\n"
+                "    async def test_x(self):\n"
+                "        await SlowHost('slow1').run('true')\n"
+                "        await RecordingHost('quick1').run('true')\n"
+            ),
+        )
+    finally:
+        reset_binding(binding)
     result.assert_outcomes(passed=1)
     result.stdout.fnmatch_lines(
         [
@@ -181,7 +192,8 @@ def test_a_close_that_outlasts_the_teardown_deadline_is_abandoned(
             "*closed 1 host at end of TestSlow's loop: quick1*",
         ]
     )
-    assert elapsed < 20, f"the sweep waited out the slow close ({elapsed:.1f}s)"
+    # The installed 0.2 s policy, not the 10 s default, bounds the runner's sweep.
+    assert deadlines["TestSlow's loop"] == 0.2
 
 
 def test_nothing_is_left_for_the_backstop(pytester, otto_plugins):
@@ -195,9 +207,9 @@ def test_nothing_is_left_for_the_backstop(pytester, otto_plugins):
             "    await RecordingHost('d').run('true')\n"
         ),
     ).assert_outcomes(passed=1)
-    from otto.context import get_context
+    from otto.invocation import abandon_closed_loops
 
-    assert get_context().abandon_closed_loops() == []
+    assert abandon_closed_loops() == []
 
 
 def test_a_class_loop_outside_a_class_is_named_after_its_test(pytester, otto_plugins):
@@ -246,9 +258,54 @@ def test_a_fixture_that_closes_its_host_leaves_the_sweep_nothing(pytester, otto_
     )
     result.assert_outcomes(passed=2)
     result.stdout.no_fnmatch_line("*closed * at end of test_mod.py's loop*")
-    from otto.context import get_context
+    from otto.invocation import abandon_closed_loops
 
-    assert get_context().abandon_closed_loops() == []
+    assert abandon_closed_loops() == []
+
+
+def test_a_tests_open_context_leaves_its_hosts_open_until_the_runner_shuts_down(
+    pytester, otto_plugins, monkeypatch
+):
+    from otto import bootstrap as bs
+
+    bs._reset()
+    monkeypatch.setattr(bs, "_result", bs.BootstrapResult(env=None, repos=[]))  # type: ignore[arg-type]
+    pytester.makepyfile(fakehost=_FAKE)
+    result = run_inner(
+        pytester,
+        otto_plugins,
+        test_ctx=(
+            "import otto\n"
+            "from otto.config.lab import Lab\n"
+            "from fakehost import RecordingHost, CLOSED\n"
+            "HOST = RecordingHost('dut1')\n"
+            "async def test_a():\n"
+            "    async with otto.open_context(lab=Lab(name='rig')):\n"
+            "        await HOST.run('true')\n"
+            "    assert CLOSED == []\n"
+            "async def test_b():\n"
+            "    assert CLOSED == []\n"
+        ),
+    )
+    result.assert_outcomes(passed=2)
+    result.stdout.fnmatch_lines(["*recorded close of dut1, loop closed: False*"])
+
+
+def test_two_sessions_in_one_process_leave_no_registration_behind(pytester, otto_plugins):
+    from otto import invocation as inv
+
+    pytester.makepyfile(fakehost=_FAKE)
+    body = (
+        "from fakehost import RecordingHost\n"
+        "async def test_x():\n"
+        "    await RecordingHost('d').run('true')\n"
+    )
+    run_inner(pytester, otto_plugins, test_one=body).assert_outcomes(passed=1)
+    assert inv.abandon_closed_loops() == []
+    assert inv.open_registrations() == []
+    run_inner(pytester, otto_plugins, test_two=body).assert_outcomes(passed=2)
+    assert inv.abandon_closed_loops() == []
+    assert inv.open_registrations() == []
 
 
 def _node(name: str, path):

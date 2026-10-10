@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from otto import invocation
 from otto.context import _active
 from otto.result import CommandResult, Result
 from otto.utils import Status
@@ -190,16 +191,25 @@ def test_busybox_probe_restores_the_context_it_installed(stub_guest_host, failin
     ``hop: test1`` resolves, and every other module in this lane builds
     its own hosts against whatever context it finds. Parametrized over the
     RAISING case too, because that is the one an ordinary green run never
-    exercises and the one a missing ``finally`` would leak on.
+    exercises and the one a missing ``finally`` would leak on. The install
+    sets the run policy and the peer-host resolver too, and those must come
+    back as well.
     """
-    before = _active.get()
+
+    def state():
+        return (_active.get(), invocation._POLICY.get(), invocation._RESOLVER.get())
+
+    before = state()
     stub_guest_host.fail = failing
     if failing:
         with pytest.raises(ProbeFailedError):
             busybox_probe_text("echo x")
     else:
         busybox_probe_text("echo x")
-    assert _active.get() is before, "busybox_probe leaked its hop context into the process"
+    after = state()
+    assert all(a is b for a, b in zip(after, before, strict=True)), (
+        f"busybox_probe leaked its hop context into the process: {before!r} -> {after!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

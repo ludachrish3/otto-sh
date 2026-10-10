@@ -115,7 +115,8 @@ healthy-but-slow worst case is 3 s: `_connect_with_retry`'s 2 s budget for a
 listener that has not bound yet, plus the 1 s ``wait_closed``. 5 s clears
 that with room and still cuts the UNhealthy shape, where this method's own
 sub-bounds stack: `_NC_FORWARD_SETUP_TIMEOUT` (5 s) + connect (2 s) + close
-(1 s) = 8 s, four-fifths of ``DEFAULT_TEARDOWN_DEADLINE`` spent on ONE file's
+(1 s) = 8 s, four-fifths of the default teardown deadline (10 s,
+``RunPolicy.teardown_deadline``) spent on ONE file's
 listener with the session teardown still queued behind it. A listener behind a
 forward that is itself stalling is unreachable by definition (see
 `_reap_nc_listener`), so giving up on it early costs nothing the remote-side

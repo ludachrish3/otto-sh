@@ -154,9 +154,10 @@ markers, reporting) and two plugins layer on otto's concerns:
   own artifacts.
 - **Retry**: `@pytest.mark.retry(n)` re-runs a failing test in place.
 - **Per-loop host cleanup**: `OttoPlugin` names each pytest-asyncio runner's
-  loop and, just before the runner closes it, closes the hosts that loop owns
-  ({mod}`otto.suite.loops`). A host registers with the scope of the loop
-  that first uses it, and fails fast with a
+  loop, holds a cleanup boundary on it for the runner's scope, and, just
+  before the runner closes it, shuts the loop's host registry down, closing
+  every host that loop owns ({mod}`otto.suite.loops`). A host registers with
+  the loop that first uses it, and fails fast with a
   {class}`~otto.host.loop_owner.HostLoopError` from any other loop that is
   still running.
 - **Monitoring and coverage**: every test, class or plain function, gets a

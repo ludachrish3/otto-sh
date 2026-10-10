@@ -10,6 +10,7 @@ from otto.coverage.collect import clean_coverage
 from otto.coverage.errors import NoCoverageHostsError
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 
 
 def _product(name, result, *, instrumented=True):
@@ -194,11 +195,12 @@ async def test_no_hosts_in_the_lab_refuses(lab):
 
 
 @pytest.mark.asyncio
-async def test_defaults_to_get_repos_when_none_given(lab):
+async def test_defaults_to_the_runs_repos_when_none_given(lab):
     lab(_host("t1", _product("app", Result(Status.Success))))
-    with patch("otto.bootstrap.get_repos", return_value=[_repo()]) as get_repos:
+    result = fake_bootstrap_result([_repo()])
+    with patch("otto.bootstrap.bootstrap", return_value=result) as composition_root:
         report = await clean_coverage()
-    get_repos.assert_called_once()
+    composition_root.assert_called_once()
     assert report.hosts == {"t1": {"app": Result(Status.Success)}}
 
 

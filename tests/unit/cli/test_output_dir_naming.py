@@ -59,7 +59,12 @@ def preamble_naming(monkeypatch, no_logger_output_dir):
     # create_output_dir is already the conftest's Mock (no_logger_output_dir);
     # shape it there rather than monkeypatching over it — see that fixture.
     no_logger_output_dir.side_effect = _create_output_dir
-    monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(output_dir=None))
+    from otto.config.lab import Lab
+    from otto.context import OttoContext
+
+    # A real context: the preamble writes the run's directory to its policy.
+    ctx = OttoContext(lab=Lab(name="preamble"))
+    monkeypatch.setattr("otto.context.get_context", lambda: ctx)
     return calls
 
 

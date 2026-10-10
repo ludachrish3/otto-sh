@@ -13,6 +13,7 @@ from otto.project.plan import HostPlan, ProductPlanEntry, RepoPlan, plan_instruc
 from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import seed_scope_verdicts
 from tests._fixtures.fake_repo import fake_repo
 
 
@@ -46,14 +47,15 @@ class _Overriding(_Host):
 
 
 class _Ctx:
-    """OttoContext double: the lab's hosts and the repo view seam the walk uses."""
+    """OttoContext double: the lab's hosts, the repos and the repo view seam the walk uses."""
 
     for_repo = OttoContext.for_repo
+    _resolve_scopes = OttoContext._resolve_scopes  # what scopes_of(ctx) reads; seeded below
 
     def __init__(self, hosts, fleets=None, exclude_projects=()):
         self.hosts = list(hosts)
         self.lab = SimpleNamespace(hosts={h.id: h for h in self.hosts})
-        self.scopes = {}
+        seed_scope_verdicts(self, {})
         self.include_projects = ()
         self.exclude_projects = tuple(exclude_projects)
         # {repo: [host ids]}: the repo view's fleet, narrower than the lab's.
@@ -68,8 +70,8 @@ class _Ctx:
 
 def _wire(monkeypatch, repo_names, ctx):
     ordered = [fake_repo(n) for n in repo_names]
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: ordered)
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: ordered)
+    ctx.repos = ordered
+    ctx.ordered_repos = ordered
     monkeypatch.setattr("otto.context.get_context", lambda: ctx)
     return ordered
 

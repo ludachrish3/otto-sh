@@ -42,7 +42,7 @@ from tests._fixtures.sutrepo import make_sut_repo
 def no_logger_output_dir():
     """Prevent management.create_output_dir from being called in CLI unit tests.
 
-    The CLI commands call ``get_context().output_dir = management.create_output_dir(...)``
+    The CLI commands call ``get_context().policy.output_dir = management.create_output_dir(...)``
     early, which requires (a) an active OttoContext and (b) management._state.xdir set
     by init_cli_logging(). Unit tests invoke subcommand apps directly, bypassing the
     main callback, so we patch out ``create_output_dir`` AND install a minimal stub
@@ -191,6 +191,16 @@ def _make_lab_fs(tmp_path: Path) -> tuple[Path, Path]:
     return sut_dir, lab_data_dir
 
 
+def _with_repos(real_bootstrap, repo):
+    """Run the real composition root, then hand back its result holding only *repo*.
+
+    Both ``repos`` and ``ordered_repos``: the context's readers take either,
+    and a walk over the real result's order would reach repos this fixture
+    never declared.
+    """
+    return dataclasses.replace(real_bootstrap(), repos=[repo], ordered_repos=[repo])
+
+
 @pytest.fixture
 def real_main_mocks(tmp_path):
     """Fixture that lets business logic run for real, mocking only I/O.
@@ -203,7 +213,9 @@ def real_main_mocks(tmp_path):
     What is mocked (I/O boundaries only):
       - ``management.remove_old_logs`` — filesystem listing + deletion
       - ``_ConsoleHandler`` (otto's ``RichHandler``) — console I/O
-      - ``get_repos`` — module-level singleton; returns a real ``Repo``
+      - ``otto.bootstrap.bootstrap``'s repos — the real composition root
+        runs, and its result's ``repos`` and ``ordered_repos`` are one real
+        ``Repo``
       - ``LocalHost.run`` — subprocess for git commands
     """
     sut_dir, lab_data_dir = _make_lab_fs(tmp_path)
@@ -227,8 +239,9 @@ def real_main_mocks(tmp_path):
     from otto import bootstrap as bs
 
     bs._reset()
-    # Lab load + session setup are lazy (Task 7): otto.cli.invoke imports
-    # get_repos from otto.config at call time, so patch the source.
+    real_bootstrap = bs.bootstrap
+    # Lab load + session setup are lazy: otto.cli.invoke calls
+    # otto.bootstrap.bootstrap() at call time, so patch the source.
     with (
         patch.dict(os.environ, clean_env, clear=True),
         patch("otto.logger.management.remove_old_logs") as p_remove,
@@ -248,7 +261,10 @@ def real_main_mocks(tmp_path):
             "otto.logger.management._ConsoleHandler",
             side_effect=lambda *args, **kwargs: logging.NullHandler(),
         ) as p_rich,
-        patch("otto.bootstrap.get_repos", return_value=[repo]),
+        # The REAL composition root runs (its registrations are part of what
+        # runs for real), and only its result's repos are this one repo: the
+        # CLI's lab load takes the result whole and hands it to the context.
+        patch("otto.bootstrap.bootstrap", side_effect=lambda: _with_repos(real_bootstrap, repo)),
         patch(
             "otto.host.local_host.LocalHost.run",
             new_callable=AsyncMock,
@@ -304,6 +320,7 @@ def run_cli():
     from otto.cli.run import run_app
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.invocation import RunPolicy
     from tests._fixtures.dispatch import DispatchRunner
 
     runner = DispatchRunner()
@@ -311,7 +328,7 @@ def run_cli():
     def _invoke(args: list[str], *, dry_run: bool = False):
         verb, *rest = args
         assert verb == "run", f"run_cli drives `otto run` only, not {verb!r}"
-        token = set_context(OttoContext(lab=Lab(name="run-cli"), dry_run=dry_run))
+        token = set_context(OttoContext(lab=Lab(name="run-cli"), policy=RunPolicy(dry_run=dry_run)))
         try:
             return runner.invoke(run_app, rest, async_leaves=True)
         finally:
@@ -342,6 +359,7 @@ def otto_test_cli(tmp_path):
     from otto.cli import test as cli_test
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.invocation import RunPolicy
     from tests._fixtures.dispatch import DispatchRunner
 
     runner = DispatchRunner()
@@ -356,7 +374,9 @@ def otto_test_cli(tmp_path):
         if lab is not None:
             out = tmp_path / "otto-out"
             out.mkdir(exist_ok=True)
-            token = set_context(OttoContext(lab=Lab(name=lab), output_dir=out, dry_run=dry_run))
+            token = set_context(
+                OttoContext(lab=Lab(name=lab), policy=RunPolicy(output_dir=out, dry_run=dry_run))
+            )
         try:
             return runner.invoke(cli_test.test_app, args, spec_name="test", under_root=True)
         finally:

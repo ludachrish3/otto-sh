@@ -18,18 +18,19 @@ def check_dependencies(ctx: "OttoContext") -> list[str]:
     host-starved repo, which is simply inactive here. An eager import
     failure never reaches this check (``bootstrap()`` contained it, and
     :func:`~otto.session.check_repos` reported it). This check catches the lazy shape: an
-    import inside an instruction body.
+    import inside an instruction body. The repos checked are the run's, read
+    off *ctx* (:attr:`~otto.context.OttoContext.ordered_repos`), never a
+    second read of the composition root.
 
     Returns the warnings: checks the preflight could not make, then each
     inactive repo's unmet requirement. Raises
     :class:`~otto.session.DependencyRefusedError` carrying the blocking
     requirements and those same warnings.
     """
-    from ..bootstrap import bootstrap
     from ..config.scope import active
     from ..env.preflight import preflight
 
-    result = preflight(bootstrap().ordered_repos)
+    result = preflight(ctx.ordered_repos)
     warnings = [str(w) for w in result.warnings]
     blocking = []
     for bad in result.unsatisfied:

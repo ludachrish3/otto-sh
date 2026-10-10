@@ -212,9 +212,9 @@ async def probe_references(references: "list[LabReference]") -> "list[ProbeResul
     finish_dry_run``), called from inside the leaf's body, which is itself
     already running under :func:`~otto.lifecycle.run_command` (otto's own
     lifecycle bridge, installed once per invocation by
-    ``otto.cli.invoke._wrap_invoke``). That OUTER ``run_command`` is what
-    sweeps the active context's host scope when the leaf's coroutine finishes
-    — the same cleanup guarantee :func:`run_probe` gets from its OWN
+    ``otto.cli.invoke._wrap_invoke``). That OUTER ``run_command``'s cleanup
+    boundary is what closes the hosts this dialed when the leaf's coroutine
+    finishes — the same cleanup guarantee :func:`run_probe` gets from its OWN
     ``run_command`` call below, so nothing here needs a second one. Calling
     ``asyncio.run`` again from in here — the bug this split fixes — would
     raise ``RuntimeError: asyncio.run() cannot be called from a running event
@@ -237,13 +237,13 @@ def run_probe(references: "list[LabReference]") -> "list[ProbeResult]":
     a plain ``-n`` stop with no ``--probe`` never reaches this function and
     starts no loop at all. Bridges into :func:`probe_references` via
     :func:`~otto.lifecycle.run_command` rather than a bare ``asyncio.run``,
-    for cleanup rather than for policy: ``get_host`` registers every host it
-    hands out with the active context's host scope, and that scope's exit
-    sweep is what CLOSES the transports this opened. A probe that left them
-    open would strand them on a loop that is about to be torn down — and, on
-    the preview path, hand the command body connections bound to a dead
-    loop. An override copy (``--term``/``--transfer``) is registered by the
-    same call, so it is swept too.
+    for cleanup rather than for policy: every host this connects registers
+    with the loop it connects on, and the release of ``run_command``'s
+    cleanup boundary is what CLOSES the transports this opened. A probe that
+    left them open would strand them on a loop that is about to be torn
+    down — and, on the preview path, hand the command body connections bound
+    to a dead loop. An override copy (``--term``/``--transfer``) registers
+    the same way when it connects, so it is closed too.
     """
     from ..lifecycle import run_command
 

@@ -28,6 +28,7 @@ from otto.cli.test import RUN_FLAGS, _run_params
 from otto.coverage.config import DestinationError
 from otto.params import OptionsValidationError
 from otto.suite.run import RunOptions, prepare_run
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests.unit.cli.conftest import _flat, _repo_with_tickets_configured, _squashed
 
 _SKIP = {"list_markers", "list_tests"}  # not RunOptions fields
@@ -70,7 +71,7 @@ def _rows():
 def test_each_flag_reaches_run_tests_as_the_class_constructs_it(
     param, capture_cov, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [_repo_with_tickets_configured()])
+    patch_bootstrap(monkeypatch, [_repo_with_tickets_configured()])
     value, argv = _sample(param, tmp_path)
     contradiction_message = None
     try:

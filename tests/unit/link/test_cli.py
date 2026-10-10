@@ -896,7 +896,7 @@ class TestDryRunRendering:
     `test_cli.py` invokes `link_app` directly, so the ROOT `--dry-run` flag is
     not parseable here — the context is installed around the invoke instead,
     which is where the flag would have put it anyway (`main`'s callback →
-    `OttoContext(dry_run=...)`).
+    the run policy the root callback installs).
 
     The library calls are real (no `AsyncMock`): the whole property under test
     is that `impair_link`/`repair_link` hand back a plan and the renderer

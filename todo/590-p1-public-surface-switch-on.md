@@ -1,9 +1,10 @@
 # #590 P1: switch the public-surface declaration on
 
-**Status (2026-10-09):** P1 landed as 14caec5b on top of the erratum f37ff1e9, and spec 4
-commit 4 (`OttoContext.scopes` never widens silently) is done. What is left is the other
-"After P1" commits: spec 2 commits 4-6, spec 3a commits 4-6, spec 3b commits 3b-1 to 3b-5, and the marked commit
-that adds the writer refusals P1 deferred (`Capture.save`, `archive_edit`).
+**Status (2026-10-09):** P1 landed as 14caec5b on top of the erratum f37ff1e9. Spec 4
+commit 4 (`OttoContext.scopes` never widens silently) and spec 2 commits 4-6 (the run-state
+contracts) are done. What is left is the other "After P1" commits: spec 3a commits 4-6,
+spec 3b commits 3b-1 to 3b-5, and the marked commit that adds the writer refusals P1
+deferred (`Capture.save`, `archive_edit`).
 
 P0 built the tooling and left it dormant: no `api/public.toml`, the golden is
 still v1, nothing gates on the validator. P0 was rebuilt (dump spec
@@ -132,10 +133,17 @@ Spec `docs/superpowers/specs/2026-10-06-run-state-contracts-design.md` §2, §5 
 - [x] ✅ (14caec5b) Its docs (spec 2 §6.1): `docs/api/context.rst` renders the `__all__` plus an Internals entry
   (`:ignore-module-all:`) for the names the architecture docs still link; the
   `pending = "spec 2 …"` note in `scripts/api_public_preview.toml` is removed.
-- [ ] **After P1**, each its own marked commit (spec 2 §6): commit 4 (`otto.invocation`,
-  `RunPolicy`, `HostResolver`, `ContextBinding`, the host layer off `otto.context`), commit 5
-  (loop-owned registrations, counted boundaries), commit 6 (`ctx.repos`, `scopes_of`, S-5's edges
-  retired per an import-site inventory; after spec 4's commit 4).
+- [x] ✅ (commits 4-6 below, by subject) **After P1**, each its own marked commit (spec 2 §6): ✅ commit 4
+  (`feat(context)!: the run policy, host resolver and context binding live in the otto.invocation
+  leaf`: `otto.invocation`, `RunPolicy`, `HostResolver`, `ContextBinding`, the host layer off
+  `otto.context`, every teardown-deadline reader on the policy), ✅ commit 5
+  (`fix(context)!: event loops own host registrations, and counted boundaries decide when hosts
+  close`: loop-owned registrations, counted boundaries with a draining protocol, host generations,
+  the runner shutdown, the orphan guard, `HostScope` deleted), ✅ commit 6
+  (`refactor(context)!: the context carries the run's repos, and scope verdicts are read through
+  scopes_of`, this line's own commit: `ctx.repos` / `ctx.ordered_repos` over one bootstrap
+  result, `scopes_of`, the S-5 sites on the run's repos, and the six remaining S-5 edges to
+  `otto.bootstrap` retired per the import-site inventory).
 
 ## Spec 3a's P1 work (registries)
 

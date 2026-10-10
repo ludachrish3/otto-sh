@@ -71,7 +71,7 @@ def classify_load_errors(
 ) -> LoadErrorVerdicts:
     """Decide, before the lab exists, which of *result*'s errors are fatal.
 
-    The one rule :func:`check_repos` and :attr:`otto.context.OttoContext.scopes`
+    The one rule :func:`check_repos` and :func:`otto.config.scope.scopes_of`
     share. An error is owned by the repo whose ``sut_dir`` matches by
     ``str()``. An unowned error (a ``settings.toml`` that would not parse) is
     fatal: that repo's declaration cannot be known. An owned error is demoted

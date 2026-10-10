@@ -79,7 +79,9 @@ path = "otto.cli"
 # retires; tach's ratchet just never carried it (the edge is function-scope,
 # added when project instructions started registering data instead of a
 # make_app factory, and this file was not updated alongside).
-depends_on = ["otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live", "otto.init", "otto.session"]
+# otto.invocation: the root callback installs the run's policy, and
+# ensure_lab_context builds the context on it.
+depends_on = ["otto.invocation", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live", "otto.init", "otto.session"]
 
 [[modules]]
 path = "otto.config"
@@ -128,9 +130,11 @@ path = "otto.console"
 
 [[modules]]
 path = "otto.context"
-# NOTE: context<->config and context<->host are known cycles held apart by
-# lazy imports (context.py:178-184). Dropping `timeout` from run_on_all_hosts
-# (Tier 1.7) removes the host edge's worst justification.
+# NOTE: context<->config is a known cycle held apart by function-scope
+# imports in otto.context. context -> host is one-way: the host layer stopped
+# importing the context when each loop's host registry moved to
+# otto.invocation. Dropping `timeout` from run_on_all_hosts (Tier 1.7)
+# removes the host edge's worst justification.
 depends_on = [
     "otto.config",
     "otto.host",
@@ -146,6 +150,8 @@ depends_on = [
     # (build_reservation_gate + ReservationGate.evaluate). Function-local.
     # Both modules were already in one import cycle, so this adds no member.
     "otto.reservations",
+    # The context composes the leaf's run policy, resolver and bindings.
+    "otto.invocation",
 ]
 
 [[modules]]
@@ -158,8 +164,6 @@ depends_on = [
     "otto.host",
     "otto._webassets",
     "otto.config",
-    # S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
-    "otto.bootstrap",
     "otto.version",
     "otto.errors",
     "otto.models",
@@ -189,8 +193,6 @@ depends_on = [
     "otto.lifecycle",
     "otto.utils",
     "otto.config",
-    # S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
-    "otto.bootstrap",
     "otto.result",
     # UseCaseResolutionError roots on OttoError, because the repo's
     # `test_every_public_exception_in_src_is_ottoerror_rooted` guard requires
@@ -280,12 +282,7 @@ depends_on = [
     "otto.result",
     "otto.snmp",
     "otto.utils",
-    # DEBT: half of the host<->context cycle — interact imports try_get_context
-    # at module scope (context.py:178 documents the workaround).
-    "otto.context",
     "otto.config",
-    # S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
-    "otto.bootstrap",
     "otto.registry",
     "otto.errors",
     # otto.kmodcov: kmod_tool_kind.py's interface_problem() reads
@@ -295,6 +292,9 @@ depends_on = [
     # otto.cli's otto.kmodcov edge above — the host package must not pull the
     # kmodcov package in at module import time.
     "otto.kmodcov",
+    # Hosts read the run's policy, resolve a peer host and register with their
+    # event loop's registry through the leaf.
+    "otto.invocation",
 ]
 
 [[modules]]
@@ -341,6 +341,12 @@ depends_on = [
 ]
 
 [[modules]]
+path = "otto.invocation"
+# The run's policy, peer-host resolver and context bindings: a leaf the host
+# layer may import (spec 2026-10-06 run-state contracts §3).
+depends_on = []
+
+[[modules]]
 path = "otto.kmodcov"
 # otto.version: export_tree() writes the exporting otto's version into the
 # vendored copy's generated header. Function-local (this package sits inside
@@ -372,8 +378,9 @@ path = "otto.lifecycle"
 # otto.logger: sync_phase resolves shutdown_listener EAGERLY at entry so the
 # forced exit path (os._exit skips atexit) can flush the queue listener
 # without importing inside a signal handler.
-# S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
-depends_on = ["otto.bootstrap", "otto.context", "otto.logger"]
+# otto.invocation: every teardown-deadline reader reads the installed run policy,
+# and run_command holds a cleanup boundary on the command's loop.
+depends_on = ["otto.invocation", "otto.logger"]
 
 [[modules]]
 path = "otto.link"
@@ -428,8 +435,7 @@ path = "otto.monitor.live"
 # The lab-aware layer above the monitor engine: it reads the active lab, the
 # repos, the driving repo's scope and full-lab tunnel discovery, and hands them
 # to the engine, which keeps its injected-dependencies rule (see otto.monitor).
-# S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
-depends_on = ["otto.monitor", "otto.bootstrap", "otto.config", "otto.context", "otto.tunnel", "otto.utils"]
+depends_on = ["otto.monitor", "otto.config", "otto.context", "otto.tunnel", "otto.utils"]
 
 [[modules]]
 path = "otto.params"
@@ -492,8 +498,6 @@ depends_on = [
     "otto.utils",
     "otto.host",
     "otto.config",
-    # S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
-    "otto.bootstrap",
     "otto.context",
     "otto.link",
     "otto.tunnel",
@@ -541,8 +545,8 @@ path = "otto.suite"
 # "installed" means.
 #
 # No loop: otto.project no longer imports otto.cli (thin-CLI item 1).
-# S-5 (spec 2026-10-06 repo-and-scope-inputs §10): the repo accessors live in otto.bootstrap.
-depends_on = ["otto.context", "otto.bootstrap", "otto.config", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.monitor.live", "otto.utils"]
+# otto.invocation: the runner sweep (suite/loops.py) reads the run policy's teardown deadline.
+depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.monitor.live", "otto.utils"]
 
 [[modules]]
 path = "otto.testing"
@@ -550,9 +554,10 @@ path = "otto.testing"
 # alongside the json backend) checks a candidate against the Inventory
 # protocol and its InventoryRecord fields.
 # otto.creds: assert_creds_store_conforms (spec 2026-09-06 §5.3).
-# otto.context: assert_host_conforms probes a host's verbs under a dry run, and
-# `dry_run` is a field of the active OttoContext -- installing one is the only
-# way to ask a host what it would do without letting it do it.
+# otto.context / otto.invocation: assert_host_conforms probes a host's verbs
+# under a dry run, and the dry run is the installed context's RunPolicy --
+# installing a context with a dry-run policy is the only way to ask a host what
+# it would do without letting it do it.
 # otto.result: the OUTCOME of that dry-run probe. A declined verb raises
 # CommandNotRunError, so the asserter cannot tell "this family declined the dry
 # run, as it should" from "this method is not the shape the protocol names"
@@ -560,7 +565,7 @@ path = "otto.testing"
 # (it lives there, not in otto.host.errors, to avoid a result->host edge).
 # Cannot invert layering or create a cycle: otto.result depends only on
 # otto.errors, a zero-import leaf, and otto.host already depends on it.
-depends_on = ["otto.config", "otto.context", "otto.creds", "otto.inventory", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.result", "otto.suite"]
+depends_on = ["otto.config", "otto.context", "otto.creds", "otto.inventory", "otto.invocation", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.result", "otto.suite"]
 
 [[modules]]
 path = "otto.tls"

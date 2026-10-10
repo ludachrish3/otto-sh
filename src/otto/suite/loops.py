@@ -4,15 +4,19 @@ pytest-asyncio runs every async test and fixture on a loop held by one of its
 ``_<scope>_scoped_runner`` fixtures. A host's connection belongs to the loop
 that opened it, so each of those loops must close its own hosts while it still
 runs: afterwards nothing can close them gracefully. :class:`~otto.suite.plugin.OttoPlugin`
-names each runner's loop and sweeps it just before the runner closes it, and
+names each runner's loop, holds a cleanup boundary on it for the runner's
+scope, and shuts its host registry down just before the runner closes it, and
 otto's per-test work (the ``ensure`` converge and the monitor events) runs on
 the runner of the test's own loop through :func:`runner_for`.
 """
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from ..invocation import Boundary
 
 RUNNER_FIXTURE = re.compile(r"_(function|class|module|package|session)_scoped_runner")
 """The names of pytest-asyncio's runner fixtures; group 1 is the loop scope."""
@@ -77,25 +81,22 @@ def runner_label(scope: str, request: pytest.FixtureRequest) -> str:
     return f"{request.node.path.name}'s loop"
 
 
-def sweep_runner_loop(runner: Any, label: str) -> None:
-    """Close every host the runner's loop owns, on that loop, before the runner closes it.
+def sweep_runner_loop(runner: Any, label: str, boundary: "Boundary") -> None:
+    """Shut down the runner loop's host registry before the runner closes the loop.
 
-    A no-op outside an otto context, and for a runner whose loop is already
-    closed, which has nothing left to close gracefully. Bounded by the
-    teardown deadline, and never raising for a failed close:
-    :meth:`~otto.context.OttoContext.sweep_loop` handles both.
+    Closes every host registered on the loop, whatever boundaries are still
+    held, then refuses new ones: a later acquisition raises and a later
+    release closes nothing. Runs with or without an otto context. A runner
+    whose loop is already closed has nothing left to close gracefully.
+    Bounded by the deadline the runner's boundary recorded; a failed close is
+    a warning.
     """
-    from ..context import try_get_context
-
-    ctx = try_get_context()
-    if ctx is None:
-        return
     try:
         loop = runner.get_loop()
     except RuntimeError:  # the runner is closed already
         return
     if loop.is_closed():
         return
-    from ..lifecycle import _resolve_teardown_deadline
+    from ..invocation import shut_down
 
-    runner.run(ctx.sweep_loop(loop, label=label, deadline=_resolve_teardown_deadline()))
+    runner.run(shut_down(loop, label=label, deadline=boundary.deadline))

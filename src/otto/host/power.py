@@ -85,10 +85,9 @@ class CommandPowerController(PowerController):
             return LocalHost()
         lab = getattr(host, "_lab", None)
         if lab is None:
-            from ..context import try_get_context
+            from ..invocation import installed_resolver
 
-            ctx = try_get_context()
-            lab = ctx.lab if ctx is not None else None
+            lab = installed_resolver()
         if lab is None or self.controller not in lab.hosts:
             raise ValueError(
                 f"power controller for {host.name!r}: controller host "

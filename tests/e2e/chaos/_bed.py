@@ -25,7 +25,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from otto.config.lab import Lab
-from otto.context import OttoContext, _active, set_context
+from otto.context import OttoContext, set_context
 from otto.host.factory import create_host_from_dict
 from otto.host.login_proxy import Cred
 from otto.host.remote_host import make_host_id
@@ -43,6 +43,7 @@ from tests._fixtures.labdata import (
     host_data,
     lab_data_path,
 )
+from tests._fixtures.run_state import preserved_run_state
 from tests._fixtures.tunnel_bed import assert_reachable, build_bed_host
 from tests.e2e._otto_subprocess import REPO_E2E
 from tests.integration.chaos._target import ChaosTarget, make_bed_target
@@ -310,16 +311,15 @@ def busybox_hop_context() -> Iterator[None]:
     test1``, and that id is resolved against the ACTIVE context's lab
     when the connection dials — a pytest process has no such lab unless one
     is installed. Mirrors the discipline in
-    ``tests/integration/busybox_bed/conftest.py`` (snapshot the ContextVar,
-    install, restore), with one deliberate difference: the scope is ONE
-    probe, not one module. The chaos lane's other modules build their own
+    ``tests/integration/busybox_bed/conftest.py`` (install, then restore the
+    whole run state the install set), with one deliberate difference: the
+    scope is ONE probe, not one module. The chaos lane's other modules build their own
     hosts and spawn their own subprocesses against the unix bed, and a
     session-scoped context carrying a two-host lab would sit under all of
     them for the whole run. Nothing here is worth that blast radius, and the
     ContextVar is process-global state — the narrowest scope that works is
     the right one.
     """
-    snapshot = _active.get()
     lab = Lab(name="busybox_chaos")
     data = host_data(BUSYBOX_HOP_ELEMENT)
     lab.add_host(
@@ -332,11 +332,9 @@ def busybox_hop_context() -> Iterator[None]:
             log=LogMode.QUIET,
         )
     )
-    set_context(OttoContext(lab=lab))
-    try:
+    with preserved_run_state():
+        set_context(OttoContext(lab=lab))
         yield
-    finally:
-        _active.set(snapshot)
 
 
 def busybox_probe(coro_factory):

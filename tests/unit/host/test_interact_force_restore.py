@@ -8,6 +8,7 @@ import pytest
 
 from otto import lifecycle
 from otto.host import interact
+from otto.invocation import RunPolicy
 
 
 def test_guard_registers_restore_hook_for_the_raw_mode_window(monkeypatch):
@@ -57,7 +58,7 @@ def test_force_exit_hook_survives_forced_unwind_of_a_bridge_shaped_drain(monkeyp
         interact, "_restore_terminal", lambda fd, attrs: restore_calls.append((fd, attrs))
     )
     ctrl = lifecycle._CommandRun(
-        teardown_deadline=lifecycle.DEFAULT_TEARDOWN_DEADLINE, install_handlers=False
+        teardown_deadline=RunPolicy().teardown_deadline, install_handlers=False
     )
     reached_drain = asyncio.Event()
     background: "list[asyncio.Task[None]]" = []  # keeps the fire-and-forget task referenced

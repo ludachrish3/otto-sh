@@ -16,7 +16,8 @@ feeding, and ``Result`` API stay untouched. The spec defaults to
 ``lab_free=True``/``output_dir=False``, which keep the preamble to its
 bootstrap gate — which is stubbed clean here, since most sub-app tests
 exercise command bodies, not repo discovery (the gate has its own tests in
-``tests/unit/cli/test_bootstrap_gate.py``). Pass ``invoke(..., lab_free=False)``
+``tests/unit/cli/test_bootstrap_gate.py``). A test that patched the composition
+root itself keeps its own answer. Pass ``invoke(..., lab_free=False)``
 to drive a test through the preamble's lab slice instead — e.g. to exercise a
 leaf's own ``__cli_lab_free__`` opt-out under a lab-bound group.
 """
@@ -36,6 +37,23 @@ from tests._fixtures.bootstrapstub import bootstrap_stub
 def _clean_bootstrap() -> SimpleNamespace:
     """A bootstrap result with no repo errors — pass the preamble's loud gate."""
     return bootstrap_stub()
+
+
+def _composition_root_for_the_invoke() -> "Any":
+    """The composition root a dispatched command sees: the test's own, else a clean stub.
+
+    A test that patched ``otto.bootstrap.bootstrap`` (``patch_bootstrap``, a
+    ``fake_bootstrap_result``) chose the run's repos there, and the library
+    reads them there too when no context carries them, so its answer stands.
+    Only the real composition root is replaced: a sub-app test never runs
+    discovery.
+    """
+    import otto.bootstrap
+
+    current = otto.bootstrap.bootstrap
+    if getattr(current, "__module__", None) == "otto.bootstrap":
+        return _clean_bootstrap
+    return current
 
 
 def shipped_dry_run_preview(name: str) -> bool:
@@ -172,7 +190,7 @@ class DispatchRunner(CliRunner):
             # substituting the dispatched command there keeps every other
             # runner behavior (isolation, stdin, Result) byte-identical.
             mock.patch.object(typer.testing, "_get_command", return_value=cmd),
-            mock.patch("otto.bootstrap.bootstrap", _clean_bootstrap),
+            mock.patch("otto.bootstrap.bootstrap", _composition_root_for_the_invoke()),
         ):
             return super().invoke(
                 app,

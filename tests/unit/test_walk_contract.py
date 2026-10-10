@@ -13,7 +13,7 @@ import pytest
 
 from otto import bootstrap as bs
 from otto.bootstrap import BootstrapError, DependencyError, ProjectScopeError
-from otto.config.scope import resolve_scopes
+from otto.config.scope import resolve_scopes, scopes_of
 from otto.context import LIBRARY_LAB_NAME, OttoContext, set_context
 from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from otto.session.errors import RepoLoadError
@@ -84,7 +84,7 @@ def test_row3_an_active_dependency_skipped_declarer_refuses(tmp_path, monkeypatc
 def test_row4_a_switched_off_skipped_declarer_keeps_its_declaration(tmp_path, monkeypatch):
     _use(monkeypatch, _write(tmp_path, "a"), _write(tmp_path, "b", labs="rig", required=["ghost"]))
     ctx = OttoContext(lab=_rig(), exclude_projects=("b",))
-    assert ctx.scopes["b"].declared
+    assert scopes_of(ctx)["b"].declared
     with pytest.raises(ProjectScopeError):  # the existing empty-fleet refusal, never the lab
         _walk(ctx)
 
@@ -103,7 +103,7 @@ def test_row6_an_inactive_broken_repo_is_demoted_and_its_declaration_counts(
     _use(monkeypatch, _write(tmp_path, "a"), _write(tmp_path, "b", labs=labs, init_fails=True))
     exclude = ("b",) if off == "excluded" else ()
     ctx = OttoContext(lab=_rig(), exclude_projects=exclude)
-    assert ctx.scopes["b"].declared  # no RepoLoadError, and the declaration is kept
+    assert scopes_of(ctx)["b"].declared  # no RepoLoadError, and the declaration is kept
     with pytest.raises(ProjectScopeError):
         _walk(ctx)
 
@@ -116,14 +116,14 @@ def test_row7_selection_spelling_is_normalised_and_exclusion_wins(
         monkeypatch, _write(tmp_path, "a"), _write(tmp_path, "my-repo", labs="rig", init_fails=True)
     )
     ctx = OttoContext(lab=_rig(), include_projects=include, exclude_projects=exclude)
-    assert "my-repo" in ctx.scopes  # resolved, not refused
+    assert "my-repo" in scopes_of(ctx)  # resolved, not refused
 
 
 def test_row8_the_sentinel_lab_resolves_nothing(tmp_path, monkeypatch):
     _use(monkeypatch, _unparseable(tmp_path))
     lab = _rig()
     lab.name = LIBRARY_LAB_NAME
-    assert OttoContext(lab=lab).scopes == {}
+    assert scopes_of(OttoContext(lab=lab)) == {}
 
 
 def test_row9_a_refusal_is_cached(tmp_path, monkeypatch):
@@ -134,7 +134,7 @@ def test_row9_a_refusal_is_cached(tmp_path, monkeypatch):
     ctx = OttoContext(lab=_rig())
     for _ in range(2):
         with pytest.raises(RepoLoadError):
-            ctx.scopes  # noqa: B018 — the read is the act under test
+            scopes_of(ctx)  # the read is the act under test
     assert calls == [1]
 
 
@@ -252,4 +252,4 @@ def test_row19_a_healthy_tree_resolves_the_verdicts_it_always_did(tmp_path, monk
         lab.hosts,
         exclude_ids=frozenset({BUILTIN_LOCAL_HOST_ID}),
     )
-    assert OttoContext(lab=lab).scopes == expected
+    assert scopes_of(OttoContext(lab=lab)) == expected

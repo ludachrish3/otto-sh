@@ -49,12 +49,32 @@ from rich.markup import escape
 from otto.cli import invoke
 from otto.cli.invoke import refuse_inactive_instruction
 from otto.cli.registry import CommandSpec
+from otto.config.lab import Lab
+from otto.context import OttoContext
 from otto.instructions import INSTRUCTIONS, InstructionEntry
 from otto.registry import registering_repo
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.clickctx import chain
 from tests._fixtures.rootoptions import make_root_options
 from tests._fixtures.scoping import verdict
+
+
+def _context(
+    *,
+    include: "tuple[str, ...]" = (),
+    exclude: "tuple[str, ...]" = (),
+    scopes: "dict[str, Any] | None" = None,
+) -> OttoContext:
+    """A real context with these switches, whose verdicts are *scopes* as given."""
+    ctx = OttoContext(
+        lab=Lab(name="t"),
+        include_projects=tuple(include),
+        exclude_projects=tuple(exclude),
+        bootstrap=fake_bootstrap_result([]),
+    )
+    seed_scope_verdicts(ctx, scopes or {})
+    return ctx
 
 
 @pytest.fixture(autouse=True)
@@ -261,11 +281,7 @@ class TestRefusal:
         exclude: "tuple[str, ...]" = (),
         scopes: "dict[str, Any] | None" = None,
     ) -> Any:
-        ctx = SimpleNamespace(
-            include_projects=tuple(include),
-            exclude_projects=tuple(exclude),
-            scopes=dict(scopes or {}),
-        )
+        ctx = _context(include=include, exclude=exclude, scopes=scopes)
         monkeypatch.setattr("otto.context.get_context", lambda: ctx)
         return ctx
 
@@ -418,9 +434,8 @@ class TestRefusalRendering:
         excluded_by_switch: bool = False,
     ) -> None:
         _install_entry("flash-b", owner)
-        ctx = SimpleNamespace(
-            include_projects=(),
-            exclude_projects=(owner,) if excluded_by_switch else (),
+        ctx = _context(
+            exclude=(owner,) if excluded_by_switch else (),
             scopes={} if scope is None else {owner: scope},
         )
         monkeypatch.setattr("otto.context.get_context", lambda: ctx)
@@ -560,7 +575,7 @@ class TestPreambleWiring:
         _install_entry("flash-b", "repo2")
         monkeypatch.setattr(
             "otto.context.get_context",
-            lambda: SimpleNamespace(include_projects=(), exclude_projects=("repo2",), scopes={}),
+            lambda: _context(exclude=("repo2",)),
         )
 
     def test_the_preamble_refuses_an_inactive_owner(
@@ -595,7 +610,7 @@ class TestPreambleWiring:
         def _get_context() -> Any:
             if not state["session"]:
                 raise RuntimeError("the gate ran before ensure_lab_session")
-            return SimpleNamespace(include_projects=(), exclude_projects=("repo2",), scopes={})
+            return _context(exclude=("repo2",))
 
         monkeypatch.setattr(invoke, "ensure_lab_session", _session)
         monkeypatch.setattr("otto.context.get_context", _get_context)

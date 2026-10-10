@@ -215,6 +215,7 @@ _SHORT_TYPE_ALIASES = {
     # misqualification class as _contextvars.Token below it.
     "_asyncio.Task": "asyncio.Task",
     "_contextvars.Token": "contextvars.Token",
+    "_contextvars.ContextVar": "contextvars.ContextVar",
     "types.Annotated": "typing.Annotated",
     # ``contextlib`` re-exports the ABC that ``@asynccontextmanager`` produces;
     # the Host protocol names it as the return type of ``as_user``/``app_shell``,

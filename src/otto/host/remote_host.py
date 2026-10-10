@@ -435,15 +435,18 @@ class RemoteHost(BaseHost):
         # even when a session refuses to (chaos spec: teardown chain
         # robustness, docs/superpowers/specs/2026-07-30-chaos-hardening-design.md).
         # The session failure still propagates afterwards.
+        # Taken before the first await: a reconnect while this close runs
+        # replaces the attributes, and this close must not touch the new managers.
+        session_mgr, connections = self._session_mgr, self._connections
         try:
-            await self._session_mgr.close_all()
+            await session_mgr.close_all()
         finally:
             # NOT teardown_step-wrapped: this close is close()'s own result,
             # not cleanup after some other operation — its loud-failure
             # contract (either chain's failure propagates; the other chain
             # still runs) is pinned by test_unix_host.py's close-chain sweep.
             # ast-grep-ignore: no-awaited-close-in-finally
-            await self._connections.close()
+            await connections.close()
 
     ####################
     #  Session delegation (shared by every remote family)
@@ -645,16 +648,14 @@ class RemoteHost(BaseHost):
     def _lab_host(self, host_id: str, *, role: str) -> "RemoteHost":
         """Resolve *host_id* to a lab host, naming *role* (``hop``, ``console server``) on failure.
 
-        Resolved from this host's own lab back-reference, else the active
-        context's lab -- the lookup the tunnel factory performs for a hop and
-        the console term performs for its console server.
+        Resolved from this host's own lab back-reference, else the installed
+        peer-host resolver (the installed context's lab, read live) -- the
+        lookup the tunnel factory performs for a hop and the console term
+        performs for its console server.
         """
-        lab = self._lab
-        if lab is None:
-            from ..context import try_get_context
+        from ..invocation import installed_resolver
 
-            ctx = try_get_context()
-            lab = ctx.lab if ctx is not None else None
+        lab = self._lab if self._lab is not None else installed_resolver()
         if lab is None:
             raise RuntimeError(
                 f"Host {self.name!r} cannot resolve {role} {host_id!r}: the host has no lab "

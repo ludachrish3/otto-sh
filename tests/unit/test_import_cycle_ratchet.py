@@ -35,6 +35,12 @@ pytestmark = pytest.mark.interpreter_agnostic
 # Shrink-only: delete entries as edges are cut, never add one to quiet a failure.
 # One owner-approved re-baseline (spec 2026-10-06 repo-and-scope-inputs, S-5) added the seven
 # edges to otto.bootstrap and cut otto.lifecycle -> otto.config. Shrink-only again from here.
+# All seven of those edges have since retired. otto.lifecycle's went when the deadline readers
+# moved to the run policy; otto.coverage's, otto.docker's, otto.host's, otto.monitor.live's,
+# otto.project's and otto.suite's went when their readers took the run's repos from the context
+# (ctx.repos) or, with no context object in hand, from otto.config.fleet.current_repos().
+# otto.lifecycle has since left the cycle: the host layer and the lifecycle stopped importing
+# the context once each event loop's host registry moved to otto.invocation.
 BASELINE: dict[str, list[str]] = {
     "otto.bootstrap": ["otto.config", "otto.host"],
     "otto.check": ["otto.host"],
@@ -49,7 +55,6 @@ BASELINE: dict[str, list[str]] = {
         "otto.init",
         "otto.instructions",
         "otto.inventory",
-        "otto.lifecycle",
         "otto.link",
         "otto.models",
         "otto.monitor",
@@ -79,34 +84,28 @@ BASELINE: dict[str, list[str]] = {
         "otto.reservations",
         "otto.session",
     ],
-    "otto.coverage": ["otto.bootstrap", "otto.config", "otto.context", "otto.host", "otto.models"],
+    "otto.coverage": ["otto.config", "otto.context", "otto.host", "otto.models"],
     "otto.creds": ["otto.models"],
-    "otto.docker": ["otto.bootstrap", "otto.config", "otto.host", "otto.lifecycle", "otto.models"],
+    "otto.docker": ["otto.config", "otto.host", "otto.models"],
     "otto.host": [
-        "otto.bootstrap",
         "otto.config",
-        "otto.context",
         "otto.docker",
-        "otto.lifecycle",
         "otto.models",
     ],
     "otto.init": ["otto.config", "otto.host", "otto.inventory", "otto.labs", "otto.models"],
     "otto.instructions": ["otto.context", "otto.project", "otto.session"],
     "otto.inventory": ["otto.config", "otto.creds", "otto.host", "otto.models"],
     "otto.labs": ["otto.config", "otto.host", "otto.inventory", "otto.link", "otto.models"],
-    "otto.lifecycle": ["otto.bootstrap", "otto.context"],
-    "otto.link": ["otto.check", "otto.host", "otto.lifecycle", "otto.models"],
+    "otto.link": ["otto.check", "otto.host", "otto.models"],
     "otto.models": ["otto.config", "otto.host", "otto.link"],
     "otto.monitor": ["otto.host", "otto.link", "otto.models"],
     "otto.monitor.live": [
-        "otto.bootstrap",
         "otto.config",
         "otto.context",
         "otto.monitor",
         "otto.tunnel",
     ],
     "otto.project": [
-        "otto.bootstrap",
         "otto.config",
         "otto.context",
         "otto.host",
@@ -126,18 +125,16 @@ BASELINE: dict[str, list[str]] = {
         "otto.models",
     ],
     "otto.suite": [
-        "otto.bootstrap",
         "otto.config",
         "otto.context",
         "otto.coverage",
         "otto.host",
-        "otto.lifecycle",
         "otto.models",
         "otto.monitor",
         "otto.monitor.live",
         "otto.project",
     ],
-    "otto.tunnel": ["otto.check", "otto.host", "otto.lifecycle", "otto.models"],
+    "otto.tunnel": ["otto.check", "otto.host", "otto.models"],
 }
 
 _HOW_TO_FIX = (

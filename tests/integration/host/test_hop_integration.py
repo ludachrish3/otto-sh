@@ -38,6 +38,7 @@ from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.fd_watermark import open_fd_count
 from tests._fixtures.labdata import element_for
+from tests._fixtures.run_state import preserved_run_state
 from tests.conftest import host_data
 from tests.integration.host._transfer_retry import transfer_with_retry
 
@@ -113,19 +114,17 @@ def _build_host(ne: str, **overrides) -> UnixHost:
 def _load_lab():
     """Populate the active OttoContext with all lab hosts so hop resolution works.
 
-    Snapshots/restores the contextvar so the module's lab doesn't leak past the
-    module (the function-scoped _reset_otto_context preserves it *within* each
-    test rather than forcing None).
+    Restores the run state the install set (the context, its policy and its
+    resolver) so the module's lab doesn't leak past the module (the
+    function-scoped _reset_otto_context preserves it *within* each test rather
+    than forcing None).
     """
-    from otto.context import _active
-
     lab = Lab(name="hops_test")
     for ne in ("test1", "test2", "test3"):
         lab.add_host(_build_host(ne))
-    snapshot = _active.get()
-    set_context(OttoContext(lab=lab))
-    yield
-    _active.set(snapshot)
+    with preserved_run_state():
+        set_context(OttoContext(lab=lab))
+        yield
 
 
 # ---------------------------------------------------------------------------

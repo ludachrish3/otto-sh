@@ -1,8 +1,10 @@
 """SUT-repo fixtures for tests that run ``run_tests`` (or ``otto test``) in-process.
 
 Shared by ``tests/unit/suite`` and ``tests/unit/cli``: each conftest imports
-the fixtures it uses from here, so both directories build repos, wire
-``otto.bootstrap.get_repos`` and evict generated modules one way. The repo
+the fixtures it uses from here, so both directories build repos, wire the
+composition root (``otto.bootstrap.bootstrap``, through
+:func:`~tests._fixtures.bootstrap_seam.patch_bootstrap`) and evict generated
+modules one way. The repo
 double (:func:`repo_double`) is for the tests that stub the pytest session
 itself and only need a repo with a test directory.
 """
@@ -12,6 +14,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 
 DOUBLE_TEST_NAME = "test_alpha"
 """The one test every :func:`repo_double` collects: what those runs select by name."""
@@ -44,6 +48,9 @@ def repo_double(
     # A real Repo always has settings; the coverage decision reads them.
     repo.settings = settings if settings is not None else {}
     repo.inventory_settings = {}
+    # No [project] table, as a real Repo without one: a context whose repos
+    # are this double resolves the whole-lab fallback, not a Mock's scope.
+    repo.project_scope = None
     return repo
 
 
@@ -77,7 +84,7 @@ def one_repo_double(tmp_path, monkeypatch) -> MagicMock:
     """Make a :func:`repo_double` the lab's only repo; return it."""
 
     repo = repo_double(tmp_path)
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+    patch_bootstrap(monkeypatch, [repo])
     return repo
 
 
@@ -106,11 +113,11 @@ def _generated_modules_evicted(tmp_path, monkeypatch):
 
 
 def _wire_repos(monkeypatch, sut_dirs):
-    """Make ``otto.bootstrap.get_repos`` answer real ``Repo`` objects for *sut_dirs*."""
+    """Make the composition root answer real ``Repo`` objects for *sut_dirs*."""
     from otto.config.repo import Repo
 
     repos = [Repo(sut_dir=d) for d in sut_dirs]
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: repos)
+    patch_bootstrap(monkeypatch, repos)
     return repos
 
 

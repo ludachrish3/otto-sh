@@ -152,7 +152,7 @@ class TestCompensateTimeoutBound:
         ``compensate`` schedules NO timer before its work completes.
 
         Reddens against exactly the mutation it exists for -- a default of
-        ``timeout=DEFAULT_TEARDOWN_DEADLINE`` (or any always-on bound)
+        ``timeout=current_policy().teardown_deadline`` (or any always-on bound)
         records a ``call_later`` here while every other test stays green.
         """
         loop = asyncio.get_running_loop()

@@ -870,6 +870,7 @@ def test_class_scoped_plugin_fixtures_warn_nothing(tmp_path) -> None:
     """
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.invocation import RunPolicy
     from otto.suite.layout import ArtifactLayout
     from otto.suite.pytest_plugin import OttoFixturesPlugin
 
@@ -879,7 +880,9 @@ class TestNoWarn:
     async def test_a(self, ctx, module_dir, test_dir) -> None:
         assert ctx is not None
 """)
-    token = set_context(OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path))
+    token = set_context(
+        OttoContext(lab=Lab(name="_test_stub"), policy=RunPolicy(output_dir=tmp_path))
+    )
     try:
         exit_code = pytest.main(
             [

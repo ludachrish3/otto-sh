@@ -3,11 +3,11 @@
 Spec ``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md`` §3
 and §8. The ORACLE is the walk itself: ``ctx.all_hosts(...)`` for the union and
 ``ctx.for_repo(owner).all_hosts(...)`` for one repo, on a non-sentinel context
-built on the same lab, repos and ``-E``, with the composition root the context
-reads (``otto.bootstrap.bootstrap``, through ``patch_bootstrap``) patched to
-hold those same repos. Over every generated case the query must equal the
-walk's ids, in the lab's order. The three places the two differ on purpose are
-tested on their own below.
+built on the same lab, repos and ``-E``, and handed one bootstrap result
+(``bootstrap=fake_bootstrap_result(...)``) holding those same repos. Over
+every generated case the query must equal the walk's ids, in the lab's
+order. The three places the two differ on purpose are tested on their own
+below.
 
 Every axis of the generator is proved live by a planted divergence in the
 function under test (``_MUTANTS``): each one must turn the differential red. A
@@ -28,10 +28,10 @@ import pytest
 
 from otto.bootstrap import ProjectScopeError
 from otto.config.fleet import fleet_of_interest
-from otto.config.scope import EmptySelectionError
+from otto.config.scope import EmptySelectionError, scopes_of
 from otto.context import LIBRARY_LAB_NAME, OttoContext, set_context
 from otto.models.dependencies import normalize_name
-from tests._fixtures.bootstrap_seam import patch_bootstrap
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.fleet import _lab, _repo, add_builtin_local, install_scoped_context
 
 
@@ -164,9 +164,12 @@ def oracle(world):
         # is not under test here.
         mp.setattr(logging.getLogger("otto.context"), "disabled", True)
         for case in _cases(world):
-            # The composition root is the seam ``OttoContext.scopes`` reads.
-            patch_bootstrap(mp, [world.repos[key] for key in case.repo_keys])
-            ctx = OttoContext(lab=world.lab, exclude_projects=tuple(case.exclude_projects or ()))
+            # The context reads its repos from the one result it is handed.
+            ctx = OttoContext(
+                lab=world.lab,
+                exclude_projects=tuple(case.exclude_projects or ()),
+                bootstrap=fake_bootstrap_result([world.repos[key] for key in case.repo_keys]),
+            )
             surface = ctx if case.owner is None else ctx.for_repo(case.owner)
             try:
                 walked = [
@@ -332,9 +335,9 @@ def test_every_axis_has_a_planted_divergence_the_differential_catches(world, ora
 # ── §3's three stated exceptions, each on its own ─────────────────────────────
 
 
-def test_an_empty_declared_fleet_the_walk_refuses_and_the_query_answers_empty(world, monkeypatch):
+def test_an_empty_declared_fleet_the_walk_refuses_and_the_query_answers_empty(world):
     ghost = world.repos["ghost"]
-    ctx = install_scoped_context(monkeypatch, world.lab, [ghost])
+    ctx = install_scoped_context(world.lab, [ghost])
 
     with pytest.raises(ProjectScopeError):
         list(ctx.all_hosts())
@@ -344,8 +347,8 @@ def test_an_empty_declared_fleet_the_walk_refuses_and_the_query_answers_empty(wo
     assert fleet_of_interest(world.lab, [ghost], owner="ghost") == []
 
 
-def test_an_unknown_owner_is_refused_even_where_the_walk_falls_back(world, monkeypatch):
-    ctx = install_scoped_context(monkeypatch, world.lab, [])
+def test_an_unknown_owner_is_refused_even_where_the_walk_falls_back(world):
+    ctx = install_scoped_context(world.lab, [])
     # The walk: no scope resolved, so an unknown owner falls back to the whole lab.
     assert [host.id for host in ctx.for_repo("x").all_hosts()] == ["h1", "h2", "h3"]
     # The query: the caller handed the repos over, so the whole lab would widen.
@@ -353,7 +356,7 @@ def test_an_unknown_owner_is_refused_even_where_the_walk_falls_back(world, monke
         fleet_of_interest(world.lab, [], owner="x")
 
     alpha = world.repos["alpha"]
-    ctx = install_scoped_context(monkeypatch, world.lab, [alpha])
+    ctx = install_scoped_context(world.lab, [alpha])
     with pytest.raises(ProjectScopeError):
         list(ctx.for_repo("x").all_hosts())
     with pytest.raises(ProjectScopeError, match=r"none of the repos it was\s+given is named 'x'"):
@@ -388,7 +391,7 @@ def test_the_query_reads_nothing_but_its_arguments(world, monkeypatch):
 
     # The injection is live: the read the walk makes does reach the refusal.
     with pytest.raises(AssertionError, match="read the composition root"):
-        OttoContext(lab=world.lab).scopes  # noqa: B018 — the read is the act under test
+        scopes_of(OttoContext(lab=world.lab))  # the read is the act under test
 
 
 def test_every_membership_reader_consults_the_one_flag_rule(world, monkeypatch):
@@ -404,7 +407,7 @@ def test_every_membership_reader_consults_the_one_flag_rule(world, monkeypatch):
 
     monkeypatch.setattr("otto.config.fleet._flag_holding_out", _hold_out_h2_only)
     plain = world.repos["plain"]
-    ctx = install_scoped_context(monkeypatch, world.lab, [plain])
+    ctx = install_scoped_context(world.lab, [plain])
 
     expected = ["h1", "h3", "h1.r1.api", "local"]
     assert [host.id for host in ctx.all_hosts()] == expected
@@ -414,10 +417,10 @@ def test_every_membership_reader_consults_the_one_flag_rule(world, monkeypatch):
     assert excinfo.value.excluded_by == ["include_containers"]
 
 
-def test_owner_is_not_normalized_in_the_query_or_the_walk(world, monkeypatch):
+def test_owner_is_not_normalized_in_the_query_or_the_walk(world):
     """Spec 4 §3: the owner is not normalized, in the query as in the walk."""
     repos = [world.repos["alpha"], world.repos["beta"]]
-    ctx = install_scoped_context(monkeypatch, world.lab, repos)
+    ctx = install_scoped_context(world.lab, repos)
 
     with pytest.raises(ProjectScopeError):
         list(ctx.for_repo("Alpha").all_hosts())

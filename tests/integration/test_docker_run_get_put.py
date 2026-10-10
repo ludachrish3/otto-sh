@@ -20,6 +20,7 @@ from otto.host.unix_host import UnixHost
 from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.paths import TESTS_ROOT
+from tests._fixtures.scope_boundary import held_for_scope
 
 REPO1_DIR = TESTS_ROOT / "repo1"
 
@@ -59,28 +60,33 @@ async def stack(test3_lease, sut_dirs_env_module):
     ``sut_dirs_env_module`` because this fixture runs at MODULE scope, ahead of
     the function-scoped ``_default_sut_dirs_env``: ``compose_up`` walks
     ``get_repos()``, which needs the SUT env, and the module-scoped bracket also
-    keeps the bootstrap memo it primes from outliving this module."""
-    parent = UnixHost(
-        ip="10.10.200.13",
-        element=Element("test3"),
-        creds=[Cred(login="vagrant", password="vagrant")],
-        is_virtual=True,
-        term="ssh",
-        transfer="scp",
-        docker_capable=True,
-    )
-    repo = Repo(sut_dir=REPO1_DIR)
-    lab = Lab(name="docker_run_test")
-    lab.hosts[parent.id] = parent
+    keeps the bootstrap memo it primes from outliving this module.
 
-    build_results = await build_images(repo, parent)
-    assert build_results["repo1-api"].is_ok, build_results
-    hosts = await compose_up(repo, lab, parent=parent.id)
-    try:
-        yield hosts["api"]
-    finally:
-        await compose_down(repo, lab, parent=parent.id)
-        await parent.close()
+    The parent and the container host outlive the test that connected them,
+    so the fixture holds the module loop's cleanup boundary for its scope
+    (``held_for_scope``); its release closes the container host."""
+    async with held_for_scope("test_docker_run_get_put.py's loop"):
+        parent = UnixHost(
+            ip="10.10.200.13",
+            element=Element("test3"),
+            creds=[Cred(login="vagrant", password="vagrant")],
+            is_virtual=True,
+            term="ssh",
+            transfer="scp",
+            docker_capable=True,
+        )
+        repo = Repo(sut_dir=REPO1_DIR)
+        lab = Lab(name="docker_run_test")
+        lab.hosts[parent.id] = parent
+
+        build_results = await build_images(repo, parent)
+        assert build_results["repo1-api"].is_ok, build_results
+        hosts = await compose_up(repo, lab, parent=parent.id)
+        try:
+            yield hosts["api"]
+        finally:
+            await compose_down(repo, lab, parent=parent.id)
+            await parent.close()
 
 
 @pytest.mark.asyncio(loop_scope="module")

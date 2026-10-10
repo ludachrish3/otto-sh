@@ -5,11 +5,12 @@ order (dependencies first to build, dependents first to tear down), what a
 failure stops and what it does not, and the host-global steps that belong to no
 repo at all (the debug sweep, the toolchain tools).
 
-THE TWO LOOKUPS ARE MONKEYPATCHED WHERE THE ORCHESTRATOR LOOKS THEM UP.
-:func:`otto.project.orchestrator._lab` imports ``get_ordered_repos`` and
-``get_context`` inside the call (the package's circular-import idiom), so the
-attribute read happens on ``otto.config`` / ``otto.context`` at call time and
-patching those two names is what the module actually sees.
+THE CONTEXT IS MONKEYPATCHED WHERE THE ORCHESTRATOR LOOKS IT UP.
+:func:`otto.project.orchestrator._lab` imports ``get_context`` inside the call
+(the package's circular-import idiom), so the attribute read happens on
+``otto.context`` at call time and patching that name is what the module
+actually sees. The repos come off the context it returns (``ctx.repos`` and
+``ctx.ordered_repos``), so the double carries them.
 
 No registry-isolation fixture here, deliberately: the tests register recording
 ``ProjectActions`` subclasses, and the root conftest's autouse
@@ -39,6 +40,7 @@ from otto.config.scope import (
     ProjectScopeConfig,
     require_nonempty_fleet,
     scoped_ids,
+    scopes_of,
 )
 from otto.context import OttoContext
 from otto.errors import OttoError
@@ -79,6 +81,7 @@ from otto.tunnel import (
     TunnelHop,
 )
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import seed_scope_verdicts
 from tests._fixtures.fake_repo import fake_repo
 
 # ── doubles ──────────────────────────────────────────────────────────────
@@ -168,14 +171,17 @@ class _FakeCtx:
     # asked for one on each level-1 hop. ``for_repo`` only wraps, and a second
     # copy of that wiring here would be a copy that can drift.
     for_repo = OttoContext.for_repo
+    # ``scopes_of(ctx)`` reads the verdicts through the context's own resolver,
+    # borrowed for the same reason; seeded below, it returns them unresolved.
+    _resolve_scopes = OttoContext._resolve_scopes
 
     def __init__(self, hosts, lab=None, scopes=None, include_projects=(), exclude_projects=()):
         self.hosts = list(hosts)
         self.lab = _fake_lab() if lab is None else lab
-        # The resolver's verdicts, as ``OttoContext.scopes`` hands them over.
+        # The resolver's verdicts, as ``scopes_of(ctx)`` hands them over.
         # An empty mapping is the whole-lab fallback (§6) and the shape every
         # test above this one runs under: nothing declared, nothing narrowed.
-        self.scopes = dict(scopes or {})
+        seed_scope_verdicts(self, scopes or {})
         # The ``-I`` / ``-E`` switch axis, TUPLES exactly as ``OttoContext``
         # stores them (one entry per switch the user typed, un-normalized —
         # ``otto.config.scope._switched`` is what normalizes, on the read side).
@@ -265,11 +271,11 @@ def _recording_actions(events, flags, questions=None, failing=None, state=None, 
 
 
 def _wire_lab(monkeypatch, repo_names, ctx, current=None, dependencies=None):
-    """Point the orchestrator's three lookups at *repo_names*, the driving repo, and *ctx*.
+    """Point the orchestrator's context lookup at *ctx*, carrying *repo_names* and the driving repo.
 
-    TWO REPO LISTS, DELIBERATELY DIFFERENT. ``get_ordered_repos`` hands back
+    TWO REPO LISTS, DELIBERATELY DIFFERENT. ``ctx.ordered_repos`` hands back
     the dependency-topological walk order (dependencies first), while
-    ``get_repos`` hands back bootstrap's own ``OTTO_SUT_DIRS`` order, whose
+    ``ctx.repos`` hands back bootstrap's own ``OTTO_SUT_DIRS`` order, whose
     FIRST entry is the driving project — the repo D3 aborts for. *current*
     defaults to the LAST name in walk order, which is where a dependent sits,
     so a gate that read the walk order's first element would be asking about a
@@ -287,8 +293,11 @@ def _wire_lab(monkeypatch, repo_names, ctx, current=None, dependencies=None):
     driving = current if current is not None else (repo_names[-1] if repo_names else None)
     configured = [repo for repo in ordered if repo.name == driving]
     configured += [repo for repo in ordered if repo.name != driving]
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: ordered)
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: configured)
+    # The same list objects on every read, unlike a real context's fresh copies:
+    # the walk must never rewrite a list it is handed, and only a shared list
+    # lets a test see that it did not.
+    ctx.repos = configured
+    ctx.ordered_repos = ordered
     monkeypatch.setattr("otto.context.get_context", lambda: ctx)
     return ordered
 
@@ -517,10 +526,9 @@ async def test_uninstall_walks_reverse_and_is_best_effort(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_uninstall_does_not_mutate_the_cached_repo_order(monkeypatch):
-    # get_ordered_repos() hands back bootstrap's OWN list (it aliases the
-    # resolution). Kills: an in-place ``repos.reverse()``, which would leave
-    # every later caller — including the next orchestrator verb — walking
-    # backwards.
+    # The double hands back the SAME ordered list on every read. Kills: an
+    # in-place ``repos.reverse()``, which would leave every later reader of
+    # that list — including the next orchestrator verb — walking backwards.
     lab = _wire(monkeypatch, repos=["base", "app"])
     before = list(lab.ordered)
     await project.uninstall()
@@ -896,12 +904,17 @@ async def test_cleanup_a_dry_run_declines_both_steps_rather_than_reporting_them_
         hosts={"r1": _Unaskable("r1"), "r2": _Unaskable("r2")},
         static_links=lambda: [link],
     )
+    from otto.invocation import RunPolicy, install_policy, reset_binding
+
     ctx = _FakeCtx([], lab=fake_lab)
-    ctx.dry_run = True
     _wire_lab(monkeypatch, [], ctx)
     monkeypatch.setattr("otto.context.try_get_context", lambda: ctx)
 
-    result = await project.cleanup()
+    binding = install_policy(RunPolicy(dry_run=True))  # what is_dry_run() reads
+    try:
+        result = await project.cleanup()
+    finally:
+        reset_binding(binding)
 
     assert result.status is Status.NotRun  # not Success, and not a fabricated failure
     assert "dry run" in result.msg
@@ -1827,10 +1840,10 @@ async def test_every_public_verb_refuses_the_driving_repos_unusable_scope(monkey
 
 @pytest.mark.asyncio
 async def test_the_gate_asks_about_the_driving_repo_not_the_first_repo_walked(monkeypatch):
-    """The reading is ``bootstrap().repos[0]`` — the first OTTO_SUT_DIRS entry.
+    """The reading is ``ctx.repos[0]`` — the first OTTO_SUT_DIRS entry.
 
     Pinned at the call because the two lists coincide in the commonest lab (one
-    repo) and disagree in every interesting one: ``get_ordered_repos()`` is a
+    repo) and disagree in every interesting one: ``ctx.ordered_repos`` is a
     TOPOLOGICAL reorder, so its first element is a dependency. Asserting the
     scopes mapping too pins the other half — the verdicts come from the live
     context, not from a resolution the gate ran for itself.
@@ -1844,7 +1857,7 @@ async def test_the_gate_asks_about_the_driving_repo_not_the_first_repo_walked(mo
 
     await project.install()
 
-    assert asked == [("app", lab.ctx.scopes)]
+    assert asked == [("app", scopes_of(lab.ctx))]
 
 
 @pytest.mark.asyncio
@@ -1883,7 +1896,7 @@ async def test_the_refusal_names_the_loaded_labs_and_the_repos_own_patterns(monk
 
 @pytest.mark.asyncio
 async def test_a_lab_with_no_repos_has_no_current_scope_to_enforce(monkeypatch):
-    """Kills an ``IndexError`` on ``get_repos()[0]`` — a repo-less run is legal."""
+    """Kills an ``IndexError`` on ``ctx.repos[0]`` — a repo-less run is legal."""
     _wire(monkeypatch, repos=[], hosts=1)
 
     assert (await project.install()).is_ok
@@ -2201,7 +2214,7 @@ async def test_a_starved_driving_repo_still_aborts_the_whole_run(monkeypatch):
 # is under test. `repo1`/`repo2` normalize to themselves, so a bed built only
 # from them cannot tell `active(repo.name, ctx)` from
 # `active(normalize_name(repo.name), ctx)` -- and the spec names that exact
-# confusion as a FAIL-OPEN hazard, because `ctx.scopes` is keyed by the raw
+# confusion as a FAIL-OPEN hazard, because `scopes_of(ctx)` is keyed by the raw
 # declared name and a missed verdict resolves ACTIVE. `_UNDERSCORED` is a repo
 # whose declared name and normalized name differ, so every cell routed through
 # it discriminates the two spellings. Its switch is typed in the NORMALIZED
@@ -2299,7 +2312,7 @@ class TestSwitchAxis:
         walk, and the only thing that changed is the switch.
 
         BOTH ROWS ALSO DISCRIMINATE THE NAME SPELLING, on opposite sides. The
-        no-switch row reaches ``ctx.scopes.get(repo.name)``, keyed by the
+        no-switch row reaches ``scopes_of(ctx).get(repo.name)``, keyed by the
         DECLARED name, so a lookup that normalized first would miss the verdict
         and walk an inactive repo (the spec's fail-open hazard). The ``-I`` row
         types the NORMALIZED name, which is what a user types, so a switch

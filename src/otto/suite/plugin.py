@@ -1132,25 +1132,32 @@ class OttoPlugin:
 
     @pytest.hookimpl(wrapper=True)
     def pytest_fixture_setup(self, fixturedef: Any, request: pytest.FixtureRequest) -> Any:
-        """Name each pytest-asyncio loop, and sweep its hosts just before it closes.
+        """Name each pytest-asyncio loop, hold its cleanup, and close its hosts just before it ends.
 
-        A runner fixture's own teardown, which closes its loop, was registered
-        on its fixturedef while the fixture set up. The sweep is registered
-        after it, and finalizers run last-in first-out, so the sweep runs
-        while the loop is still open. Every fixture set up on the loop later
-        registers its own teardown later still, so those finish before the
-        sweep. A fixture that closes its host itself therefore leaves nothing
-        to sweep, and the loop-end debug line names only the hosts the sweep
-        closed.
+        It names each runner's loop and holds a cleanup boundary on it for the
+        runner's scope; the finalizer shuts the loop's registry down, closing
+        every host on it whatever the count. A runner fixture's own teardown,
+        which closes its loop, was registered on its fixturedef while the
+        fixture set up. The sweep is registered after it, and finalizers run
+        last-in first-out, so the sweep runs while the loop is still open.
+        Every fixture set up on the loop later registers its own teardown
+        later still, so those finish before the sweep. A fixture that closes
+        its host itself therefore leaves nothing to sweep, and the loop-end
+        debug line names only the hosts the sweep closed.
         """
         result = yield
         match = RUNNER_FIXTURE.fullmatch(fixturedef.argname)
         if match is not None:
             from ..host.loop_owner import LOOP_LABELS
+            from ..invocation import acquire_boundary, current_policy
 
+            loop = result.get_loop()
             label = runner_label(match.group(1), request)
-            LOOP_LABELS[result.get_loop()] = label
-            fixturedef.addfinalizer(functools.partial(sweep_runner_loop, result, label))
+            LOOP_LABELS[loop] = label
+            # Held for the runner's whole loop scope: an open_context inside a test
+            # leaves its hosts to this runner, whose shutdown closes them.
+            boundary = acquire_boundary(loop, deadline=current_policy().teardown_deadline)
+            fixturedef.addfinalizer(functools.partial(sweep_runner_loop, result, label, boundary))
         return result
 
     @pytest.fixture(autouse=True)

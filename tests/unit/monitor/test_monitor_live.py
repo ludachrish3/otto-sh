@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from otto.config.lab import Lab
 from otto.config.repo import MonitorSettings
 from otto.config.scope import EmptySelectionError
+from otto.context import OttoContext
 from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
 from otto.host.login_proxy import Cred
@@ -17,6 +19,11 @@ from otto.logger.mode import LogMode
 from otto.monitor.errors import MonitorInputError, MonitorTlsError, NoMonitorableHostsError
 from otto.monitor.export import build_db_export
 from otto.monitor.live import LiveReport, run_live, select_monitor_hosts
+from tests._fixtures.bootstrap_seam import (
+    fake_bootstrap_result,
+    patch_bootstrap,
+    seed_scope_verdicts,
+)
 from tests._fixtures.fake_repo import fake_repo
 
 
@@ -49,7 +56,7 @@ def lab(monkeypatch):
 
     monkeypatch.setattr("otto.config.fleet.all_hosts", all_hosts)
     monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
-    monkeypatch.setattr("otto.bootstrap.get_repos", list)
+    patch_bootstrap(monkeypatch, [])
     return hosts
 
 
@@ -105,7 +112,7 @@ class TestRunLiveRefusesBeforeAnyFile:
         """
         db = tmp_path / "m.db"
         bad = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
-        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [bad])
+        patch_bootstrap(monkeypatch, [bad])
         with pytest.raises(MonitorInputError, match="at least") as e:
             await run_live(hosts="z.*", interval=0.5, db=db)
         assert e.value.field == "interval"
@@ -122,7 +129,7 @@ class TestRunLiveRefusesBeforeAnyFile:
     async def test_tls(self, lab, tmp_path, monkeypatch):
         db = tmp_path / "m.db"
         bad = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
-        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [bad])
+        patch_bootstrap(monkeypatch, [bad])
         with pytest.raises(MonitorTlsError):
             await run_live(db=db)
         assert not db.exists()
@@ -153,7 +160,7 @@ async def test_run_live_hands_the_server_the_declared_cert_and_key(
 ):
     cert, key = tls_pair
     repo = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
+    patch_bootstrap(monkeypatch, [repo])
     await run_live(hosts="web1")
     kwargs = served.call_args.kwargs
     assert (kwargs["tls_cert"], kwargs["tls_key"]) == (cert, key)
@@ -226,6 +233,11 @@ async def test_tunnel_discovery_covers_the_whole_lab_not_the_selection(lab):
     assert seen == [whole]
 
 
+def _context_over(repos):
+    """A real context whose repos are *repos*, from one result handed to it."""
+    return OttoContext(lab=Lab(name="rig"), bootstrap=fake_bootstrap_result(repos))
+
+
 class TestDrivingRepoScopeGate:
     """D3 fires at the monitor fleet build, not only at ``otto run``'s verbs.
 
@@ -236,7 +248,7 @@ class TestDrivingRepoScopeGate:
     says this lab is not its world.
 
     Every fixture below gives the driving repo and the dependency DIFFERENT
-    verdicts, and ``get_repos()`` hands back bootstrap's order (driving first)
+    verdicts, and the context's ``repos`` hands back bootstrap's order (driving first)
     while the walk order elsewhere heads with a dependency — so a gate asking
     about the wrong repo is visible in both directions.
     """
@@ -278,15 +290,15 @@ class TestDrivingRepoScopeGate:
             "app": cls._scope("app", excluded=excluded == "app"),
             "base": cls._scope("base", excluded=excluded == "base"),
         }
+        repos = [
+            fake_repo("app", monitor_settings=MonitorSettings()),
+            fake_repo("base", monitor_settings=MonitorSettings()),
+        ]
         monkeypatch.setattr("otto.config.fleet.all_hosts", _all_hosts)
-        monkeypatch.setattr(
-            "otto.bootstrap.get_repos",
-            lambda: [
-                fake_repo("app", monitor_settings=MonitorSettings()),
-                fake_repo("base", monitor_settings=MonitorSettings()),
-            ],
-        )
-        monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(scopes=scopes))
+        patch_bootstrap(monkeypatch, repos)
+        ctx = _context_over(repos)
+        seed_scope_verdicts(ctx, scopes)
+        monkeypatch.setattr("otto.context.get_context", lambda: ctx)
         return contacted
 
     @pytest.mark.asyncio
@@ -314,10 +326,34 @@ class TestDrivingRepoScopeGate:
         served.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_the_driving_repo_is_the_contexts_not_the_composition_roots(
+        self, lab, served, monkeypatch
+    ):
+        """The gate reads ``ctx.repos``: a composition root listing the repos otherwise is ignored.
+
+        The context's first repo is ``app``, whose scope is unusable; the
+        composition root lists the healthy ``base`` first. A gate that read
+        the accessor instead of the context would let the monitor run.
+        """
+        from otto.bootstrap import ProjectScopeError
+
+        contacted = self._world(monkeypatch, excluded="app")
+        reordered = [
+            fake_repo("base", monitor_settings=MonitorSettings()),
+            fake_repo("app", monitor_settings=MonitorSettings()),
+        ]
+        patch_bootstrap(monkeypatch, reordered)
+
+        with pytest.raises(ProjectScopeError, match="'app'"):
+            await run_live()
+
+        assert contacted == []
+
+    @pytest.mark.asyncio
     async def test_an_excluded_dependency_does_not_stop_the_monitor(self, lab, served, monkeypatch):
         """D3's asymmetry, and the mirror that kills a gate pointed at the wrong repo.
 
-        ``get_repos()[0]`` is the driving project; the walk order's first entry
+        ``ctx.repos[0]`` is the driving project; the walk order's first entry
         is a dependency (``get_ordered_repos`` is a topological reorder). A gate
         reading the latter refuses here, where the monitor must simply run.
         """
@@ -338,7 +374,7 @@ class TestDrivingRepoScopeGate:
         """
         from otto.context import get_context
 
-        monkeypatch.setattr("otto.bootstrap.get_repos", list)
+        patch_bootstrap(monkeypatch, [])
         with pytest.raises(RuntimeError):
             get_context()
 
@@ -350,11 +386,13 @@ class TestDrivingRepoScopeGate:
     async def test_a_context_with_no_repos_is_untouched(self, lab, served, monkeypatch):
         """A checkout with no ``OTTO_SUT_DIRS``, under a context: no current repo to refuse.
 
-        The context's verdicts are empty and ``get_repos()`` is ``[]``, so the
+        The context's verdicts are empty and its ``repos`` is ``[]``, so the
         gate must not invent a verdict (nor die indexing an empty list).
         """
-        monkeypatch.setattr("otto.bootstrap.get_repos", list)
-        monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(scopes={}))
+        patch_bootstrap(monkeypatch, [])
+        ctx = _context_over([])
+        seed_scope_verdicts(ctx, {})
+        monkeypatch.setattr("otto.context.get_context", lambda: ctx)
 
         report = await run_live()
 
@@ -374,10 +412,7 @@ class TestDrivingRepoScopeGate:
         def _boom():
             raise RuntimeError("no bootstrap here")
 
-        monkeypatch.setattr(
-            "otto.bootstrap.get_repos",
-            lambda: [fake_repo("app", monitor_settings=MonitorSettings())],
-        )
+        patch_bootstrap(monkeypatch, [fake_repo("app", monitor_settings=MonitorSettings())])
         monkeypatch.setattr("otto.context.get_context", _boom)
 
         report = await run_live()
@@ -386,7 +421,7 @@ class TestDrivingRepoScopeGate:
 
     @staticmethod
     def _unreachable_repos(monkeypatch):
-        """Make ``get_repos()`` raise and record the fleet build; return the record."""
+        """Make every repo read raise and record the fleet build; return the record."""
         contacted = []
 
         def _boom():
@@ -397,7 +432,8 @@ class TestDrivingRepoScopeGate:
             contacted.append("walked")
             return iter([_unix("box")])
 
-        monkeypatch.setattr("otto.bootstrap.get_repos", _boom)
+        # The run's own TLS read and a context's first repos read both ask it.
+        monkeypatch.setattr("otto.bootstrap.bootstrap", _boom)
         monkeypatch.setattr("otto.config.fleet.all_hosts", _all_hosts)
         return contacted
 
@@ -425,12 +461,17 @@ class TestDrivingRepoScopeGate:
     async def test_unreachable_repos_under_a_context_stop_the_gate(self, lab, served, monkeypatch):
         """Under a context, only the context lookup is guarded: the repo read is not.
 
-        ``get_repos()``'s error propagates out of the gate itself, before any
-        host is walked, so a guard widened around the repo read (which would
-        let the walk run and fail later, at the TLS lookup) turns this red.
+        The context's ``repos`` error propagates out of the gate itself, before
+        any host is walked, so a guard widened around the repo read (which would
+        let the walk run and fail later, at the TLS lookup) turns this red. The
+        context is built without a result, so its first ``repos`` read asks the
+        raising composition root; its verdicts are seeded, so that read is the
+        one under test.
         """
         contacted = self._unreachable_repos(monkeypatch)
-        monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(scopes={}))
+        ctx = OttoContext(lab=Lab(name="rig"))
+        seed_scope_verdicts(ctx, {})
+        monkeypatch.setattr("otto.context.get_context", lambda: ctx)
 
         with pytest.raises(RuntimeError, match="no bootstrap here"):
             await run_live()

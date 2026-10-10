@@ -14,7 +14,7 @@ from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.context import OttoContext, set_context
 from otto.host.element import Element
-from tests._fixtures.bootstrap_seam import patch_bootstrap
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.sutrepo import make_sut_repo
 
 
@@ -81,24 +81,28 @@ def add_builtin_local(lab, *, resources=frozenset()):
     return lab
 
 
-def install_scoped_context(monkeypatch, lab, repos, *, exclude_projects=()):
+def install_scoped_context(lab, repos, *, exclude_projects=()):
     """Build and install an ``OttoContext`` whose scopes resolve over *repos*.
 
     *exclude_projects* is the run's ``-E`` list, as the CLI would set it.
 
-    ``OttoContext.scopes`` reads ``otto.bootstrap.bootstrap()`` lazily, so
-    :func:`~tests._fixtures.bootstrap_seam.patch_bootstrap` (one result whose
-    repos, walk order and errors every reader sees) is what lets a unit test
-    declare a fleet of interest without standing up a bootstrap. An empty
-    *repos* list is the whole-lab fallback — no declaration, no narrowing.
+    The context is handed one bootstrap result holding *repos* (``bootstrap=``,
+    :func:`~tests._fixtures.bootstrap_seam.fake_bootstrap_result`), which is
+    what lets a unit test declare a fleet of interest without standing up a
+    bootstrap. An empty *repos* list is the whole-lab fallback — no
+    declaration, no narrowing.
 
     Installation is not undone here: the root conftest's autouse
-    ``_reset_otto_context`` snapshot-restores the ContextVar after every test,
-    and a ``reset_context(token)`` of our own cannot work anyway — async callers
-    run their body in a COPY of the context, so the token is from a different
+    ``_reset_otto_context`` snapshot-restores the three variables ``set_context``
+    installs (the context, its policy and its resolver) after every test,
+    and a ``reset_context(binding)`` of our own cannot work anyway — async callers
+    run their body in a COPY of the context, so the binding is from a different
     Context object and ``ContextVar.reset`` raises.
     """
-    patch_bootstrap(monkeypatch, repos)
-    ctx = OttoContext(lab=lab, exclude_projects=tuple(exclude_projects))
+    ctx = OttoContext(
+        lab=lab,
+        exclude_projects=tuple(exclude_projects),
+        bootstrap=fake_bootstrap_result(repos),
+    )
     set_context(ctx)
     return ctx

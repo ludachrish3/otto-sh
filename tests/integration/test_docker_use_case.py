@@ -41,6 +41,7 @@ from otto.docker.deployment import deploy, teardown
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.labdata import element_for, host_data
 from tests._fixtures.paths import TESTS_ROOT
 
@@ -133,11 +134,12 @@ def project(suffix) -> str:
 def _deployment_config(monkeypatch, lab, repos, suffix):
     """Point ``deploy``/``teardown`` at THIS module's lab, repos and suffix.
 
-    The three config seams are patched rather than bootstrapped: ``deploy``
-    reads the process-wide ``get_lab``/``get_repos``/``get_ordered_repos``,
-    and bootstrapping them here would import the sample repos' ``init``
-    modules into the test process (they register process-global providers) to
-    obtain repos this fixture already holds.
+    The two config seams are patched rather than bootstrapped: ``deploy``
+    reads the process-wide ``get_lab`` and, with no context installed, the
+    run's repos from the composition root (``otto.bootstrap.bootstrap``), and
+    bootstrapping here would import the sample repos' ``init`` modules into
+    the test process (they register process-global providers) to obtain repos
+    this fixture already holds.
 
     ``scope_for_repo`` is patched to its TRUTHFUL answer, not a convenient
     one: neither sample repo declares a ``[project]`` table, so the real
@@ -147,8 +149,7 @@ def _deployment_config(monkeypatch, lab, repos, suffix):
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", suffix)
     with (
         patch("otto.config.fleet.get_lab", return_value=lab),
-        patch("otto.bootstrap.get_repos", return_value=list(repos)),
-        patch("otto.bootstrap.get_ordered_repos", return_value=list(repos)),
+        patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result(repos)),
         patch.object(resolve_mod, "scope_for_repo", return_value=None),
     ):
         yield

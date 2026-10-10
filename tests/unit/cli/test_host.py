@@ -303,14 +303,14 @@ class TestResolveCliHostHop:
         assert host.hop == "dut47"
 
     def test_unknown_hop_fails_loud_through_the_same_path_as_an_unknown_target(
-        self, monkeypatch, tmp_path, capsys
+        self, tmp_path, capsys
     ):
         """A hop naming no host fails exactly like an unknown target does:
         the same ``_resolve_host`` boundary, the same "No host with ID"
         message, the same ``typer.Exit(1)`` — not a silently-``None`` hop and
         not a different error shape.
         """
-        _slot_fleet(monkeypatch, tmp_path)
+        _slot_fleet(tmp_path)
         ctx = _host_ctx(None, "slot1", hop="ghost-hop")
 
         with pytest.raises(typer.Exit) as exc:
@@ -357,7 +357,7 @@ class _SlotBackend(ReservationBackendBase):
         return [Reservation(user="dana", resource=resource)]
 
 
-def _slot_fleet(monkeypatch, tmp_path):
+def _slot_fleet(tmp_path):
     """A two-host lab whose declared fleet is ``slot1`` alone; each host owns a slot."""
     from tests._fixtures.fleet import _lab as fleet_lab
     from tests._fixtures.fleet import _repo, install_scoped_context
@@ -365,7 +365,7 @@ def _slot_fleet(monkeypatch, tmp_path):
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    install_scoped_context(monkeypatch, lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
     return lab
 
 
@@ -415,7 +415,7 @@ def _spy_build_report(monkeypatch):
     return calls
 
 
-def test_targeting_a_host_outside_the_fleet_demands_its_own_slot(monkeypatch, tmp_path, capsys):
+def test_targeting_a_host_outside_the_fleet_demands_its_own_slot(tmp_path, capsys):
     """Holding the fleet's slot is not permission to touch a host outside it.
 
     The project declares ``slot1``, so the preamble's gate asked for
@@ -425,7 +425,7 @@ def test_targeting_a_host_outside_the_fleet_demands_its_own_slot(monkeypatch, tm
     Red at HEAD: ``resolve_cli_host`` returned the ``slot2`` host and no
     ``typer.Exit`` was raised.
     """
-    _slot_fleet(monkeypatch, tmp_path)
+    _slot_fleet(tmp_path)
     ctx = _host_ctx(_gate({"slot-1"}), "slot2")
 
     with pytest.raises(typer.Exit) as exc:
@@ -438,9 +438,9 @@ def test_targeting_a_host_outside_the_fleet_demands_its_own_slot(monkeypatch, tm
     assert "dana" in out  # and who holds it
 
 
-def test_targeting_a_host_outside_the_fleet_proceeds_when_its_slot_is_held(monkeypatch, tmp_path):
+def test_targeting_a_host_outside_the_fleet_proceeds_when_its_slot_is_held(tmp_path):
     """The check is a check, not a refusal: hold ``slot-2`` and ``slot2`` is reachable."""
-    _slot_fleet(monkeypatch, tmp_path)
+    _slot_fleet(tmp_path)
     ctx = _host_ctx(_gate({"slot-1", "slot-2"}), "slot2")
 
     assert host_module.resolve_cli_host(ctx).id == "slot2"
@@ -453,7 +453,7 @@ def test_a_target_inside_the_fleet_is_not_checked_twice(monkeypatch, tmp_path):
     per command for an answer otto has just had. The spy goes red on a check
     that drops the fleet filter in ``ReservationGate.check_hosts``.
     """
-    _slot_fleet(monkeypatch, tmp_path)
+    _slot_fleet(tmp_path)
     calls = _spy_build_report(monkeypatch)
     ctx = _host_ctx(_gate({"slot-1"}), "slot1")
 
@@ -468,7 +468,7 @@ def test_dash_r_skips_the_targeted_host_check_too(monkeypatch, tmp_path):
     ignored it would make ``-R`` stop working for exactly the command whose
     target is out of scope.
     """
-    _slot_fleet(monkeypatch, tmp_path)
+    _slot_fleet(tmp_path)
     calls = _spy_build_report(monkeypatch)
     ctx = _host_ctx(_gate(set(), skip_check=True), "slot2")
 
@@ -476,15 +476,15 @@ def test_dash_r_skips_the_targeted_host_check_too(monkeypatch, tmp_path):
     assert calls == []
 
 
-def test_no_reservation_gate_on_the_context_is_a_no_op(monkeypatch, tmp_path):
+def test_no_reservation_gate_on_the_context_is_a_no_op(tmp_path):
     """A lab-free or ungated invocation has no gate to read; targeting still works."""
-    _slot_fleet(monkeypatch, tmp_path)
+    _slot_fleet(tmp_path)
     ctx = _host_ctx(None, "slot2")
 
     assert host_module.resolve_cli_host(ctx).id == "slot2"
 
 
-def test_a_hop_outside_the_fleet_demands_its_own_slot(monkeypatch, tmp_path, capsys):
+def test_a_hop_outside_the_fleet_demands_its_own_slot(tmp_path, capsys):
     """Reaching a host you hold THROUGH a jump box you do not hold is still using it.
 
     The target is ``slot1``, squarely inside the declared fleet and already
@@ -496,7 +496,7 @@ def test_a_hop_outside_the_fleet_demands_its_own_slot(monkeypatch, tmp_path, cap
     Red at HEAD: the hop resolved after the check, `slot-2` was never demanded,
     and ``resolve_cli_host`` returned with ``host.hop == "slot2"``.
     """
-    _slot_fleet(monkeypatch, tmp_path)
+    _slot_fleet(tmp_path)
     ctx = _host_ctx(_gate({"slot-1"}), "slot1", hop="slot2")
 
     with pytest.raises(typer.Exit) as exc:
@@ -509,9 +509,9 @@ def test_a_hop_outside_the_fleet_demands_its_own_slot(monkeypatch, tmp_path, cap
     assert "slot-1" not in out  # the target is in the fleet: not re-demanded
 
 
-def test_a_hop_outside_the_fleet_proceeds_when_its_slot_is_held(monkeypatch, tmp_path):
+def test_a_hop_outside_the_fleet_proceeds_when_its_slot_is_held(tmp_path):
     """Hold the hop's slot and the jump is wired as before."""
-    _slot_fleet(monkeypatch, tmp_path)
+    _slot_fleet(tmp_path)
     ctx = _host_ctx(_gate({"slot-1", "slot-2"}), "slot1", hop="slot2")
 
     host = host_module.resolve_cli_host(ctx)
@@ -532,7 +532,7 @@ def test_an_out_of_fleet_host_with_no_slot_of_its_own_is_never_queried(monkeypat
 
     Red at HEAD: the spy recorded one call with ``['gw']``.
     """
-    lab = _slot_fleet(monkeypatch, tmp_path)
+    lab = _slot_fleet(tmp_path)
     lab.resources = {"rig-pdu"}  # a lab-level id, so the requirement is non-empty
     from tests._fixtures.fleet import _host
 
@@ -1147,9 +1147,7 @@ def _soon_utc(minutes):
     return datetime.now(timezone.utc) + timedelta(minutes=minutes)
 
 
-def test_naming_an_out_of_fleet_host_warns_that_its_own_slot_is_lapsing(
-    monkeypatch, tmp_path, caplog
-):
+def test_naming_an_out_of_fleet_host_warns_that_its_own_slot_is_lapsing(tmp_path, caplog):
     """``slot-2`` is held, so no refusal — but it ends in a minute, so say so.
 
     The preamble's gate never saw ``slot-2``: the declared fleet is ``slot1``
@@ -1158,7 +1156,7 @@ def test_naming_an_out_of_fleet_host_warns_that_its_own_slot_is_lapsing(
     """
     import logging
 
-    _slot_fleet(monkeypatch, tmp_path)
+    _slot_fleet(tmp_path)
     ctx = _host_ctx(_gate({"slot-1", "slot-2"}, ends={"slot-2": _soon_utc(1)}), "slot2")
 
     with caplog.at_level(logging.WARNING, logger="otto"):
@@ -1168,11 +1166,11 @@ def test_naming_an_out_of_fleet_host_warns_that_its_own_slot_is_lapsing(
     assert "expires" in caplog.text.lower()
 
 
-def test_a_healthy_out_of_fleet_slot_says_nothing(monkeypatch, tmp_path, caplog):
+def test_a_healthy_out_of_fleet_slot_says_nothing(tmp_path, caplog):
     """The negative half: a booking well outside the window is not news."""
     import logging
 
-    _slot_fleet(monkeypatch, tmp_path)
+    _slot_fleet(tmp_path)
     ctx = _host_ctx(_gate({"slot-1", "slot-2"}, ends={"slot-2": _soon_utc(240)}), "slot2")
 
     with caplog.at_level(logging.WARNING, logger="otto"):
@@ -1181,7 +1179,7 @@ def test_a_healthy_out_of_fleet_slot_says_nothing(monkeypatch, tmp_path, caplog)
     assert "expires" not in caplog.text.lower()
 
 
-def test_warning_fires_only_once_for_an_out_of_fleet_host(monkeypatch, tmp_path, caplog):
+def test_warning_fires_only_once_for_an_out_of_fleet_host(tmp_path, caplog):
     """A lab-level booking is required by BOTH sites and announced by one.
 
     The gate requires the lab's own ``rig-pdu`` plus the fleet's ``slot-1``;
@@ -1192,7 +1190,7 @@ def test_warning_fires_only_once_for_an_out_of_fleet_host(monkeypatch, tmp_path,
     """
     import logging
 
-    lab = _slot_fleet(monkeypatch, tmp_path)
+    lab = _slot_fleet(tmp_path)
     lab.resources = {"rig-pdu"}
     gate = _gate({"rig-pdu", "slot-1", "slot-2"}, ends={"rig-pdu": _soon_utc(2)})
     ctx = _host_ctx(gate, "slot2")
@@ -1204,7 +1202,7 @@ def test_warning_fires_only_once_for_an_out_of_fleet_host(monkeypatch, tmp_path,
     assert caplog.text.count("rig-pdu") == 1
 
 
-def test_dash_r_suppresses_the_out_of_fleet_expiry_warning(monkeypatch, tmp_path, caplog):
+def test_dash_r_suppresses_the_out_of_fleet_expiry_warning(tmp_path, caplog):
     """``-R`` returns above the check at this site, so above the warning too.
 
     Mutation: move the ``skip_check`` return in
@@ -1214,7 +1212,7 @@ def test_dash_r_suppresses_the_out_of_fleet_expiry_warning(monkeypatch, tmp_path
     """
     import logging
 
-    _slot_fleet(monkeypatch, tmp_path)
+    _slot_fleet(tmp_path)
     ctx = _host_ctx(
         _gate({"slot-1", "slot-2"}, skip_check=True, ends={"slot-2": _soon_utc(1)}), "slot2"
     )
@@ -1225,7 +1223,7 @@ def test_dash_r_suppresses_the_out_of_fleet_expiry_warning(monkeypatch, tmp_path
     assert "expires" not in caplog.text.lower()
 
 
-def test_a_null_backend_never_reaches_the_out_of_fleet_expiry_helper(monkeypatch, tmp_path, caplog):
+def test_a_null_backend_never_reaches_the_out_of_fleet_expiry_helper(tmp_path, caplog):
     """The guard that keeps the warning from becoming the thing that queries.
 
     ``build_report`` short-circuits on the null backend before it asks
@@ -1251,7 +1249,7 @@ def test_a_null_backend_never_reaches_the_out_of_fleet_expiry_helper(monkeypatch
                 "the null backend was queried; the is_null_backend guard is missing"
             )
 
-    _slot_fleet(monkeypatch, tmp_path)
+    _slot_fleet(tmp_path)
     gate = ReservationGate(
         # WITH the username the check is for: without it the fetch this test
         # is trying to prove unreachable would fail on the base class's "no

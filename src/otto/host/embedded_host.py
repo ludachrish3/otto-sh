@@ -241,11 +241,13 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             logger.debug(f"{self.name}: console_options.login overridden to False (no RTOS login)")
         self._build_connection_state()
 
-    def rebuild_connections(self) -> None:
+    @override
+    def _rebuild_connections(self) -> None:
         """Recreate the ConnectionManager and its dependents, dropping the old ones unclosed.
 
-        Mirrors :meth:`~otto.host.unix_host.UnixHost.rebuild_connections`: how
-        a host leaves a closed event loop (or a rebooted board). The old
+        This family's override of the ``_rebuild_connections`` hook that
+        :meth:`~otto.host.host.BaseHost.rebuild_connections` calls: how a host
+        leaves a closed event loop (or a rebooted board). The old
         manager's transports may belong to a dead loop, so they are abandoned
         rather than closed, except a cached console client, whose line is
         released at once: the console server serves one client, so a client

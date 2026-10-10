@@ -31,6 +31,7 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.fake_repo import fake_repo
 
 from .test_resolve_select import _frag  # reuse the fragment table builder
@@ -149,11 +150,11 @@ def _staged_env_text(host: UnixHost) -> str:
 
 @contextmanager
 def _install(lab, repos, ordered=None):
-    """Patch deploy.py's three config seams for the duration of the block."""
+    """Patch deploy.py's two config seams (the lab, the composition root) for the block."""
+    result = fake_bootstrap_result(repos, ordered=ordered or None)
     with (
         patch("otto.config.fleet.get_lab", return_value=lab),
-        patch("otto.bootstrap.get_repos", return_value=list(repos)),
-        patch("otto.bootstrap.get_ordered_repos", return_value=list(ordered or repos)),
+        patch("otto.bootstrap.bootstrap", return_value=result),
     ):
         yield
 

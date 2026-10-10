@@ -43,6 +43,7 @@ from otto.host.host import BaseHost
 from otto.host.lab_info import LabInfo
 from otto.host.product import Product, apply_product_providers, register_product_provider
 from otto.host.toolchain import Toolchain
+from otto.invocation import RunPolicy
 from otto.logger.mode import LogMode
 from otto.project import (
     CleanupOptions,
@@ -203,7 +204,7 @@ def _wire_lab(monkeypatch, tmp_path, repo_names, hosts, *, declarations=None):
     lab = Lab(name="composed")
     for host in hosts:
         lab.add_host(host)
-    set_context(OttoContext(lab=lab, output_dir=tmp_path))
+    set_context(OttoContext(lab=lab, policy=RunPolicy(output_dir=tmp_path)))
     ordered = [
         fake_repo(name, project_scope=(declarations or {}).get(name), sut_dir=tmp_path / name)
         for name in repo_names

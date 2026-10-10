@@ -108,8 +108,8 @@ A `register_cli_command()` loader can be one of three things:
 
 Registration is the only opt-in. Write commands as `async def`
 functions — on your own Typer app or as bare-function loaders — and otto's
-dispatch runs each invocation under the full command lifecycle: host-scope
-entry (hosts opened during the command are swept when it exits), the
+dispatch runs each invocation under the full command lifecycle: a cleanup
+boundary (hosts opened during the command are closed when it exits), the
 two-stage SIGINT/SIGTERM interrupt policy, and the bounded teardown deadline.
 There is no decorator to remember and nothing to import from `otto.lifecycle`;
 the leaf-invoke wrapper detects the coroutine a plain `async def` leaf

@@ -1,38 +1,43 @@
 """otto's per-invocation runtime composition root.
 
-Owns the active Lab, the per-invocation runtime flags, and one host scope per
-event loop. Propagated via a ContextVar so the bare module accessors
-(otto.lab.all_hosts/get_host) can stay zero-argument, while explicit
-passing (OttoContext methods, open_context) is first-class.
+Owns the active Lab and the run's policy (:class:`RunPolicy`, from the
+``otto.invocation`` leaf, which also keeps each event loop's host registry).
+Propagated via a ContextVar so the bare module accessors
+(otto.lab.all_hosts/get_host) can stay zero-argument, while explicit passing
+(OttoContext methods, open_context) is first-class.
 """
 
 import asyncio
-import functools
 import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from contextvars import ContextVar, Token
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from .host.host import DEFAULT_COMMAND_TIMEOUT
+from .invocation import ContextBinding, HostResolver, RunPolicy, Variant
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from _typeshed import DataclassInstance
 
+    from .bootstrap import BootstrapResult
     from .config.lab import Lab
+    from .config.repo import Repo
     from .config.scope import ProjectScope
     from .host import Results, UnixHost
-    from .host.host import BaseHost
     from .host.remote_host import RemoteHost
     from .params import OptionsSource
 
 __all__ = [
+    "ContextBinding",
+    "HostResolver",
     "OttoContext",
     "ProjectContextView",
+    "RunPolicy",
     "Variant",
     "get_context",
     "open_context",
@@ -69,121 +74,6 @@ already-imported side keeps both directions acyclic.
 """
 
 
-class HostScope:
-    """The hosts whose connections one event loop owns; closes them while that loop runs.
-
-    One per event loop, held by :meth:`OttoContext.scope_for`. A host
-    registers itself the first time it touches a connection on a loop (see
-    ``BaseHost._claim_loop``), so the scope holds exactly
-    what the loop can still close gracefully. The deterministic backstop that
-    replaces ``RemoteHost.__del__``: a host created and passed around without
-    an explicit ``async with`` is still closed when its loop's scope is swept.
-    Registration is deduped by object identity; ``close()`` is idempotent, so
-    an early per-host close and the sweep never collide.
-    """
-
-    def __init__(self) -> None:
-        self._hosts: "list[BaseHost]" = []
-        self._sweeping: "list[BaseHost]" = []
-        """The hosts the current sweep set out to close, in registration order."""
-        self._settled: dict[int, bool] = {}
-        """``id(host)`` -> whether its close succeeded, for each close that has finished."""
-        self._closed: list[str] = []
-        """The ids closed by the ranks the current sweep has finished, in close order."""
-        self._rank: "list[BaseHost]" = []
-        """The rank the current sweep is closing now."""
-
-    def register(self, host: "BaseHost") -> None:
-        """Add *host* to the scope for the sweep, deduplicating by identity."""
-        if any(host is h for h in self._hosts):  # dedup by object identity
-            return
-        self._hosts.append(host)
-
-    def closed_ids(self) -> list[str]:
-        """Return the ids of the hosts the current sweep has closed so far, in close order."""
-        in_flight = [_host_id(h) for h in self._rank if self._settled.get(id(h)) is True]
-        return [*self._closed, *in_flight]
-
-    def unclosed(self) -> "list[BaseHost]":
-        """Return the hosts the current sweep set out to close whose close has not finished."""
-        return [h for h in self._sweeping if id(h) not in self._settled]
-
-    async def sweep(self) -> list[str]:
-        """Close every registered host this loop still owns; return the ids of those that closed.
-
-        Dependency-ranked: a host that another registered host names as its
-        ``parent`` (a container's ``docker exec`` channel drains over its
-        parent's still-open transport) closes only after its dependents.
-        Within a rank closes run concurrently. A failed close is logged as a
-        warning naming the host, and never stops the remaining ranks.
-
-        The list is drained first, so a second sweep closes only what
-        registered since. Only hosts this loop still owns are closed: one
-        that has moved to another loop is that loop's to close, and one its
-        own code already closed (and has not used since) has nothing left to
-        close. A duck-typed host with no ownership record at all is closed.
-        Progress is recorded as each close finishes (:meth:`closed_ids`,
-        :meth:`unclosed`), for a caller that cuts the sweep short.
-        """
-        hosts, self._hosts = self._hosts, []
-        loop = asyncio.get_running_loop()
-        remaining = [
-            h for h in hosts if getattr(h, "_owner_loop", _UNTRACKED) in (loop, _UNTRACKED)
-        ]
-        self._sweeping = list(remaining)
-        self._settled = {}
-        self._closed = []
-        while remaining:
-            parent_ids = {id(getattr(h, "parent", None)) for h in remaining}
-            rank = [h for h in remaining if id(h) not in parent_ids]
-            if not rank:
-                rank = remaining  # parent cycle (impossible by construction): close all, don't spin
-            self._rank = rank
-            results = await asyncio.gather(
-                *(self._close_one(h) for h in rank), return_exceptions=True
-            )
-            for host, result in zip(rank, results, strict=True):
-                if isinstance(result, BaseException):  # a close that raised CancelledError itself
-                    self._settled[id(host)] = False
-                    _warn_failed(host, result)
-            self._closed += [_host_id(h) for h in rank if self._settled.get(id(h)) is True]
-            self._rank = []
-            done = {id(h) for h in rank}
-            remaining = [h for h in remaining if id(h) not in done]
-        return self.closed_ids()
-
-    async def _close_one(self, host: "BaseHost") -> None:
-        """Close *host* and record the outcome; a failed close is a warning.
-
-        A close cancelled before it finished records nothing, which is what
-        leaves the host in :meth:`unclosed`.
-        """
-        try:
-            await host.close()
-        except asyncio.CancelledError:
-            raise
-        except BaseException as exc:  # noqa: BLE001 — a failed close is a warning, whatever it raised
-            self._settled[id(host)] = False
-            _warn_failed(host, exc)
-        else:
-            self._settled[id(host)] = True
-
-
-_UNTRACKED = object()
-"""Stands in for ``_owner_loop`` on a duck-typed host that records no owning loop."""
-
-_CANCEL_GRACE = 0.25
-"""Seconds a timed-out sweep waits after each cancel for the closes to unwind."""
-
-
-def _host_id(host: "BaseHost") -> str:
-    return getattr(host, "id", repr(host))
-
-
-def _warn_failed(host: "BaseHost", exc: BaseException) -> None:
-    logger.warning(f"otto: closing host {_host_id(host)!r} failed during scope sweep: {exc!r}")
-
-
 _active: ContextVar["OttoContext | None"] = ContextVar("otto_context", default=None)
 
 
@@ -203,48 +93,90 @@ def try_get_context() -> "OttoContext | None":
     return _active.get()
 
 
-def set_context(ctx: "OttoContext") -> "Token[OttoContext | None]":
-    """Install *ctx* as the active context and return the reset token."""
-    return _active.set(ctx)
+def set_context(ctx: "OttoContext") -> ContextBinding:
+    """Install *ctx*, its run policy and a live resolver over its lab; return the binding.
+
+    Hand the binding to :func:`reset_context`, in the same execution context.
+    Installing acquires no cleanup boundary. A hand-built context on a loop you
+    drive yourself closes its hosts with :meth:`OttoContext.sweep_loop`; under
+    ``open_context``, ``run_command`` or ``otto test`` a boundary holds the
+    loop, so that raises and the boundary closes them instead.
+    """
+    from .invocation import install_policy, install_resolver, install_var
+
+    policy = ctx.policy  # first: a non-context fails before anything is installed
+    binding = install_var(_active, ctx)
+    install_policy(policy, into=binding)
+    install_resolver(_ContextResolver(ctx), into=binding)
+    return binding
 
 
-Variant = Literal["debug", "field"]
-"""The product variant a run selects, ``"debug"`` or ``"field"``."""
+def reset_context(token: ContextBinding) -> None:
+    """Undo the matching :func:`set_context`: resolver, policy, then context, exactly once."""
+    from .invocation import reset_binding
 
-VARIANTS: tuple[Variant, ...] = ("debug", "field")
-"""The two product variants a run can select (``--field``/``--debug``)."""
-
-_variant: ContextVar[Variant] = ContextVar("otto_variant", default="debug")
+    reset_binding(token)
 
 
 def variant() -> Variant:
-    """Return the run's product variant — ``"debug"`` unless root ``--field`` chose field.
+    """Return the run's product variant: ``"debug"`` unless the run chose ``"field"``.
 
-    Its own ContextVar rather than a field on :class:`OttoContext`: a lab is
-    ingested — every declared entry built, every provider run — inside the
-    CLI's lab load, before an ``OttoContext`` exists, and the variant must be
-    readable there. Read by :meth:`otto.declared.KindRegistry.build` to pick
-    between same-name entries, and by providers that return per-variant
-    instances. A library caller that never set it reads ``"debug"``.
+    Read off the installed :class:`RunPolicy` (a fresh default when none is
+    installed), so ingest, which runs before any context exists, and providers
+    read one value: the one :meth:`otto.declared.KindRegistry.build` picks
+    between same-name entries by.
     """
-    return _variant.get()
+    from .invocation import current_policy
+
+    return current_policy().variant
 
 
-def set_variant(value: Variant) -> "Token[Variant]":
-    """Set the run's variant; the root CLI callback's one write, before any lab loads."""
-    if value not in VARIANTS:
-        raise ValueError(f"variant must be 'debug' or 'field', got {value!r}")
-    return _variant.set(value)
+def set_variant(value: Variant) -> ContextBinding:
+    """Choose the run's variant before any context exists; return the binding to reset.
+
+    For a script's manual pattern: ``set_variant("field")``, then build and
+    :func:`set_context` an :class:`OttoContext`, which copies the variant.
+
+    Raises:
+        ValueError: *value* is not ``"debug"`` or ``"field"``.
+        RuntimeError: a context is installed. Its policy is what hosts read,
+            and a second policy would split it from :attr:`OttoContext.policy`;
+            open a nested ``open_context(variant=...)`` to run under another
+            variant.
+    """
+    import dataclasses
+
+    from .invocation import check_variant, current_policy, install_policy
+
+    checked = check_variant(value)
+    if _active.get() is not None:
+        raise RuntimeError(
+            "set_variant cannot change the variant while a context is installed; "
+            "run that work inside a nested `async with otto.open_context(variant=...)`"
+        )
+    return install_policy(dataclasses.replace(current_policy(), variant=checked))
 
 
-def reset_context(token: "Token[OttoContext | None]") -> None:
-    """Restore the context ContextVar to the value it held before the matching ``set_context``."""
-    _active.reset(token)
+def reset_variant(token: ContextBinding) -> None:
+    """Undo the matching :func:`set_variant`, exactly once."""
+    from .invocation import reset_binding
+
+    reset_binding(token)
 
 
-def reset_variant(token: "Token[Variant]") -> None:
-    """Restore the variant ContextVar to the value it held before the matching ``set_variant``."""
-    _variant.reset(token)
+class _ContextResolver:
+    """The installed peer-host resolver: the context's lab, read live (a later ``ctx.lab`` too)."""
+
+    def __init__(self, ctx: "OttoContext") -> None:
+        self._ctx = ctx
+
+    @property
+    def name(self) -> str:
+        return self._ctx.lab.name
+
+    @property
+    def hosts(self) -> "dict[str, Any]":
+        return self._ctx.lab.hosts
 
 
 def _flags_hiding_every_match(
@@ -295,14 +227,13 @@ def _flags_hiding_every_match(
     return sorted(hiding)
 
 
-@dataclass
+@dataclass(init=False)
 class OttoContext:
-    """The active per-invocation runtime: chosen lab, runtime flags, and per-loop host scopes."""
+    """The active per-invocation runtime: chosen lab and run policy."""
 
     lab: "Lab"
-    dry_run: bool = False
-    log_command_output: bool = True
-    output_dir: "Path | None" = None
+    policy: "RunPolicy"
+    """The run's policy, read live by every host; the same object :func:`set_context` installs."""
     cov_decision: "bool | None" = None
     """Whether coverage is on for this run, once decided; ``None`` until then.
 
@@ -312,11 +243,6 @@ class OttoContext:
     Left ``None``, the first read of :attr:`cov` detects the answer and
     stores it here.
     """
-    _loop_scopes: "dict[asyncio.AbstractEventLoop, HostScope]" = field(
-        default_factory=dict, init=False, repr=False, compare=False
-    )
-    """One :class:`HostScope` per event loop that has owned a host connection."""
-
     include_projects: tuple[str, ...] = ()
     """Repo names forced ACTIVE this invocation (``-I``), PEP-503-normalized ON READ.
 
@@ -324,9 +250,9 @@ class OttoContext:
     library contexts. Read only through :func:`otto.config.scope.active` —
     nothing else may re-derive activation from these tuples.
 
-    Nothing normalizes on WRITE. This dataclass stays plain (no
-    ``__post_init__``), so any caller may store whatever spelling it holds and
-    the stored tuple is NOT guaranteed normalized;
+    Nothing normalizes on WRITE. The constructor stores what it is given, so
+    any caller may store whatever spelling it holds and the stored tuple is
+    NOT guaranteed normalized;
     :func:`otto.config.scope.active` normalizes both the stored values and the
     queried name before comparing. The invariant is therefore enforced where it
     is read rather than merely asked for here — a docstring-only version would
@@ -367,11 +293,97 @@ class OttoContext:
     _scopes_refusal: "BaseException | None" = field(
         default=None, init=False, repr=False, compare=False
     )
-    """What resolving :attr:`scopes` raised, re-raised on every later read.
+    """What :meth:`_resolve_scopes` raised, re-raised on every later read.
 
-    ``functools.cached_property`` caches a value, never an exception, so a
-    refused read would otherwise re-run the composition root on every walk.
+    Cached beside the verdicts, so a refused read never re-runs the load-error
+    classifier on every walk.
     """
+
+    _bootstrap_result: "BootstrapResult | None" = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    """The composition root's result the run already holds, as given to the constructor."""
+
+    _bootstrap_refusal: "BaseException | None" = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    """What reading the composition root raised, re-raised on every later read."""
+
+    _scope_verdicts: "dict[str, ProjectScope] | None" = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    """The repos' scope verdicts, once resolved."""
+
+    def __init__(
+        self,
+        lab: "Lab",
+        *,
+        cov_decision: "bool | None" = None,
+        include_projects: tuple[str, ...] = (),
+        exclude_projects: tuple[str, ...] = (),
+        policy: "RunPolicy | None" = None,
+        bootstrap: "BootstrapResult | None" = None,
+    ) -> None:
+        """Build a context over *lab*; the run flags come only from *policy*.
+
+        Without *policy*, a fresh :class:`RunPolicy` with the default flags
+        (not dry-run, command output logged, no output directory) copies the
+        variant and teardown deadline of
+        :func:`otto.invocation.current_policy` (the two values that were
+        ambient before contexts carried a policy); it never copies another
+        context's flags. With *policy*, that object is used as given: to run
+        a hand-built context dry, pass ``policy=RunPolicy(dry_run=True)``.
+        *bootstrap* is the composition root's result this run already holds
+        (the CLI and ``open_context`` pass theirs); without it, the first read
+        of :attr:`repos`, :attr:`ordered_repos` or the scope verdicts calls
+        ``otto.bootstrap.bootstrap()`` once, and its outcome, a refusal
+        included, is kept for the context's life.
+        ``dataclasses.replace`` is not supported on a context.
+        """
+        from .invocation import RunPolicy, current_policy
+
+        if policy is None:
+            ambient = current_policy()
+            policy = RunPolicy(variant=ambient.variant, teardown_deadline=ambient.teardown_deadline)
+        self.lab = lab
+        self.policy = policy
+        self.cov_decision = cov_decision
+        self.include_projects = include_projects
+        self.exclude_projects = exclude_projects
+        self.verb = None
+        self._verb_options = {}
+        self._verb_option_kwargs = {}
+        self._scopes_refusal = None
+        self._bootstrap_result = bootstrap
+        self._bootstrap_refusal = None
+        self._scope_verdicts = None
+
+    @property
+    def dry_run(self) -> bool:
+        """Whether this run declines device-changing commands, read live off :attr:`policy`.
+
+        Read-only. Set it on the policy (``ctx.policy.dry_run = True``), or build
+        the context with ``policy=RunPolicy(dry_run=True)``.
+        """
+        return self.policy.dry_run
+
+    @property
+    def log_command_output(self) -> bool:
+        """Whether hosts log each command and its output, read live off :attr:`policy`.
+
+        Read-only. Set it on the policy (``ctx.policy.log_command_output = False``),
+        or suppress it for a block with :class:`otto.host.host.SuppressCommandOutput`.
+        """
+        return self.policy.log_command_output
+
+    @property
+    def output_dir(self) -> "Path | None":
+        """The run's output directory, read live off :attr:`policy`.
+
+        Read-only. Set it on the policy (``ctx.policy.output_dir = path``), or
+        build the context with ``policy=RunPolicy(output_dir=path)``.
+        """
+        return self.policy.output_dir
 
     def bind_verb_options(self, verb: str, kwargs: "dict[str, Any]") -> None:
         """Build every options class registered for *verb* from the parsed *kwargs*.
@@ -488,9 +500,7 @@ class OttoContext:
         if self.lab.name == LIBRARY_LAB_NAME:
             return False
         try:
-            from .bootstrap import get_repos
-
-            repos = get_repos()
+            repos = self.repos
         except Exception as exc:  # noqa: BLE001 — no repos reachable ⇒ no [coverage] ⇒ off
             logger.debug(f"otto: coverage detection unavailable ({exc!r}); ctx.cov is False")
             return False
@@ -525,8 +535,8 @@ class OttoContext:
     def get_host(self, host_id: str, **overrides: Any) -> "UnixHost":
         """Look up *host_id* in the active lab and apply any keyword overrides.
 
-        Handing a host out registers nothing: the host joins the scope of
-        whichever event loop it first connects on (:meth:`scope_for`).
+        Handing a host out registers nothing: the host registers with the
+        event loop it connects on, and that loop's cleanup closes it.
         """
         from .config.fleet import _apply_option_overrides
 
@@ -550,151 +560,101 @@ class OttoContext:
         resolved = _apply_option_overrides(cast("Any", host), **overrides)
         return cast("UnixHost", resolved)
 
-    def scope_for(self, loop: asyncio.AbstractEventLoop) -> HostScope:
-        """Return the host scope of *loop*: the hosts whose connections that loop owns.
-
-        Entries for loops that have closed are pruned on the way, so a
-        long-lived context that sees many short loops (a script calling
-        ``asyncio.run`` repeatedly) keeps one entry per live loop. Pruning
-        only forgets the entry: a host still owned by that dead loop drops
-        its connection state on its next use or ``close()``.
-        """
-        for dead in [lp for lp in self._loop_scopes if lp.is_closed() and lp is not loop]:
-            del self._loop_scopes[dead]
-        return self._loop_scopes.setdefault(loop, HostScope())
-
     async def sweep_loop(
         self, loop: asyncio.AbstractEventLoop, *, label: str, deadline: float | None = None
     ) -> list[str]:
-        """Close every host *loop* owns, while it still runs; log one debug line naming them.
+        """Close every host registered on *loop* now, while it runs; for a loop you drive yourself.
 
-        Awaited on *loop* itself, before it closes: the command lifecycle
-        does so at the end of each command, ``open_context`` on exit, and
-        ``otto test`` at the end of each pytest-asyncio loop. *label* names
-        the loop in the debug line, for example ``closed 2 hosts at end of
-        TestRouter's loop: dut1, dut2``. Returns the ids of the hosts that
-        closed; a failed close is a warning, not a raise.
+        Meant for a script that drives its own loop with a hand-built context
+        and no cleanup boundary. Inside ``open_context``, ``run_command`` or
+        ``otto test`` the boundary closes the loop's hosts instead, so this
+        raises there. *label* names the loop in the debug line. Returns the
+        ids of the hosts that closed; a failed close is a warning.
 
-        *deadline* bounds the sweep in seconds; the callers in otto pass the
-        teardown deadline (``OTTO_TEARDOWN_DEADLINE``), and ``None`` waits
-        for every close. When the deadline expires the sweep is cancelled,
-        and after a short grace cancelled again, however its closes' own
-        cleanup is going. A warning then gives the time taken and names the
-        hosts not closed, whose connection state is dropped unclosed so each
-        reconnects on its next use. The return value still lists the hosts
-        that did close.
+        *deadline* bounds the sweep in seconds (``None`` waits for every
+        close). On expiry the sweep is cancelled, and after a short grace
+        cancelled again; a warning names the hosts not closed, whose
+        connections are dropped so each reconnects on its next use.
 
         Raises:
-            RuntimeError: *loop* is not the running loop. A host's close is
-                network work that only its owning loop can drive.
+            RuntimeError: *loop* is not the running loop; a cleanup boundary
+                holds it; it is already being swept; or its runner shut it down.
         """
         if loop is not asyncio.get_running_loop():
             raise RuntimeError(
                 f"sweep_loop can only sweep the running loop, but {label} is not the "
                 "loop running here; await it on that loop, before the loop closes"
             )
-        scope = self._loop_scopes.pop(loop, None)
-        if scope is None:
-            return []
-        started = loop.time()
-        task = loop.create_task(scope.sweep())
-        try:
-            await asyncio.wait({task}, timeout=deadline)
-            if not task.done():
-                await self._cut_short(task)
-        except BaseException:
-            task.cancel()  # our own caller gave up; the sweep must not outlive it
-            raise
-        if task.done() and not task.cancelled():
-            closed = task.result()
-        else:
-            closed = scope.closed_ids()
-            self._abandon_unclosed(scope, loop, label=label, elapsed=loop.time() - started)
-        if closed:
-            noun = "host" if len(closed) == 1 else "hosts"
-            logger.debug(f"closed {len(closed)} {noun} at end of {label}: {', '.join(closed)}")
-        return closed
+        from .invocation import sweep_unheld
 
-    @staticmethod
-    async def _cut_short(task: "asyncio.Task[list[str]]") -> None:
-        """Cancel a sweep that ran past its deadline, waiting only a bounded grace per cancel.
+        return await sweep_unheld(loop, label=label, deadline=deadline)
 
-        A cancelled close can keep running in its own cleanup, for example a
-        transport's close in a ``finally``; the second cancel interrupts that.
-        A task that still refuses is left to finish on its own, with its
-        outcome retrieved when it does, so nothing waits on it unboundedly.
+    def _bootstrap_snapshot(self) -> "BootstrapResult":
+        """Return the one result this context reads its repos and load errors from.
+
+        Read on first use when the constructor was given none; a refusal is
+        cached and re-raised on every later read.
         """
-        for _ in range(2):
-            task.cancel()
-            await asyncio.wait({task}, timeout=_CANCEL_GRACE)
-            if task.done():
-                return
-        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        if self._bootstrap_refusal is not None:
+            raise self._bootstrap_refusal
+        if self._bootstrap_result is None:
+            from .bootstrap import bootstrap  # function-scope: the composition root
 
-    @staticmethod
-    def _abandon_unclosed(
-        scope: HostScope, loop: asyncio.AbstractEventLoop, *, label: str, elapsed: float
-    ) -> None:
-        """Drop the connections of the hosts a cut-short sweep of *loop* left unclosed."""
-        stuck = [h for h in scope.unclosed() if getattr(h, "_owner_loop", None) in (None, loop)]
-        for host in stuck:
-            if hasattr(host, "_owner_loop"):  # a duck-typed host keeps no state to drop
-                host._drop_dead_connections()  # noqa: SLF001 — the context is the owner's other half
-                host._owner_loop = None  # noqa: SLF001 — the context is the owner's other half
-        ids = ", ".join(_host_id(h) for h in stuck) or "none"
-        logger.warning(
-            f"otto: closing hosts at end of {label} ran past its deadline; gave up after "
-            f"{elapsed:.1f}s and dropped the connections of: {ids}"
-        )
+            try:
+                self._bootstrap_result = bootstrap()
+            except Exception as exc:  # cached: an unavailable bootstrap stays unavailable
+                self._bootstrap_refusal = exc
+                raise
+        return self._bootstrap_result
 
-    def abandon_closed_loops(self) -> list[str]:
-        """Drop the connections of hosts whose loop closed unswept (the backstop).
+    @property
+    def repos(self) -> "list[Repo]":
+        """Every repo this run parsed, a dependency-skipped one included.
 
-        A loop that closed before anything swept it leaves connections no
-        loop can close gracefully. Their state is dropped, as a host's next
-        use would drop it anyway, and the hosts are unowned again. Hosts
-        that have since moved to another loop are left alone. Returns the ids
-        abandoned, logged at debug level.
+        A fresh list on every read: changing it changes nothing here. A list
+        of repos is not deeply immutable; what is promised is the membership
+        and the order. With no SUT directories it is empty ("known empty").
+
+        Raises:
+            Exception: whatever discovery raised, when the repos cannot be
+                read ("unavailable"); the same exception on every read.
         """
-        abandoned: list[str] = []
-        for loop in [lp for lp in self._loop_scopes if lp.is_closed()]:
-            for host in self._loop_scopes.pop(loop)._hosts:  # noqa: SLF001 — HostScope is this module's own
-                if host._owner_loop is not loop:  # noqa: SLF001 — the context is the owner's other half
-                    continue
-                host._drop_dead_connections()  # noqa: SLF001 — the context is the owner's other half
-                host._owner_loop = None  # noqa: SLF001 — the context is the owner's other half
-                abandoned.append(host.id)
-        if abandoned:
-            noun = "host" if len(abandoned) == 1 else "hosts"
-            logger.debug(
-                f"abandoned {len(abandoned)} {noun} left on closed loops: {', '.join(abandoned)}"
-            )
-        return abandoned
+        return list(self._bootstrap_snapshot().repos)
 
-    @functools.cached_property
-    def scopes(self) -> "dict[str, ProjectScope]":
-        """Each repo's resolved fleet of interest for this run (spec §5), computed once.
+    @property
+    def ordered_repos(self) -> "list[Repo]":
+        """The repos a fleet-wide walk visits, in dependency order, skipped repos absent.
 
-        Display and abort data — ``status --full`` renders it and
-        :func:`~otto.config.scope.require_current_scope` refuses on it. Fleet
-        iteration does NOT read the stored :attr:`~otto.config.scope.ProjectScope.universe`; it
-        re-asks :func:`~otto.config.scope.repo_targets` per host through
+        A fresh list on every read, from the same result as :attr:`repos`.
+        """
+        return list(self._bootstrap_snapshot().ordered_repos)
+
+    def _resolve_scopes(self) -> "dict[str, ProjectScope]":
+        """Resolve the per-repo scope verdicts once and cache them; read them with ``scopes_of``.
+
+        Each repo's resolved fleet of interest for this run, keyed by
+        ``Repo.name``. Display and abort data: ``status --full`` renders it
+        and :func:`~otto.config.scope.require_current_scope` refuses on it.
+        Fleet iteration does NOT read the stored
+        :attr:`~otto.config.scope.ProjectScope.universe`; it re-asks
+        :func:`~otto.config.scope.repo_targets` per host through
         :func:`~otto.config.scope.scoped_ids`, so a container registered after
-        this property was first touched is still scoped correctly.
+        the verdicts were first resolved is still scoped correctly.
 
-        Lazy, not computed in ``__post_init__``, because resolving it needs the
-        repos — and reaching them runs ``bootstrap()``. A context is built in
-        plenty of places that never walk a fleet (library FD-model callers, the
-        ``LIBRARY_LAB_NAME`` sentinel session, unit tests holding a hand-built
-        ``Lab``), and making every one of them pay for — or fail on — a
-        composition root they never asked for would be the wrong trade.
+        Lazy, not computed at construction, because resolving them needs the
+        repos, which come from :attr:`repos`'s one bootstrap result. A context
+        is built in plenty of places that never walk a fleet (library
+        FD-model callers, the ``LIBRARY_LAB_NAME`` sentinel session, unit
+        tests holding a hand-built ``Lab``), and making every one of them pay
+        for, or fail on, a composition root it never asked for would be the
+        wrong trade.
 
         The verdicts cover every repo whose settings parsed, a repo the
         dependency pass skipped included: a skip changes what a repo
         registers, never what it declared, so it cannot make a declaration
         vanish and widen the walk. Two worlds answer an empty mapping, which
-        feeds the whole-lab fallback: the ``LIBRARY_LAB_NAME`` sentinel
-        lab, and a run with no SUT directories at all (no repos, so nothing
+        feeds the whole-lab fallback: the ``LIBRARY_LAB_NAME`` sentinel lab,
+        and a run with no SUT directories at all (no repos, so nothing
         declared and nothing to narrow).
 
         A walk never widens because the repos could not be read:
@@ -710,30 +670,32 @@ class OttoContext:
           does not exist) propagates as raised.
 
         A refusal is cached: every later read re-raises the same exception
-        without running ``bootstrap()`` again.
+        without running the classifier or ``bootstrap()`` again.
 
         Raises:
             otto.session.RepoLoadError: A load error that stops a run.
         """
         if self._scopes_refusal is not None:
             raise self._scopes_refusal
-        if self.lab.name == LIBRARY_LAB_NAME:
-            return {}
-        try:
-            return self._resolve_verdicts()
-        except Exception as exc:  # cached: a refused read must not re-run bootstrap()
-            self._scopes_refusal = exc
-            raise
+        if self._scope_verdicts is None:
+            if self.lab.name == LIBRARY_LAB_NAME:
+                self._scope_verdicts = {}
+            else:
+                try:
+                    self._scope_verdicts = self._resolve_verdicts()
+                except Exception as exc:  # cached: a refused read must not re-run the classifier
+                    self._scopes_refusal = exc
+                    raise
+        return self._scope_verdicts
 
     def _resolve_verdicts(self) -> "dict[str, ProjectScope]":
         """Resolve every parsed repo's verdict, after refusing a load error that is fatal here."""
-        from .bootstrap import bootstrap
         from .config.scope import _not_switched_off, resolve_scopes
         from .host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
         from .session.errors import RepoLoadError
         from .session.projects import classify_load_errors
 
-        result = bootstrap()
+        result = self._bootstrap_snapshot()
         verdicts = classify_load_errors(
             result,
             list(self.lab.component_names),
@@ -812,23 +774,20 @@ class OttoContext:
                 own fleet is empty is not reported as the whole fleet's;
                 suppressed by ``require_nonempty=False``. Also when *owner*
                 names a repo this run never resolved, which no flag suppresses.
-            otto.session.RepoLoadError: :attr:`scopes` refused: a repo failed
+            otto.session.RepoLoadError: The scope verdicts refused: a repo failed
                 to load in a way that stops a run. No flag suppresses it.
         """
         from .config.scope import require_nonempty_fleet, scoped_ids
 
+        scopes = self._resolve_scopes()
         admissible = scoped_ids(
-            self.lab.hosts, self.scopes, owner, exclude_projects=self.exclude_projects
+            self.lab.hosts, scopes, owner, exclude_projects=self.exclude_projects
         )
         if require_nonempty:
             require_nonempty_fleet(
-                self.scopes, admissible, owner, exclude_projects=self.exclude_projects
+                scopes, admissible, owner, exclude_projects=self.exclude_projects
             )
         return admissible
-
-    def _admissible_ids(self, owner: "str | None") -> "set[str]":
-        """Alias of :meth:`admissible_ids` kept for one release; new code calls the public name."""
-        return self.admissible_ids(owner)
 
     def all_hosts(
         self,
@@ -889,8 +848,9 @@ class OttoContext:
                 ``otto.config.fleet._apply_option_overrides``.
 
         Yields:
-            RemoteHost: Each selected host. Nothing registers until it connects
-            (see :meth:`scope_for`).
+            RemoteHost: Each selected host. Nothing registers until it
+            connects; then it registers with the event loop it connects on,
+            and that loop's cleanup closes it.
 
         Raises:
             otto.config.scope.EmptySelectionError: *pattern* is not ``None`` and
@@ -1132,11 +1092,10 @@ class ProjectContextView:
     off a host they share. Through this view that mistake is unspellable.
 
     A FACADE OVER THE SAME CONTEXT, not a copy. Everything else —
-    :meth:`~OttoContext.get_host`, the runtime flags, the per-loop host
-    scopes, links, options — is delegated live by ``__getattr__``, so an
-    ``output_dir`` set after the view was built still arrives, and a host
-    handed out here registers, once it connects, into the same per-loop
-    :class:`HostScope` that closes it.
+    :meth:`~OttoContext.get_host`, the runtime flags, links, options — is
+    delegated live by ``__getattr__``, so an ``output_dir`` set after the
+    view was built still arrives. A host handed out here registers with the
+    event loop it connects on, and that loop's cleanup closes it.
 
     ``get_host`` is deliberately NOT narrowed (§6): explicit targeting beats
     scoping, and a repo naming a jump host it does not own must still reach it.
@@ -1234,6 +1193,47 @@ class ProjectContextView:
         return await self._ctx.run_on_all_hosts(*args, _scope_owner=self._repo_name, **kwargs)
 
 
+def prepared_policy(
+    *,
+    variant: "Variant | None" = None,
+    dry_run: bool = False,
+    log_command_output: bool = True,
+    output_dir: "Path | None" = None,
+) -> RunPolicy:
+    """Build the policy a run prepares before its lab: flags given, variant given or inherited.
+
+    Shared by :func:`open_context` and the library ``run_tests``. The
+    teardown deadline is the default 10 seconds, never an inherited one; the
+    caller fills it from discovery with :func:`fill_teardown_deadline`.
+    Raises ``ValueError`` for an unknown *variant*, before anything is
+    installed.
+    """
+    from .invocation import RunPolicy, check_variant, current_policy
+
+    return RunPolicy(
+        dry_run=dry_run,
+        log_command_output=log_command_output,
+        output_dir=output_dir,
+        variant=current_policy().variant if variant is None else check_variant(variant),
+    )
+
+
+def fill_teardown_deadline(policy: "RunPolicy") -> None:
+    """Set *policy*'s teardown deadline to the one discovery parsed (``OTTO_TEARDOWN_DEADLINE``).
+
+    When discovery fails, *policy*'s deadline is left as it is: a policy from
+    :func:`prepared_policy` keeps the default 10 s. It never reads another
+    policy's deadline. ``open_context`` calls it once its policy is
+    installed, and the library ``run_tests`` before it installs its sentinel
+    context.
+    """
+    from .bootstrap import discovered_teardown_deadline  # function-scope: the composition root
+
+    discovered = discovered_teardown_deadline()
+    if discovered is not None:
+        policy.teardown_deadline = discovered
+
+
 @asynccontextmanager
 async def open_context(
     *,
@@ -1262,23 +1262,31 @@ async def open_context(
     :func:`~otto.reservations.build_reservation_gate` from the repos'
     ``[reservations]``), so a lab whose resources you do not hold refuses.
 
-    *variant* mirrors ``otto --field/--debug``: it is applied with
-    :func:`otto.context.set_variant` before the lab is built, so a product
-    declared once per variant resolves to the chosen entry, and it stays set
-    for the body, where providers read it. ``None`` keeps the variant already
-    active (``"debug"`` unless the caller set one). Every exit restores the
-    previous variant, a refusal during setup included. A
-    :class:`~otto.config.lab.Lab` you pass keeps the products it was built
-    with, so build it under the same variant (:func:`set_variant` before
-    :func:`~otto.session.build_lab`); containers started in the body
-    (``compose_up``) are ingested under the variant you pass.
+    *variant* mirrors ``otto --field/--debug``: it is installed on the run's
+    policy (:attr:`OttoContext.policy`) before the lab is built, so a product
+    declared once per variant resolves to the chosen entry, and it stays for
+    the body, where providers read it. ``None`` inherits the variant already
+    current (``"debug"`` unless the caller chose one). A nested
+    ``open_context(variant=...)`` inside another context is allowed: it is
+    how a script runs work under another variant, since :func:`set_variant`
+    refuses while a context is installed. Every exit restores the outer
+    policy, a refusal during setup included. A :class:`~otto.config.lab.Lab`
+    you pass keeps the products it was built with, so build it under the same
+    variant (:func:`set_variant` before :func:`~otto.session.build_lab`);
+    containers started in the body (``compose_up``) are ingested under the
+    variant you pass.
 
     *lab* is a lab name, a ``+``-joined combination, a list of either (each
     item split like a repeated ``--lab``), or a
-    :class:`~otto.config.lab.Lab`. On exit, the running loop's host scope
-    closes the hosts that connected on it (:meth:`OttoContext.sweep_loop`) and
-    the contextvar is reset. It installs no logging (see
+    :class:`~otto.config.lab.Lab`. It installs no logging (see
     :func:`otto.session.install_logging`).
+
+    On exit it releases its cleanup boundary on the running loop, and the
+    last release closes the hosts that connected on that loop. A nested
+    ``open_context``'s exit closes nothing while the outer one holds the
+    loop; under ``otto test`` the runner's loop holds it until that runner
+    shuts down (see the host-scopes cookbook). Then it restores the outer
+    context and policy.
 
     *holder* mirrors ``--holder`` (check reservations as that user; ``None``
     or ``""`` means the invoking user). *skip_reservation_check* mirrors
@@ -1305,16 +1313,26 @@ async def open_context(
             you do not hold; its ``.report`` lists each one and its holders.
         otto.reservations.check.ReservationBackendError: the configured backend
             cannot be built or queried.
+        RuntimeError: entered from inside a host's close while its loop is
+            being swept (refused before any of the steps above).
     """
-    # First, so an invalid value refuses before anything needs undoing.
-    variant_token = None if variant is None else set_variant(variant)
+    from .invocation import install_policy, refuse_inside_a_sweep, reset_binding
+
+    # First, so an invalid variant refuses before anything needs undoing.
+    policy = prepared_policy(
+        variant=variant, dry_run=dry_run, log_command_output=log_command_output
+    )
+    # Before bootstrap, the lab build and the reservation gate: a host's close
+    # during a sweep cannot open a context, so it pays for none of them.
+    refuse_inside_a_sweep("open_context")
+    policy_binding = install_policy(policy)  # ingest reads the variant while the lab is built
     try:
-        from .bootstrap import bootstrap, get_env
+        from .bootstrap import bootstrap
         from .config.lab import Lab, split_lab_names
         from .session import build_lab, check_dependencies, check_repos, select_projects
 
         result = bootstrap()  # composition root — idempotent; registers user init components
-        deadline = get_env().teardown_deadline  # bounds the closing sweep on exit
+        fill_teardown_deadline(policy)  # after discovery; bounds the closing sweep on exit
         selection = select_projects(result.repos, include_projects or [], exclude_projects or [])
         if isinstance(lab, Lab):
             labs = list(lab.component_names)
@@ -1344,30 +1362,33 @@ async def open_context(
             logger.info("reservations: acting as %r (holder=)", gate.identity.username)
         ctx = OttoContext(
             lab=resolved_lab,
-            dry_run=dry_run,
-            log_command_output=log_command_output,
             include_projects=tuple(selection.include),
             exclude_projects=tuple(selection.exclude),
+            policy=policy,
+            bootstrap=result,
         )
-        token = set_context(ctx)
+        binding = set_context(ctx)
         try:
             for warning in check_dependencies(ctx):
                 logger.warning("%s", warning)
             # Last, as the CLI presents its gate after the dependency refusal;
             # dry_run is gated too, because the CLI gates before its dry-run seam.
             gate.evaluate()
+            from .invocation import acquire_boundary_waiting
+
+            # Waits out a sweep in progress on this loop.
+            boundary = await acquire_boundary_waiting(
+                asyncio.get_running_loop(), deadline=policy.teardown_deadline
+            )
         except BaseException:
-            reset_context(token)
+            reset_context(binding)
             raise
         try:
             yield ctx
         finally:
             try:
-                await ctx.sweep_loop(
-                    asyncio.get_running_loop(), label="open_context", deadline=deadline
-                )
+                await boundary.release(label="open_context")
             finally:
-                reset_context(token)
+                reset_context(binding)
     finally:
-        if variant_token is not None:
-            reset_variant(variant_token)
+        reset_binding(policy_binding)

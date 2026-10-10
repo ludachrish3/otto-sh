@@ -261,6 +261,7 @@ from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.remote_host import make_host_id
 from otto.host.unix_host import UnixHost
+from otto.invocation import RegistrySnapshot
 from otto.registry import Registry
 from otto.suite._retry import report_retries, retry_hookwrapper
 from tests._fixtures import _conftest_rebind
@@ -276,6 +277,7 @@ from tests._fixtures._lazy_exports import (
     raise_on_leaked_lazy_exports,
 )
 from tests._fixtures._loop_reaper import (
+    LeakedRegistrationError,
     LeakedRunningLoopError,
     classify_loop_origin,
     reap_or_raise,
@@ -287,6 +289,7 @@ from tests._fixtures._transport_leaks import (
     install_transport_tracker,
     scan_leaked_transports,
 )
+from tests._fixtures.run_state import preserved_run_state
 
 # ---------------------------------------------------------------------------
 # tach pytest-plugin stub (process-global sys.modules identity → root conftest)
@@ -334,6 +337,9 @@ def pytest_configure(config):  # type: ignore[no-untyped-def]
     # it must repair (see the module docstring; interim-review find).
     if not config.pluginmanager.has_plugin("otto-conftest-rebind"):
         config.pluginmanager.register(_conftest_rebind, name="otto-conftest-rebind")
+    from otto import invocation
+
+    invocation._FORGET_OBSERVER = _archive_closed_wider_loop  # test support seam
 
 
 def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool | None:
@@ -454,6 +460,9 @@ def pytest_unconfigure(config):  # type: ignore[no-untyped-def]
     import faulthandler
     import signal
 
+    from otto import invocation
+
+    invocation._FORGET_OBSERVER = None  # test support seam
     if hasattr(faulthandler, "unregister"):
         faulthandler.unregister(signal.SIGINT)
 
@@ -590,6 +599,48 @@ def _live_scoped_runner_loops(item) -> set:
     return owned
 
 
+_WIDER_RUNNER_LOOPS: "weakref.WeakSet[asyncio.AbstractEventLoop]" = weakref.WeakSet()
+"""Loops a class/module/package/session pytest-asyncio runner owned, seen at a test's teardown."""
+
+_CLOSED_WITH_HOSTS: list[RegistrySnapshot] = []
+"""Wider runner loops that closed with hosts still registered; reported at session end."""
+
+
+def _archive_closed_wider_loop(snap: RegistrySnapshot) -> None:
+    """``otto.invocation``'s forget observer: keep a closed wider runner loop's leftover hosts.
+
+    ``otto.invocation`` calls it from ``_forget_registry``, the one place a
+    registry is removed, BEFORE the registry goes. So a leak on a module or
+    session loop survives whichever code forgets that loop first: the guard,
+    or a registration anywhere (a later test, or another fixture's finalizer
+    in the same teardown).
+    """
+    if snap.closed and snap.loop in _WIDER_RUNNER_LOOPS:
+        _CLOSED_WITH_HOSTS.append(snap)
+
+
+def _orphan_registrations(item) -> list[RegistrySnapshot]:  # type: ignore[no-untyped-def]
+    """The hosts left registered on an open loop that no cleanup boundary holds (orphans), cleared.
+
+    Called in the teardown wrapper after every fixture has torn down and BEFORE
+    the loop reaper, which would close a loop the test leaked and so hide its
+    hosts. The only exemption is a held boundary (spec 2 §7): a live wider-scoped
+    runner loop is inspected like any other, so a test that shares a host across
+    tests on one either holds a boundary for that scope or closes the host.
+    Closed loops' registries are forgotten; the forget observer
+    (``_archive_closed_wider_loop``) keeps a wider runner loop's leftover hosts
+    for the session-end check. Each orphan's registry is dropped, so the next
+    test starts clean.
+    """
+    from otto import invocation
+
+    invocation.forget_closed_loops()
+    orphans = [snap for snap in invocation.open_registrations() if snap.held == 0]
+    for snap in orphans:
+        invocation._forget_registry(snap.loop)  # the guard owns the cleanup
+    return orphans
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_teardown(item):
     """After the test and all its fixtures finalize, reap orphaned harness
@@ -600,7 +651,14 @@ def pytest_runtest_teardown(item):
     Loops still owned by a live wider-than-function runner are excluded so the
     reaper never closes a class/module/package/session loop out from under the
     next test in that scope (see :func:`_live_scoped_runner_loops`).
+
+    Hosts the test left registered on an open loop that no cleanup boundary
+    holds raise :class:`LeakedRegistrationError`, a wider runner loop
+    included (see :func:`_orphan_registrations`).
     """
+    # Before the yield, while the wider runners are still alive: a session or
+    # module runner finalized inside this teardown is still recorded.
+    _WIDER_RUNNER_LOOPS.update(_live_scoped_runner_loops(item))
     try:
         result = yield
         _reap_after_teardown(item)
@@ -617,8 +675,12 @@ def pytest_runtest_teardown(item):
 
 
 def _reap_after_teardown(item) -> None:  # type: ignore[no-untyped-def]
-    """Reap orphaned loops, refuse a still-running one, and report leaked transports."""
+    """Reap orphaned loops, refuse a running one or orphaned hosts, report leaked transports."""
     global _loops_reaped  # noqa: PLW0603 — module-level singleton/cache
+
+    # First: the reaper below closes every open harness loop the test leaked,
+    # which would hide the hosts the test left registered on it.
+    orphans = _orphan_registrations(item)
 
     def origin_of(loop):
         info = _LOOP_INFO.get(loop)
@@ -648,6 +710,13 @@ def _reap_after_teardown(item) -> None:  # type: ignore[no-untyped-def]
     reason = running_loop_leak_reason(running, origin, describe=describe)
     if reason is not None:
         raise LeakedRunningLoopError(f"{item.nodeid}: {reason}")
+    if orphans:
+        names = "; ".join(f"{snap.loop!r}: {', '.join(snap.display_ids)}" for snap in orphans)
+        raise LeakedRegistrationError(
+            f"{item.nodeid}: hosts left registered on an open event loop no boundary holds "
+            f"({names}); close the hosts, hold a cleanup boundary for the loop's scope, "
+            "or close the loop the test opened"
+        )
     # After the reap, so transports bound to a just-reaped function loop are
     # flagged at this very boundary instead of one test later.
     _report_leaked_transports(item)
@@ -655,7 +724,18 @@ def _reap_after_teardown(item) -> None:  # type: ignore[no-untyped-def]
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):  # type: ignore[no-untyped-def]
-    """Fail the session if it wrote a NEW ``__pycache__`` under ``src/otto``.
+    """Fail the session if a host registration outlived it, or it wrote bytecode into ``src/otto``.
+
+    Registrations first (:func:`_fail_on_registrations_left`), in every
+    process, since each xdist worker has its own registries: what the
+    per-test orphan guard archived (a class, module, package or session
+    runner loop that closed with hosts still registered) together with every
+    registry still holding records now. It forgets nothing first, so a
+    closed loop's leftover hosts are reported too. A worker hands its lines
+    to the controller, which reports every process's and fails the session.
+
+    The rest of this docstring is about the bytecode check: a NEW
+    ``__pycache__`` under ``src/otto``.
 
     The invariant the ``PYTHONPYCACHEPREFIX`` block at the top of this module
     buys: a test process that writes bytecode into the editable source tree
@@ -691,6 +771,7 @@ def pytest_sessionfinish(session, exitstatus):  # type: ignore[no-untyped-def]
       perturbs the NEXT run's first measurement; this guard simply cannot
       attribute it to the session that spawned it.
     """
+    _fail_on_registrations_left(session, exitstatus)
     if os.environ.get("PYTEST_XDIST_WORKER"):
         return
     created = sorted(_src_otto_pycache_dirs() - _PYCACHE_AT_SESSION_START)
@@ -719,6 +800,59 @@ def pytest_sessionfinish(session, exitstatus):  # type: ignore[no-untyped-def]
             reporter.write_line(line)
     else:  # pragma: no cover - only without the terminal reporter (e.g. -p no:terminal)
         print("\n".join(lines))  # noqa: T201 — test diagnostic output
+    if exitstatus == 0:
+        session.exitstatus = 1
+
+
+_WORKER_REGISTRATIONS_LEFT: list[str] = []
+"""The controller's copy of what each xdist worker reported left at its session end."""
+
+_REGISTRATIONS_LEFT_KEY = "otto_registrations_left"
+"""The ``workeroutput`` key a worker's leftover registrations travel under."""
+
+
+def _registrations_left() -> list[str]:
+    """This process's leftover host registrations, one line per loop.
+
+    What the per-test guard archived (a wider runner loop closed with hosts
+    still registered, possibly forgotten since by a later registration), plus
+    whatever is still registered now. Nothing is forgotten first.
+    """
+    from otto import invocation
+
+    left = [*_CLOSED_WITH_HOSTS, *invocation.all_registrations()]
+    return [f"{snap.loop!r}: {', '.join(snap.display_ids)}" for snap in left]
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):  # type: ignore[no-untyped-def]
+    """Controller side: collect what a finished xdist worker reported left registered."""
+    output = getattr(node, "workeroutput", None) or {}
+    _WORKER_REGISTRATIONS_LEFT.extend(output.get(_REGISTRATIONS_LEFT_KEY, []))
+
+
+def _fail_on_registrations_left(session, exitstatus) -> None:  # type: ignore[no-untyped-def]
+    """Fail the session if a host registration outlived it, in this process or any worker.
+
+    An xdist worker cannot fail the run itself: xdist records the worker's
+    exit status before this hook runs, the controller acts on a worker
+    status of 2 only, and the worker's terminal goes nowhere. So a worker
+    hands its lines to the controller through ``workeroutput`` (sent after
+    its session finishes), :func:`pytest_testnodedown` collects them, and the
+    controller reports them and sets the exit status.
+    """
+    lines = _registrations_left()
+    workeroutput = getattr(session.config, "workeroutput", None)
+    if workeroutput is not None:  # an xdist worker: the controller reports
+        workeroutput[_REGISTRATIONS_LEFT_KEY] = lines
+        return
+    lines += _WORKER_REGISTRATIONS_LEFT
+    if not lines:
+        return
+    reporter = session.config.pluginmanager.getplugin("terminalreporter")
+    if reporter is not None:
+        reporter.write_sep("=", "registrations outlived the session", red=True)
+        reporter.write_line("host registrations left at session end: " + "; ".join(lines))
     if exitstatus == 0:
         session.exitstatus = 1
 
@@ -779,9 +913,30 @@ def _report_leaked_transports(item) -> None:  # type: ignore[no-untyped-def]
 
 
 @contextlib.contextmanager
-def active_context(lab=None, **kwargs):
-    """Install an OttoContext for the duration of the block (test helper)."""
-    token = set_context(OttoContext(lab=lab if lab is not None else Lab(name="test"), **kwargs))
+def active_context(
+    lab=None,
+    *,
+    dry_run: bool = False,
+    log_command_output: bool = True,
+    output_dir: "Path | None" = None,
+    **kwargs,
+):
+    """Install an OttoContext for the duration of the block (test helper).
+
+    The three run flags become the context's policy (``OttoContext`` takes
+    them only through ``policy=``), copying the current variant and teardown
+    deadline as a policy-less context does.
+    """
+    from otto.invocation import current_policy
+
+    policy = dataclasses.replace(
+        current_policy(),
+        dry_run=dry_run,
+        log_command_output=log_command_output,
+        output_dir=output_dir,
+    )
+    lab = lab if lab is not None else Lab(name="test")
+    token = set_context(OttoContext(lab=lab, policy=policy, **kwargs))
     try:
         yield
     finally:
@@ -830,33 +985,52 @@ def _hermetic_otto_home(_hermetic_otto_home_dir: Path) -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _reset_otto_context():
-    """Restore the OttoContext and variant ContextVars to their pre-test values after every test.
+    """Restore the OttoContext, run-policy and resolver ContextVars to their pre-test values.
 
     Fixtures and tests call set_context() / set_variant() directly, which persist
-    in the ContextVars. We snapshot the values at test start and restore them at
+    in the ContextVars (the context's own, and the ``otto.invocation`` leaf's
+    policy and resolver). We snapshot the values at test start and restore them at
     teardown, so a test that sets a context can't leak into later tests run on
     the same (long-lived) xdist worker. We do NOT force the var to None during
     the test — that would wipe a module/session scoped context a fixture
     installed for the test to use (e.g. the hop integration suite's
-    module-scoped lab).
+    module-scoped lab). That module-scoped install is
+    :func:`_reset_otto_context_per_module`'s to undo.
 
     Lives in the *root* conftest so it covers the integration tree too: under
     ``make coverage`` the whole suite runs in one process and ungrouped unit
     tests can land on a worker that previously ran integration tests.
 
-    A CLI invocation needs none of this: it resets the context and the variant
+    A CLI invocation needs none of this: it resets the context and the policy
     it installed when Click closes its root context, through ``CliRunner`` as
     through ``entry()``.
     """
-    from otto.context import _active, _variant
-
-    snapshot = _active.get()
-    variant_snapshot = _variant.get()
-    try:
+    with preserved_run_state():
         yield
-    finally:
-        _active.set(snapshot)
-        _variant.set(variant_snapshot)
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _reset_otto_context_per_module():
+    """Restore the same three ContextVars when each test module ends.
+
+    The per-test restore cannot undo a module-scoped fixture's install: it
+    snapshots the state with that install already in place. So a module
+    fixture that undid only part of what ``set_context`` installed (restoring
+    the context's ``_active`` and not the leaf's policy and resolver, as the
+    integration bed conftests did) left a policy and a live resolver to every
+    later test on its worker: under ``make coverage`` that failed 14 unit
+    tests, which found a policy installed before they started. A root
+    module-scoped autouse fixture is set up before every other module-scoped
+    fixture and finalized after them, so whatever a module installed ends
+    with that module.
+
+    A session-scoped fixture that installs a context is still preserved when
+    it is set up before the module starts (requested by the module's first
+    test, or autouse); one first requested later in a module is undone when
+    that module ends.
+    """
+    with preserved_run_state():
+        yield
 
 
 @pytest.fixture(autouse=True)

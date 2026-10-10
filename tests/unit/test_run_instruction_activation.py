@@ -6,13 +6,14 @@ from otto.config.lab import Lab
 from otto.context import OttoContext, try_get_context
 from otto.instructions import INSTRUCTIONS, InstructionEntry, run_instruction
 from otto.session import InstructionInactiveError
+from tests._fixtures.bootstrap_seam import seed_scope_verdicts
 
 pytestmark = pytest.mark.asyncio
 
 
 def _ctx(*, exclude: "tuple[str, ...]" = ()) -> OttoContext:
     ctx = OttoContext(lab=Lab(name="t"), exclude_projects=exclude)
-    ctx.scopes = {}
+    seed_scope_verdicts(ctx, {})
     return ctx
 
 

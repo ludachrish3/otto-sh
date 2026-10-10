@@ -1183,7 +1183,7 @@ class TestSeamStaysLoopFreeWithoutProbe:
 
     Before this fix ``stop_at_dry_run_seam`` bridged its ENTIRE tail through
     ``run_command(finish_dry_run(...))`` unconditionally — signal handlers,
-    a host-scope sweep, and a teardown-deadline lookup, all to print a few
+    a cleanup boundary, and a teardown-deadline lookup, all to print a few
     lines and raise ``typer.Exit(0)``. Patching ``otto.lifecycle.run_command``
     and asserting it went untouched is the only way to prove the loop truly
     never starts; asserting on output alone could not tell this fix apart

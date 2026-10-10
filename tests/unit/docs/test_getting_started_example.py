@@ -324,7 +324,7 @@ def test_the_versions_fragment_is_a_working_provider() -> None:
         try:
             built = versions.agents_for(host)
         finally:
-            context._variant.reset(token)
+            context.reset_variant(token)
         assert [p.name for p in built] == ["agent-1.2", "agent-1.3"]
         assert all(str(p.artifact).endswith("-field") for p in built)
         assert all(p.artifact.is_absolute() for p in built)

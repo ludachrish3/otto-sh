@@ -15,11 +15,9 @@ library setup the test does before the invocation it is about.
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from contextvars import Token
-
     import pytest
 
-    from otto.context import OttoContext
+    from otto.context import ContextBinding, OttoContext
 
 
 def record_contexts_at_close(monkeypatch: "pytest.MonkeyPatch") -> "list[OttoContext]":
@@ -34,7 +32,7 @@ def record_contexts_at_close(monkeypatch: "pytest.MonkeyPatch") -> "list[OttoCon
     real_reset = context_mod.reset_context
     seen: "list[OttoContext]" = []
 
-    def _recording_reset(token: "Token[OttoContext | None]") -> None:
+    def _recording_reset(token: "ContextBinding") -> None:
         installed = context_mod.try_get_context()
         if installed is not None:
             seen.append(installed)

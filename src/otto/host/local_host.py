@@ -189,9 +189,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     def __post_init__(self) -> None:
         self.id = "local"
-        self.rebuild_connections()
+        self._rebuild_connections()
 
-    def rebuild_connections(self) -> None:
+    @override
+    def _rebuild_connections(self) -> None:
         """Recreate the session manager and transfer backend, dropping the old ones unclosed.
 
         How a host leaves a closed event loop: the old shell's pipes belong
@@ -639,4 +640,5 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     @override
     async def _close(self) -> None:
-        await self._session_mgr.close_all()
+        session_mgr = self._session_mgr
+        await session_mgr.close_all()

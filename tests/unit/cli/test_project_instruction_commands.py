@@ -73,7 +73,11 @@ from otto.project.commands import (
 from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
-from tests._fixtures.bootstrap_seam import patch_bootstrap
+from tests._fixtures.bootstrap_seam import (
+    fake_bootstrap_result,
+    patch_bootstrap,
+    seed_scope_verdicts,
+)
 from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.sutrepo import make_sut_repo
@@ -945,15 +949,12 @@ async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
         "h0": types.SimpleNamespace(source_lab="bench"),
         "h1": types.SimpleNamespace(source_lab="floor"),
     }
-    ctx = types.SimpleNamespace(
-        scopes=resolve_scopes(repos, ["bench", "floor"], hosts),
-        # ``status`` asks ``otto.config.scope.active``, which reads the switch
-        # tuples as well as the verdicts. Empty, as the real ``OttoContext``
-        # defaults them: this lab is decided by declarations alone.
-        include_projects=(),
-        exclude_projects=(),
-    )
-    ctx.for_repo = lambda name: types.SimpleNamespace(_repo=name)
+    # ``status`` asks ``otto.config.scope.active``, which reads the switch
+    # tuples as well as the verdicts. Empty, as the real ``OttoContext``
+    # defaults them: this lab is decided by declarations alone.
+    ctx = OttoContext(lab=Lab(name="t"), bootstrap=fake_bootstrap_result(repos))
+    seed_scope_verdicts(ctx, resolve_scopes(repos, ["bench", "floor"], hosts))
+    monkeypatch.setattr(ctx, "for_repo", lambda name: types.SimpleNamespace(_repo=name))
 
     monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, repos))
     # The scoping rows cover every parsed repo, read from the composition root.
@@ -1014,15 +1015,12 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
         "h0": types.SimpleNamespace(source_lab="bench"),
         "h1": types.SimpleNamespace(source_lab="floor"),
     }
-    ctx = types.SimpleNamespace(
-        scopes=resolve_scopes(repos, ["bench", "floor"], hosts),
-        # ``status`` asks ``otto.config.scope.active``, which reads the switch
-        # tuples as well as the verdicts. Empty, as the real ``OttoContext``
-        # defaults them: this lab is decided by declarations alone.
-        include_projects=(),
-        exclude_projects=(),
-    )
-    ctx.for_repo = lambda name: types.SimpleNamespace(_repo=name)
+    # ``status`` asks ``otto.config.scope.active``, which reads the switch
+    # tuples as well as the verdicts. Empty, as the real ``OttoContext``
+    # defaults them: this lab is decided by declarations alone.
+    ctx = OttoContext(lab=Lab(name="t"), bootstrap=fake_bootstrap_result(repos))
+    seed_scope_verdicts(ctx, resolve_scopes(repos, ["bench", "floor"], hosts))
+    monkeypatch.setattr(ctx, "for_repo", lambda name: types.SimpleNamespace(_repo=name))
 
     monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, repos))
     # The scoping rows cover every parsed repo, read from the composition root.
@@ -1495,15 +1493,15 @@ class TestProjectInstructionOwnOptionValidation:
     def _wire_one_repo(self, monkeypatch) -> None:
         """Make ``guarded`` a walked repo: undeclared, so it is always kept (§6).
 
-        The patch feeds the orchestrator's walk order (``get_ordered_repos()``).
+        The patch feeds the run's repos, and with them the orchestrator's walk
+        order (``ctx.ordered_repos``).
         ``project_scope=None`` is the documented undeclared shape
         (:func:`otto.config.scope._lab_applies`) -- the whole-lab fallback,
         never a narrowing -- so whatever verdicts the context resolves, this
         repo's walk is never narrowed away.
         """
-        monkeypatch.setattr(
-            "otto.bootstrap.get_ordered_repos",
-            lambda: [fake_repo("guarded", project_scope=None, sut_dir="/tmp/guarded")],
+        patch_bootstrap(
+            monkeypatch, [fake_repo("guarded", project_scope=None, sut_dir="/tmp/guarded")]
         )
 
     def test_a_bad_own_option_exits_2_on_a_real_run(self, monkeypatch, registered) -> None:
@@ -1553,8 +1551,7 @@ def _wire_widget_lab(monkeypatch, seen: list, names=("widget", "dormant")) -> No
 
     publish_project_instructions()
     repos = [fake_repo(n, project_scope=None, sut_dir=f"/tmp/{n}") for n in names]
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: repos)
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: repos)
+    patch_bootstrap(monkeypatch, repos)
 
 
 def _install_skips(caplog) -> list[str]:

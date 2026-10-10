@@ -10,6 +10,8 @@ refusal order: configuration, tier, ticket, instrumentation, repository,
 destination — all before any host is actually fetched from.
 """
 
+import asyncio
+import contextvars
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -99,6 +101,15 @@ def git_sut(tmp_path):
     repo.write("f.c", "int a;\n")
     repo.commit("init")
     return repo.root
+
+
+async def _with_nothing_installed(coro):
+    """Await *coro* in a fresh, empty execution context: no context, policy or resolver.
+
+    The task is created inside ``contextvars.Context().run``, so it runs in a
+    copy of that empty context whatever the caller has installed.
+    """
+    return await contextvars.Context().run(asyncio.ensure_future, coro)
 
 
 @pytest.fixture
@@ -381,6 +392,7 @@ async def test_get_defaults_to_the_per_invocation_output_dir(all_hosts_of, git_s
     into ``ctx.output_dir / "cov"`` — the per-invocation output directory."""
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.invocation import RunPolicy
 
     repo = _repo({"hosts": ".*"}, sut_dir=git_sut)
     board = _embedded_board("board1")
@@ -397,7 +409,7 @@ async def test_get_defaults_to_the_per_invocation_output_dir(all_hosts_of, git_s
 
     invocation_dir = tmp_path / "xdir" / "cov" / "20260703_120000_000_get"
     invocation_dir.mkdir(parents=True)
-    token = set_context(OttoContext(lab=Lab(name="t"), output_dir=invocation_dir))
+    token = set_context(OttoContext(lab=Lab(name="t"), policy=RunPolicy(output_dir=invocation_dir)))
     try:
         with patch("otto.coverage.collect.collect_coverage", collect_mock):
             report = await get_coverage(repos=[repo])
@@ -413,18 +425,12 @@ async def test_no_output_dir_and_no_context_is_refused(all_hosts_of, git_sut):
     """No ``output_dir`` and no context (a bare programmatic call) fails clean —
     after config/tier/ticket/instrumentation/repository validation, so those
     never get masked by it."""
-    from otto.context import reset_context, set_context
-
     repo = _repo({"hosts": ".*"}, sut_dir=git_sut)
     board = _embedded_board("board1")
     all_hosts_of(board)
 
-    token = set_context(None)
-    try:
-        with pytest.raises(CoverageInputError) as exc:
-            await get_coverage(repos=[repo])
-    finally:
-        reset_context(token)
+    with pytest.raises(CoverageInputError) as exc:
+        await _with_nothing_installed(get_coverage(repos=[repo]))
     assert exc.value.field == "output_dir"
 
 
@@ -620,8 +626,6 @@ async def test_a_failed_get_clean_keeps_the_captures_and_reports_not_ok(
 async def test_each_refusal_fires_before_any_host_is_touched(all_hosts_of, tmp_path):
     """Configuration, tier, ticket, instrumentation, repository, destination:
     in that order — none of them ever calls ``collect_coverage``/``clean_coverage``."""
-    from otto.context import reset_context, set_context
-
     git_sut_repo = TmpGitRepo(tmp_path / "sut")
     git_sut_repo.write("f.c", "int a;\n")
     git_sut_repo.commit("init")
@@ -676,12 +680,8 @@ async def test_each_refusal_fires_before_any_host_is_touched(all_hosts_of, tmp_p
             patch("otto.coverage.collect.clean_coverage", clean_mock),
         ):
             if i == len(scenarios) - 1:
-                token = set_context(None)
-                try:
-                    with pytest.raises(expected):
-                        await get_coverage(repos=[repo], **kwargs)
-                finally:
-                    reset_context(token)
+                with pytest.raises(expected):
+                    await _with_nothing_installed(get_coverage(repos=[repo], **kwargs))
             else:
                 with pytest.raises(expected):
                     await get_coverage(output_dir=tmp_path, repos=[repo], **kwargs)

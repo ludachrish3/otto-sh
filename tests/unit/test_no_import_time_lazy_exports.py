@@ -54,9 +54,13 @@ GUARDED_PACKAGES = ["otto", "otto.config", "otto.logger"]
 # getters; the getters themselves are guarded at their defining modules.
 GUARDED_ATTRS_PACKAGES = ["otto.lab"]
 
-# Getters that no lazy table exports, because their defining module is their
-# public home: patched there, read at call time, never bound at import (spec
-# 2026-10-06 repo-and-scope-inputs §9, the lazy-getter guard).
+# Getters that no lazy table exports, read at their defining module: patched
+# there, read at call time, never bound at import (spec 2026-10-06
+# repo-and-scope-inputs §9, the lazy-getter guard). otto.bootstrap is its
+# getters' public home. otto.invocation has no public path, but the host layer
+# reads the run's policy and peer-host resolver there, and a module-level
+# binding of either would go stale across runs just the same (spec 2026-10-06
+# run-state contracts §3).
 PROCESS_WIDE_GETTERS: dict[str, frozenset[str]] = {
     "otto.bootstrap": frozenset(
         {
@@ -68,6 +72,7 @@ PROCESS_WIDE_GETTERS: dict[str, frozenset[str]] = {
             "get_completion_names",
         }
     ),
+    "otto.invocation": frozenset({"current_policy", "installed_policy", "installed_resolver"}),
 }
 
 # A site that genuinely cannot read the name at call time, keyed on its path

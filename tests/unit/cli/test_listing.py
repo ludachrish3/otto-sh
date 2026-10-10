@@ -14,6 +14,7 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from otto.config.repo import Repo
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -237,7 +238,7 @@ class TestListTests:
 
     def test_list_tests_lists_all_and_exits(self, tmp_path: Path) -> None:
         repo = self._repo_with_tests(tmp_path)
-        with patch("otto.bootstrap.get_repos", return_value=[repo]):
+        with patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result([repo])):
             result = runner.invoke(_test_app(), ["--list-tests"])
         assert result.exit_code == 0
         assert "test_alpha" in result.stdout
@@ -245,7 +246,7 @@ class TestListTests:
 
     def test_list_tests_filters_by_marker(self, tmp_path: Path) -> None:
         repo = self._repo_with_tests(tmp_path)
-        with patch("otto.bootstrap.get_repos", return_value=[repo]):
+        with patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result([repo])):
             result = runner.invoke(_test_app(), ["--list-tests", "--markers", "slow"])
         assert result.exit_code == 0
         assert "test_beta" in result.stdout

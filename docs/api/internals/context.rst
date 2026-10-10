@@ -10,7 +10,3 @@ them. The public names are on :doc:`/api/context`.
 .. autodata:: otto.context.T
 
 .. autodata:: otto.context.LIBRARY_LAB_NAME
-
-.. autoclass:: otto.context.HostScope
-
-.. autodata:: otto.context.VARIANTS

@@ -32,11 +32,14 @@ def otto_plugins(otto_output_dir):
     """
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.invocation import RunPolicy
     from otto.suite.layout import ArtifactLayout
     from otto.suite.plugin import OttoPlugin
     from otto.suite.pytest_plugin import OttoFixturesPlugin
 
-    token = set_context(OttoContext(lab=Lab(name="_test_stub"), output_dir=otto_output_dir))
+    token = set_context(
+        OttoContext(lab=Lab(name="_test_stub"), policy=RunPolicy(output_dir=otto_output_dir))
+    )
     try:
         yield [OttoPlugin(), OttoFixturesPlugin(layout=ArtifactLayout(root=otto_output_dir))]
     finally:

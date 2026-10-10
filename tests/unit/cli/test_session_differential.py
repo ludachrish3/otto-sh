@@ -437,7 +437,7 @@ def test_otto_field_and_open_context_variant_field_build_the_same_lab(tmp_path, 
     """``otto --field --lab X`` and ``open_context(lab=X, variant="field")`` pick the same entry.
 
     The CLI side is the real ``entry()``, so the ``--field`` parse and the root
-    callback's ``set_variant`` are in the loop; its lab is read off the context
+    callback's policy install are in the loop; its lab is read off the context
     ``ensure_lab_context`` installed, as Click's close resets it. Sync, with the
     library side under its own ``asyncio.run``, so ``entry()`` never runs inside
     a live loop.

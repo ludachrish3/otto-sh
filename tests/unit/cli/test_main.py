@@ -47,6 +47,37 @@ async def _main_probe() -> CommandResult:
 register_cli_command("_main_probe", _main_probe, help="internal test probe", gate=False)
 
 
+def _ingest_variant_entries() -> list[str]:
+    """Build two same-name declared entries, one per variant, as ingest does while a lab loads."""
+    from types import SimpleNamespace
+
+    from otto.declared import DeclaredEntry, KindRegistry
+
+    registry: KindRegistry = KindRegistry("toy kind", register_hint="register_toy_kind()")
+    registry.register(
+        "toy",
+        lambda entry, host: SimpleNamespace(name=entry.name, owner=None, **entry.params),
+        origin="tests",
+    )
+
+    def entry(variant: str, artifact: str) -> DeclaredEntry:
+        return DeclaredEntry(
+            name="fw",
+            kind="toy",
+            seam="products",
+            owner="acme",
+            base_dir=Path("/repo"),
+            match={},
+            params={"artifact": artifact},
+            cls=None,
+            variant=variant,
+        )
+
+    host = SimpleNamespace(id="h1", source_lab="", element=None)
+    built = registry.build([entry("field", "field.bin"), entry("debug", "debug.bin")], host)
+    return [b.artifact for b in built]
+
+
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
 
@@ -752,7 +783,7 @@ class TestDryRunMode:
 
 
 class TestInvocationResets:
-    """An invocation resets the variant and context it installed when Click closes it.
+    """An invocation resets the policy and context it installed when Click closes it.
 
     Spec docs/superpowers/specs/2026-10-06-run-state-contracts-design.md §5. Each
     test runs its invocations inside its own body and asserts between them, so
@@ -791,6 +822,29 @@ class TestInvocationResets:
         assert isinstance(result.exception, RuntimeError), result.output
         assert (context.variant(), context.try_get_context()) == ("debug", baseline)
 
+    def test_an_interrupted_deadline_discovery_restores_the_prior_policy(
+        self, main_mocks, monkeypatch
+    ):
+        """An interrupt between installing the root policy and its deadline still resets it.
+
+        Discovery swallows ``Exception`` only, so ``KeyboardInterrupt`` escapes
+        it; the policy installed just before must not outlive the invocation.
+        """
+        from otto.invocation import RunPolicy, install_policy, installed_policy, reset_binding
+
+        def _interrupt() -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("otto.bootstrap.discovered_teardown_deadline", _interrupt)
+        outer = RunPolicy(dry_run=True)  # an embedding caller's dry run
+        binding = install_policy(outer)
+        try:
+            result = _invoke([])
+            assert result.exit_code != 0, result.output  # the interrupt aborted the invocation
+            assert installed_policy() is outer
+        finally:
+            reset_binding(binding)
+
     def test_two_entry_invocations_each_leave_the_state_they_found(
         self, main_mocks, monkeypatch, contexts_at_close
     ):
@@ -807,27 +861,62 @@ class TestInvocationResets:
         assert (context.variant(), context.try_get_context()) == ("debug", baseline)
         assert len(contexts_at_close) == 2
 
-    def test_the_context_resets_before_the_variant(self, main_mocks, monkeypatch):
-        """Spec 2 §5: the context resets before the variant (LIFO close)."""
+    def test_the_context_resets_before_the_policy(self, main_mocks, monkeypatch):
+        """Spec 2 §5: the context's binding resets before the root policy's (LIFO close).
+
+        Both go through ``otto.invocation.reset_binding``; each reset is named by
+        what it changed: the installed context, or (the context unchanged) the
+        installed policy.
+        """
         import otto.context as context_mod
+        import otto.invocation as invocation_mod
 
         order: "list[str]" = []
-        real_reset_context = context_mod.reset_context
-        real_reset_variant = context_mod.reset_variant
+        real_reset_binding = invocation_mod.reset_binding
 
-        def _context(token):
-            order.append("context")
-            real_reset_context(token)
+        def _spy(binding):
+            before = (context_mod.try_get_context(), invocation_mod.installed_policy())
+            real_reset_binding(binding)
+            after = (context_mod.try_get_context(), invocation_mod.installed_policy())
+            if before[0] is not after[0]:
+                order.append("context")
+            elif before[1] is not after[1]:
+                order.append("policy")
+            else:
+                order.append("neither")
 
-        def _variant(token):
-            order.append("variant")
-            real_reset_variant(token)
-
-        monkeypatch.setattr("otto.context.reset_context", _context)
-        monkeypatch.setattr("otto.context.reset_variant", _variant)
+        monkeypatch.setattr("otto.invocation.reset_binding", _spy)
         result = _invoke(["--field"])
         assert result.exit_code == 0, result.output
-        assert order == ["context", "variant"]
+        assert order == ["context", "policy"]
+
+    @pytest.mark.parametrize(
+        ("flags", "picked"), [(["--field"], ["field.bin"]), ([], ["debug.bin"])]
+    )
+    def test_lab_loading_ingests_under_the_runs_variant(
+        self, main_mocks, contexts_at_close, flags, picked
+    ):
+        built: list[list[str]] = []
+
+        def load_lab_and_ingest(*args, **kwargs):
+            built.append(_ingest_variant_entries())  # ingest runs while the lab loads
+            return main_mocks["lab"]
+
+        main_mocks["load_lab"].side_effect = load_lab_and_ingest
+        result = runner.invoke(app, ["--lab", "test_lab", *flags, "_main_probe"])
+        assert result.exit_code == 0, result.output
+        assert built, "the lab never loaded: the probe did not reach ingest"
+        assert all(b == picked for b in built)
+        assert [ctx.policy.variant for ctx in contexts_at_close] == [picked[0].split(".")[0]]
+
+    def test_the_root_callback_fills_the_teardown_deadline_from_discovery(
+        self, main_mocks, contexts_at_close
+    ):
+        result = runner.invoke(
+            app, ["--lab", "test_lab", "_main_probe"], env={"OTTO_TEARDOWN_DEADLINE": "7.5"}
+        )
+        assert result.exit_code == 0, result.output
+        assert [ctx.policy.teardown_deadline for ctx in contexts_at_close] == [7.5]
 
     def test_the_inline_lab_load_resets_too(self, real_main_mocks, contexts_at_close):
         """The root callback's inline lab load (``--show-lab``) registers one reset.

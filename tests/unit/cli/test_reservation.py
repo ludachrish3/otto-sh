@@ -213,14 +213,14 @@ def test_check_exits_1_when_not_configured(capsys):
     assert exc.value.exit_code == 1
 
 
-def test_check_passes_when_fully_reserved(capsys, monkeypatch):
+def test_check_passes_when_fully_reserved(capsys):
     identity = ResolvedIdentity(username="alice", source="$USER")
     backend = _FakeBackend()
     res = ReservationGate(backend=backend, identity=identity, skip_check=False)
     ctx = _make_ctx({"otto_reservation": res})
 
     lab = Lab(name="test_lab", resources={"r1"})
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     check(ctx)  # must not raise
 
     assert "OK" in capsys.readouterr().out
@@ -239,7 +239,7 @@ def test_check_exits_1_on_missing_reservation(capsys, monkeypatch):
     ctx = _make_ctx({"otto_reservation": res})
 
     lab = Lab(name="test_lab", resources={"r1"})
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     with pytest.raises(typer.Exit) as exc:
         check(ctx)
     assert exc.value.exit_code == 1
@@ -262,7 +262,7 @@ def test_check_prints_the_requirement_table_before_the_verdict(capsys, monkeypat
     ctx = _make_ctx({"otto_reservation": res})
 
     lab = _rig_lab(_slot_host("test1", "chassis1", "slot-1"))
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
 
     check(ctx)
 
@@ -291,9 +291,7 @@ def test_check_table_covers_only_the_hosts_in_play(capsys, monkeypatch, tmp_path
         _slot_host("test1", "chassis1", "slot-1"),
         _slot_host("test2", "chassis2", "slot-2"),
     )
-    install_scoped_context(
-        monkeypatch, lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["chassis1"])]
-    )
+    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["chassis1"])])
 
     check(ctx)  # must not raise: slot-2 is unheld, but chassis2 is out of play
 
@@ -319,7 +317,6 @@ def test_check_drops_the_hosts_of_an_excluded_project(capsys, monkeypatch, tmp_p
         _slot_host("test2", "chassis2", "slot-2"),
     )
     install_scoped_context(
-        monkeypatch,
         lab,
         [
             _repo(tmp_path, "r1", labs=["rig"], hosts=["chassis1"]),
@@ -358,9 +355,7 @@ def test_check_under_an_empty_declared_fleet_reports_zero_hosts_in_play(
 
     lab = _rig_lab(_slot_host("test1", "chassis1", "slot-1"))
     lab.resources = {"r1"}
-    install_scoped_context(
-        monkeypatch, lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])]
-    )
+    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])])
 
     check(ctx)
 
@@ -385,7 +380,7 @@ def test_check_says_so_when_nothing_is_required(capsys, monkeypatch):
     res = ReservationGate(backend=_FakeBackend(), identity=identity, skip_check=False)
     ctx = _make_ctx({"otto_reservation": res})
 
-    install_scoped_context(monkeypatch, _rig_lab(), [])
+    install_scoped_context(_rig_lab(), [])
 
     check(ctx)
 
@@ -414,7 +409,7 @@ def test_check_does_not_query_the_backend_when_nothing_is_required(capsys, monke
     res = ReservationGate(backend=_UnreachableBackend(), identity=identity, skip_check=False)
     ctx = _make_ctx({"otto_reservation": res})
 
-    install_scoped_context(monkeypatch, _rig_lab(), [])
+    install_scoped_context(_rig_lab(), [])
 
     check(ctx)  # must not raise: nothing is required, so nothing is asked
 
@@ -443,7 +438,7 @@ def test_check_table_renders_n_a_under_the_null_backend(capsys, monkeypatch):
     ctx = _make_ctx({"otto_reservation": res})
 
     lab = _rig_lab(_slot_host("test1", "chassis1", "slot-1"))
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
 
     check(ctx)  # must not raise
 
@@ -478,7 +473,7 @@ def test_check_renders_a_resource_that_looks_like_markup_verbatim(capsys, monkey
     res = ReservationGate(backend=_HoldsBracketed(), identity=identity, skip_check=False)
     ctx = _make_ctx({"otto_reservation": res})
 
-    install_scoped_context(monkeypatch, Lab(name="rig", resources={"rack[a]"}), [])
+    install_scoped_context(Lab(name="rig", resources={"rack[a]"}), [])
 
     check(ctx)
 
@@ -509,7 +504,7 @@ def test_check_table_does_not_credit_a_foreign_users_row(capsys, monkeypatch):
     ctx = _make_ctx({"otto_reservation": res})
 
     lab = Lab(name="test_lab", resources={"r1"})
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     with pytest.raises(typer.Exit) as exc:
         check(ctx)
     assert exc.value.exit_code == 1
@@ -536,7 +531,7 @@ def test_whoami_builds_backend_on_demand(capsys):
     assert "fake" in out  # backend_name() from the factory-built backend
 
 
-def test_check_loads_lab_lazily_when_preamble_skipped(capsys, monkeypatch):
+def test_check_loads_lab_lazily_when_preamble_skipped(capsys):
     """The lab_free group means check must pull the lab in itself."""
     from unittest.mock import patch
 
@@ -548,7 +543,7 @@ def test_check_loads_lab_lazily_when_preamble_skipped(capsys, monkeypatch):
         c.meta["otto_reservation"] = state
 
     lab = Lab(name="test_lab", resources={"r1"})
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     with patch("otto.cli.invoke.ensure_lab_context", side_effect=_fake_ensure) as ensure:
         check(ctx)
 
@@ -576,7 +571,7 @@ def test_check_without_lab_exits_with_usage_error(capsys):
     )
 
 
-def test_check_builds_backend_on_demand(capsys, monkeypatch):
+def test_check_builds_backend_on_demand(capsys):
     identity = ResolvedIdentity(username="alice", source="--holder")
     res = ReservationGate(
         backend=None,
@@ -587,7 +582,7 @@ def test_check_builds_backend_on_demand(capsys, monkeypatch):
     ctx = _make_ctx({"otto_reservation": res})
 
     lab = Lab(name="test_lab", resources={"r1"})
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     check(ctx)  # _FakeBackend reserves {"r1"} for everyone → passes
 
     assert "OK" in capsys.readouterr().out
@@ -626,14 +621,14 @@ class _ExpiringBackend(ReservationBackendBase):
         return [Reservation(user="alice", resource=resource)]
 
 
-def test_check_warns_when_a_required_reservation_is_expiring(capsys, monkeypatch, caplog):
+def test_check_warns_when_a_required_reservation_is_expiring(capsys, caplog):
     import logging
 
     identity = ResolvedIdentity(username="alice", source="$USER")
     res = ReservationGate(backend=_ExpiringBackend(1), identity=identity, skip_check=False)
     ctx = _make_ctx({"otto_reservation": res})
 
-    install_scoped_context(monkeypatch, Lab(name="test_lab", resources={"r1"}), [])
+    install_scoped_context(Lab(name="test_lab", resources={"r1"}), [])
     with caplog.at_level(logging.WARNING, logger="otto"):
         check(ctx)
 
@@ -642,7 +637,7 @@ def test_check_warns_when_a_required_reservation_is_expiring(capsys, monkeypatch
     assert "expires" in caplog.text.lower()
 
 
-def test_check_is_silent_for_a_reservation_outside_the_window(capsys, monkeypatch, caplog):
+def test_check_is_silent_for_a_reservation_outside_the_window(capsys, caplog):
     """The negative half of the pair, so the warning is not simply unconditional."""
     import logging
 
@@ -650,14 +645,14 @@ def test_check_is_silent_for_a_reservation_outside_the_window(capsys, monkeypatc
     res = ReservationGate(backend=_ExpiringBackend(600), identity=identity, skip_check=False)
     ctx = _make_ctx({"otto_reservation": res})
 
-    install_scoped_context(monkeypatch, Lab(name="test_lab", resources={"r1"}), [])
+    install_scoped_context(Lab(name="test_lab", resources={"r1"}), [])
     with caplog.at_level(logging.WARNING, logger="otto"):
         check(ctx)
 
     assert "expires" not in caplog.text.lower()
 
 
-def test_check_still_warns_under_skip_reservation_check(capsys, monkeypatch, caplog):
+def test_check_still_warns_under_skip_reservation_check(capsys, caplog):
     """``-R`` does NOT silence this command. Consequence to preserve, not to fix.
 
     Mutation: gate the call on ``not res.skip_check`` and this goes red — and
@@ -675,7 +670,7 @@ def test_check_still_warns_under_skip_reservation_check(capsys, monkeypatch, cap
     )
     ctx = _make_ctx({"otto_reservation": res})
 
-    install_scoped_context(monkeypatch, Lab(name="test_lab", resources={"r1"}), [])
+    install_scoped_context(Lab(name="test_lab", resources={"r1"}), [])
     with caplog.at_level(logging.WARNING, logger="otto"):
         check(ctx)
 
@@ -684,7 +679,7 @@ def test_check_still_warns_under_skip_reservation_check(capsys, monkeypatch, cap
     assert "expires" in caplog.text.lower()
 
 
-def test_check_does_not_warn_when_the_lab_requires_nothing(capsys, monkeypatch, caplog):
+def test_check_does_not_warn_when_the_lab_requires_nothing(capsys, caplog):
     """The empty-requirement short-circuit sits above the warning.
 
     The backend raises on any fetch: reaching it at all would fail a run that
@@ -706,7 +701,7 @@ def test_check_does_not_warn_when_the_lab_requires_nothing(capsys, monkeypatch, 
     )
     ctx = _make_ctx({"otto_reservation": res})
 
-    install_scoped_context(monkeypatch, Lab(name="empty_lab"), [])
+    install_scoped_context(Lab(name="empty_lab"), [])
     with caplog.at_level(logging.WARNING, logger="otto"):
         check(ctx)
 
@@ -714,7 +709,7 @@ def test_check_does_not_warn_when_the_lab_requires_nothing(capsys, monkeypatch, 
     assert "expires" not in caplog.text.lower()
 
 
-def test_check_does_not_warn_under_the_null_backend(capsys, monkeypatch, caplog):
+def test_check_does_not_warn_under_the_null_backend(capsys, caplog):
     """``n/a`` in the held column and nothing in the log: there is nothing to lapse.
 
     Mutation: drop the ``if not null:`` guard from the warning in
@@ -740,7 +735,7 @@ def test_check_does_not_warn_under_the_null_backend(capsys, monkeypatch, caplog)
     )
     ctx = _make_ctx({"otto_reservation": res})
 
-    install_scoped_context(monkeypatch, Lab(name="test_lab", resources={"r1"}), [])
+    install_scoped_context(Lab(name="test_lab", resources={"r1"}), [])
     with caplog.at_level(logging.WARNING, logger="otto"):
         check(ctx)
 

@@ -6,6 +6,7 @@ import pytest
 
 from otto.host.product import ProductPlan
 from otto.project.plan import HostPlan, ProductPlanEntry, RepoPlan
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fake_repo import fake_repo
 from tests.unit.cli.conftest import _flat
 from tests.unit.cli.test_project_instruction_commands import _publish_the_six
@@ -102,6 +103,7 @@ def test_the_leaf_drives_the_real_planner_over_a_lab_without_contacting_the_host
     from otto.context import OttoContext, reset_context, set_context
     from otto.declared import DeclaredEntry
     from otto.host.product import PRODUCT_KINDS
+    from otto.invocation import RunPolicy
     from tests._fixtures.dispatch import DispatchRunner
     from tests.unit.project.test_plan import _Host
 
@@ -119,10 +121,9 @@ def test_the_leaf_drives_the_real_planner_over_a_lab_without_contacting_the_host
     product = PRODUCT_KINDS.build([entry], host)[0]
     product.owner = "r1"
     host.products = [product]
-    ctx = OttoContext(lab=Lab(name="bench", hosts={host.id: host}), dry_run=True)
+    ctx = OttoContext(lab=Lab(name="bench", hosts={host.id: host}), policy=RunPolicy(dry_run=True))
     repos = [fake_repo("r1", project_scope=None, sut_dir=tmp_path)]
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: repos)
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: repos)
+    patch_bootstrap(monkeypatch, repos)
     token = set_context(ctx)
     try:
         dry = DispatchRunner().invoke(run_app, ["install"], async_leaves=True)

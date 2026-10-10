@@ -398,6 +398,19 @@ def get_env() -> "OttoEnvSettings":
     return discover().env
 
 
+def discovered_teardown_deadline() -> "float | None":
+    """``OTTO_TEARDOWN_DEADLINE`` as discovery parsed it, or ``None`` when discovery fails.
+
+    Read once, when a run is prepared (the CLI root callback,
+    ``open_context``, library ``run_tests``), into the run's policy. With no
+    policy installed, every reader sees the policy's 10-second default.
+    """
+    try:
+        return get_env().teardown_deadline
+    except Exception:  # noqa: BLE001 — discovery unavailable (bare library use): the default stands
+        return None
+
+
 def is_bootstrapped() -> bool:
     """Report whether bootstrap has already started — never forces it.
 

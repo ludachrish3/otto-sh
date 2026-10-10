@@ -42,6 +42,7 @@ from tests._fixtures.labdata import lab_data_path
 # SUT repos depend on for this frame), adding its dir to the path the way
 # ``Repo.add_libs_to_pythonpath`` does at config-load time.
 from tests._fixtures.paths import ensure_custom_hosts_on_path
+from tests._fixtures.run_state import preserved_run_state
 from tests.conftest import (
     _ZEPHYR_BACKEND_NE,
     BUSYBOX_BED_GROUP,
@@ -107,21 +108,20 @@ def _install_integration_lab() -> None:
 def _load_lab():
     """Make the SSH hops resolvable by the embedded host transport.
 
-    Snapshots the OttoContext ContextVar before installing the integration
-    lab and restores it on module teardown. xdist workers are long-lived
-    processes, so without this restore the ``integration_host`` context would
-    persist after this module finishes and leak into whatever test the worker
-    runs next — e.g. a ``tests/unit/test_context.py`` case asserting a pristine
-    ``try_get_context() is None``. The function-scoped ``_reset_otto_context``
-    in the root conftest cannot undo this: it snapshots the *already-installed*
-    module context, so the module-scoped install needs its own restore.
+    Restores, on module teardown, everything ``set_context`` installed: the
+    context, its run policy and its resolver
+    (:func:`~tests._fixtures.run_state.preserved_run_state`). xdist workers are
+    long-lived processes, so without this restore the ``integration_host``
+    context would persist after this module finishes and leak into whatever
+    test the worker runs next — e.g. a ``tests/unit/test_context.py`` case
+    asserting a pristine ``try_get_context() is None``. The function-scoped
+    ``_reset_otto_context`` in the root conftest cannot undo this: it snapshots
+    the *already-installed* module context, so the module-scoped install needs
+    its own restore.
     """
-    from otto.context import _active
-
-    snapshot = _active.get()
-    _install_integration_lab()
-    yield
-    _active.set(snapshot)
+    with preserved_run_state():
+        _install_integration_lab()
+        yield
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ from otto.project import actions as actions_mod
 from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import seed_scope_verdicts
 from tests._fixtures.fake_repo import fake_repo
 
 
@@ -56,15 +57,17 @@ class _FakeCtx:
     """OttoContext double — copied from test_orchestrator.py's ``_FakeCtx``.
 
     Only the two seams the orchestrator uses: ``for_repo`` (the real wrapper,
-    borrowed rather than reimplemented) and an empty ``scopes`` mapping (the
-    whole-lab fallback, the shape this single-repo lab runs under).
+    borrowed rather than reimplemented) and empty seeded scope verdicts read
+    through the real ``_resolve_scopes`` (the whole-lab fallback, the shape
+    this single-repo lab runs under).
     """
 
     for_repo = OttoContext.for_repo
+    _resolve_scopes = OttoContext._resolve_scopes
 
     def __init__(self, hosts):
         self.hosts = list(hosts)
-        self.scopes = {}
+        seed_scope_verdicts(self, {})
         self.include_projects = ()
         self.exclude_projects = ()
 
@@ -82,7 +85,7 @@ class _FakeCtx:
 
 
 def _wire_lab(monkeypatch, repo_names, ctx):
-    """Point the orchestrator's two lookups at *repo_names* and *ctx*.
+    """Point the orchestrator's context lookup at *ctx*, carrying *repo_names*.
 
     Copied from test_orchestrator.py's ``_wire_lab`` (single-repo shape).
     The doubles are real repos from ``fake_repo``, not Mocks: a Mock's
@@ -90,8 +93,8 @@ def _wire_lab(monkeypatch, repo_names, ctx):
     declaration.
     """
     ordered = [fake_repo(name) for name in repo_names]
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: ordered)
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: ordered)
+    ctx.repos = ordered
+    ctx.ordered_repos = ordered
     monkeypatch.setattr("otto.context.get_context", lambda: ctx)
     return ordered
 

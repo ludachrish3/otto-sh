@@ -22,6 +22,7 @@ it proves every site renders through it.
 """
 
 import logging
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -35,11 +36,12 @@ from otto.host.element import Element
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.dispatch import DispatchRunner
 from tests.conftest import active_context
 
 from .test_cli import _uc, _uc_repo
-from .test_deploy import _compose_file, _frag, _host, _install, _lab, _repo, _wire
+from .test_deploy import _compose_file, _frag, _host, _lab, _repo, _wire
 
 _LOSER = "a (priority 10)"
 _SENTINEL = "SENTINEL-FROM-DESCRIBE"
@@ -77,6 +79,19 @@ def _two_providers(tmp_path, *, images=()):
     return a, b, _lab(host)
 
 
+@contextmanager
+def _run_over(lab, repos, *, dry_run=False):
+    """Install a context over *lab* whose run's repos are *repos*, for one dispatched command.
+
+    The dry-run variants need an installed context anyway (its policy carries
+    ``dry_run``), so every variant gets one and the run's repos ride on it
+    (``bootstrap=``), as they do on the CLI's context: one seam for both
+    shapes.
+    """
+    with active_context(lab, dry_run=dry_run, bootstrap=fake_bootstrap_result(repos)):
+        yield
+
+
 def _invoke(*argv: str):
     return DispatchRunner().invoke(docker_cli.docker_app, list(argv), spec_name="docker")
 
@@ -95,7 +110,7 @@ def test_compose_up_shows_a_displacement_once(tmp_path, caplog, monkeypatch):
     a, b, lab = _two_providers(tmp_path)
     with (
         caplog.at_level(logging.INFO, logger="otto.docker.deployment"),
-        _install(lab, [a, b]),
+        _run_over(lab, [a, b]),
     ):
         result = _invoke("compose", "up", "integration", "--parent", "test3", "--provide", "edge=b")
 
@@ -109,8 +124,7 @@ def test_compose_up_dry_run_shows_a_displacement_once(tmp_path, caplog):
     a, b, lab = _two_providers(tmp_path)
     with (
         caplog.at_level(logging.INFO, logger="otto.docker.deployment"),
-        _install(lab, [a, b]),
-        active_context(dry_run=True),
+        _run_over(lab, [a, b], dry_run=True),
     ):
         result = _invoke("compose", "up", "integration", "--parent", "test3", "--provide", "edge=b")
 
@@ -138,7 +152,7 @@ def test_compose_build_shows_a_displacement_once(tmp_path, caplog):
     )
     with (
         caplog.at_level(logging.INFO),
-        _install(lab, [a, b]),
+        _run_over(lab, [a, b]),
         patch("otto.docker.build_verbs._build_plan", built),
     ):
         result = _invoke(
@@ -154,8 +168,7 @@ def test_compose_build_dry_run_shows_a_displacement_once(tmp_path, caplog):
     a, b, lab = _two_providers(tmp_path, images=("api",))
     with (
         caplog.at_level(logging.INFO),
-        _install(lab, [a, b]),
-        active_context(dry_run=True),
+        _run_over(lab, [a, b], dry_run=True),
     ):
         result = _invoke(
             "compose", "build", "integration", "--parent", "test3", "--provide", "edge=b"
@@ -199,7 +212,7 @@ def test_the_live_up_log_line_renders_through_describe(tmp_path, caplog, monkeyp
     a, b, lab = _two_providers(tmp_path)
     with (
         caplog.at_level(logging.INFO, logger="otto.docker.deployment"),
-        _install(lab, [a, b]),
+        _run_over(lab, [a, b]),
     ):
         result = _invoke(*_UP)
 
@@ -209,7 +222,7 @@ def test_the_live_up_log_line_renders_through_describe(tmp_path, caplog, monkeyp
 
 def test_the_up_dry_run_plan_renders_through_describe(tmp_path, sentinel):
     a, b, lab = _two_providers(tmp_path)
-    with _install(lab, [a, b]), active_context(dry_run=True):
+    with _run_over(lab, [a, b], dry_run=True):
         result = _invoke(*_UP)
 
     assert result.exit_code == 0, result.output
@@ -232,7 +245,7 @@ def test_the_live_build_report_renders_through_describe(tmp_path, caplog, sentin
             )
         ]
     )
-    with _install(lab, [a, b]), patch("otto.docker.build_verbs._build_plan", built):
+    with _run_over(lab, [a, b]), patch("otto.docker.build_verbs._build_plan", built):
         result = _invoke(*_BUILD)
 
     assert result.exit_code == 0, result.output
@@ -241,7 +254,7 @@ def test_the_live_build_report_renders_through_describe(tmp_path, caplog, sentin
 
 def test_the_build_dry_run_plan_renders_through_describe(tmp_path, sentinel):
     a, b, lab = _two_providers(tmp_path, images=("api",))
-    with _install(lab, [a, b]), active_context(dry_run=True):
+    with _run_over(lab, [a, b], dry_run=True):
         result = _invoke(*_BUILD)
 
     assert result.exit_code == 0, result.output
@@ -284,7 +297,7 @@ def _one_repo_two_losers(tmp_path):
 @pytest.mark.parametrize("argv", [_UP, _BUILD], ids=["up", "build"])
 def test_a_dry_run_plan_joins_two_displacements_as_sentences(tmp_path, argv):
     a, b, lab = _one_repo_two_losers(tmp_path)
-    with _install(lab, [a, b]), active_context(dry_run=True):
+    with _run_over(lab, [a, b], dry_run=True):
         result = _invoke(*argv)
 
     assert result.exit_code == 0, result.output

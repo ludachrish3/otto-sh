@@ -74,10 +74,10 @@ CASES = {
 
 
 @pytest.mark.parametrize("case", sorted(CASES))
-def test_the_check_command_shows_exactly_the_report(case, monkeypatch, capsys, caplog):
+def test_the_check_command_shows_exactly_the_report(case, capsys, caplog):
     make_lab, make_backend = CASES[case]
     lab = make_lab()
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     gate = ReservationGate(
         backend=make_backend(), identity=ResolvedIdentity(username="alice", source="$USER")
     )
@@ -111,10 +111,10 @@ def test_the_check_command_shows_exactly_the_report(case, monkeypatch, capsys, c
         assert out.index("╭") < out.index("OK — all required")
 
 
-def test_the_expiring_case_really_has_an_expiring_booking(monkeypatch):
+def test_the_expiring_case_really_has_an_expiring_booking():
     make_lab, make_backend = CASES["expiring"]
     lab = make_lab()
-    install_scoped_context(monkeypatch, lab, [])
+    install_scoped_context(lab, [])
     gate = ReservationGate(
         backend=make_backend(), identity=ResolvedIdentity(username="alice", source="$USER")
     )

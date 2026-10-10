@@ -18,42 +18,48 @@ from pathlib import Path
 import otto.host
 
 _RAW = {"_session_mgr", "_connections", "_file_transfer"}
-_EXEMPT_METHODS = {
-    "close",
-    "_close",
-    "rebuild_connections",
-    "_live_session_mgr",
-    "_live_connections",
-    "_live_file_transfer",
-    "__post_init__",
-}
+_EXEMPT_METHODS = {"_close"}
+"""Async methods that may read a raw manager: a family's ``_close`` tears its own managers down."""
 _NOT_HOST_MODULES = {"session.py"}
 
 
-def _violations(path: Path) -> list[str]:
+def _host_paths() -> list[Path]:
+    host_dir = Path(otto.host.__file__).parent
+    return [p for p in sorted(host_dir.glob("*.py")) if p.name not in _NOT_HOST_MODULES]
+
+
+def _raw_reads(path: Path) -> "list[tuple[str, str]]":
+    """Each async method's raw manager reads, as ``(method name, "file:line ... reads self.x")``."""
     tree = ast.parse(path.read_text())
-    found = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.AsyncFunctionDef) or node.name in _EXEMPT_METHODS:
-            continue
-        found.extend(
-            f"{path.name}:{sub.lineno} {node.name} reads self.{sub.attr}"
-            for sub in ast.walk(node)
-            if isinstance(sub, ast.Attribute)
-            and sub.attr in _RAW
-            and isinstance(sub.value, ast.Name)
-            and sub.value.id == "self"
-        )
-    return found
+    return [
+        (node.name, f"{path.name}:{sub.lineno} {node.name} reads self.{sub.attr}")
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        for sub in ast.walk(node)
+        if isinstance(sub, ast.Attribute)
+        and sub.attr in _RAW
+        and isinstance(sub.value, ast.Name)
+        and sub.value.id == "self"
+    ]
+
+
+def _violations(path: Path) -> list[str]:
+    return [line for name, line in _raw_reads(path) if name not in _EXEMPT_METHODS]
 
 
 def test_no_async_host_method_reads_a_raw_manager():
-    host_dir = Path(otto.host.__file__).parent
-    paths = [p for p in sorted(host_dir.glob("*.py")) if p.name not in _NOT_HOST_MODULES]
-    found = [v for p in paths for v in _violations(p)]
+    found = [v for p in _host_paths() for v in _violations(p)]
     assert found == [], (
         "use _live_session_mgr() / _live_connections() / _live_file_transfer():\n"
         + "\n".join(found)
+    )
+
+
+def test_every_exempt_name_is_one_the_guard_would_otherwise_trip():
+    """An exemption that nothing needs hides nothing today and silently waives the next method."""
+    tripping = {name for p in _host_paths() for name, _ in _raw_reads(p)}
+    assert _EXEMPT_METHODS - tripping == set(), (
+        "inert exemptions: no async method of that name reads a raw manager"
     )
 
 

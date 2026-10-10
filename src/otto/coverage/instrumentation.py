@@ -131,12 +131,11 @@ def detect_for_lab(repos: "list[Repo] | None" = None) -> InstrumentationReport:
     host in the fleet. Container hosts are included — a product can live in
     a container (spec §13).
     """
-    from ..bootstrap import get_repos
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
-    from ..config.fleet import all_hosts
+    from ..config.fleet import all_hosts, current_repos
 
     if repos is None:
-        repos = get_repos()
+        repos = current_repos()
     cov_config = get_cov_config(repos)
     pattern = load_hosts_pattern(cov_config)
     return detect(all_hosts(pattern=pattern, include_containers=True))

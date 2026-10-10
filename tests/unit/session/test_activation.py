@@ -5,6 +5,7 @@ import pytest
 from otto.config.lab import Lab
 from otto.config.scope import ProjectScope
 from otto.context import OttoContext
+from tests._fixtures.bootstrap_seam import seed_scope_verdicts
 from tests._fixtures.scoping import verdict
 
 
@@ -14,7 +15,7 @@ def _ctx(
     scopes: "dict[str, ProjectScope] | None" = None,
 ) -> OttoContext:
     ctx = OttoContext(lab=Lab(name="t"), exclude_projects=exclude)
-    ctx.scopes = dict(scopes or {})
+    seed_scope_verdicts(ctx, scopes or {})
     return ctx
 
 

@@ -234,8 +234,12 @@ entry without it matches any run. The root `--field/--debug` flag (env
 `OTTO_FIELD_PRODUCTS`, default `--debug`) selects the run's. A Python caller
 passes `variant="field"` to
 [`open_context`](../cookbook/python-library.md#recommended-open_context); the
-lower-level `otto.context.set_variant` sets it directly, and a caller that does
-neither reads `debug`. A variant entry
+lower-level `otto.context.set_variant` sets it directly, before any context is
+installed (the
+[manual pattern](../cookbook/python-library.md#bring-your-own-cli-lower-level-primitives)),
+and a caller that does neither reads `debug`. `set_variant` refuses while a
+context is installed; to run some work under another variant there, nest an
+`open_context(variant=...)`. A variant entry
 is a more specific entry and goes before its fallback, exactly as a `match`
 does:
 

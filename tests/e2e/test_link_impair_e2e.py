@@ -100,6 +100,7 @@ from otto.logger.mode import LogMode
 from otto.utils import wait_for_async
 from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import host_data, make_host
+from tests._fixtures.scope_boundary import held_for_scope
 
 pytestmark = [
     pytest.mark.integration,
@@ -236,79 +237,85 @@ async def impair_lab():
     it with a persistent event loop the fixture (and its dependent tests)
     outlive their creating test under -- the default ``function`` loop_scope
     would close after the first test and corrupt the cached SSH connections.
+
+    The hosts outlive the test that connected them, so the fixture holds the
+    module loop's cleanup boundary for its scope (``held_for_scope``).
     """
-    for ne in ("test1", "test2", "test3"):
-        await _assert_reachable(ne, host_data(ne)["ip"])
+    async with held_for_scope("test_link_impair_e2e.py's loop"):
+        for ne in ("test1", "test2", "test3"):
+            await _assert_reachable(ne, host_data(ne)["ip"])
 
-    lab = Lab(name="impair_e2e")
-    test1 = _build_host("test1")
-    test2 = _build_host("test2")
-    test3 = _build_host("test3")
-    for host in (test1, test2, test3):
-        lab.add_host(host)
+        lab = Lab(name="impair_e2e")
+        test1 = _build_host("test1")
+        test2 = _build_host("test2")
+        test3 = _build_host("test3")
+        for host in (test1, test2, test3):
+            lab.add_host(host)
 
-    # Idempotent against a crashed prior run: pre-delete before creating.
-    await _root_best_effort(test1, f"ip link del {_VLAN100_DEV}")
-    await _root_best_effort(test3, f"ip link del {_VLAN100_DEV}")
-    await _root_best_effort(test3, f"ip link del {_VLAN200_DEV}")
-    await _root_best_effort(test2, f"ip link del {_VLAN200_DEV}")
-    for rule in _FORWARD_RULES:
-        await _root_best_effort(test3, f"iptables -D FORWARD {rule}")
-
-    await _add_vlan(test1, _VLAN100_DEV, _VLAN100_ID, f"{_TEST1_VLAN_IP}/24")
-    await _add_vlan(test3, _VLAN100_DEV, _VLAN100_ID, f"{_TEST3_VLAN100_IP}/24")
-    await _add_vlan(test2, _VLAN200_DEV, _VLAN200_ID, f"{_TEST2_VLAN_IP}/24")
-    await _add_vlan(test3, _VLAN200_DEV, _VLAN200_ID, f"{_TEST3_VLAN200_IP}/24")
-
-    prior_ip_forward = (
-        await test3.exec(
-            "sysctl -n net.ipv4.ip_forward", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
-        )
-    ).value.strip()
-    await _root(test3, "sysctl -w net.ipv4.ip_forward=1")
-
-    await _root(test1, f"ip route add {_VLAN200_NET} via {_TEST3_VLAN100_IP}")
-    await _root(test2, f"ip route add {_VLAN100_NET} via {_TEST3_VLAN200_IP}")
-
-    # test3 is docker-capable: Docker's own iptables integration installs a
-    # default FORWARD DROP policy, which silently drops the routed dataplane
-    # traffic above (discovered live -- see the module docstring). Punch two
-    # narrow holes, ONLY between the two VLAN sub-interfaces.
-    for rule in _FORWARD_RULES:
-        await _root(test3, f"iptables -I FORWARD 1 {rule}")
-
-    edge = Link(
-        a=LinkEndpoint(host=_TEST1, interface=_VLAN100_DEV, ip=_TEST1_VLAN_IP),
-        b=LinkEndpoint(host=_TEST3, interface=_VLAN100_DEV, ip=_TEST3_VLAN100_IP),
-        name="edge",
-    )
-    dataplane = Link(
-        a=LinkEndpoint(host=_TEST1, interface=_VLAN100_DEV, ip=_TEST1_VLAN_IP),
-        b=LinkEndpoint(host=_TEST2, interface=_VLAN200_DEV, ip=_TEST2_VLAN_IP),
-        name="dataplane",
-        impair=_TEST3,
-    )
-    lab.links.extend([edge, dataplane])
-
-    try:
-        yield lab
-    finally:
-        with contextlib.suppress(Exception):
-            await repair_all(lab)
+        # Idempotent against a crashed prior run: pre-delete before creating.
+        await _root_best_effort(test1, f"ip link del {_VLAN100_DEV}")
+        await _root_best_effort(test3, f"ip link del {_VLAN100_DEV}")
+        await _root_best_effort(test3, f"ip link del {_VLAN200_DEV}")
+        await _root_best_effort(test2, f"ip link del {_VLAN200_DEV}")
         for rule in _FORWARD_RULES:
+            await _root_best_effort(test3, f"iptables -D FORWARD {rule}")
+
+        await _add_vlan(test1, _VLAN100_DEV, _VLAN100_ID, f"{_TEST1_VLAN_IP}/24")
+        await _add_vlan(test3, _VLAN100_DEV, _VLAN100_ID, f"{_TEST3_VLAN100_IP}/24")
+        await _add_vlan(test2, _VLAN200_DEV, _VLAN200_ID, f"{_TEST2_VLAN_IP}/24")
+        await _add_vlan(test3, _VLAN200_DEV, _VLAN200_ID, f"{_TEST3_VLAN200_IP}/24")
+
+        prior_ip_forward = (
+            await test3.exec(
+                "sysctl -n net.ipv4.ip_forward", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+            )
+        ).value.strip()
+        await _root(test3, "sysctl -w net.ipv4.ip_forward=1")
+
+        await _root(test1, f"ip route add {_VLAN200_NET} via {_TEST3_VLAN100_IP}")
+        await _root(test2, f"ip route add {_VLAN100_NET} via {_TEST3_VLAN200_IP}")
+
+        # test3 is docker-capable: Docker's own iptables integration installs a
+        # default FORWARD DROP policy, which silently drops the routed dataplane
+        # traffic above (discovered live -- see the module docstring). Punch two
+        # narrow holes, ONLY between the two VLAN sub-interfaces.
+        for rule in _FORWARD_RULES:
+            await _root(test3, f"iptables -I FORWARD 1 {rule}")
+
+        edge = Link(
+            a=LinkEndpoint(host=_TEST1, interface=_VLAN100_DEV, ip=_TEST1_VLAN_IP),
+            b=LinkEndpoint(host=_TEST3, interface=_VLAN100_DEV, ip=_TEST3_VLAN100_IP),
+            name="edge",
+        )
+        dataplane = Link(
+            a=LinkEndpoint(host=_TEST1, interface=_VLAN100_DEV, ip=_TEST1_VLAN_IP),
+            b=LinkEndpoint(host=_TEST2, interface=_VLAN200_DEV, ip=_TEST2_VLAN_IP),
+            name="dataplane",
+            impair=_TEST3,
+        )
+        lab.links.extend([edge, dataplane])
+
+        try:
+            yield lab
+        finally:
             with contextlib.suppress(Exception):
-                await _root_best_effort(test3, f"iptables -D FORWARD {rule}")
-        with contextlib.suppress(Exception):
-            await _root_best_effort(test1, f"ip link del {_VLAN100_DEV}")
-        with contextlib.suppress(Exception):
-            await _root_best_effort(test3, f"ip link del {_VLAN100_DEV}")
-        with contextlib.suppress(Exception):
-            await _root_best_effort(test3, f"ip link del {_VLAN200_DEV}")
-        with contextlib.suppress(Exception):
-            await _root_best_effort(test2, f"ip link del {_VLAN200_DEV}")
-        with contextlib.suppress(Exception):
-            await _root(test3, f"sysctl -w net.ipv4.ip_forward={prior_ip_forward}")
-        await asyncio.gather(*(h.close() for h in (test1, test2, test3)), return_exceptions=True)
+                await repair_all(lab)
+            for rule in _FORWARD_RULES:
+                with contextlib.suppress(Exception):
+                    await _root_best_effort(test3, f"iptables -D FORWARD {rule}")
+            with contextlib.suppress(Exception):
+                await _root_best_effort(test1, f"ip link del {_VLAN100_DEV}")
+            with contextlib.suppress(Exception):
+                await _root_best_effort(test3, f"ip link del {_VLAN100_DEV}")
+            with contextlib.suppress(Exception):
+                await _root_best_effort(test3, f"ip link del {_VLAN200_DEV}")
+            with contextlib.suppress(Exception):
+                await _root_best_effort(test2, f"ip link del {_VLAN200_DEV}")
+            with contextlib.suppress(Exception):
+                await _root(test3, f"sysctl -w net.ipv4.ip_forward={prior_ip_forward}")
+            await asyncio.gather(
+                *(h.close() for h in (test1, test2, test3)), return_exceptions=True
+            )
 
 
 async def _assert_bed_hygiene() -> None:

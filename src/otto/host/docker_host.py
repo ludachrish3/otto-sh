@@ -375,12 +375,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 or :func:`~otto.docker.compose.compose_up` declined, unwrapped.
                 See the arms below for why it is spelled out.
         """
-        from ..bootstrap import get_repos as _get_repos
-        from ..docker.resolve import declared_use_cases
+        from ..docker.resolve import is_declared_use_case
 
-        repos = _get_repos()
-
-        if self.project in declared_use_cases(repos):
+        if is_declared_use_case(self.project):
             from ..docker.deployment import deploy
 
             logger.debug(
@@ -425,6 +422,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 )
             return cid
 
+        from ..config.fleet import current_repos
         from ..config.fleet import get_lab as _get_lab
         from ..docker.compose import compose_up
 
@@ -433,7 +431,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             f"auto-starting stack {self.compose_project!r}"
         )
         lab = _get_lab()
-        repo = next((r for r in repos if r.name == self.project), None)
+        repo = next((r for r in current_repos() if r.name == self.project), None)
         if repo is None:
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running, and no "
@@ -1278,12 +1276,14 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """
         return await super(DockerContainerHost, self)._mkdir_all(paths, user="root")
 
-    def rebuild_connections(self) -> None:
+    @override
+    def _rebuild_connections(self) -> None:
         """Drop any persistent session so the next call reopens it.
 
-        Mirrors :meth:`~otto.host.unix_host.UnixHost.rebuild_connections`:
-        how the host leaves an event loop that has closed (``_claim_loop``
-        calls it when the loop that owned the session is gone). The container
+        This family's override of the ``_rebuild_connections`` hook that
+        :meth:`~otto.host.host.BaseHost.rebuild_connections` calls: how the
+        host leaves an event loop that has closed (``_claim_loop`` reaches it
+        when the loop that owned the session is gone). The container
         host doesn't own any raw transport (the parent does), but its
         ``_session_mgr`` may hold a ``ShellSession`` whose ``asyncssh``
         process is bound to the old loop. Replacing the manager forces lazy
@@ -1318,12 +1318,16 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         happens in a ``finally`` because a teardown that fails half-way still
         leaves no channel this host may claim to know the user of — the
         alternative is a raising ``close()`` that also poisons every later
-        ``run(user=...)`` with a refusal.
+        ``run(user=...)`` with a refusal. A close that finishes after the host
+        reconnected (a rebuild or an abandonment since it started) leaves the
+        binding alone: it belongs to the new channel.
         """
+        generation, session_mgr = self._generation, self._session_mgr
         try:
-            await self._session_mgr.close_all()
+            await session_mgr.close_all()
         finally:
-            self._forget_run_channel_binding()
+            if self._generation == generation:  # a later channel's binding is not this close's
+                self._forget_run_channel_binding()
 
 
 __all__ = ["DockerContainerHost"]

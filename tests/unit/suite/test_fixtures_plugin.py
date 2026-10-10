@@ -14,6 +14,7 @@ from typing_extensions import Self
 from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.errors import EnsureStateError
+from otto.invocation import RunPolicy
 from otto.params import OptionsSource
 from otto.result import CommandNotRunError, Result
 from otto.suite.layout import ArtifactLayout
@@ -71,7 +72,7 @@ def _otto_context(tmp_path: Path):
     context for the duration of the inner pytest session, as ``otto test``
     has one installed around its own.
     """
-    ctx = OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path)
+    ctx = OttoContext(lab=Lab(name="_test_stub"), policy=RunPolicy(output_dir=tmp_path))
     token = set_context(ctx)
     try:
         yield

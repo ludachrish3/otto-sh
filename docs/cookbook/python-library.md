@@ -183,8 +183,8 @@ yourself (the `otto.session` functions are on {doc}`../api/session`):
    `exclude_projects`.
 3. {func}`~otto.session.check_repos` refuses if an active repo failed to load, and
    returns the load errors of inactive repos, which `open_context` logs.
-4. For the field variant, call `otto.context.set_variant("field")` and keep
-   the token it returns. The lab build picks each product's
+4. For the field variant, call `otto.context.set_variant("field")` before
+   building any context, and keep the binding it returns. The lab build picks each product's
    {ref}`variant <product-variants>` entry, and providers read the variant
    while the work runs, so set it before step 5 and reset it after step 10.
 5. {func}`~otto.session.build_lab` builds the lab, unless you passed a `Lab` object.
@@ -193,10 +193,13 @@ yourself (the `otto.session` functions are on {doc}`../api/session`):
    gate from the repos' `[reservations]` (an unbuildable backend refuses here,
    before any context exists). Skip it, as `-R` does, with
    `skip_reservation_check=True`.
-7. Build an `OttoContext` with that lab, the selection's include / exclude
-   (`include_projects=`, `exclude_projects=`) and the runtime flags, and
-   install it as the active context with `set_context()`, which returns a
-   reset token.
+7. Build an `OttoContext` with that lab and the selection's include / exclude
+   (`include_projects=`, `exclude_projects=`). The run flags live on its
+   policy ({class}`~otto.context.RunPolicy`) and are read-only on the context.
+   Without `policy=`, the context copies the variant `set_variant` chose. A
+   policy you pass is used as given, so it carries the variant too: a dry run
+   under the field variant passes `policy=RunPolicy(dry_run=True, variant="field")`.
+   Install the context with `set_context()`, which returns a binding.
 8. {func}`~otto.session.check_dependencies` runs the
    [dependency preflight](../cli/env/index.md#the-dependency-preflight). It needs
    the installed context, because whether a repo is active depends on the
@@ -204,10 +207,14 @@ yourself (the `otto.session` functions are on {doc}`../api/session`):
 9. `gate.evaluate()` ({meth}`~otto.reservations.check.ReservationGate.evaluate`)
    refuses with `MissingReservationError` when you do not hold what the lab
    needs. It runs last, as on the CLI.
-10. Do the work. Each host that connects joins the host scope of the event loop
-   it connects on. On the way out, `ctx.sweep_loop(...)` closes the hosts the
-   running loop owns, then `reset_context(token)` restores the prior state,
-   and `otto.context.reset_variant(variant_token)` restores the prior variant
+10. Do the work. Each host that connects registers with the event loop it
+   connects on. On the way out, `ctx.sweep_loop(...)` closes the hosts the
+   running loop owns: it is for a loop you drive with a hand-built context.
+   Inside `open_context`, `run_command` or `otto test` it raises, because a
+   cleanup boundary holds the loop and closes those hosts itself
+   ({doc}`host-scopes` has the rest). Then
+   `reset_context(binding)` restores the prior state, and
+   `otto.context.reset_variant(variant_binding)` restores the prior variant
    if you set one.
 
 The smallest version keeps steps 1, 5, 7 and 10:
@@ -216,11 +223,11 @@ The smallest version keeps steps 1, 5, 7 and 10:
 import asyncio
 
 from otto.bootstrap import bootstrap
-from otto.context import OttoContext, reset_context, set_context
+from otto.context import OttoContext, RunPolicy, reset_context, set_context
 from otto.session import build_lab
 
 lab = build_lab(bootstrap().repos, ["mylab"])
-ctx = OttoContext(lab=lab, dry_run=False)
+ctx = OttoContext(lab=lab, policy=RunPolicy(dry_run=False))
 token = set_context(ctx)
 try:
     # your work here
@@ -253,7 +260,8 @@ it directly, see "Calling an instruction by name" in
 ## Host lifetimes
 
 There are three patterns for managing individual host connections inside an
-`open_context` block. All three are safe — the scope provides the backstop.
+`open_context` block. All three are safe — the block's exit closes whatever
+is still open.
 
 **(a) Tight scoping with `async with`:**
 
@@ -270,7 +278,7 @@ async with otto.open_context(lab="mylab") as ctx:
 async with otto.open_context(lab="mylab") as ctx:
     host = ctx.get_host("router1")
     await configure(host)  # pass it wherever you like
-# the scope sweep closes host when the block exits
+# open_context's exit closes host
 ```
 
 **(c) Explicit `await host.close()`:**
@@ -279,18 +287,19 @@ async with otto.open_context(lab="mylab") as ctx:
 async with otto.open_context(lab="mylab") as ctx:
     host = ctx.get_host("router1")
     await host.run("reboot")
-    await host.close()  # early close — idempotent; scope sweep is a no-op
+    await host.close()  # early close — idempotent; the exit then has nothing to close
 ```
 
 `close()` is idempotent: calling it multiple times is safe.
 
 ## FD-model caveat
 
-A host joins a scope when it first connects, on whatever event loop it connects
-on, and only while a context is active. A host you construct **directly**
-(e.g. `UnixHost(...)`) and use outside any context has no scope backstop — it
-is yours to close, exactly like an explicitly-opened file descriptor. Use
-`async with` or `await h.close()`.
+A host registers with the event loop it first connects on, whether or not a
+context is active, and that loop's cleanup closes it: `open_context`'s exit,
+the end of a `run_command`, or an `otto test` runner's shutdown
+({doc}`host-scopes`). A host you use on a loop you drive yourself, with none
+of those around it, is yours to close, exactly like an explicitly-opened file
+descriptor. Use `async with` or `await h.close()`.
 
 A host's connection belongs to the event loop that opened it. Using the host
 from a different event loop while that one is still running raises

@@ -1,13 +1,16 @@
-"""The six readers that swallow their accessor's import, run against a real bootstrap.
+"""The six readers that swallow a failed accessor, run against a real bootstrap.
 
-Each reader imports an ``otto.bootstrap`` accessor inside a broad ``except``
+Five readers import an ``otto.bootstrap`` accessor inside a broad ``except``
 (spec ``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md``
 §2.1). An import that names a home the accessor no longer has raises
 ``ImportError``, the ``except`` swallows it, and the reader quietly answers
-its "nothing to read" default. Nothing here patches an accessor: each test
-writes a real SUT repo, points ``OTTO_SUT_DIRS`` at it and asserts the answer
-only a working import gives. ``tests/unit/test_moved_name_spellings.py``
-refuses the old spellings statically.
+its "nothing to read" default. The sixth,
+``otto.bootstrap.discovered_teardown_deadline``, swallows a failed discovery
+and answers ``None``, so the run keeps its 10-second default. Nothing here
+patches an accessor: each test writes a real SUT repo, points
+``OTTO_SUT_DIRS`` at it and asserts the answer only a working read gives.
+``tests/unit/test_moved_name_spellings.py`` refuses the old spellings
+statically.
 """
 
 import logging
@@ -50,11 +53,8 @@ def test_scope_for_repo_reads_the_real_repos(declaring_repo):
 
 
 def test_the_teardown_deadline_reads_the_real_environment(declaring_repo, monkeypatch):
-    from otto.lifecycle import DEFAULT_TEARDOWN_DEADLINE, _resolve_teardown_deadline
-
     monkeypatch.setenv("OTTO_TEARDOWN_DEADLINE", "7.5")
-    assert DEFAULT_TEARDOWN_DEADLINE != 7.5
-    assert _resolve_teardown_deadline() == 7.5
+    assert bs.discovered_teardown_deadline() == 7.5
 
 
 def test_declared_entries_read_the_real_repos(declaring_repo):
@@ -67,10 +67,13 @@ def test_declared_entries_read_the_real_repos(declaring_repo):
 
 
 def test_the_walk_resolves_its_scopes_from_the_real_repos(declaring_repo):
+    from otto.config.scope import scopes_of
     from otto.context import OttoContext
 
     ctx = OttoContext(lab=_rig())
-    assert set(ctx.scopes) == {"scoped"}, "the walk saw no declaration: its accessor import failed"
+    assert set(scopes_of(ctx)) == {"scoped"}, (
+        "the walk saw no declaration: its accessor import failed"
+    )
     assert [host.id for host in ctx.all_hosts()] == ["slot1"]
 
 

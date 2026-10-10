@@ -29,6 +29,9 @@ import typer
 from otto.cli import invoke
 from otto.cli.invoke import refuse_unsatisfied_dependencies
 from otto.cli.registry import CommandSpec
+from otto.config.lab import Lab
+from otto.context import OttoContext
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.clickctx import chain
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.rootoptions import make_root_options
@@ -77,14 +80,14 @@ def _wire(
         "otto.bootstrap.bootstrap",
         lambda: types.SimpleNamespace(ordered_repos=repos, errors=[], repos=repos),
     )
-    monkeypatch.setattr(
-        "otto.context.get_context",
-        lambda: types.SimpleNamespace(
-            include_projects=tuple(include),
-            exclude_projects=tuple(exclude),
-            scopes=dict(scopes or {}),
-        ),
+    ctx = OttoContext(
+        lab=Lab(name="t"),
+        include_projects=tuple(include),
+        exclude_projects=tuple(exclude),
+        bootstrap=fake_bootstrap_result(repos),
     )
+    seed_scope_verdicts(ctx, scopes or {})
+    monkeypatch.setattr("otto.context.get_context", lambda: ctx)
 
 
 def test_the_absent_package_really_is_absent() -> None:
@@ -327,7 +330,8 @@ class TestPreambleWiring:
         active OttoContext``. That is the whole reason the spec's placement and
         its ``active()`` requirement could not both be honoured.
         """
-        from otto.context import reset_context, set_context
+        from otto.config.lab import Lab
+        from otto.context import OttoContext, reset_context, set_context
 
         tokens: list = []
 
@@ -345,11 +349,7 @@ class TestPreambleWiring:
             invoke,
             "ensure_lab_session",
             lambda ctx, spec: tokens.append(
-                set_context(
-                    types.SimpleNamespace(
-                        include_projects=(), exclude_projects=("repo4",), scopes={}
-                    )  # ty: ignore[invalid-argument-type]
-                )
+                set_context(OttoContext(lab=Lab(name="flash"), exclude_projects=("repo4",)))
             ),
         )
         spec = CommandSpec(name="run", loader=None, gate=False)

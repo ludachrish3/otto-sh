@@ -207,6 +207,7 @@ def test_same_stem_modules_end_to_end_via_test_dir(pytester, otto_output_dir):
     module_dir/test_dir fixtures — not just the ArtifactLayout unit tests above."""
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.invocation import RunPolicy
     from otto.suite.layout import ArtifactLayout
     from otto.suite.plugin import OttoPlugin
     from otto.suite.pytest_plugin import OttoFixturesPlugin
@@ -221,7 +222,9 @@ def test_same_stem_modules_end_to_end_via_test_dir(pytester, otto_output_dir):
         )
     layout = ArtifactLayout(root=otto_output_dir, test_roots=[pytester.path])
     plugins = [OttoPlugin(), OttoFixturesPlugin(layout=layout)]
-    token = set_context(OttoContext(lab=Lab(name="_test_stub"), output_dir=otto_output_dir))
+    token = set_context(
+        OttoContext(lab=Lab(name="_test_stub"), policy=RunPolicy(output_dir=otto_output_dir))
+    )
     try:
         result = pytester.runpytest_inprocess(*INNER_ARGS, plugins=plugins)
         result.assert_outcomes(passed=2)

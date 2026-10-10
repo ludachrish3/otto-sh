@@ -42,8 +42,8 @@ the zero-argument convenience accessors — not license for hidden globals.
 
 ## Deterministic lifecycles, no `__del__`
 
-Resources are closed by scopes (`HostScope`, `async with`, explicit
-`close()`), never by garbage collection. `__del__` was removed deliberately;
+Resources are closed by scopes (each loop's host registry, `async with`,
+explicit `close()`), never by garbage collection. `__del__` was removed deliberately;
 teardown must be orderly and observable — containers close before their
 parent's connection, sessions drain before sockets. ({doc}`lifecycle`,
 {doc}`subsystems/docker-hosts`)

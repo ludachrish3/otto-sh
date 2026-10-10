@@ -109,9 +109,8 @@ async def clean_coverage(
             way the walk comes back empty), or ``host_ids`` narrowed an
             otherwise non-empty match down to nothing.
     """
-    from ..bootstrap import get_repos
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
-    from ..config.fleet import all_hosts, do_for_all_hosts
+    from ..config.fleet import all_hosts, current_repos, do_for_all_hosts
     from ..config.scope import EmptySelectionError
     from ..errors import is_containable
     from ..result import Result
@@ -121,7 +120,7 @@ async def clean_coverage(
     from .reports import CleanReport
 
     if repos is None:
-        repos = get_repos()
+        repos = current_repos()
     cov_config = get_cov_config(repos)
     if not cov_config:
         raise CoverageConfigError("No [coverage] section found in .otto/settings.toml")
@@ -236,8 +235,8 @@ async def collect_coverage(
 
     Args:
         cov_dir: Destination directory for the collected coverage.
-        repos: Repo list to resolve ``[coverage]`` from (defaults to
-            :func:`otto.bootstrap.get_repos`).
+        repos: Repo list to resolve ``[coverage]`` from (defaults to the
+            run's repos, :func:`otto.config.fleet.current_repos`).
         tier: Tier name to annotate onto each capture; ``None`` resolves the
             sole e2e-kind tier. A caller that has already resolved a
             :class:`~otto.coverage.tiers.TierConfig` (e.g. ``otto cov get``,
@@ -265,9 +264,8 @@ async def collect_coverage(
         A :class:`CollectResult` with the destination, per-product dirs, and
         the produced capture paths.
     """
-    from ..bootstrap import get_repos
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
-    from ..config.fleet import all_hosts
+    from ..config.fleet import all_hosts, current_repos
     from ..host.embedded_host import EmbeddedHost
     from ..host.local_host import LocalHost
     from .fetcher.embedded import collect_embedded_coverage
@@ -275,7 +273,7 @@ async def collect_coverage(
     from .instrumentation import instrumented_products
 
     if repos is None:
-        repos = get_repos()
+        repos = current_repos()
 
     cov_config = get_cov_config(repos)
     if not cov_config:

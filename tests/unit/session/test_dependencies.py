@@ -8,6 +8,7 @@ from otto.config.lab import Lab
 from otto.config.scope import ProjectScope
 from otto.context import OttoContext
 from otto.env.preflight import PreflightResult, Unsatisfied
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.scoping import verdict
@@ -24,8 +25,12 @@ def _ctx(
     exclude: "tuple[str, ...]" = (),
     scopes: "dict[str, ProjectScope] | None" = None,
 ) -> OttoContext:
-    ctx = OttoContext(lab=Lab(name="t"), exclude_projects=exclude)
-    ctx.scopes = dict(scopes or {})
+    ctx = OttoContext(
+        lab=Lab(name="t"),
+        exclude_projects=exclude,
+        bootstrap=fake_bootstrap_result([], ordered=_REPOS),
+    )
+    seed_scope_verdicts(ctx, scopes or {})
     return ctx
 
 
@@ -33,14 +38,20 @@ _REPOS = [fake_repo("acme"), fake_repo("beta")]
 
 
 def _preflight(monkeypatch: pytest.MonkeyPatch, *, unsatisfied, warnings) -> "list[Any]":
-    """Stub bootstrap and the preflight; the returned list records each repos argument."""
+    """Stub the preflight; the returned list records each repos argument.
+
+    The composition root answers OTHER repos than the context carries, so a
+    check that read it instead of the context is caught.
+    """
     seen: list[Any] = []
 
     def stub(repos):
         seen.append(repos)
         return PreflightResult(unsatisfied=list(unsatisfied), warnings=list(warnings))
 
-    monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: bootstrap_stub([], ordered=_REPOS))
+    monkeypatch.setattr(
+        "otto.bootstrap.bootstrap", lambda: bootstrap_stub([], ordered=[fake_repo("elsewhere")])
+    )
     monkeypatch.setattr("otto.env.preflight.preflight", stub)
     return seen
 
@@ -52,7 +63,7 @@ def test_nothing_unmet_returns_the_preflight_warnings(monkeypatch):
     assert check_dependencies(_ctx()) == ["could not check beta"]
 
 
-def test_the_preflight_checks_the_bootstraps_ordered_repos(monkeypatch):
+def test_the_preflight_checks_the_contexts_ordered_repos(monkeypatch):
     from otto.session import check_dependencies
 
     seen = _preflight(monkeypatch, unsatisfied=[], warnings=[])

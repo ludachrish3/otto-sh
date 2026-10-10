@@ -350,18 +350,20 @@ def _session_context(log_dir: Path) -> "Iterator[OttoContext]":
     *log_dir* directly, below, and handed to the session's plugins.) Two
     cases:
 
-    - **No active context**: install a minimal lab-less one
-      (``OttoContext(lab=Lab(name=LIBRARY_LAB_NAME), output_dir=log_dir)``) for
-      the duration of the session and always restore the prior state via the
-      ``set_context``/``reset_context`` token pair. The sentinel ``Lab`` carries
+    - **No active context**: install a minimal lab-less one, whose policy
+      (``otto.context.prepared_policy``) carries *log_dir* as its
+      ``output_dir``, inherits the current variant and takes its teardown
+      deadline from ``OTTO_TEARDOWN_DEADLINE``, for the duration of
+      the session, and always restore the prior state via the
+      ``set_context``/``reset_context`` binding. The sentinel ``Lab`` carries
       no hosts, so ``get_host()`` inside such a suite fails loud with its
       normal unknown-host error (plus an ``open_context`` breadcrumb keyed off
       ``LIBRARY_LAB_NAME`` — see :meth:`otto.context.OttoContext.get_host`) —
       correct for hostless library runs; suites that need lab hosts use
       ``open_context()`` (see the Cookbook's Python library page).
-    - **Active context**: point its ``output_dir`` at *log_dir* when it has
-      none (the same assignment the CLI preamble makes; one it already has is
-      left alone), and restore ``output_dir``, ``cov_decision`` and the verb
+    - **Active context**: point its policy's ``output_dir`` at *log_dir* when
+      it has none (the same assignment the CLI preamble makes; one it already
+      has is left alone), and restore ``output_dir``, ``cov_decision`` and the verb
       binding (:meth:`~otto.context.OttoContext.verb_binding_preserved` --
       :func:`run_tests` binds ``test``) afterwards — the run's per-session
       state never outlives the run on a context the caller owns.
@@ -371,23 +373,32 @@ def _session_context(log_dir: Path) -> "Iterator[OttoContext]":
     active = try_get_context()
     if active is None:
         from ..config.lab import Lab
-        from ..context import LIBRARY_LAB_NAME, OttoContext, reset_context, set_context
+        from ..context import (
+            LIBRARY_LAB_NAME,
+            OttoContext,
+            fill_teardown_deadline,
+            prepared_policy,
+            reset_context,
+            set_context,
+        )
 
-        ctx = OttoContext(lab=Lab(name=LIBRARY_LAB_NAME), output_dir=log_dir)
+        policy = prepared_policy(output_dir=log_dir)
+        fill_teardown_deadline(policy)
+        ctx = OttoContext(lab=Lab(name=LIBRARY_LAB_NAME), policy=policy)
         token = set_context(ctx)
         try:
             yield ctx
         finally:
             reset_context(token)
         return
-    prior_output_dir, prior_cov = active.output_dir, active.cov_decision
-    if active.output_dir is None:
-        active.output_dir = log_dir
+    prior_output_dir, prior_cov = active.policy.output_dir, active.cov_decision
+    if active.policy.output_dir is None:
+        active.policy.output_dir = log_dir
     try:
         with active.verb_binding_preserved():
             yield active
     finally:
-        active.output_dir, active.cov_decision = prior_output_dir, prior_cov
+        active.policy.output_dir, active.cov_decision = prior_output_dir, prior_cov
 
 
 def prepare_run(opts: RunOptions, *, dry_run: bool = False) -> None:
@@ -438,12 +449,12 @@ def prepare_run(opts: RunOptions, *, dry_run: bool = False) -> None:
     if opts.cov_tickets_json is not None:
         # Knowable now, unlike "the git walk matched nothing", which stays a
         # post-run warning in _post_run_coverage.
-        from ..bootstrap import get_repos
         from ..config.coverage_settings import get_cov_config
+        from ..config.fleet import current_repos
         from ..coverage.tickets import load_ticket_spec
         from ..params import OptionsValidationError
 
-        if load_ticket_spec(get_cov_config(get_repos())) is None:
+        if load_ticket_spec(get_cov_config(current_repos())) is None:
             raise OptionsValidationError(
                 "cov_tickets_json requires [coverage.tickets] to be configured"
             )
@@ -1658,19 +1669,20 @@ def run_tests(
 
     import pytest
 
-    from ..bootstrap import get_repos
     from ..config.home import workspace_home
     from ..params import flatten_option_instances
     from .layout import ArtifactLayout
 
     flat = flatten_option_instances(list(options or []), verb="test")
     opts = run_options
-    repos = get_repos()
     log_dir = resolve_output_dir(output_dir)
-    searched = [r for r in repos if any(d.exists() for d in r.tests)]
-    multi = len(searched) > 1
 
     with _session_context(log_dir) as session_ctx:
+        # The context first, then its repos: an inherited context's snapshot, or
+        # the library sentinel's, read once (the sentinel bootstraps lazily).
+        repos = session_ctx.repos
+        searched = [r for r in repos if any(d.exists() for d in r.tests)]
+        multi = len(searched) > 1
         # Bound first: every test (and the `ensure` converge) reads the
         # options off this context, and a bad value fails before any
         # collection or host work.
@@ -1745,7 +1757,9 @@ def run_tests(
             # owned before it closed (OttoPlugin.pytest_fixture_setup), so
             # this should find nothing; anything left holds state no loop can
             # drive, and is dropped so the post-run phase reconnects it.
-            session_ctx.abandon_closed_loops()
+            from ..invocation import abandon_closed_loops
+
+            abandon_closed_loops()
             # Tests that ran have their coverage collected even when a later
             # repo's session then raises (a refused registration); an
             # interrupt means STOP: no further repos, no post-coverage.
@@ -1841,11 +1855,11 @@ def selected_tests(names: list[str], *, markers: str = "") -> Listing:
         otto.registry.RegistrationRefused: a test file or conftest
             registered something while loading.
     """
-    from ..bootstrap import get_repos
+    from ..config.fleet import current_repos
     from ..config.home import workspace_home
 
     names = [n.strip() for n in names if n.strip()]
-    repos = get_repos()
+    repos = current_repos()
     searched = [r for r in repos if any(d.exists() for d in r.tests)]
     home = workspace_home()
     known = _read_known(searched, home)

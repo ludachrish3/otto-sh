@@ -713,8 +713,9 @@ class RootOptions:
     field: bool = False
     """``--field``: the run installs each product's field variant (spec
     2026-10-03 §5); ``False`` is ``--debug``, the default. The root callback
-    also sets it for the invocation with :func:`otto.context.set_variant`,
-    which is what the registry and providers read."""
+    also installs it as the variant of the run's policy
+    (:class:`otto.context.RunPolicy`), which is what the registry and
+    providers read."""
     probe: bool = False
     """``--probe``: under a dry run, open a connection to each host the command
     names (spec §3). Defaults so a caller that predates the flag still builds;
@@ -848,7 +849,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     :func:`report_lab_context_error`; the soft ``HostGroup`` probe
     (:func:`try_ensure_lab`) swallows them.
     """
-    from ..context import get_context
+    from ..context import fill_teardown_deadline, get_context
 
     meta = ctx.meta
     if meta.get("_otto_lab_ready"):
@@ -856,10 +857,24 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
 
     opts = root_options(ctx)
 
-    from ..bootstrap import get_repos
+    from ..bootstrap import bootstrap
+    from ..invocation import RunPolicy, install_policy, installed_policy, reset_binding
     from ..session import build_lab
 
-    repos = get_repos()
+    # The lab build reads the run policy (ingest picks each product's variant
+    # entry by it), so the policy is installed before it. The root callback
+    # installed one; a caller driving the group directly ran none, and the
+    # root options carry it. That policy is prepared as the root callback's
+    # is: its reset registered at once, then its deadline filled from discovery.
+    policy = installed_policy()
+    if policy is None:
+        policy = RunPolicy(dry_run=opts.dry_run, variant="field" if opts.field else "debug")
+        binding = install_policy(policy)
+        ctx.find_root().call_on_close(lambda: reset_binding(binding))
+        fill_teardown_deadline(policy)
+
+    result = bootstrap()  # already run by entry(): the cached composition root
+    repos = result.repos
     # `--lab` is not a hard-required Typer option (so lab-free subcommands can
     # run without it); build_lab refuses an empty selection (`no_labs`) before
     # any lab side effect, for everything that does need a lab.
@@ -888,21 +903,23 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
 
     meta["otto_reservation"] = reservation_gate
 
-    # Install the runtime context: lab + dry_run flag + the per-invocation
-    # project switches (-I/-E), which every activation question reads back
-    # through otto.config.scope.active. Its reset runs when Click closes this
-    # invocation's root context, before the variant's (the root callback
-    # registered that one first), so the context never outlives the invocation.
-    # Installed here, outside the command's event loop: the leaf's coroutine
-    # runs later under run_command, in a copy of this execution context.
+    # Install the runtime context: lab + the run policy installed above + the
+    # per-invocation project switches (-I/-E), which every activation question
+    # reads back through otto.config.scope.active. Its reset runs when Click
+    # closes this invocation's root context, before the policy's (registered
+    # first, by the root callback or the fallback above), so the context
+    # never outlives the invocation. Installed here, outside the command's
+    # event loop: the leaf's coroutine runs later under run_command, in a copy
+    # of this execution context.
     from ..context import OttoContext, reset_context, set_context
 
     token = set_context(
         OttoContext(
             lab=lab,
-            dry_run=opts.dry_run,
             include_projects=opts.include_projects,
             exclude_projects=opts.exclude_projects,
+            policy=policy,
+            bootstrap=result,
         )
     )
     ctx.find_root().call_on_close(lambda: reset_context(token))
@@ -1105,7 +1122,7 @@ def ensure_lab_session(ctx: typer.Context, spec: "CommandSpec") -> None:
         # ``ctx.command.name`` differs.
         leaf_name = ctx.command.name
         sub = None if leaf_name == spec.name else (leaf_name or spec.name)
-        get_context().output_dir = management.create_output_dir(spec.name, sub)
+        get_context().policy.output_dir = management.create_output_dir(spec.name, sub)
 
 
 def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
@@ -1114,7 +1131,7 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
     Runs in the leaf preamble AFTER the lab session exists, so the verdict can
     come from :func:`otto.config.scope.active` — the one authority — rather than
     from a pre-lab projection of it. Ordering is load-bearing, not cosmetic:
-    before the session there are no ``ctx.scopes`` verdicts at all, and a
+    before the session there are no ``scopes_of(ctx)`` verdicts at all, and a
     missing verdict resolves ACTIVE, so a gate hoisted above it would refuse
     nothing except an explicit ``-E``.
 
@@ -1435,10 +1452,10 @@ def dry_run_requested(ctx: typer.Context) -> bool:
     """Whether this invocation is a dry run.
 
     Prefers the root callback's recorded options (the flag the user actually
-    typed) and falls back to the active :class:`~otto.context.OttoContext` —
-    which is what a sub-app driven without the root callback (unit tests, an
-    embedder) installs, and what ``ensure_lab_context`` derives from the flag
-    anyway, so the two can only ever agree on the real dispatch path.
+    typed) and falls back to :func:`~otto.host.host.is_dry_run`, the installed
+    run policy — which is what a sub-app driven without the root callback
+    (unit tests, an embedder) installs, and what the root callback builds from
+    the flag anyway, so the two can only ever agree on the real dispatch path.
 
     Read with ``getattr``, not attribute access: ``_otto_root_options`` is a
     plain ``ctx.meta`` slot, and several preamble tests park a bare sentinel
@@ -1448,21 +1465,20 @@ def dry_run_requested(ctx: typer.Context) -> bool:
     flag = getattr(ctx.meta.get("_otto_root_options"), "dry_run", None)
     if flag is not None:
         return bool(flag)
-    from ..context import try_get_context
+    from ..host.host import is_dry_run
 
-    active = try_get_context()
-    return bool(active is not None and active.dry_run)
+    return is_dry_run()
 
 
 def probe_requested(ctx: typer.Context) -> bool:
     """Whether this dry run may open connections (``--probe``, spec §3).
 
-    Read ONLY from the root callback's recorded options — no
-    :class:`~otto.context.OttoContext` fallback, unlike
-    :func:`dry_run_requested`. ``dry_run`` lives on the context because the
-    LIBRARY layer branches on it at every device boundary; ``--probe`` is a CLI
-    presentation choice that nothing below the seam consults, and putting it on
-    the context would invite exactly that. A sub-app driven without the root
+    Read ONLY from the root callback's recorded options — no run-policy
+    fallback, unlike :func:`dry_run_requested`. ``dry_run`` lives on the run
+    policy (the context reads it) because the LIBRARY layer branches on it at
+    every device boundary; ``--probe`` is a CLI presentation choice that
+    nothing below the seam consults, and putting it on the policy would invite
+    exactly that. A sub-app driven without the root
     callback therefore never probes, which is the safe answer.
     """
     return bool(getattr(ctx.meta.get("_otto_root_options"), "probe", False))
@@ -1667,8 +1683,8 @@ def stop_at_dry_run_seam(ctx: typer.Context, spec: "CommandSpec") -> None:
     lifecycle event loop, and only when ``--probe`` was actually given — and
     then calls ``_conclude_dry_run``, the sync resolve/print/exit tail
     shared with :func:`finish_dry_run`. A plain ``-n`` stop (no ``--probe``)
-    therefore starts no event loop at all: no signal handlers, no host-scope
-    sweep, no teardown-deadline lookup, to do what is otherwise a few printed
+    therefore starts no event loop at all: no signal handlers, no cleanup
+    boundary, no teardown-deadline lookup, to do what is otherwise a few printed
     lines and a ``typer.Exit(0)``. This runs inside ``command_preamble``,
     before any leaf coroutine is even constructed, so staying loop-free here
     is not an optimization otto's own outer ``run_command`` would have made
@@ -2026,7 +2042,7 @@ def _require_async_leaf(cmd: Any, spec: "CommandSpec") -> None:
     """Refuse a sync leaf under a command whose lane demands coroutines.
 
     Only a coroutine reaches the bridge below, so a sync leaf runs with no
-    host-scope entry and no interrupt policy. ``@instruction`` checks this at
+    cleanup boundary and no interrupt policy. ``@instruction`` checks this at
     its own decorator, but that is the SUGAR: a directly-registered
     ``InstructionEntry``, an ``@run_app.command()``, and a sub-group added
     with ``add_typer`` all reach ``otto run`` without passing it.
@@ -2100,7 +2116,7 @@ def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
         # The lifecycle bridge (wave 2 of the command-lifecycle-uniformity
         # spec): a plain ``async def`` leaf — typer never awaits callbacks, so
         # its invoke returns the coroutine object — runs under the full
-        # command policy (host-scope entry, two-stage interrupts, teardown
+        # command policy (a cleanup boundary, two-stage interrupts, teardown
         # deadline) with REGISTRATION as the only opt-in. Detection is on the
         # invoke RESULT, not the callback: typer wraps every callback in its
         # own sync shim, so ``iscoroutinefunction(cmd.callback)`` is always

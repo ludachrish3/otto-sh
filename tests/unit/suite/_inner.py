@@ -64,8 +64,8 @@ class SlowHost(RecordingHost):
 """Source of a ``fakehost`` module: ``LocalHost`` doubles that log and record each close.
 
 A test writes it with ``pytester.makepyfile(fakehost=FAKE_HOSTS)``. The hosts
-claim the running loop on first use, as every host does, so they join that
-loop's host scope with no test wiring. ``CLOSED`` gets ``(host id, id(loop),
+claim the running loop on first use, as every host does, so they register
+with that loop with no test wiring. ``CLOSED`` gets ``(host id, id(loop),
 loop closed?)`` for every close.
 """
 

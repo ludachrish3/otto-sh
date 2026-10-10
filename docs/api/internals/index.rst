@@ -26,6 +26,7 @@ of these pages.
    init/index
    instructions
    inventory
+   invocation
    kmodcov
    labs
    layout

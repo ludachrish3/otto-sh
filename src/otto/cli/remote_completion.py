@@ -334,10 +334,10 @@ def _live_listing(host: "Any", directory: str) -> "list[ListingEntry] | None":
     The coroutine runs under :func:`otto.lifecycle.run_command`, never a bare
     ``asyncio.run`` (house rule: ``tests/unit/test_no_bare_asyncio_run.py``).
     Besides the interrupt policy, that buys the completer a second closer: a
-    host registers with the command loop's host scope when it connects, and
-    the active :class:`~otto.context.OttoContext` sweeps that scope at loop
-    exit, so the host :func:`_load_host` constructed (or its ``--term``-override
-    copy) is closed even if the explicit ``host.close()`` below fails. The
+    host registers with the command loop when it connects, and releasing the
+    command's cleanup boundary closes it at loop exit, context or not, so the
+    host :func:`_load_host` constructed (or its ``--term``-override copy) is
+    closed even if the explicit ``host.close()`` below fails. The
     explicit close stays as the prompt, first closer, and double closing is
     safe: ``close()`` is idempotent, and ``HostConnections.close`` clears each
     cached slot take-then-clear.

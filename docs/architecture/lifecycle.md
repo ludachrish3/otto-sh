@@ -29,7 +29,7 @@ digraph lifecycle {
     dispatch [label="dispatch\nresolve only the target command;\nevery other command stays a help stub"];
     preamble [label="invoke preamble\nload + merge labs → OttoContext →\noutput dir + log sinks → reservation gate\n(lab_free commands skip lab and gate)"];
     body [label="command body\n(command-specific — pages below)"];
-    teardown [label="teardown\neach loop's HostScope closes its hosts;\nexit code derived from the Result"];
+    teardown [label="teardown\neach loop's last cleanup boundary closes its hosts;\nexit code derived from the Result"];
 
     shim -> entry [label=" every argv but a bare --version"];
     entry -> completion [label=" completion request"];
@@ -221,7 +221,8 @@ directory listing is precisely what a dry run cannot honestly produce.
 Ctrl-C is decided in one place. Every command body reaches the event loop
 through {func}`otto.lifecycle.run_command`, and the first SIGINT or SIGTERM
 it sees is **graceful**: the body task is cancelled, a status line goes to
-stderr, and the `HostScope` sweep closes remote sessions properly. The
+stderr, and releasing the command's cleanup boundary closes remote sessions
+properly. The
 teardown deadline (`OTTO_TEARDOWN_DEADLINE`, 10 seconds by default) starts
 counting at that *first signal*, so it is one budget shared by the body's
 cancellation unwind and the sweep that follows it — not an allowance granted
@@ -235,8 +236,8 @@ a supervisor reads the interrupt identically either way.
 
 Registration is the whole opt-in. A leaf never mentions `otto.lifecycle`: the
 invoke wrapper detects the coroutine a plain `async def` leaf returned and
-bridges it through `run_command()`, so a third-party command gets host-scope
-entry, the two-stage policy, and the bounded teardown for free — the same
+bridges it through `run_command()`, so a third-party command gets a cleanup
+boundary, the two-stage policy, and the bounded teardown for free — the same
 policy the first-party commands run under
 ({doc}`../cookbook/extending/extending-cli`).
 
@@ -253,7 +254,7 @@ in-process pytest session behind `otto test` (`otto/suite/run.py`), where
 stage one is pytest's own fixture unwind, which releases the tests' host
 connections. That *composes* the primitive rather than escaping it: the exit
 contract is identical, only the graceful path belongs to pytest instead of
-to the scope.
+to the command's cleanup boundary.
 
 Commands nested inside a phase **defer to it**. `run_command()` installs its
 handlers with `add_signal_handler`, and asyncio restores
@@ -287,12 +288,15 @@ returns. Local blocking work belongs in {func}`asyncio.to_thread`.
 
 ## OttoContext: the per-invocation runtime
 
-{class}`~otto.context.OttoContext` is a plain dataclass holding exactly what
-one invocation needs: the active `lab`, the `dry_run` and
-`log_command_output` flags, the invocation's `output_dir`, the options bound
-for the dispatched verb (read with {meth}`~otto.context.OttoContext.options`),
-and one {class}`~otto.context.HostScope` per event loop. Its methods are the
-canonical host accessors:
+{class}`~otto.context.OttoContext` holds exactly what one invocation needs:
+the active `lab`, the run's `policy` (a {class}`~otto.context.RunPolicy`:
+dry run, command-output logging, the invocation's output directory, the
+product variant and the teardown deadline), and the options bound for the
+dispatched verb (read with {meth}`~otto.context.OttoContext.options`). Its
+`dry_run`, `log_command_output` and `output_dir` read the policy and are
+read-only; change them on `ctx.policy`.
+It holds no hosts' connections: those belong to event loops (below). Its
+methods are the canonical host accessors:
 
 - {meth}`~otto.context.OttoContext.get_host` — look up one host by id and
   apply per-call option overrides.
@@ -320,32 +324,63 @@ injected.
 
 For a CLI invocation the lab load (`ensure_lab_context`, shared by the preamble and
 the inline `--show-lab`/`--list-hosts` paths) installs the context, and the root
-callback the run's product variant; each registers its reset with Click's `call_on_close` on
-the invocation's root context. Click closes that context once, when the invocation
+callback the run's policy (`--field`/`--debug`, `--dry-run` and the teardown
+deadline from `OTTO_TEARDOWN_DEADLINE`), which the context then carries; each
+registers its reset with Click's `call_on_close` on the invocation's root
+context. Click closes that context once, when the invocation
 ends, whether it returns, exits or raises, and the same way for the console script,
 `app()` and a `CliRunner`. It runs the resets last-in first-out, so the context is
-reset before the variant and nothing an invocation installed outlives it: read the
+reset before the policy and nothing an invocation installed outlives it: read the
 context inside the command, never after `app()` returns.
 
-## HostScope: deterministic teardown, no `__del__`
+## Loop registries: deterministic teardown, no `__del__`
 
 Hosts hold real resources — SSH connections, telnet consoles, docker exec
 channels. otto deliberately has **no** `__del__`-based cleanup: garbage
 collection is non-deterministic, and relying on it caused resource churn.
-Instead a host registers, deduplicated by identity, with the
-{class}`~otto.context.HostScope` of the event loop that first connects it
-({meth}`~otto.context.OttoContext.scope_for`), because a connection belongs
-to the loop that opened it and only that loop can close it gracefully. Each
-loop's scope closes what it owns while the loop still runs
-({meth}`~otto.context.OttoContext.sweep_loop`): a command's loop at command
-end, and under `otto test` each pytest-asyncio loop just before pytest-asyncio
-closes it, logging `closed 2 hosts at end of TestRouter's loop: dut1, dut2`
-at debug level. A host used from a different loop that is still running
-fails fast with {class}`~otto.host.loop_owner.HostLoopError` instead of
-hanging; one whose owning loop has already closed drops its dead connection
-and reconnects. After `otto test`'s pytest session returns, anything a loop
-left unswept is abandoned as a backstop
-({meth}`~otto.context.OttoContext.abandon_closed_loops`).
+Instead a host registers with the registry of the event loop that connects
+it ({class}`~otto.invocation.HostRegistration`), and registers again, in
+place of its earlier record, each time it reconnects or rebuilds its
+connections. It does so whether or not a context is installed, because a
+connection belongs to the loop that opened it and only that loop can close
+it gracefully. A host used from a
+different loop that is still running fails fast with
+{class}`~otto.host.loop_owner.HostLoopError` instead of hanging; one whose
+owning loop has already closed drops its dead connection and reconnects.
+
+When a loop's hosts close is decided by **cleanup boundaries**
+({func}`~otto.invocation.acquire_boundary`), a count held on the loop:
+
+- **Who holds one.** `run_command` holds one on the command's loop for the
+  body, `open_context` holds one on the running loop for its block, and under
+  `otto test` each pytest-asyncio runner holds one on its loop for the
+  runner's whole scope.
+- **The last release sweeps.** Only the release that brings the count to
+  zero closes the loop's hosts, while the loop still runs, logging
+  `closed 2 hosts at end of TestRouter's loop: dut1, dut2` at debug level. So
+  a nested `open_context`'s exit closes nothing while the outer one holds
+  the loop, and a host connected under `run_command` with no context still
+  closes when the command ends.
+- **The sweep drains.** Hosts close in dependency order (a docker exec
+  channel before its parent's connection), bounded by the teardown deadline.
+  While a loop drains, an `open_context` entering on it waits for the drain
+  to end, then reconnects whatever the drain closed on its next use; a close
+  that tries to enter one raises instead of waiting on itself. A host still
+  open when the deadline expires, or when a second interrupt cuts the drain
+  short, is abandoned before anyone else is let in: its connections are
+  dropped with no I/O, so a close still running can no longer touch them,
+  and it reconnects on its next use.
+- **Runner shutdown.** Just before pytest-asyncio closes a runner's loop,
+  otto shuts that loop's registry down: every host on it closes whatever the
+  count, and the loop refuses new boundaries. So under `otto test` an
+  `open_context` inside a test leaves its hosts open until its runner's loop
+  shuts down ({doc}`../cookbook/host-scopes`).
+
+A script that drives a loop itself, with none of these around it, holds no
+boundary; it closes its hosts with {meth}`~otto.context.OttoContext.sweep_loop`
+or `close()`. After `otto test`'s pytest session returns, anything a closed
+loop left behind is abandoned as a backstop
+({func}`~otto.invocation.abandon_closed_loops`).
 
 That yields three equally valid usage modes, mirroring file descriptors:
 
@@ -354,7 +389,7 @@ That yields three equally valid usage modes, mirroring file descriptors:
 async with ctx.get_host("router1") as h:
     await h.run("uptime")
 
-# 2. no ceremony — the loop's scope closes it at command end
+# 2. no ceremony — the command's cleanup boundary closes it at command end
 h = ctx.get_host("router1")
 await h.run("uptime")
 
@@ -362,7 +397,7 @@ await h.run("uptime")
 await h.close()
 ```
 
-`close()` is idempotent, so an early per-host close and the end-of-scope sweep
+`close()` is idempotent, so an early per-host close and the boundary's sweep
 never collide.
 
 ## Library use: `open_context()`
@@ -385,7 +420,8 @@ order:
 3. build the lab, or take a `Lab` object as given;
 4. build the reservation gate, install the context, then run the dependency
    preflight and the gate;
-5. yield, and on exit tear everything down, scope included.
+5. yield, and on exit release its cleanup boundary (the last release closes
+   the loop's hosts) and restore the outer context.
 
 See [Bring-your-own-CLI](../cookbook/python-library.md#bring-your-own-cli-lower-level-primitives)
 in the library guide for each step and what it raises. The reservation gate

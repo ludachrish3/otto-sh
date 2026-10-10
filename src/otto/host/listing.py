@@ -295,9 +295,9 @@ def _unused_declared(repos: list[Any], seam: str, hosts: list[Any]) -> list[Unus
     does not hash). An entry whose ``variant`` differs from the run's is
     passed over by ingest, so it reads ``variant 'x' (run is y)``.
     """
-    from .. import context
+    from ..invocation import current_policy
 
-    run = context.variant()
+    run = current_policy().variant
     meta = _SEAMS[seam]
     scoped: set[int] = set()
     matched: set[int] = set()

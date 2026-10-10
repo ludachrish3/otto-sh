@@ -429,6 +429,37 @@ def get_lab() -> Lab:
     return get_context().lab
 
 
+def current_repos() -> "list[Repo]":
+    """Return the run's repos where no context object is in hand.
+
+    The installed context's :attr:`~otto.context.OttoContext.repos` when one
+    is installed, else bootstrap's. Code that holds a context reads
+    ``ctx.repos``. This is for the conveniences that work with or without
+    one (``prepare_run``, coverage's entry points, docker's repo reads). A
+    fresh list on every call.
+    """
+    from ..context import try_get_context  # function-scope: read when called
+
+    ctx = try_get_context()
+    if ctx is not None:
+        return ctx.repos
+    from ..bootstrap import bootstrap  # function-scope: the composition root
+
+    return list(bootstrap().repos)
+
+
+def current_ordered_repos() -> "list[Repo]":
+    """Return :func:`current_repos` in dependency order, dependency-skipped repos absent."""
+    from ..context import try_get_context  # function-scope: read when called
+
+    ctx = try_get_context()
+    if ctx is not None:
+        return ctx.ordered_repos
+    from ..bootstrap import bootstrap  # function-scope: the composition root
+
+    return list(bootstrap().ordered_repos)
+
+
 def get_hosts_in_play() -> set[str]:
     """Return this run's hosts in play — the RESERVATION readers' entry; walks must not use it.
 
@@ -617,7 +648,7 @@ def fleet_of_interest(
     from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
     from .scope import resolve_scopes, scoped_ids
 
-    # The verdicts the walk's context resolves (``OttoContext.scopes``), with
+    # The verdicts the walk's context resolves (``scopes_of(ctx)``), with
     # the same ``local`` exclusion, so the two read identical data.
     scopes = resolve_scopes(
         repos,

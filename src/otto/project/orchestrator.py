@@ -17,12 +17,11 @@ name (``walk``, ``continue_on_failure``, ``require_dependencies``,
 a repo that adds a project instruction gets the same machinery otto's six use.
 
 * **Direction.** A ``forward`` walk takes dependencies first
-  (:func:`~otto.bootstrap.get_ordered_repos`'s own order); ``reverse`` takes
-  dependents first, because a dependent must come down before the thing it
-  depends on. The order is READ, never rewritten -- ``get_ordered_repos()``
-  hands back bootstrap's own list, so ``_run_bodies`` reverses a COPY of
-  it; an in-place ``.reverse()`` on that list would leave every later caller
-  walking backwards.
+  (:attr:`~otto.context.OttoContext.ordered_repos`' own order); ``reverse``
+  takes dependents first, because a dependent must come down before the thing
+  it depends on. The order is READ, never rewritten -- the walk reverses a
+  COPY of the list it is handed; an in-place ``.reverse()`` on a caller's list
+  would leave that caller walking backwards.
 * **Failure.** Building is fail-fast: installing a dependent on top of a
   dependency that is known to be missing produces a lab nobody can reason
   about. Tearing down and gathering logs are best-effort
@@ -157,7 +156,7 @@ class InactiveRequiredDependencyError(OttoError):
 def _lab() -> "tuple[OttoContext, list[Repo]]":
     """Return the active context and the repos to walk, dependencies first -- D3 enforced.
 
-    Both lookups are imported HERE rather than at module scope, matching the
+    The context is imported HERE rather than at module scope, matching the
     package's circular-import idiom (:mod:`otto.config` and :mod:`otto.context`
     reach back into hosts): ``import otto.project`` must stay cheap, because
     the default instructions import it at CLI startup.
@@ -172,21 +171,20 @@ def _lab() -> "tuple[OttoContext, list[Repo]]":
     are gated by the verb they delegate to, before that delegate does anything
     either.
     """
-    from ..bootstrap import get_ordered_repos
     from ..context import get_context
 
     ctx = get_context()
     _enforce_current_scope(ctx)
-    return ctx, get_ordered_repos()
+    return ctx, ctx.ordered_repos
 
 
 def _enforce_current_scope(ctx: "OttoContext") -> None:
     """Raise when the DRIVING repo's own fleet declaration cannot work (D3's abort).
 
-    THE DRIVING REPO IS ``bootstrap().repos[0]`` -- the first ``OTTO_SUT_DIRS``
+    THE DRIVING REPO IS ``ctx.repos[0]`` -- the first ``OTTO_SUT_DIRS``
     entry, the project whose run this is -- and NOT the first repo of the walk
     order this module iterates. Those are two different repos in any lab with a
-    dependency: :func:`~otto.bootstrap.get_ordered_repos` hands back a topological
+    dependency: :attr:`~otto.context.OttoContext.ordered_repos` is a topological
     reorder, dependencies first, so its head is the thing being depended ON.
     Gating on that one would abort a healthy project's run over a dependency's
     declaration, which is precisely the veto D3's asymmetry exists to prevent.
@@ -200,12 +198,11 @@ def _enforce_current_scope(ctx: "OttoContext") -> None:
     legal -- ``otto run`` in a bare lab directory -- so the lookup is guarded
     rather than indexed.
     """
-    from ..bootstrap import get_repos
-    from ..config.scope import require_current_scope
+    from ..config.scope import require_current_scope, scopes_of
 
-    repos = get_repos()
+    repos = ctx.repos
     if repos:
-        require_current_scope(ctx.scopes, repos[0].name)
+        require_current_scope(scopes_of(ctx), repos[0].name)
 
 
 def _skip_message(scope: "ProjectScope", verb: str) -> str:
@@ -352,7 +349,7 @@ def _applicable(
             repo requires a provider this run dropped on the LAB axis. See
             that class for why the switch shape warns instead.
     """
-    from ..config.scope import active, switched_off
+    from ..config.scope import active, scopes_of, switched_off
     from ..models.dependencies import normalize_name
 
     keep: "list[Repo]" = []
@@ -363,7 +360,7 @@ def _applicable(
             continue
         # Keyed by the NORMALIZED name because that is what a dependency
         # declaration is matched on; ``active`` above was asked with the raw
-        # ``Repo.name``, which is how ``ctx.scopes`` is keyed. Two spellings,
+        # ``Repo.name``, which is how ``scopes_of(ctx)`` is keyed. Two spellings,
         # two lookups, each with the one its own mapping uses.
         dropped[normalize_name(repo.name)] = repo
         if not announce:
@@ -378,7 +375,7 @@ def _applicable(
         else:
             # Not switched off and not active leaves exactly one cause, so the
             # verdict is present: ``active`` resolves True for a missing one.
-            logger.warning(_literal(_skip_message(ctx.scopes[repo.name], verb)))
+            logger.warning(_literal(_skip_message(scopes_of(ctx)[repo.name], verb)))
 
     for repo in keep:
         for dep in repo.dependencies:
@@ -433,7 +430,7 @@ def _announce_dropped_provider(
         InactiveRequiredDependencyError: *require_dependencies*, and *dep* is
             required, and *provider* was dropped on the lab axis.
     """
-    from ..config.scope import switched_off
+    from ..config.scope import scopes_of, switched_off
 
     by_switch = switched_off(provider.name, ctx)
     if dep.required and by_switch:
@@ -448,7 +445,7 @@ def _announce_dropped_provider(
         )
         return
     if dep.required:
-        scope = ctx.scopes[provider.name]
+        scope = scopes_of(ctx)[provider.name]
         labs = ", ".join(scope.loaded_labs) or "(none)"
         if not require_dependencies:
             if not announce:
@@ -477,7 +474,7 @@ def _announce_dropped_provider(
         f"switched off via --exclude-projects {dep.normalized}"
         if by_switch
         else f"not applicable to the loaded lab(s) "
-        f"[{', '.join(ctx.scopes[provider.name].loaded_labs) or '(none)'}]"
+        f"[{', '.join(scopes_of(ctx)[provider.name].loaded_labs) or '(none)'}]"
     )
     logger.warning(
         _literal(
@@ -582,9 +579,9 @@ def _walk_order(
     THE ONE WALK: :func:`_run_bodies` (a real run) and
     :func:`project_instruction_body_options` (the per-repo options build) both
     resolve their repos through this -- same order (copied before
-    ``spec.walk == "reverse"`` reverses it, since ``repos`` may be bootstrap's
-    own list an in-place ``.reverse()`` would leave every later caller walking
-    backwards), same applicability filter (:func:`_applicable`, so a repo no
+    ``spec.walk == "reverse"`` reverses it, since ``repos`` may be the
+    caller's own list, and an in-place ``.reverse()`` would leave that caller
+    walking backwards), same applicability filter (:func:`_applicable`, so a repo no
     loaded lab applies to is silently skipped, not reported as an absence),
     and the same body resolved per repo (:func:`actions_for` +
     ``entry.body_for``) -- so a bad value raises from the identical repo, in
@@ -713,12 +710,10 @@ def project_instruction_body_options(
     lab-inactive dependency (:class:`InactiveRequiredDependencyError`) --
     exactly as a real run's walk would, before either builds anything.
     """
-    from ..bootstrap import get_ordered_repos
-
     source = OptionsSource.from_kwargs(kwargs)
     seen: set[type] = set()
     instances: list[Any] = []
-    for _repo, _actions, body in _walk_order(name, ctx, get_ordered_repos(), announce=announce):
+    for _repo, _actions, body in _walk_order(name, ctx, ctx.ordered_repos, announce=announce):
         if body.options_cls is None or body.options_cls in seen:
             continue
         seen.add(body.options_cls)
@@ -1117,8 +1112,7 @@ async def status(opts: "StatusOptions | OptionsSource | None" = None) -> Project
     would put a line in front of every operator whose lab merely does not
     include some project, which is the ordinary case and not news.
     """
-    from ..bootstrap import get_repos
-    from ..config.scope import active, switched_off
+    from ..config.scope import active, scopes_of, switched_off
     from ..models.dependencies import normalize_name
 
     source = _source(opts, StatusOptions)
@@ -1136,8 +1130,8 @@ async def status(opts: "StatusOptions | OptionsSource | None" = None) -> Project
     # that explains it. Actions and the install state walk only `repos`.
     walked = {repo.name for repo in repos}
     scoping: "dict[str, RepoScope]" = {}
-    for repo in get_repos():
-        scope = ctx.scopes.get(repo.name)
+    for repo in ctx.repos:
+        scope = scopes_of(ctx).get(repo.name)
         if scope is not None:
             scoping[repo.name] = _scope_row(scope, skipped=repo.name not in walked)
     states: "dict[str, InstallState]" = {}

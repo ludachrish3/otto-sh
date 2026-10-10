@@ -15,6 +15,7 @@ from otto.coverage.instrumentation import (
     detect_for_lab,
     instrumented_products,
 )
+from tests._fixtures.bootstrap_seam import patch_bootstrap
 
 
 def _product(name, verdict):
@@ -162,9 +163,6 @@ def test_detect_for_lab_with_coverage_config_passes_pattern_and_containers(monke
     calls = {}
     host = _host("h1", _product("app", True))
 
-    def fake_get_repos():
-        return ["repo"]
-
     def fake_get_cov_config(repos):
         assert repos == ["repo"]
         return {"hosts": "sensor.*"}
@@ -178,7 +176,7 @@ def test_detect_for_lab_with_coverage_config_passes_pattern_and_containers(monke
         calls["include_containers"] = include_containers
         return [host]
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", fake_get_repos)
+    patch_bootstrap(monkeypatch, ["repo"])
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", fake_get_cov_config)
     monkeypatch.setattr("otto.config.coverage_settings.load_hosts_pattern", fake_load_hosts_pattern)
     monkeypatch.setattr("otto.config.fleet.all_hosts", fake_all_hosts)
@@ -193,9 +191,6 @@ def test_detect_for_lab_without_coverage_config_defaults_to_none_pattern(monkeyp
     calls = {}
     host = _host("h2", _product("agent", False))
 
-    def fake_get_repos():
-        return []
-
     def fake_get_cov_config(repos):
         assert repos == []
         return {}
@@ -208,7 +203,7 @@ def test_detect_for_lab_without_coverage_config_defaults_to_none_pattern(monkeyp
         calls["include_containers"] = include_containers
         return [host]
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", fake_get_repos)
+    patch_bootstrap(monkeypatch, [])
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", fake_get_cov_config)
     monkeypatch.setattr("otto.config.coverage_settings.load_hosts_pattern", fake_load_hosts_pattern)
     monkeypatch.setattr("otto.config.fleet.all_hosts", fake_all_hosts)
