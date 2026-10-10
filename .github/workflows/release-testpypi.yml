@@ -21,7 +21,7 @@ jobs:
       # Same gated build as release.yml: the wheel must embed the built web
       # frontends, and the otto_build_backend shim fails a bare `uv build`.
       - name: Set up Node
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
 
