@@ -17,7 +17,7 @@ from typing import Any
 import typer
 from typer.models import TyperInfo
 
-from ..registry import Registry, caller_module
+from ..registry import Registry, registration_boundary
 from .builtin_commands import register_builtin_commands
 from .invoke import prepare_command_target
 
@@ -72,20 +72,16 @@ class CommandSpec:
     NOT set for ``test``: the ``otto test`` leaf is sync, because
     ``pytest.main`` is."""
 
-    origin: str = ""
-    """Module that registered the command (auto-captured) — used in collisions."""
-
 
 CLI_COMMANDS: Registry[CommandSpec] = Registry(
-    "CLI command",
-    register_hint="otto.register_cli_command()",
-    # register_cli_command has no overwrite parameter — the default
-    # "Pass overwrite=True…" sentence would point at a knob that does not exist.
-    collision_hint="CLI command names cannot be overwritten; pick a unique name.",
+    "CLI command", entry=CommandSpec, register_hint="otto.register_cli_command()"
 )
-"""Every registered top-level ``otto`` command or group, keyed by CLI name."""
+"""Every registered top-level ``otto`` command or group, keyed by CLI name.
+
+``CLI_COMMANDS.origin(name)`` is the module that registered a command."""
 
 
+@registration_boundary
 def register_cli_command(
     name: str,
     loader: Any,
@@ -96,26 +92,22 @@ def register_cli_command(
     gate: bool = True,
     async_leaves: bool = False,
     dry_run_preview: bool = False,
-    origin: str | None = None,
+    overwrite: bool = False,
 ) -> None:
     """Register a top-level ``otto`` command or group.
 
     *loader* is a ``typer.Typer`` app (group), a plain/async function (leaf
     command), or a ``"pkg.mod:attr"`` string resolved lazily on dispatch.
-    Name collisions raise immediately, naming both registering modules —
-    there is deliberately no overwrite escape hatch for CLI commands.
+    A taken name raises :class:`~otto.registry.DuplicateRegistration`, naming
+    both registering modules, unless *overwrite* is true, which replaces the
+    command deliberately.
 
     *dry_run_preview* opts every leaf under this command out of the
     ``--dry-run`` seam default (see :attr:`CommandSpec.dry_run_preview`).
 
-    *origin* names the registering module; ``None`` (the default) captures
-    the caller's, which is right for every direct call. A WRAPPER that
-    registers on someone else's behalf must pass the real registrant — the
-    same seam :meth:`Registry.register <otto.registry.Registry.register>`
-    exposes, and for the same reason: ``@cli_command`` registers from inside
-    this module, and a frame-captured origin of ``otto.cli.registry`` made
-    the completion cache classify every decorated third-party leaf as a
-    BUILT-IN and silently drop it from warm root help.
+    The command is credited to the module that called this function (or
+    applied :func:`cli_command`), which is what the completion cache reads to
+    tell a third-party command from one of otto's own.
     """
     if help is None and isinstance(loader, typer.Typer):
         # A live app already carries its Typer-native help — read it once here
@@ -124,8 +116,6 @@ def register_cli_command(
         # Lazy "pkg.mod:attr" loaders have nothing to read without importing;
         # that is what explicit help= is for.
         help = _live_app_help(loader)  # noqa: A001 — mirrors typer's own `help=` keyword
-    if origin is None:
-        origin = caller_module()
     spec = CommandSpec(
         name=name,
         loader=loader,
@@ -135,9 +125,8 @@ def register_cli_command(
         gate=gate,
         async_leaves=async_leaves,
         dry_run_preview=dry_run_preview,
-        origin=origin,
     )
-    CLI_COMMANDS.register(name, spec, origin=origin)
+    CLI_COMMANDS.register(name, spec, overwrite=overwrite)
 
 
 def cli_command(
@@ -170,6 +159,7 @@ def cli_command(
     interruptible than a sync one (see :func:`~otto.instructions.instruction`).
     """
 
+    @registration_boundary
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         if not lab_free and not inspect.iscoroutinefunction(func):
             raise TypeError(
@@ -187,13 +177,6 @@ def cli_command(
         # function-loader branch wraps it in a throwaway Typer on dispatch
         # (same as expose._synthesize_command), so it always resolves to a
         # leaf command, never a same-named nested group.
-        #
-        # origin= is the module APPLYING the decorator, captured here because
-        # the register_cli_command call below runs in THIS module's frame — a
-        # frame-captured origin would read "otto.cli.registry", the cache
-        # collector would classify a third-party leaf as a built-in, and warm
-        # root help would silently drop it (while direct registrations, whose
-        # frame IS the plugin module, survived).
         register_cli_command(
             cmd_name,
             target,
@@ -202,7 +185,6 @@ def cli_command(
             output_dir=output_dir,
             gate=gate,
             dry_run_preview=dry_run_preview,
-            origin=caller_module(),
         )
         return func
 

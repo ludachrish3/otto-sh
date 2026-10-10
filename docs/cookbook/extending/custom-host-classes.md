@@ -26,24 +26,33 @@ fails the init module rather than a later connect. A profile carries none
 unless you pass them, even one based on `unix`; the built-in values are
 listed in {doc}`../../configuration/os-profiles`.
 
-A code registration overrides a data table of the same name (see
-{doc}`../../configuration/os-profiles`), so an `[os_profiles]` table in
-`settings.toml` cannot patch a profile a library registers in code. To change
-one, import the library in your own init module and call
-`register_os_profile` for that name afterwards, or register the variant under
-a new name.
+A code profile wins over a data table of the same name, whichever comes
+first (see {doc}`../../configuration/os-profiles`), so an `[os_profiles]`
+table in `settings.toml` cannot patch a profile a library registers in code.
+Registering a name that is already taken raises
+{class}`~otto.registry.DuplicateRegistration`; to replace a library's
+profile, import the library in your own init module and call
+`register_os_profile(..., overwrite=True)` for that name afterwards, or
+register the variant under a new name.
 
 ## Custom host classes
 
 To ship a host subclass from an external repo:
 
 1. Subclass `EmbeddedHost` or `UnixHost` (whichever family fits).
-2. Call `register_host_class(name, cls)` from an init module.  This also
-   auto-registers a trivial same-named profile so `os_type: <name>` resolves
-   immediately with no extra config.  That profile carries no console prompt
-   patterns — even over `unix` — so a `UnixHost` subclass whose hosts log in
-   over the `console` term follows it with
-   `register_os_profile(name, base=name, login_prompt=..., password_prompt=...)`.
+2. Call `register_host_class(name, cls)` from an init module.  `os_type:
+   <name>` then resolves to the class's own profile with no extra config. It
+   registers no `os_type` profile: the class's profile is the lowest layer
+   ({doc}`../../configuration/os-profiles`), so a code profile or a repo's
+   data table of the same name replaces it. Pass
+   `profile=ProfileFields(...)` (from `otto.host`) to give it defaults or
+   console prompt patterns; without it the profile carries none — even over
+   `unix` — so a `UnixHost` subclass whose hosts log in over the `console`
+   term passes
+   `profile=ProfileFields(login_prompt=..., password_prompt=...)`.
+   Every argument after the class is keyword-only, and registering a name
+   that is already taken raises {class}`~otto.registry.DuplicateRegistration`
+   unless you pass `overwrite=True`.
 
 ```python
 from dataclasses import dataclass, field

@@ -20,7 +20,7 @@ from typing import ClassVar
 
 from typing_extensions import override
 
-from ..registry import Ref, Registry, caller_module
+from ..registry import ClassEntry, Ref, Registry, registration_boundary, resolved
 
 
 class BinaryLoader(ABC):
@@ -145,8 +145,16 @@ class LlextHexLoader(BinaryLoader):
         return any(raw.strip() == line for raw in output.splitlines())
 
 
-def _validate_binary_loader(type_name: str, cls: type[BinaryLoader]) -> None:
-    """Refuse a loader whose ``type_name`` disagrees with the name it is registered under."""
+def _check_loader_class(type_name: str, cls: object) -> None:
+    """Refuse anything but a :class:`BinaryLoader` subclass whose ``type_name`` is its name.
+
+    One check, two call sites: ``validate`` runs it on a class registered
+    eagerly, ``check_resolved`` on the class a ``Ref`` names, once imported.
+    """
+    if not (isinstance(cls, type) and issubclass(cls, BinaryLoader)):
+        raise TypeError(
+            f"register_binary_loader({type_name!r}): {cls!r} is not a BinaryLoader subclass"
+        )
     if cls.type_name != type_name:
         raise ValueError(
             f"register_binary_loader: type_name {type_name!r} doesn't match "
@@ -154,28 +162,48 @@ def _validate_binary_loader(type_name: str, cls: type[BinaryLoader]) -> None:
         )
 
 
-LOADER_CLASSES: Registry[type[BinaryLoader]] = Registry(
+def _validate_loader_entry(
+    type_name: str, entry: "ClassEntry[BinaryLoader]", _proposed: object
+) -> None:
+    if not isinstance(entry.cls, Ref):
+        _check_loader_class(type_name, entry.cls)
+
+
+LOADER_CLASSES: "Registry[ClassEntry[BinaryLoader]]" = Registry(
     "binary loader",
+    entry=ClassEntry,
     register_hint="otto.host.binary_loader.register_binary_loader()",
-    validate=_validate_binary_loader,
+    validate=_validate_loader_entry,
+    check_resolved=lambda name, entry: _check_loader_class(name, resolved(entry.cls)),
 )
-LOADER_CLASSES.register("llext-hex", Ref("otto.host.binary_loader:LlextHexLoader"))
+"""The binary-loader classes lab data can name, keyed by loader name."""
+LOADER_CLASSES.register("llext-hex", ClassEntry(Ref("otto.host.binary_loader:LlextHexLoader")))
 
 
+@registration_boundary
 def register_binary_loader(
-    type_name: str, cls: type[BinaryLoader], *, overwrite: bool = False
+    type_name: str, cls: "type[BinaryLoader] | Ref", *, overwrite: bool = False
 ) -> None:
     """Make a custom :class:`BinaryLoader` subclass available to lab data.
 
     Call from an init module listed in ``.otto/settings.toml`` — the same
     pattern :func:`otto.host.command_frame.register_command_frame` follows.
+    *cls* may be a :class:`~otto.registry.Ref` (``"module:Class"``), imported
+    and checked when lab data first builds the loader.
 
     *overwrite* replaces an existing registration under *type_name*
     deliberately (e.g. a built-in); by default a duplicate name raises.
+
+    Raises
+    ------
+    TypeError
+        If *cls* is not a :class:`BinaryLoader` subclass.
+    ValueError
+        If *type_name* doesn't match ``cls.type_name``.
     """
-    LOADER_CLASSES.register(type_name, cls, overwrite=overwrite, origin=caller_module())
+    LOADER_CLASSES.register(type_name, ClassEntry(cls), overwrite=overwrite)
 
 
 def build_binary_loader(type_name: str) -> BinaryLoader:
     """Construct the :class:`BinaryLoader` registered under *type_name*."""
-    return LOADER_CLASSES.get(type_name)()
+    return resolved(LOADER_CLASSES.get(type_name).cls)()

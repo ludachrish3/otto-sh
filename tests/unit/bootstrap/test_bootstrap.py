@@ -12,24 +12,18 @@ from tests._fixtures.sutrepo import make_sut_repo
 
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch):
-    """Reset bootstrap's caches, and un-register anything a test's init module registered.
+    """Reset bootstrap's caches around each test.
 
-    The provider registries are plain module-level lists, so ``_isolate_registries``
-    (which walks ``otto.registry.Registry`` singletons) does not cover them —
-    ``tests/unit/host`` and ``tests/unit/project`` each snapshot them by hand for
-    the same reason. It matters more here than there: the D2 check below reads
-    those lists on EVERY ``bootstrap()``, so a provider leaked by one test, owned
-    by a repo name a later test happens to reuse, would fail that later test's
-    bootstrap for a repo it never registered anything from.
+    What a test's init module registers, providers included, is restored by the
+    root conftest's ``_isolate_registries``. That matters here: the D2 check
+    reads the provider subscriptions on EVERY ``bootstrap()``, so a provider
+    leaked by one test, owned by a repo name a later test happens to reuse,
+    would fail that later test's bootstrap for a repo it never registered
+    anything from.
     """
-    from otto.host import dev_tool as dev_tool_mod
-    from otto.host import product as product_mod
-
-    saved = (list(product_mod._PRODUCT_PROVIDERS), list(dev_tool_mod._DEV_TOOL_PROVIDERS))
     bs._reset()
     yield
     bs._reset()
-    product_mod._PRODUCT_PROVIDERS[:], dev_tool_mod._DEV_TOOL_PROVIDERS[:] = saved
 
 
 def _write_repo(tmp_path, *, broken_test: bool = False) -> str:
@@ -353,9 +347,33 @@ def test_provider_repo_with_lab_patterns_bootstraps(tmp_path, monkeypatch):
     assert [r.name for r in result.repos] == ["provlabs"]
     # Without this the negative tests would pass just as well against a fixture
     # whose init module registered nothing at all.
-    from otto.host.product import _PRODUCT_PROVIDERS
+    from otto.host.product import registered_product_providers
 
-    assert "provlabs" in {owner for _, owner in _PRODUCT_PROVIDERS}
+    assert "provlabs" in {owner for _, owner in registered_product_providers()}
+
+
+def test_provider_owner_check_reads_the_subscription():
+    """D2 reads provider owners from the subscription, judged over the repos that ran."""
+    from types import SimpleNamespace
+
+    from otto.host.product import register_product_provider
+    from otto.registry import registering_repo
+
+    ghost = SimpleNamespace(
+        name="ghost",
+        sut_dir="/nowhere/ghost",
+        project_scope=None,
+        declared_products=[],
+        declared_dev_tools=[],
+    )
+    with registering_repo("ghost"):
+        register_product_provider(lambda host: [])
+    # The positive control: once ghost is among the repos that ran, its
+    # provider makes it owe a [project] declaration it does not have.
+    with pytest.raises(bs.ProjectScopeError, match="ghost"):
+        bs._check_providing_repos_declare_scope([ghost], [ghost])
+    # Absent from ordered_repos, its provider's owner is ignored.
+    bs._check_providing_repos_declare_scope([ghost], [])
 
 
 def test_providerless_repo_needs_no_declaration(tmp_path, monkeypatch):
@@ -680,3 +698,229 @@ def test_is_bootstrapped_false_before_any_call(monkeypatch):
     monkeypatch.setattr(bs, "_result", None)
     monkeypatch.setattr(bs, "_in_progress", None)
     assert bs.is_bootstrapped() is False
+
+
+# ── [os_profiles]: a bad table is contained per repo, after init ──────────
+
+
+def _profile_repo(tmp_path, name: str, table: str = "", *, required: str = "") -> str:
+    deps = f'[dependencies]\nrequired = ["{required}"]\n\n' if required else ""
+    return str(make_sut_repo(tmp_path / name, name=name, extra=deps + table))
+
+
+_BAD_TABLE = '[os_profiles.broken]\nbase = "windows"\n'
+
+
+def test_a_bad_os_profiles_table_is_contained_naming_the_repo_and_the_table(tmp_path, monkeypatch):
+    bad = _profile_repo(tmp_path, "repo-a", _BAD_TABLE)
+    good = _profile_repo(tmp_path, "repo-b", '[os_profiles.fine]\nbase = "unix"\n')
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{bad},{good}")
+    result = bs.bootstrap()  # does not raise
+    assert [repo.name for repo in result.repos] == ["repo-a", "repo-b"]  # still discovered
+    # Kept in the dependency order, as a repo whose init failed is.
+    assert [repo.name for repo in result.ordered_repos] == ["repo-a", "repo-b"]
+    (err,) = result.errors
+    assert err.sut_dir == pathlib.Path(bad)
+    assert "[os_profiles.broken] in repo 'repo-a'" in str(err)
+    assert "register_os_profile" not in str(err)
+
+
+def test_a_dependency_skipped_repo_s_malformed_table_is_still_reported(tmp_path, monkeypatch):
+    """A table's shape is the settings parse's to check, skipped repo or not."""
+    skipped = _profile_repo(
+        tmp_path, "repo-a", "[os_profiles.broken]\nbase = 5\n", required="ghost"
+    )
+    monkeypatch.setenv("OTTO_SUT_DIRS", skipped)
+    result = bs.bootstrap()
+    assert result.ordered_repos == []
+    (err,) = result.errors
+    assert err.sut_dir == pathlib.Path(skipped)
+    assert "os_profiles.broken.base" in str(err)
+
+
+def test_a_dependency_skipped_repo_s_tables_are_not_judged_by_meaning(tmp_path, monkeypatch):
+    """Its init never ran, so a base it may register is not its error: the skip is its only one."""
+    skipped = _profile_repo(tmp_path, "repo-a", _BAD_TABLE, required="ghost")
+    monkeypatch.setenv("OTTO_SUT_DIRS", skipped)
+    result = bs.bootstrap()
+    assert result.ordered_repos == []
+    (err,) = result.errors
+    assert "dependency 'ghost' is not satisfied" in str(err)
+
+
+def test_a_command_not_involving_the_broken_repo_still_runs(tmp_path):
+    """The real CLI: root help with a bad table in one of two repos exits 0."""
+    import os
+    import subprocess
+    import sys
+
+    bad = _profile_repo(tmp_path, "repo-a", _BAD_TABLE)
+    good = _profile_repo(tmp_path, "repo-b")
+    env = {
+        **os.environ,
+        "OTTO_SUT_DIRS": f"{bad},{good}",
+        "OTTO_HOME": str(tmp_path / "home"),
+        "OTTO_XDIR": str(tmp_path / "xdir"),
+    }
+    done = subprocess.run(
+        [sys.executable, "-m", "otto", "--help"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+
+
+def _scoped(lab: str) -> str:
+    return f'[project]\nlab_patterns = ["{lab}"]\nhost_patterns = [".*"]\n\n'
+
+
+def test_a_bad_table_does_not_excuse_an_unscoped_provider_from_d2(tmp_path, monkeypatch):
+    """D2 still judges a repo whose table is bad: its init ran and registered a provider."""
+    repo = _write_provider_repo(tmp_path, "provbadtable", project=_BAD_TABLE)
+    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
+    with pytest.raises(bs.ProjectScopeError) as exc:
+        bs.bootstrap()
+    _assert_names_the_missing_declaration(str(exc.value), "provbadtable")
+
+
+def _dependent_pair(root, broken_repo: str, monkeypatch) -> "types.SimpleNamespace":
+    """Bootstrap *broken_repo* (named repo-a) and repo-c, which requires it."""
+    bs._reset()
+    c = _profile_repo(root, "repo-c", required="repo-a")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{broken_repo},{c}")
+    result = bs.bootstrap()
+    return types.SimpleNamespace(
+        ordered=[repo.name for repo in result.ordered_repos],
+        failing=sorted(pathlib.Path(e.sut_dir).name for e in result.errors),
+    )
+
+
+def test_a_dependent_of_a_bad_table_repo_behaves_as_with_a_failed_init(tmp_path, monkeypatch):
+    """A bad table is the dependency's load error, exactly as a failed init module is."""
+    table_root, init_root = tmp_path / "table", tmp_path / "init"
+    bad_table = _dependent_pair(
+        table_root, _profile_repo(table_root, "repo-a", _BAD_TABLE), monkeypatch
+    )
+    failed_init = _dependent_pair(
+        init_root,
+        str(
+            make_sut_repo(
+                init_root / "repo-a",
+                name="repo-a",
+                extra='libs = ["lib"]\ninit = ["repo_a_fails"]\n',
+                files={"lib/repo_a_fails.py": "raise RuntimeError('init failed')\n"},
+            )
+        ),
+        monkeypatch,
+    )
+    assert failed_init.ordered == ["repo-a", "repo-c"]
+    assert failed_init.failing == ["repo-a"]
+    assert bad_table == failed_init
+
+
+def _scoped_pair(tmp_path, monkeypatch):
+    bad = _profile_repo(tmp_path, "repo-a", _scoped("lab-a") + _BAD_TABLE)
+    good = _profile_repo(tmp_path, "repo-b", _scoped(".*"))
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{bad},{good}")
+    return bs.bootstrap()
+
+
+def test_a_run_not_using_the_bad_table_repo_proceeds_with_a_warning(tmp_path, monkeypatch):
+    from otto.session.projects import check_repos, select_projects
+
+    result = _scoped_pair(tmp_path, monkeypatch)
+    # Kept ordered, as a repo whose init failed is: D2 and the dependency
+    # order still see it.
+    assert [repo.name for repo in result.ordered_repos] == ["repo-a", "repo-b"]
+    check = check_repos(result, ["lab-b"], select_projects(result.repos, [], []))
+    (demoted,) = check.demoted
+    assert demoted.repo == "repo-a"
+    assert demoted.reason == "out_of_scope"
+    assert "[os_profiles.broken] in repo 'repo-a'" in str(demoted.error)
+
+
+def test_a_run_using_the_bad_table_repo_fails_loudly(tmp_path, monkeypatch):
+    from otto.session.projects import RepoLoadError, check_repos, select_projects
+
+    result = _scoped_pair(tmp_path, monkeypatch)
+    with pytest.raises(RepoLoadError) as exc:
+        check_repos(result, ["lab-a"], select_projects(result.repos, [], []))
+    assert "[os_profiles.broken] in repo 'repo-a'" in str(exc.value)
+
+
+# ── [os_profiles] over a host class registered by reference ─────────────────
+
+
+def _ref_class_repo(tmp_path, name: str, init_body: str, table: str = "") -> str:
+    """A repo whose init module ``<name>_init`` runs *init_body*, with settings *table*."""
+    module = f"{name.replace('-', '_')}_init"
+    return str(
+        make_sut_repo(
+            tmp_path / name,
+            name=name,
+            extra=f'libs = ["lib"]\ninit = ["{module}"]\n\n{table}',
+            files={f"lib/{module}.py": textwrap.dedent(init_body)},
+        )
+    )
+
+
+_MISSING_MODULE_CLASS = """\
+    from otto.host.os_profile import register_host_class
+    from otto.registry import Ref
+
+    register_host_class(
+        "plugin-host",
+        Ref("plugin_hosts_missing:PluginHost"),
+        spec=Ref("plugin_hosts_missing:PluginSpec"),
+    )
+"""
+
+_ALPHA_OVER_PLUGIN_HOST = '[os_profiles.alpha]\nbase = "plugin-host"\n'
+
+
+def test_a_table_over_a_class_whose_module_is_missing_is_contained(tmp_path, monkeypatch):
+    """The class's import fails at the table check: that repo's error, never a crash."""
+    repo = _ref_class_repo(tmp_path, "repo-ref", _MISSING_MODULE_CLASS, _ALPHA_OVER_PLUGIN_HOST)
+    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
+    result = bs.bootstrap()  # does not raise
+    (err,) = result.errors
+    assert err.sut_dir == pathlib.Path(repo)
+    text = str(err)
+    assert "[os_profiles.alpha] in repo 'repo-ref'" in text
+    assert "base 'plugin-host' (host class registered by repo_ref_init)" in text
+    assert "resolution failed: ModuleNotFoundError" in text
+    assert "plugin_hosts_missing" in text
+
+
+def test_a_ref_class_s_bad_own_profile_names_its_registering_module(tmp_path, monkeypatch):
+    """The class's own defaults are checked when it resolves; the error names who registered it.
+
+    The table that triggered the resolution belongs to another repo, so naming
+    only that table would send its author after a typo that is not theirs.
+    """
+    owner = _ref_class_repo(
+        tmp_path,
+        "repo-owner",
+        """\
+        from otto.host.os_profile import ProfileFields, register_host_class
+        from otto.registry import FrozenMap, Ref
+
+        register_host_class(
+            "typo-host",
+            Ref("otto.host.unix_host:UnixHost"),
+            spec=Ref("otto.models.host:UnixHostSpec"),
+            profile=ProfileFields(FrozenMap({"not_a_field": 1})),
+        )
+        """,
+    )
+    user = _profile_repo(tmp_path, "repo-user", '[os_profiles.alpha]\nbase = "typo-host"\n')
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{owner},{user}")
+    result = bs.bootstrap()
+    (err,) = result.errors
+    text = str(err)
+    assert "[os_profiles.alpha] in repo 'repo-user'" in text
+    assert "base 'typo-host' (host class registered by repo_owner_init)" in text
+    assert "unknown default field(s)" in text

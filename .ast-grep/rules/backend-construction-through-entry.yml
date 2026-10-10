@@ -1,0 +1,64 @@
+id: backend-construction-through-entry
+language: python
+severity: error
+message: this constructs a built-in backend directly, so a backend a repo registers over the built-in's name is never used here. Build through the seam's registry (`prepare` + `build`, or the seam's `build_*` function), which calls whatever entry is registered under the name.
+note: >
+  A built-in backend is one registry entry among others: a repo replaces it
+  by registering its own backend under the same name with overwrite=True.
+  Only the entry's factory may call the built-in's constructor: the
+  function registered as `factory=`, which has a parameter annotated
+  `Configured[config, env]` (`_json_inventory` in
+  otto.inventory.json_backend, `_command_power` in otto.host.power), so a
+  call inside such a function is not flagged. The annotation itself must
+  start with `Configured[`: a parameter that only mentions it inside another
+  type (a factory callable a registration wrapper takes, a list of prepared
+  states an orchestration loop walks) does not make a function a factory.
+  An orchestration module that calls the constructor itself bypasses the
+  registry, and the replacement silently never runs.
+
+  Flagged: a call of a built-in backend's constructor
+  (`JsonFileLabRepository`, `JsonInventory`, `NetBoxInventory`,
+  `JsonCredsStore`, `JsonReservationBackend`, `NullReservationBackend`,
+  `CommandPowerController`, `ConnectionManager`, `ConnectionManager.create`),
+  bare or through a module, in the orchestration modules that load labs,
+  inventory, creds, reservations and power, and build hosts' connections
+  (labs.sources, config.lab, inventory.config, creds.config,
+  reservations.factory, host.unix_host, host.embedded_host, session.lab
+  and host.power).
+
+  The rule is bounded: a helper in another module that constructs a
+  built-in, a constructor reached through an alias, and a helper shaped like
+  a factory (a `Configured[...]` parameter it was never registered with) are
+  not seen. The
+  replacement differential (tests/unit/registry/test_replacement_*.py, which
+  replaces every built-in name and builds through the real product path) is
+  the real guard.
+files:
+- src/otto/labs/sources.py
+- src/otto/config/lab.py
+- src/otto/inventory/config.py
+- src/otto/creds/config.py
+- src/otto/reservations/factory.py
+- src/otto/host/unix_host.py
+- src/otto/host/embedded_host.py
+- src/otto/host/power.py
+- src/otto/session/lab.py
+rule:
+  kind: call
+  all:
+  - has:
+      field: function
+      regex: '^(\w+\.)*(JsonFileLabRepository|JsonInventory|NetBoxInventory|JsonCredsStore|JsonReservationBackend|NullReservationBackend|CommandPowerController|ConnectionManager|ConnectionManager\.create)$'
+  # A registered entry's factory (a parameter annotated
+  # `Configured[config, env]`) is where the built-in's constructor belongs.
+  - not:
+      inside:
+        kind: function_definition
+        stopBy: end
+        has:
+          field: parameters
+          has:
+            kind: typed_parameter
+            has:
+              field: type
+              regex: '^["'']?Configured\['

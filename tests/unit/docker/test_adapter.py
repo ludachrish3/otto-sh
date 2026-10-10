@@ -1,22 +1,16 @@
 """Adapter registration mirrors register_project_actions' attribution rules."""
 
-from __future__ import annotations
-
-import contextlib
-from unittest.mock import patch
-
 import pytest
 
 from otto.docker import adapter as adapter_mod
 from otto.docker.adapter import AdapterResult, adapter_for, register_compose_adapter
+from otto.registry import DuplicateRegistration, RegistrationRefused, registering_repo
 
 
 @pytest.fixture
 def _as_repo():
-    with patch.object(adapter_mod, "get_registering_repo", return_value="repo1"):
+    with registering_repo("repo1"):
         yield
-    with contextlib.suppress(ValueError):
-        adapter_mod.COMPOSE_ADAPTERS.unregister("repo1:integration")
 
 
 @pytest.mark.usefixtures("_as_repo")
@@ -33,37 +27,47 @@ def test_register_and_lookup():
 
 @pytest.mark.usefixtures("_as_repo")
 def test_duplicate_registration_is_loud():
-    """The collision names both the (repo, use_case) key and the purpose-written hint.
-
-    Anchored on more than Registry's generic "already registered" phrase so a
-    regression that drops the collision_hint (dead text otherwise, since
-    nothing else reads it) would be caught here.
-    """
+    """A second adapter for one (repo, use case) names the key and the way to replace it."""
 
     @register_compose_adapter("integration")
     def one(facts):
         return AdapterResult()
 
     with pytest.raises(
-        ValueError,
+        DuplicateRegistration,
         match=r"compose adapter 'repo1:integration' is already registered.*"
-        r"One adapter per \(repo, use-case\); merge the logic into it\.",
+        r"Pass overwrite=True to replace it deliberately\.",
     ):
 
         @register_compose_adapter("integration")
         def two(facts):
             return AdapterResult()
 
+    assert adapter_for("repo1", "integration") is one
+
+
+@pytest.mark.usefixtures("_as_repo")
+def test_overwrite_replaces_the_repos_adapter():
+    @register_compose_adapter("integration")
+    def one(facts):
+        return AdapterResult()
+
+    @register_compose_adapter("integration", overwrite=True)
+    def two(facts):
+        return AdapterResult()
+
+    assert adapter_for("repo1", "integration") is two
+
 
 def test_outside_init_module_is_refused():
-    with (
-        patch.object(adapter_mod, "get_registering_repo", return_value=None),
-        pytest.raises(
-            ValueError,
-            match=r"register_compose_adapter\(\) must be called from a repo init module",
-        ),
+    names, revision = adapter_mod.COMPOSE_ADAPTERS.names(), adapter_mod.COMPOSE_ADAPTERS.revision
+    with pytest.raises(
+        RegistrationRefused,
+        match=r"^compose adapter 'integration' must be registered from a repo init module",
     ):
         register_compose_adapter("integration")(lambda facts: AdapterResult())
+    assert adapter_mod.COMPOSE_ADAPTERS.names() == names
+    assert adapter_mod.COMPOSE_ADAPTERS.revision == revision
 
 
 @pytest.mark.usefixtures("_as_repo")

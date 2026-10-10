@@ -8,14 +8,19 @@ import pytest
 
 from otto.inventory import (
     CredsOverlay,
+    InventoryConstructionError,
     InventoryDeclaration,
+    InventoryEnv,
     InventoryError,
     JsonInventory,
+    JsonInventoryConfig,
+    NetBoxInventoryConfig,
     build_inventory,
     build_inventory_from_declarations,
     compile_inventory,
     construct_inventory,
 )
+from otto.models.base import OttoModel
 from otto.models.settings import CredsConfigSpec, InventoryConfigSpec, UserSettingsModel
 from tests._fixtures.fake_repo import fake_repo
 
@@ -46,13 +51,13 @@ def _user_file(dir_: Path, body: str) -> Path:
 
 def test_json_requires_path_and_refuses_unknown_keys(tmp_path):
     with pytest.raises(
-        InventoryError,
-        match=r"origin\.toml: \[inventory\] backend 'json' requires a 'path' string",
+        InventoryConstructionError,
+        match=r"'json' \(registered by .*; configured in origin\.toml\): parse failed: path",
     ):
         compile_inventory(
             InventoryConfigSpec(backend="json"), anchor_dir=tmp_path, origin="origin.toml"
         )
-    with pytest.raises(InventoryError, match=r"unknown key\(s\) for the json backend: \['url'\]"):
+    with pytest.raises(InventoryConstructionError, match=r"parse failed: url: Extra inputs"):
         compile_inventory(
             InventoryConfigSpec(backend="json", path="i.json", url="x"),
             anchor_dir=tmp_path,
@@ -62,8 +67,7 @@ def test_json_requires_path_and_refuses_unknown_keys(tmp_path):
 
 def test_json_supplies_must_be_a_list_of_field_names(tmp_path):
     with pytest.raises(
-        InventoryError,
-        match=r"o: \[inventory\] 'supplies' must be a list of record field names",
+        InventoryConstructionError, match=r"configured in o\): parse failed: supplies"
     ):
         compile_inventory(
             InventoryConfigSpec(backend="json", path="i.json", supplies="ip"),
@@ -75,82 +79,86 @@ def test_json_supplies_must_be_a_list_of_field_names(tmp_path):
         anchor_dir=tmp_path,
         origin="o",
     )
-    assert out.kwargs["supplies"] == ["ip"]
+    assert out.prepared.normalized["supplies"] == ("ip",)
 
 
 def test_relative_paths_anchor_to_the_declaring_dir_and_tilde_expands(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     cfg = InventoryConfigSpec(backend="json", path="lab/i.json")
     out = compile_inventory(cfg, anchor_dir=tmp_path / "repo", origin="o")
-    assert out.kwargs["path"] == tmp_path / "repo" / "lab" / "i.json"
+    assert out.prepared.config == JsonInventoryConfig(path=tmp_path / "repo" / "lab" / "i.json")
     assert out.creds is None
     assert out.cache_ttl.total_seconds() == 24 * 3600
 
 
-def test_other_backends_keep_their_kwargs_verbatim(tmp_path):
+def test_netbox_keys_are_parsed_by_its_own_model(tmp_path):
     cfg = InventoryConfigSpec(backend="netbox", url="https://nb", filter={"site": "a"})
     out = compile_inventory(cfg, anchor_dir=tmp_path, origin="o")
-    assert out.kwargs == {"url": "https://nb", "filter": {"site": "a"}}
+    assert out.prepared.config == NetBoxInventoryConfig(url="https://nb", filter={"site": "a"})
+
+
+class _FakeConfig(OttoModel, frozen=True):
+    url: str
+    token_env: str | None = None
 
 
 class _FakeBackend:
-    """Stand-in for the netbox backend (Task 8): records what it was constructed with."""
+    """A third-party backend: records the configuration and env it was built from."""
 
-    def __init__(self, *, repo_dir, url, token_env=None):
-        self.repo_dir = repo_dir
-        self.url = url
-        self.token_env = token_env
-        self.label = f"fake:{url}"
+    def __init__(self, c):
+        self.env = c.env
+        self.url = c.config.url
+        self.token_env = c.config.token_env
+        self.label = f"fake:{self.url}"
         self.supplies = frozenset({"ip"})
+
+    def lookup(self, key):
+        raise NotImplementedError
+
+    def list_keys(self):
+        return []
 
     def fingerprint(self):
         """A third-party backend that CAN report freshness — so it is never cached.
 
-        Required by the protocol (spec §10) and read at construction since the
-        snapshot cache landed: a backend returning a string opts out of the
-        cache by design, which is what the ``isinstance(inv, _FakeBackend)``
-        assertion below now also pins.
+        A backend returning a string opts out of the cache by design, which is
+        what the ``isinstance(inv, _FakeBackend)`` assertion below also pins.
         """
         return f"fake:{self.url}"
 
 
-def test_a_non_json_backend_gets_repo_dir_plus_its_own_kwargs(tmp_path):
-    """The other construction arm: kwargs verbatim, plus ``repo_dir`` for anchoring.
+def test_a_third_party_backend_gets_its_config_and_env(tmp_path):
+    """A registered backend is built by its factory from its parsed config and the env.
 
     Registered here rather than waited for, because an arm no test reaches is
     an arm no test can catch breaking.
     """
     from otto.inventory import register_inventory_backend
-    from otto.inventory.registry import INVENTORY_BACKENDS
 
-    register_inventory_backend("fake-test", _FakeBackend)
-    try:
-        compiled = compile_inventory(
-            InventoryConfigSpec(backend="fake-test", url="https://nb", token_env="NB_TOKEN"),
-            anchor_dir=tmp_path,
-            origin="o",
-        )
-        inv = construct_inventory(compiled)
-        assert isinstance(inv, _FakeBackend)
-        assert inv.repo_dir == tmp_path
-        assert inv.url == "https://nb"
-        assert inv.token_env == "NB_TOKEN"
+    register_inventory_backend("fake-test", config=_FakeConfig, factory=_FakeBackend)
+    compiled = compile_inventory(
+        InventoryConfigSpec(backend="fake-test", url="https://nb", token_env="NB_TOKEN"),
+        anchor_dir=tmp_path,
+        origin="o",
+    )
+    inv = construct_inventory(compiled)
+    assert isinstance(inv, _FakeBackend)
+    assert inv.env == InventoryEnv(tmp_path, "o")
+    assert inv.url == "https://nb"
+    assert inv.token_env == "NB_TOKEN"
 
-        # A typo'd kwarg is the backend's own TypeError; it must reach the user
-        # naming the settings file and the backend, as the json arm's does.
-        bad = compile_inventory(
+    # A typo'd key fails the backend's config model, naming the settings file
+    # and the backend, as the json backend's does.
+    with pytest.raises(
+        InventoryConstructionError,
+        match=r"'fake-test' \(registered by .*; configured in r1/settings\.toml\): "
+        r"parse failed: .*urll",
+    ):
+        compile_inventory(
             InventoryConfigSpec(backend="fake-test", urll="https://nb"),
             anchor_dir=tmp_path,
             origin="r1/settings.toml",
         )
-        with pytest.raises(
-            InventoryError,
-            match=r"r1/settings\.toml: \[inventory\] backend 'fake-test': "
-            r".*unexpected keyword argument 'urll'",
-        ):
-            construct_inventory(bad)
-    finally:
-        INVENTORY_BACKENDS.unregister("fake-test")
 
 
 class _CachedThirdParty:
@@ -163,8 +171,7 @@ class _CachedThirdParty:
 
     supplies = frozenset({"ip"})
 
-    def __init__(self, repo_dir=None, *, url="https://cmdb"):
-        self.repo_dir = repo_dir
+    def __init__(self, url="https://cmdb"):
         self.url = url
         self.label = f"cmdb:{url}"
 
@@ -184,28 +191,22 @@ class _SuppliesCreds(_CachedThirdParty):
     supplies = frozenset({"ip", "creds"})
 
 
+class _NoConfig(OttoModel, frozen=True):
+    pass
+
+
 @pytest.fixture
 def registered_backend():
-    """Register a backend class under a name for one test; unregister it after.
+    """Register a backend class under a name for one test, built with no configuration.
 
-    ``overwrite=True`` so a re-run inside one session cannot fail on a
-    leftover, and the teardown runs whatever the test did — the registry is
-    process-global, and a name left behind changes what the NEXT test resolves.
+    The root isolation fixture restores the table afterwards.
     """
     from otto.inventory import register_inventory_backend
-    from otto.inventory.registry import INVENTORY_BACKENDS
-
-    names: list[str] = []
 
     def _register(name, cls):
-        register_inventory_backend(name, cls, overwrite=True)
-        names.append(name)
+        register_inventory_backend(name, config=_NoConfig, factory=lambda c: cls(), overwrite=True)
 
-    try:
-        yield _register
-    finally:
-        for name in names:
-            INVENTORY_BACKENDS.unregister(name)
+    return _register
 
 
 def _third_party(tmp_path, ttl):
@@ -466,7 +467,9 @@ def test_two_repos_must_agree(tmp_path):
 
 
 def test_unknown_backend_and_bad_table_are_inventory_errors(tmp_path):
-    with pytest.raises(InventoryError, match=r"o: Unknown inventory backend"):
+    with pytest.raises(
+        InventoryError, match=r"'nope' \(not registered; configured in o\): lookup failed"
+    ):
         build_inventory_from_declarations(
             [InventoryDeclaration(origin="o", anchor_dir=tmp_path, table={"backend": "nope"})],
             user_settings=None,
@@ -519,7 +522,9 @@ def test_creds_without_an_inventory_is_an_error_naming_the_declaring_file(tmp_pa
 def test_an_unknown_creds_backend_is_an_inventory_error(tmp_path):
     """A ``CredsError`` off the creds side must reach the caller as an ``InventoryError``."""
     inv_path = _inventory_file(tmp_path)
-    with pytest.raises(InventoryError, match=r"o: Unknown creds backend 'nope'"):
+    with pytest.raises(
+        InventoryError, match=r"creds backend 'nope' \(not registered; configured in o\)"
+    ):
         build_inventory_from_declarations(
             [
                 InventoryDeclaration(
@@ -711,7 +716,9 @@ def test_build_inventory_turns_a_broken_user_file_into_an_inventory_error(tmp_pa
 
 def test_build_inventory_names_the_user_file_as_the_origin(tmp_path):
     user_file = _user_file(tmp_path, '[inventory]\nbackend = "nope"\n')
-    with pytest.raises(InventoryError, match=rf"{user_file}: Unknown inventory backend"):
+    with pytest.raises(
+        InventoryError, match=rf"'nope' \(not registered; configured in {user_file}\)"
+    ):
         build_inventory([], user_settings_path=user_file)
 
 
@@ -755,3 +762,37 @@ def test_a_user_file_relative_path_anchors_to_the_user_file_directory(tmp_path):
     inv = build_inventory([], user_settings_path=user_file)
     assert isinstance(inv, JsonInventory)
     assert inv.path == inv_path.resolve()
+
+
+def test_a_creds_construction_failure_stays_a_construction_error(tmp_path):
+    """Both creds sites keep the construction kind: compile (lookup) and build (factory)."""
+    from otto.creds import CredsConstructionError, register_creds_backend
+    from otto.inventory import InventoryConstructionError
+
+    inv_path = _inventory_file(tmp_path)
+
+    def _declare(creds_table):
+        return [
+            InventoryDeclaration(
+                origin="o",
+                anchor_dir=tmp_path,
+                table={"backend": "json", "path": str(inv_path)},
+                creds_table=creds_table,
+            )
+        ]
+
+    with pytest.raises(InventoryConstructionError) as at_compile:
+        build_inventory_from_declarations(_declare({"backend": "nope"}), user_settings=None)
+    assert isinstance(at_compile.value, ValueError)
+    assert isinstance(at_compile.value.__cause__, CredsConstructionError)
+
+    class _NoKeys(OttoModel, frozen=True):
+        pass
+
+    def _boom(c):
+        raise RuntimeError("vault down")
+
+    register_creds_backend("boom-store", config=_NoKeys, factory=_boom)
+    with pytest.raises(InventoryConstructionError, match="vault down") as at_build:
+        build_inventory_from_declarations(_declare({"backend": "boom-store"}), user_settings=None)
+    assert isinstance(at_build.value.__cause__, CredsConstructionError)

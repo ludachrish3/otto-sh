@@ -6,10 +6,10 @@ import pytest
 
 from otto.declared import DeclaredEntry
 from otto.host import kmod_kind, kmod_tool_kind  # noqa: F401 — imports register the kinds
-from otto.host.dev_tool import DEV_TOOL_KINDS
+from otto.host.dev_tool import DEV_TOOL_KIND_BUILDER
 from otto.host.kmod_kind import KmodProduct
 from otto.host.kmod_tool_kind import KmodTool
-from otto.host.product import LOGIN_HOME_PLACEHOLDER, PRODUCT_KINDS
+from otto.host.product import LOGIN_HOME_PLACEHOLDER, PRODUCT_KIND_BUILDER
 from otto.kmodcov import INTERFACE
 
 MODULES = "cat /proc/modules"
@@ -34,7 +34,7 @@ def _kmod(host, tmp_path, artifact="kcov.ko", **params):
         match={},
         params={"artifact": artifact, **params},
     )
-    return PRODUCT_KINDS.build([entry], host)[0]
+    return PRODUCT_KIND_BUILDER.build([entry], host)[0]
 
 
 def _tool(host, tmp_path, kind="kmod", name="helper", artifact=None, **params):
@@ -49,7 +49,7 @@ def _tool(host, tmp_path, kind="kmod", name="helper", artifact=None, **params):
         match={},
         params={"artifact": artifact, **params},
     )
-    return DEV_TOOL_KINDS.build([entry], host)[0]
+    return DEV_TOOL_KIND_BUILDER.build([entry], host)[0]
 
 
 def _actions(lines):

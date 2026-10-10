@@ -10,7 +10,7 @@ from otto.declared import DeclaredEntry
 from otto.host import DeclaredProduct as LazyDeclaredProduct
 from otto.host.declared_product import DeclaredProduct
 from otto.host.dev_tool import DevTool
-from otto.host.product import PRODUCT_KINDS, Product, ShellProduct
+from otto.host.product import PRODUCT_KIND_BUILDER, Product, ShellProduct
 from otto.host.shell_kind import build_declared
 from otto.result import Result
 from otto.utils import Status
@@ -45,13 +45,13 @@ def test_declared_product_serves_both_seams():
 
 
 def test_the_shell_kind_builds_a_declared_product():
-    built = PRODUCT_KINDS.build([_entry(install="make install")], _Host())[0]
+    built = PRODUCT_KIND_BUILDER.build([_entry(install="make install")], _Host())[0]
     assert type(built) is DeclaredProduct
     assert built.install_cmd == "make install"
 
 
 def test_the_default_plan_shows_the_declared_strings():
-    product = PRODUCT_KINDS.build(
+    product = PRODUCT_KIND_BUILDER.build(
         [_entry(install="make install", uninstall="make clean")], _Host()
     )[0]
     plan = product.plan(_Host())

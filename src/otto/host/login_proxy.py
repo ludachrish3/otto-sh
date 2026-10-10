@@ -21,7 +21,7 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from ..errors import OttoError
 from ..logger.mode import LogMode
-from ..registry import Registry, caller_module
+from ..registry import Registry, registration_boundary
 from .command_frame import BashFrame, SessionMarkers
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .shell_liveness import confirm_live
@@ -138,12 +138,15 @@ class LoginProxyError(OttoError, ConnectionError):
     """A proxy step failed or a chain could not be resolved."""
 
 
-LOGIN_PROXIES: Registry[LoginProxy] = Registry(
-    "login proxy", register_hint="otto.register_login_proxy()"
+LOGIN_PROXIES: "Registry[LoginProxy]" = Registry(
+    "login proxy",
+    entry=LoginProxy,
+    register_hint="otto.register_login_proxy()",
 )
 """The login proxies a host's login chain can name, keyed by proxy name."""
 
 
+@registration_boundary
 def register_login_proxy(
     name: str,
     fn: LoginProxyFn,
@@ -163,9 +166,7 @@ def register_login_proxy(
     why not declaring one is the safe default, and why a proxy that answers
     its own prompt must leave this unset.
     """
-    LOGIN_PROXIES.register(
-        name, LoginProxy(fn, undo, prompt), overwrite=overwrite, origin=caller_module()
-    )
+    LOGIN_PROXIES.register(name, LoginProxy(fn, undo, prompt), overwrite=overwrite)
 
 
 # How `su` spells the prompt it asks for credentials at. Not locale-

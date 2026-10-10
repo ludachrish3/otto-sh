@@ -33,14 +33,17 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, SupportsInt
+from typing import TYPE_CHECKING, Literal, SupportsInt
 
 from pydantic import ConfigDict
 
 from ..models.base import OttoModel
-from ..registry import Registry, caller_module
+from ..registry import Registry, registration_boundary
 from .parsers import MetricDataPoint, human_readable
 from .rates import RateTracker
+
+if TYPE_CHECKING:
+    from ..registry import Proposed
 
 __all__ = ["SnmpMetric", "register_snmp_metric"]
 
@@ -124,23 +127,40 @@ class SnmpMetric(OttoModel):
 # descriptors, mirroring the host-class registry decision. (See the Phase A
 # design, "SNMP-metric registration symmetry".)
 
-# Registration here always overwrites (see register_snmp_metric) — re-teaching
-# otto how to chart an OID, including one of the built-ins below, is documented,
-# tested behavior, not a mistake to catch loudly.
-SNMP_METRICS: Registry[SnmpMetric] = Registry(
-    "SNMP metric descriptor", register_hint="otto.monitor.snmp.register_snmp_metric()"
+
+def _check_snmp_metric(name: str, entry: SnmpMetric, proposed: "Proposed[SnmpMetric]") -> None:
+    """``SNMP_METRICS``' validate: the key is the descriptor's own OID."""
+    del proposed
+    if name != entry.oid:
+        raise ValueError(
+            f"SNMP metric descriptor registered under {name!r} but its OID is {entry.oid!r}"
+        )
+
+
+# Each OID has one descriptor. Re-teaching otto how to chart an OID, including
+# one of the built-ins below, is supported and deliberate: it passes
+# overwrite=True, so two init modules describing the same OID collide loudly.
+SNMP_METRICS: "Registry[SnmpMetric]" = Registry(
+    "SNMP metric descriptor",
+    entry=SnmpMetric,
+    register_hint="otto.monitor.snmp.register_snmp_metric()",
+    validate=_check_snmp_metric,
 )
 
 
-def register_snmp_metric(metric: SnmpMetric) -> None:
-    """Register (or override) the descriptor for ``metric.oid``.
+@registration_boundary
+def register_snmp_metric(metric: SnmpMetric, *, overwrite: bool = False) -> None:
+    """Register the descriptor for ``metric.oid``.
 
     Call from an init module listed in ``.otto/settings.toml`` to teach otto how
     to chart a private/device-specific OID — the same extension pattern as
     :func:`otto.monitor.parsers.register_host_parsers` and
-    :func:`otto.host.command_frame.register_command_frame`.
+    :func:`otto.host.command_frame.register_command_frame`. An OID that already
+    has a descriptor, including a built-in one, raises
+    :class:`~otto.registry.DuplicateRegistration` unless *overwrite* is true,
+    which replaces it.
     """
-    SNMP_METRICS.register(metric.oid, metric, overwrite=True, origin=caller_module())
+    SNMP_METRICS.register(metric.oid, metric, overwrite=overwrite)
 
 
 def _register_builtin_metrics() -> None:
@@ -225,7 +245,7 @@ def fs_oids(index: int) -> list[str]:
 
 
 def _register_net_metrics(index: int) -> None:
-    """Register descriptors for interface *index* (idempotent — always overwrites)."""
+    """Register descriptors for interface *index*; an OID that already has one keeps it."""
     rx, tx, rx_p, tx_p, errs, drops = net_oids(index)
 
     def _m(
@@ -256,11 +276,11 @@ def _register_net_metrics(index: int) -> None:
         _m(errs, f"errors if{index}", "Net errors", "err/s", y_title="Rate"),
         _m(drops, f"drops if{index}", "Net errors", "drop/s", y_title="Rate"),
     ):
-        register_snmp_metric(metric)
+        _register_indexed_metric(metric)
 
 
 def _register_fs_metrics(index: int) -> None:
-    """Register descriptors for filesystem *index* (idempotent — always overwrites)."""
+    """Register descriptors for filesystem *index*; an OID that already has one keeps it."""
     used, total = fs_oids(index)
     for metric in (
         SnmpMetric(
@@ -282,6 +302,17 @@ def _register_fs_metrics(index: int) -> None:
             meta_of=used,
         ),
     ):
+        _register_indexed_metric(metric)
+
+
+def _register_indexed_metric(metric: SnmpMetric) -> None:
+    """Register a bundle's descriptor for *metric*'s OID unless that OID already has one.
+
+    Every host whose ``snmp.oids`` names a bundle expands it, so the same
+    index is met again; the descriptor registered the first time stays, and
+    so does one an init module registered for that OID before expansion.
+    """
+    if metric.oid not in SNMP_METRICS:
         register_snmp_metric(metric)
 
 

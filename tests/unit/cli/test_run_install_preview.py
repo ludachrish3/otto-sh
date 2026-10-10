@@ -9,14 +9,6 @@ from otto.project.plan import HostPlan, ProductPlanEntry, RepoPlan
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fake_repo import fake_repo
 from tests.unit.cli.conftest import _flat
-from tests.unit.cli.test_project_instruction_commands import _publish_the_six
-
-
-@pytest.fixture(autouse=True)
-def _published():
-    """Otto's project instructions, ``install`` among them, published."""
-    _publish_the_six()
-
 
 LONG_COMMAND = "tar -xzf /opt/stage/agent.tar.gz -C /opt/agent && " + "/opt/agent/install.sh " * 6
 assert len(LONG_COMMAND) > 100
@@ -102,7 +94,7 @@ def test_the_leaf_drives_the_real_planner_over_a_lab_without_contacting_the_host
     from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.declared import DeclaredEntry
-    from otto.host.product import PRODUCT_KINDS
+    from otto.host.product import PRODUCT_KIND_BUILDER
     from otto.invocation import RunPolicy
     from tests._fixtures.dispatch import DispatchRunner
     from tests.unit.project.test_plan import _Host
@@ -118,7 +110,7 @@ def test_the_leaf_drives_the_real_planner_over_a_lab_without_contacting_the_host
         params={"artifact": "agent.tar.gz", "stage_dir": "/opt/stage", "install": "sh install"},
     )
     host = _Host("test1")
-    product = PRODUCT_KINDS.build([entry], host)[0]
+    product = PRODUCT_KIND_BUILDER.build([entry], host)[0]
     product.owner = "r1"
     host.products = [product]
     ctx = OttoContext(lab=Lab(name="bench", hosts={host.id: host}), policy=RunPolicy(dry_run=True))

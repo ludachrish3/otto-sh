@@ -122,7 +122,7 @@ with none of it. The edges to know about:
   registration-dispatch time rather than letting it silently do nothing.
 - **`@instruction()` rejects every plain `def`.** The rule is re-applied
   when a leaf is invoked, so registering an `InstructionEntry` straight into
-  `INSTRUCTIONS`, hanging a command off `run_app` with `@run_app.command()`,
+  `STANDALONE_INSTRUCTIONS`, hanging a command off `run_app` with `@run_app.command()`,
   or adding a sub-group with `add_typer` is refused the same way.
 - **`@cli_command()` rejects a sync handler unless `lab_free=True`.** Note
   what `lab_free` actually means: otto will not load a lab, open a session or
@@ -185,8 +185,10 @@ it always blocks *execution*.
 `register_cli_command()` takes keyword-only metadata, mirrored on
 {class}`~otto.cli.registry.CommandSpec`. `@cli_command()` accepts `lab_free`,
 `output_dir`, `gate` and `dry_run_preview`, but not `async_leaves` or
-`origin`, which only `register_cli_command()` takes. The table covers the three
-that most commands set:
+`overwrite`, which only `register_cli_command()` takes. The registering module
+is not metadata you pass: the engine records it, and
+`CLI_COMMANDS.origin(name)` reads it back. The table covers the three that
+most commands set:
 
 | Keyword      | Default | Effect                                                                                                                                   |
 |--------------|---------|-------------------------------------------------------------------------------------------------------------------------------------------|
@@ -227,16 +229,16 @@ Two commands registering the same name is a **hard failure at registration
 time**, naming both modules:
 
 ```text
-ValueError: CLI command 'mytool' is already registered by 'acme.cli'; second
-registration from 'acme.other'. CLI command names cannot be overwritten; pick a
-unique name.
+DuplicateRegistration: CLI command 'mytool' is already registered by
+'acme.cli'; second registration from 'acme.other'. Pass overwrite=True to
+replace it deliberately.
 ```
 
-Unlike the backend registries covered in {doc}`extending-backends` (term,
-transfer, host classes, ...), which accept `overwrite=True` for a deliberate
-replacement, **`register_cli_command()` has no `overwrite` parameter at
-all**. If you need to replace a built-in's behavior, give your command a
-different top-level name.
+A deliberate replacement passes `overwrite=True`, as for every registry in
+{doc}`extending-backends`. Two repos that both do so for one name get an
+order-dependent winner — whichever init module runs last — and that is the
+explicit choice each of them made. Root `otto --help`, tab completion and
+dispatch serve the replacement from then on.
 
 ## Completion
 
@@ -285,8 +287,7 @@ commands and instructions.
 - {doc}`../../cli/run/index` — instructions (`otto run ...`), the closest sibling to a
   `@cli_command()` leaf
 - {doc}`extending-backends` — the term/transfer backend registries, which
-  share {class}`~otto.registry.Registry`'s engine but allow `overwrite=True`
-  where CLI commands don't
+  share {class}`~otto.registry.Registry`'s engine
 - {doc}`../../configuration/settings` — the `init` field that makes registration modules load
 - {doc}`../python-library` — using otto without the CLI at all
 - {doc}`Extension points <../../architecture/subsystems/extension-points>` — the

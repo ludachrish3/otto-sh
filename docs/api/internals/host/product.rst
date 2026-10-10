@@ -37,7 +37,11 @@ and the reference can link them. The public names are on :doc:`/api/host/product
 
 .. autofunction:: otto.host.product.scan_for_instrumentation
 
+.. autodata:: otto.host.product.PRODUCT_PROVIDERS
+
 .. autodata:: otto.host.product.PRODUCT_KINDS
+
+.. autodata:: otto.host.product.PRODUCT_KIND_BUILDER
 
 .. autofunction:: otto.host.product.apply_declared_products
 

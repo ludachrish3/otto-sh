@@ -52,7 +52,8 @@ def _apply_option_overrides(
     returned copy wholesale; the caller is responsible for constructing
     the full options instance they want.
 
-    The copy is built via :func:`dataclasses.replace`, which re-runs
+    The copy is built via :func:`~otto.host.os_profile.copy_host` (a
+    :func:`dataclasses.replace` that keeps the host's resolved profile), which re-runs
     ``__post_init__`` and therefore constructs a *fresh*
     :class:`ConnectionManager` with the override options wired in from
     the start. This is required because protocol options shape the
@@ -127,7 +128,9 @@ def _apply_option_overrides(
         # sees no load-time transfer preference, so it takes the menu's order.
         usable = console_transfer_menu(host.name, getattr(host, "valid_transfers", []), None)
         overrides["transfer"] = TRANSFER_RESOLVER.resolve_active(usable)
-    return dataclasses.replace(host, **overrides)
+    from ..host.os_profile import copy_host
+
+    return copy_host(host, **overrides)
 
 
 def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_hosts)

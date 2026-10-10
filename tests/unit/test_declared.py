@@ -225,11 +225,12 @@ def test_unknown_element_subpath_is_not_a_retired_key():
         validate_match_table({"element.resources": "x"})
 
 
-# ── KindRegistry.build ───────────────────────────────────────────────────────
+# ── KindBuilder.build ────────────────────────────────────────────────────────
 
 from pathlib import Path
 
-from otto.declared import DeclaredEntry, KindRegistry
+from otto.declared import DeclaredEntry, KindBuilder, KindEntry
+from otto.registry import Registry
 
 
 def _entry(
@@ -260,11 +261,28 @@ def _boom_resolver(entry):
     raise ValueError("boom")
 
 
+def _toy_kinds() -> Registry:
+    """A toy seam's kind registry, empty."""
+    return Registry("toy kind", entry=KindEntry, register_hint="register_toy_kind()")
+
+
 @pytest.fixture
 def kinds():
-    reg: KindRegistry = KindRegistry("toy kind", register_hint="register_toy_kind()")
-    reg.register("toy", _toy_factory, origin="tests")
-    return reg
+    table = _toy_kinds()
+    table.register("toy", KindEntry(_toy_factory))
+    return KindBuilder(table)
+
+
+def test_kind_builder_is_not_a_registry():
+    """The builder reads a plain kind registry; it is not one itself."""
+    from otto.host.dev_tool import DEV_TOOL_KIND_BUILDER, DEV_TOOL_KINDS
+    from otto.host.product import PRODUCT_KIND_BUILDER, PRODUCT_KINDS
+
+    assert not isinstance(PRODUCT_KIND_BUILDER, Registry)
+    assert not isinstance(DEV_TOOL_KIND_BUILDER, Registry)
+    assert type(PRODUCT_KINDS) is Registry and type(DEV_TOOL_KINDS) is Registry  # noqa: PT018
+    assert PRODUCT_KIND_BUILDER.kinds is PRODUCT_KINDS
+    assert DEV_TOOL_KIND_BUILDER.kinds is DEV_TOOL_KINDS
 
 
 def test_build_first_match_wins_in_declaration_order(kinds):
@@ -283,7 +301,7 @@ def test_build_stamps_owner_unless_the_factory_already_named_one(kinds):
     def opinionated(entry, host):
         return SimpleNamespace(name=entry.name, owner="handed-over")
 
-    kinds.register("opinionated", opinionated, origin="tests")
+    kinds.kinds.register("opinionated", KindEntry(opinionated))
     built = kinds.build([_entry("a"), _entry("b", kind="opinionated")], _host())
     assert [(b.name, b.owner) for b in built] == [("a", "acme"), ("b", "handed-over")]
 
@@ -384,9 +402,8 @@ def test_the_registry_reads_the_real_variant_when_nothing_patches_it(kinds):
 def test_a_class_entry_is_built_by_the_registrys_class_factory():
     from otto.registry import Ref
 
-    reg: KindRegistry = KindRegistry(
-        "toy kind",
-        register_hint="register_toy_kind()",
+    reg = KindBuilder(
+        _toy_kinds(),
         class_factory=Ref("tests.unit.test_declared:_toy_factory"),
         class_resolver=Ref("tests.unit.test_declared:_toy_resolver"),
     )
@@ -404,9 +421,8 @@ def test_a_class_entry_is_built_by_the_registrys_class_factory():
 def test_a_class_entry_is_resolved_before_match_variant_and_name_checks(skipped_by):
     from otto.registry import Ref
 
-    reg: KindRegistry = KindRegistry(
-        "toy kind",
-        register_hint="register_toy_kind()",
+    reg = KindBuilder(
+        _toy_kinds(),
         class_factory=Ref("tests.unit.test_declared:_toy_factory"),
         class_resolver=Ref("tests.unit.test_declared:_boom_resolver"),
     )
@@ -419,7 +435,7 @@ def test_a_class_entry_is_resolved_before_match_variant_and_name_checks(skipped_
     )
     entries = [entry]
     if skipped_by == "taken":
-        reg.register("toy", _toy_factory, origin="tests")
+        reg.kinds.register("toy", KindEntry(_toy_factory))
         entries.insert(0, _entry("fw", artifact="first.bin"))
     with _run_under("debug"), pytest.raises(ValueError, match="boom"):
         reg.build(entries, _host(os_version="1.0"))
@@ -429,12 +445,12 @@ def test_a_class_entry_is_resolved_before_match_variant_and_name_checks(skipped_
     "hooks",
     [{"class_factory": "_toy_factory"}, {"class_resolver": "_toy_resolver"}],
 )
-def test_a_registry_with_only_one_class_hook_is_refused(hooks):
+def test_a_builder_with_only_one_class_hook_is_refused(hooks):
     from otto.registry import Ref
 
     refs = {k: Ref(f"tests.unit.test_declared:{v}") for k, v in hooks.items()}
     with pytest.raises(ValueError, match=r"`class_factory` and `class_resolver`"):
-        KindRegistry("toy kind", register_hint="register_toy_kind()", **refs)
+        KindBuilder(_toy_kinds(), **refs)
 
 
 def test_a_class_entry_without_a_class_factory_fails_even_when_taken_and_variant_skipped(

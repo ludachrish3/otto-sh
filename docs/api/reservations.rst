@@ -6,8 +6,8 @@ effective user actually holds the resources the selected lab needs.
 It is pluggable: the check itself is fixed, but the "who has what
 reserved?" query is answered by a
 :class:`~otto.reservations.protocol.ReservationBackend`
-implementation — shipped ones, or your own class selected by registered name in
-``.otto/settings.toml``.
+implementation — shipped ones, or your own backend selected by registered name
+in ``.otto/settings.toml``.
 
 For narrative setup, configuration, and writing a custom backend, see
 the :doc:`CLI reference <../cli/reservation/index>`.
@@ -21,7 +21,8 @@ methods, no write methods of any kind.  Otto never mutates scheduler
 state.  The recommended way to satisfy it is to inherit
 :class:`~otto.reservations.ReservationBackendBase`, which declares the two
 methods as abstract, adds the cached ``reservations`` member every consumer
-reads, and spells out the constructor the factory calls.
+reads, and keeps the ``url``, ``repo_dir`` and ``username`` your factory hands
+it.
 
 ``fetch_reservations`` answers in :class:`~otto.reservations.protocol.Reservation`
 records (``backend_name`` returns a plain ``str``), so every backend reports
@@ -42,35 +43,22 @@ which then reports the holders as unknown;
 Extension points for implementers
 ---------------------------------
 
-A custom backend needs three pieces:
+A reservation backend is a *configured* backend.  It is registered from an
+``init`` module with
+:func:`~otto.reservations.register_reservation_backend`, which takes a config
+model and a factory (``register_reservation_backend(name, *, config, factory,
+overwrite=False)``), and selected by that name with ``backend = "<name>"`` in
+the ``[reservations]`` table.  Otto parses the ``[reservations.<name>]``
+sub-table with the config model, then calls the factory with a
+:class:`~otto.registry.Configured` carrying that parsed configuration and a
+:class:`~otto.reservations.ReservationEnv` (``url``, ``repo_dir``,
+``username`` and ``origin``).  The factory returns the backend.  Any failure on
+that path raises :class:`~otto.reservations.ReservationConstructionError`.
+:data:`~otto.reservations.RESERVATION_BACKENDS` is the registry itself.
 
-1. **A class** that satisfies :class:`~otto.reservations.protocol.ReservationBackend`.
-   Inherit :class:`~otto.reservations.ReservationBackendBase` and implement its two
-   abstract methods.  Protocol satisfaction is structural, so a class that merely has
-   the two methods also works — but the base also supplies the cached
-   ``reservations`` member the conformance helper requires, which a structural
-   backend must then provide itself.
-2. **An init module** that registers the class under a bare name::
-
-      from otto.reservations import register_reservation_backend
-      register_reservation_backend("my-team-jira", MyBackend)
-
-   The init module must be importable (add its containing directory to ``libs = [...]``
-   in ``.otto/settings.toml``, or install it into the same environment) and listed under
-   ``[init]`` in ``.otto/settings.toml``.
-3. **A ``[reservations]`` entry** selecting the registered name::
-
-      [reservations]
-      backend = "my-team-jira"
-
-   Optional per-backend kwargs go in a ``[reservations.my-team-jira]`` sub-table and
-   are passed to the constructor alongside the optional ``url`` setting.
-
-The factory always passes ``repo_dir=`` and ``username=``, adds ``url=`` when the
-setting is present, and passes every ``[reservations.<name>]`` key as a further
-keyword argument — ``Class(url=url, repo_dir=..., username=..., **kwargs_from_settings)``.
-Accept or omit ``url`` as fits your deployment; forward the otto-owned arguments
-to ``super().__init__``.
+"Selecting it in settings" in :doc:`../cookbook/extending/reservation-backends`
+is the one home for that contract: the config model, the factory, the
+environment and the errors.
 
 See :doc:`../getting-started/reservations` for a worked example — a small
 backend, its ``init`` module registration, its ``[reservations]`` table, and

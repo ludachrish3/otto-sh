@@ -4,7 +4,7 @@ Otto reads the tool-agnostic half of a host — address, interfaces,
 credentials, versions, location — through an **inventory backend**: a small
 class that answers "what is true about the machine with this key?". Two ship
 with otto, the `json` file and `netbox`
-({doc}`../../configuration/inventory`); anything else is a class you
+({doc}`../../configuration/inventory`); anything else is a backend you
 register from your own repo, because your source of record is a CMDB, an asset
 database, or a service nobody else has.
 
@@ -51,7 +51,7 @@ from otto.inventory import check_supplies
 
 
 class MyInventory:
-    def __init__(self, repo_dir=None, *, url, supplies=None):
+    def __init__(self, *, url, supplies=None):
         self.url = url
         self.supplies = check_supplies(supplies)
         self.label = f"mycmdb:{url.rstrip('/')}"
@@ -60,15 +60,35 @@ class MyInventory:
 
 ## Selecting it in settings
 
-Register the backend under a bare name from an `init` module (one of the
-modules in `init = [...]`), then select it by that name:
+An inventory backend is a *configured* backend, registered with the one
+wrapper shape every configured seam shares
+({ref}`configured-backends`): a config model that parses the `[inventory]`
+table, and a factory that builds the backend from it. Register it under a
+bare name from an `init` module (one of the modules in `init = [...]`), then
+select it by that name:
 
 ```python
 # my_inventory.py  (listed in init = [...])
-from otto.inventory import register_inventory_backend
+from pydantic import ConfigDict
+
+from otto.inventory import InventoryEnv, register_inventory_backend
+from otto.models import OttoModel
+from otto.registry import Configured
 from my_company.cmdb import MyInventory
 
-register_inventory_backend("mycmdb", MyInventory)
+
+class MyInventoryConfig(OttoModel):
+    model_config = ConfigDict(frozen=True)
+
+    url: str
+    supplies: list[str] | None = None
+
+
+def my_inventory(c: Configured[MyInventoryConfig, InventoryEnv]) -> MyInventory:
+    return MyInventory(url=c.config.url, supplies=c.config.supplies)
+
+
+register_inventory_backend("mycmdb", config=MyInventoryConfig, factory=my_inventory)
 ```
 
 ```toml
@@ -78,25 +98,34 @@ url = "https://cmdb.example.com"
 cache_ttl = "24h"
 ```
 
-Otto constructs it as
-`MyInventory(repo_dir=<declaring directory>, url="https://cmdb.example.com")` —
-every key in the table except otto's own (`backend`, `cache_ttl`) becomes a
-keyword argument.
+Otto parses every key in the table except its own (`backend`,
+`cache_ttl`) with `MyInventoryConfig`, so an unknown key or a bad value fails
+when the table is read, naming the field, the backend and the settings file
+(never quoting the rejected value); what a config model must be is stated
+once, under {ref}`configured-backends`. The factory then receives the parsed
+configuration as `c.config`.
 
 For an HTTPS CMDB signed by an internal CA, build the client with
 {func}`otto.tls.os_trust_session`, the same session otto's own NetBox
 backend uses — see {doc}`https-clients`.
 
-`repo_dir` is always passed, and it is **the
-directory the declaration came from**: the repository root for a project
+`c.env` is an {class}`~otto.inventory.InventoryEnv`. Its `anchor_dir` is
+**the directory the declaration came from**: the repository root for a project
 `[inventory]` override, and `~/.otto` — otto's home — for the user settings
-file, which is where most declarations live. Anchor your own relative
-path-like settings to it, and do not read it as "the repo" — for the usual
-declaration there is no repo involved.
+file, which is where most declarations live. A validator on your config model
+reads it as `info.context["env"].anchor_dir` to anchor a relative path-like
+setting, as the built-in `json` backend's model does; do not read it as "the
+repo" — for the usual declaration there is no repo involved. Its `origin` is
+the settings file, for messages.
 
-Reject a kwarg you do not understand with a `TypeError` or `ValueError`: otto
-wraps it into an error naming the settings file and the backend, which the raw
-`unexpected keyword argument 'urll'` does not.
+Otto decides which tables name the same inventory, and keys the snapshot
+cache, by the *parsed* configuration (plus `cache_ttl`), never by the
+declaring directory or file: a relative path that one repo anchors and the
+absolute path another repo writes are one inventory.
+
+A factory that raises, or that returns something without the protocol's
+members, fails with {class}`~otto.inventory.InventoryConstructionError`
+naming the settings file, the backend and the module that registered it.
 
 {func}`~otto.inventory.register_inventory_backend` refuses a duplicate name
 unless you pass `overwrite=True`, which is how you deliberately replace a
@@ -123,6 +152,12 @@ of your own is {doc}`creds-backends`.
 
 ## Opting into the snapshot cache
 
+Whether otto may cache a backend is first the registration's to say:
+`register_inventory_backend(..., snapshot_cache=False)` keeps otto from ever
+wrapping it, and from asking its `fingerprint()` while it builds it. The
+default is `True`; the built-in `json` backend states `False`, the built-in
+`netbox` `True`.
+
 `fingerprint()` is otto's freshness question. Otto asks it whenever it
 validates or writes the shell-completion cache — on a TAB, on root
 `otto --help`, and in the commands that record into it — so it must answer from
@@ -134,7 +169,7 @@ free:
   freshness yourself, from local state.
 - Return **`None`** and otto wraps you in
   {class}`~otto.inventory.cache.SnapshotCache` whenever `cache_ttl` is greater
-  than zero. A snapshot younger than the TTL is served without calling you at
+  than zero (and your registration allows it). A snapshot younger than the TTL is served without calling you at
   all; an older one triggers one `list_keys()` + `lookup()` sweep and an atomic
   rewrite; and when you raise, a snapshot of any age is served with a warning
   naming its age. The cache then supplies the fingerprint you could not — the

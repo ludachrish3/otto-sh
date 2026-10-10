@@ -346,7 +346,8 @@ class OsProfileSpec(OttoModel):
     """A named ``[os_profiles.<name>]`` bundle: a ``base`` host-class plus raw default field values.
 
     ``extra='allow'`` collects the non-``base`` keys; the per-field typo guard
-    runs later, in ``register_os_profile`` (against the base class's slots), so
+    runs after init, in :func:`~otto.host.os_profile.check_data_profiles`
+    (against the base class's fields, which an init module may register), so
     the bundle stays raw here exactly as a ``lab.json`` entry would be.
     """
 
@@ -372,7 +373,7 @@ class ReservationConfigSpec(OttoModel):
     :attr:`SettingsModel.reservations`.
 
     ``extra='allow'`` keeps the backend-specific ``[reservations.<backend>]``
-    sub-table open — otto-core cannot type a third-party backend's kwargs.
+    sub-table open here: the backend's config model parses it.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -497,10 +498,11 @@ class LabSourceSpec(OttoModel):
     """One ``[[lab.sources]]`` entry: a host-data source declaration.
 
     ``extra='allow'`` because everything beyond ``backend``/``name`` is the
-    selected backend's constructor kwargs (the built-in ``json`` backend's
-    ``paths``, a custom backend's connection settings). Structural validation
-    of those kwargs happens in :func:`otto.labs.sources.compile_lab_sources`,
-    which knows which backend the entry selected.
+    selected backend's options (the built-in ``json`` backend's ``paths``, a
+    custom backend's connection settings). Settings parse keeps them as
+    written (:func:`otto.labs.sources.compile_lab_sources`); the backend's
+    registered config model parses them when otto prepares the source, after
+    every repo's init modules have run.
     """
 
     model_config = ConfigDict(extra="allow")

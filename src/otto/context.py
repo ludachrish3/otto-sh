@@ -123,7 +123,7 @@ def variant() -> Variant:
 
     Read off the installed :class:`RunPolicy` (a fresh default when none is
     installed), so ingest, which runs before any context exists, and providers
-    read one value: the one :meth:`otto.declared.KindRegistry.build` picks
+    read one value: the one :meth:`otto.declared.KindBuilder.build` picks
     between same-name entries by.
     """
     from .invocation import current_policy

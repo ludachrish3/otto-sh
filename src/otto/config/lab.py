@@ -243,6 +243,29 @@ class Lab:
         return self
 
 
+def _json_source(search_paths: list[Path]) -> "LabRepository":
+    """Build a json source over *search_paths* through the lab-source registry.
+
+    No repo is selected on this path, so its hosts see no repo data profiles.
+    """
+    from ..host.os_profile import ProfileContext
+    from ..labs.registry import LAB_REPOSITORIES
+    from ..labs.sources import LabSourceEnv
+
+    prepared = LAB_REPOSITORIES.prepare(
+        "json",
+        {"paths": [str(p) for p in search_paths]},
+        LabSourceEnv(
+            repo_dir=Path.cwd(),
+            label="json",
+            origin="load_lab(search_paths=)",
+            profiles=ProfileContext.empty(),
+        ),
+        source="load_lab(search_paths=)",
+    )
+    return LAB_REPOSITORIES.build(prepared)
+
+
 def load_lab(
     labnames: str | list[str],
     search_paths: list[Path] | None = None,
@@ -267,10 +290,14 @@ def load_lab(
         ``None`` reproduces today's behavior.
     repository : LabRepository | None
         A pre-built host-source backend (e.g. from
-        :func:`otto.labs.build_lab_sources`). When ``None``, a built-in json
-        backend over ``search_paths`` is used — wrapped in a one-source
+        :func:`otto.labs.build_lab_sources`). When ``None``, the ``json``
+        backend registered in :data:`~otto.labs.registry.LAB_REPOSITORIES`
+        is built over ``search_paths`` (relative entries anchor to the
+        current directory) — wrapped in a one-source
         :class:`~otto.labs.composite.CompositeLabRepository`, which is where
-        lab existence and the declared-but-memberless rule live.
+        lab existence and the declared-but-memberless rule live. With no
+        ``search_paths`` the composite has no source, and loading fails with
+        configuration guidance.
     inventory : Inventory | None
         The process inventory (:func:`otto.inventory.build_inventory`), passed
         straight through to every component load so entries carrying an
@@ -311,18 +338,15 @@ def load_lab(
         # `otto.config`. The function scope solves the cycle too, so the
         # post-class placement and its noqa pair are both gone.
         from ..labs.composite import CompositeLabRepository, LabSource
-        from ..labs.json_repository import JsonFileLabRepository
 
         # One json source still goes through the composite: lab existence and
         # the declared-but-memberless rule live there and nowhere else. A
-        # caller-supplied repository is used as given.
-        repository = CompositeLabRepository(
-            [
-                LabSource(
-                    label="json", repository=JsonFileLabRepository(search_paths=search_paths or [])
-                )
-            ]
-        )
+        # caller-supplied repository is used as given. With no search paths
+        # the composite is empty, and its load_lab fails loud with guidance.
+        sources: list[LabSource] = []
+        if search_paths:
+            sources.append(LabSource(label="json", repository=_json_source(search_paths)))
+        repository = CompositeLabRepository(sources)
 
     labs = [
         repository.load_lab(name, preferences=preferences, inventory=inventory)

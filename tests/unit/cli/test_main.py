@@ -51,14 +51,15 @@ def _ingest_variant_entries() -> list[str]:
     """Build two same-name declared entries, one per variant, as ingest does while a lab loads."""
     from types import SimpleNamespace
 
-    from otto.declared import DeclaredEntry, KindRegistry
+    from otto.declared import DeclaredEntry, KindBuilder, KindEntry
+    from otto.registry import Registry
 
-    registry: KindRegistry = KindRegistry("toy kind", register_hint="register_toy_kind()")
-    registry.register(
+    kinds: Registry = Registry("toy kind", entry=KindEntry, register_hint="register_toy_kind()")
+    kinds.register(
         "toy",
-        lambda entry, host: SimpleNamespace(name=entry.name, owner=None, **entry.params),
-        origin="tests",
+        KindEntry(lambda entry, host: SimpleNamespace(name=entry.name, owner=None, **entry.params)),
     )
+    builder = KindBuilder(kinds)
 
     def entry(variant: str, artifact: str) -> DeclaredEntry:
         return DeclaredEntry(
@@ -74,7 +75,7 @@ def _ingest_variant_entries() -> list[str]:
         )
 
     host = SimpleNamespace(id="h1", source_lab="", element=None)
-    built = registry.build([entry("field", "field.bin"), entry("debug", "debug.bin")], host)
+    built = builder.build([entry("field", "field.bin"), entry("debug", "debug.bin")], host)
     return [b.artifact for b in built]
 
 

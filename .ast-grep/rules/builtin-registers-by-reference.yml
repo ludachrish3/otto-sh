@@ -34,24 +34,18 @@ note: >
       no-argument call of a `register_*` function the file defines itself is
       checked like any other, since its body is not;
     - a `register_*(...)` call in a file that defines that function
-      (`def register_<thing>`), when the function's body registers into a
-      registry the same file assigns at module scope (`NAME = Registry(...)`,
-      or any `*Registry(...)` constructor such as KindRegistry) and into
-      nothing else: no `<X>.register(...)` on a receiver the file does not
-      assign that way, and no call of another `register_*` function. The
+      (`def register_<thing>`, decorated or not: every wrapper carries
+      `@registration_boundary`), when the function's body registers into a
+      registry the same file assigns at module scope (`NAME = Registry(...)`
+      or `NAME = BackendRegistry(...)`) and into nothing else: no
+      `<X>.register(...)` on a receiver the file does not assign that way,
+      and no call of another `register_*` function. The
       registration API, its registry and the entry then load together, so a
       Ref would defer nothing. A local `register_*` helper that registers
       into another module's registry is checked, even in a file that
       assigns some unrelated registry of its own;
     - a `<REGISTRY>.register(...)` call in the file that assigns `<REGISTRY>`
-      at module scope, for the same reason;
-    - project.actions' `register_project_instruction_bodies(ProjectActions,
-      None)`, matched by that function's name in a file that defines both it
-      and the class passed first. It registers into otto.instructions'
-      PROJECT_INSTRUCTIONS, so the same-file shape does not cover it, but it
-      is introspective: it registers the marked methods of a class defined
-      beside the call, those entries are bound to that class, and a
-      "mod:attr" reference cannot name one.
+      at module scope, for the same reason.
 
   Four sites use the same-file shapes today: host.login_proxy's `su` proxy,
   host.connections' term backends (their class, ConnectionManager, is
@@ -79,20 +73,14 @@ utils:
           has:
             field: function
             regex: '^(\w+\.)*Ref$'
-        # A keyword entry (`cls=Ref(...)`), but not `origin=`, which names
-        # where an entry came from rather than the entry itself.
+        # A keyword entry (`cls=Ref(...)`).
         - kind: keyword_argument
-          all:
-          - has:
-              field: name
-              not:
-                regex: '^origin$'
-          - has:
-              field: value
-              kind: call
-              has:
-                field: function
-                regex: '^(\w+\.)*Ref$'
+          has:
+            field: value
+            kind: call
+            has:
+              field: function
+              regex: '^(\w+\.)*Ref$'
   no-arguments:
     has:
       field: arguments
@@ -146,8 +134,8 @@ utils:
       - has:
           field: object
           pattern: $R
-  # `$R.register(...)` where this file assigns `$R = ...Registry(...)` at
-  # module scope.
+  # `$R.register(...)` where this file assigns `$R = Registry(...)` or
+  # `$R = BackendRegistry(...)` at module scope.
   into-a-local-registry:
     all:
     - matches: registry-register-call
@@ -167,10 +155,11 @@ utils:
                 kind: call
                 has:
                   field: function
-                  regex: '^(\w+\.)*\w*Registry$'
+                  regex: '^(\w+\.)*(Registry|BackendRegistry)$'
   # `$FOREIGN.register(...)` where this file assigns no `$FOREIGN =
-  # ...Registry(...)`. Its own metavariable: $R is already bound to the
-  # local registry when this runs, and would pin the receiver to it.
+  # Registry(...)` or `BackendRegistry(...)`. Its own metavariable: $R is
+  # already bound to the local registry when this runs, and would pin the
+  # receiver to it.
   into-a-foreign-registry:
     all:
     - kind: call
@@ -201,7 +190,30 @@ utils:
                   kind: call
                   has:
                     field: function
-                    regex: '^(\w+\.)*\w*Registry$'
+                    regex: '^(\w+\.)*(Registry|BackendRegistry)$'
+  # `def $API(...)`: the registration function, named by the call.
+  defines-api:
+    kind: function_definition
+    has:
+      field: name
+      pattern: $API
+  # `def $API(...)` whose body registers into a registry this file assigns
+  # and into nothing else.
+  defines-api-into-a-local-registry-only:
+    all:
+    - matches: defines-api
+    - has:
+        stopBy: end
+        matches: into-a-local-registry
+    - not:
+        has:
+          stopBy: end
+          any:
+          - matches: into-a-foreign-registry
+          - kind: call
+            has:
+              field: function
+              regex: '^(\w+\.)*register_\w+$'
   runs-at-import:
     any:
     - matches: at-module-scope
@@ -224,7 +236,8 @@ rule:
             pattern: $API
     - not:
         matches: by-reference
-    # No arguments, and the called API is imported, not defined here.
+    # No arguments, and the called API is imported, not defined here
+    # (a definition counts whether or not it is decorated).
     - not:
         all:
         - matches: no-arguments
@@ -233,65 +246,29 @@ rule:
               kind: module
               stopBy: end
               has:
-                kind: function_definition
-                has:
-                  field: name
-                  pattern: $API
+                any:
+                - matches: defines-api
+                - kind: decorated_definition
+                  has:
+                    field: definition
+                    matches: defines-api
     - not:
         inside:
           kind: decorator
           stopBy: end
-    # The registration API is defined in this file, and registers into a
-    # registry this file assigns and into nothing else.
+    # The registration API is defined in this file (decorated or not), and
+    # registers into a registry this file assigns and into nothing else.
     - not:
         inside:
           kind: module
           stopBy: end
           has:
-            kind: function_definition
-            all:
-            - has:
-                field: name
-                pattern: $API
-            - has:
-                stopBy: end
-                matches: into-a-local-registry
-            - not:
-                has:
-                  stopBy: end
-                  any:
-                  - matches: into-a-foreign-registry
-                  - kind: call
-                    has:
-                      field: function
-                      regex: '^(\w+\.)*register_\w+$'
-    # The one introspective site: project.actions registers the marked
-    # methods of ProjectActions, a class defined beside the call (see note).
-    - not:
-        all:
-        - has:
-            field: function
-            regex: '^register_project_instruction_bodies$'
-        - has:
-            field: arguments
-            has:
-              nthChild: 1
-              kind: identifier
-              pattern: $CLS
-        - inside:
-            kind: module
-            stopBy: end
-            all:
-            - has:
-                kind: function_definition
-                has:
-                  field: name
-                  regex: '^register_project_instruction_bodies$'
-            - has:
-                kind: class_definition
-                has:
-                  field: name
-                  pattern: $CLS
+            any:
+            - matches: defines-api-into-a-local-registry-only
+            - kind: decorated_definition
+              has:
+                field: definition
+                matches: defines-api-into-a-local-registry-only
     - matches: runs-at-import
   # <REGISTRY>.register(name, obj, ...)
   - all:

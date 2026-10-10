@@ -13,7 +13,6 @@ from otto.host.factory import create_host_from_dict
 from otto.host.interface import Interface
 from otto.host.login_proxy import Cred, via_cred
 from otto.host.options import TelnetOptions
-from otto.host.os_profile import HOST_CLASSES
 from otto.host.toolchain import Toolchain
 from otto.host.unix_host import UnixHost
 from otto.link import LinkImpairer, register_impairer
@@ -597,7 +596,7 @@ def test_spec_power_control_coerces_through_to_host():
     )
     host = spec.to_host(element=Element("lab"))
     assert isinstance(host.power_control, CommandPowerController)
-    assert host.power_control.controller == "hyp"
+    assert host.power_control.config.controller == "hyp"
 
 
 def test_spec_unset_power_control_defaults_none():
@@ -625,10 +624,10 @@ def test_registered_pairs_drift_guard():
     live registry so it covers the built-ins as well as anything registered
     through register_host_class.
     """
-    from otto.host.os_profile import registered_host_specs
+    from otto.host.os_profile import build_host_class, registered_host_specs
 
     for name, spec_cls in registered_host_specs().items():
-        runtime_cls = HOST_CLASSES.get(name)
+        runtime_cls = build_host_class(name)
         spec_fields = set(spec_cls.model_fields) - _SPEC_ONLY_FIELDS
         init_fields = {
             f.name for f in dataclasses.fields(runtime_cls) if f.init and not f.name.startswith("_")

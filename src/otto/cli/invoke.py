@@ -15,7 +15,7 @@ import inspect
 from collections.abc import Callable, Iterator
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn, cast, get_type_hints
+from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast, get_type_hints
 
 import typer
 from rich.markup import escape
@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from ..context import OttoContext
     from ..coverage.config import DestinationError
     from ..errors import FieldError
-    from ..registry import Registry
     from ..reservations import ReservationBackendError
     from ..result import Result
     from ..session import (
@@ -1164,7 +1163,7 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
     name = node.info_name or ""
     if name not in INSTRUCTIONS:
         return  # a statically-declared `run` child; nobody owns it
-    owner = INSTRUCTIONS.get(name).registered_by
+    owner = INSTRUCTIONS.repo(name)
 
     from ..context import get_context
     from ..session import InstructionInactiveError, check_instruction_active
@@ -2224,12 +2223,35 @@ def wrap_leaf_callbacks(cmd: Any, spec: "CommandSpec") -> Any:
 # ---------------------------------------------------------------------------
 
 
+class ChildTable(Protocol):
+    """What :func:`make_registry_group` reads: a registry or a view of one."""
+
+    @property
+    def revision(self) -> int:
+        """A counter that moves whenever an entry changes."""
+        ...
+
+    def names(self) -> list[str]:
+        """Return the child names, in order."""
+        ...
+
+    def get(self, name: str) -> Any:
+        """Return the entry for *name*."""
+        ...
+
+    def __contains__(self, name: object) -> bool:
+        """Whether *name* is a child."""
+        ...
+
+
 def make_registry_group(
-    child_registry: "Registry[Any]", *, app_of: "Callable[[Any], typer.Typer]"
+    child_registry: ChildTable, *, app_of: "Callable[[Any], typer.Typer]"
 ) -> "type[TyperGroup]":
     """Build a TyperGroup class whose children come from *child_registry*.
 
-    Children (instruction sub-apps) convert lazily on first access.
+    Children (instruction sub-apps) convert lazily on first access, and the
+    converted children are kept until *child_registry*'s ``revision`` moves:
+    a replaced entry is converted afresh.
     *app_of* returns an entry's Typer app: an instruction BUILDS its app then
     (``otto.cli.run.build_instruction_app``), so building it is where a clash between
     its flags and the ``run`` verb's is found, or a ``run`` options class that
@@ -2258,6 +2280,7 @@ def make_registry_group(
         """Group whose subcommands resolve from a component registry."""
 
         _child_cache: dict[str, Any]
+        _child_cache_revision: int | None = None
 
         @override
         def resolve_command(self, ctx: Any, args: list[str]) -> Any:
@@ -2280,14 +2303,13 @@ def make_registry_group(
                 return static
             if cmd_name not in child_registry:
                 return None
-            # Converted-child cache with NO invalidation: fine for the CLI's
-            # one-shot process lifetime, but a same-module re-registration
-            # (sanctioned: overwrite=True within one module) that happens
-            # AFTER this group already converted the child would keep serving
-            # the earlier conversion. If long-lived embedders ever hit that,
-            # key the cache on the registry entry (or clear it on register).
-            cache = getattr(self, "_child_cache", None) or {}
-            self._child_cache = cache
+            # Converted children, dropped whenever the table changes: a
+            # re-registration with overwrite=True is served afresh.
+            revision = child_registry.revision
+            if self._child_cache_revision != revision:
+                self._child_cache = {}
+                self._child_cache_revision = revision
+            cache = self._child_cache
             if cmd_name not in cache:
                 entry = child_registry.get(cmd_name)
                 converted: Any = typer.main.get_command(app_of(entry))

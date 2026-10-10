@@ -5,12 +5,13 @@ import json
 import pytest
 
 from otto.inventory import (
+    InventoryEnv,
     InventoryError,
     InventoryKeyError,
     JsonInventory,
     parse_inventory_document,
 )
-from otto.inventory.registry import get_inventory_backend_class
+from otto.inventory.registry import INVENTORY_BACKENDS
 from otto.models.inventory import FILLABLE_INVENTORY_FIELDS
 from otto.testing import assert_inventory_conforms
 
@@ -33,8 +34,13 @@ def _file(tmp_path, doc=_DOC):
     return p
 
 
-def test_json_is_the_registered_builtin():
-    assert get_inventory_backend_class("json") is JsonInventory
+def test_json_is_the_registered_builtin(tmp_path):
+    prepared = INVENTORY_BACKENDS.prepare(
+        "json", {"path": "inv.json"}, InventoryEnv(tmp_path, "o.toml")
+    )
+    inventory = INVENTORY_BACKENDS.build(prepared)
+    assert isinstance(inventory, JsonInventory)
+    assert inventory.path == (tmp_path / "inv.json").resolve()
 
 
 def test_construction_does_no_io(tmp_path):

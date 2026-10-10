@@ -14,7 +14,8 @@ on an open event loop no cleanup boundary holds (checked before the reaper
 closes the loop, and a live wider-scoped runner loop is not exempt), and
 ``pytest_sessionfinish`` fails a session whose class, module, package or
 session runner loop closed with hosts still registered, even when a later
-registration has since forgotten that loop's registry.
+registration has since forgotten that loop's registry, and a session that
+ends with two live otto registry tables sharing one ``(module, kind)``.
 
 ``tests/unit/test_lazy_packages.py`` tests the check's functions directly;
 what this module pins is the WIRING. Each test runs an inner session with the
@@ -552,6 +553,61 @@ def test_a_session_finalizer_registering_in_the_same_teardown_does_not_erase_the
     assert result.ret == 1, combined
     assert _OUTLIVED in combined, combined
     assert "module-leak" in combined, combined
+
+
+PROBE_DUPLICATE_TABLE = """\
+# A table-building module imported a second time while its first copy stays
+# alive: two live LOADER_CLASSES share one (module, kind).
+import importlib
+import sys
+
+import otto.host.binary_loader as original
+
+_KEPT = [original]
+
+
+def test_reimports_a_table_building_module():
+    del sys.modules["otto.host.binary_loader"]
+    try:
+        _KEPT.append(importlib.import_module("otto.host.binary_loader"))
+    finally:
+        sys.modules["otto.host.binary_loader"] = original
+    assert _KEPT[1].LOADER_CLASSES is not original.LOADER_CLASSES
+"""
+
+PROBE_ONE_TABLE_EACH = """\
+import otto.host.binary_loader
+
+
+def test_imports_a_table_building_module_once():
+    assert "llext-hex" in otto.host.binary_loader.LOADER_CLASSES
+"""
+
+_DUPLICATE_TABLES = "duplicate otto registry tables"
+
+
+@pytest.mark.parametrize("workers", [[], ["-n", "1"]], ids=["single-process", "xdist"])
+def test_two_live_tables_under_one_key_fail_the_session(
+    inner: pytest.Pytester, workers: list[str]
+) -> None:
+    (inner.path / "test_probe_duplicate_table.py").write_text(PROBE_DUPLICATE_TABLE)
+    result = inner.runpytest_subprocess(*PROBE_ARGS, *workers, timeout=180)
+    combined = str(result.stdout) + str(result.stderr)
+
+    assert _outcomes(result) == {"passed": 1}, combined
+    assert result.ret == 1, combined
+    assert _DUPLICATE_TABLES in combined, combined
+    assert "otto.host.binary_loader: binary loader (x2)" in combined, combined
+
+
+def test_a_session_with_one_table_per_key_passes(inner: pytest.Pytester) -> None:
+    (inner.path / "test_probe_one_table_each.py").write_text(PROBE_ONE_TABLE_EACH)
+    result = inner.runpytest_subprocess(*PROBE_ARGS, timeout=180)
+    combined = str(result.stdout) + str(result.stderr)
+
+    assert _outcomes(result) == {"passed": 1}, combined
+    assert result.ret == 0, combined
+    assert _DUPLICATE_TABLES not in combined, combined
 
 
 # A section header: a test's, or an ``ERROR at teardown of`` one. Its rule is

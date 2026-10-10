@@ -15,7 +15,7 @@ pid, so it tears down any carrier's processes.
 
 from typing import ClassVar
 
-from ..registry import Ref, Registry, caller_module
+from ..registry import ClassEntry, Ref, Registry, registration_boundary, resolved
 
 DEFAULT_CARRIER = "socat"
 """Name of the first-party carrier — the ``--carrier`` default at the CLI and
@@ -76,8 +76,15 @@ class TunnelCarrier:
         raise NotImplementedError
 
 
-def _validate_carrier(name: str, cls: type[TunnelCarrier]) -> None:
-    """Refuse a carrier declaring no protocol: it could never validate any tunnel."""
+def _check_carrier_class(name: str, cls: object) -> None:
+    """Refuse anything but a :class:`TunnelCarrier` subclass declaring a protocol.
+
+    One with no protocol could never validate any tunnel. One check, two call
+    sites: ``validate`` runs it on a class registered eagerly,
+    ``check_resolved`` on the class a ``Ref`` names, once imported.
+    """
+    if not (isinstance(cls, type) and issubclass(cls, TunnelCarrier)):
+        raise TypeError(f"register_carrier({name!r}): {cls!r} is not a TunnelCarrier subclass")
     if not cls.supported_protocols:
         raise ValueError(
             f"register_carrier({name!r}): cls.supported_protocols is empty; a carrier "
@@ -85,23 +92,45 @@ def _validate_carrier(name: str, cls: type[TunnelCarrier]) -> None:
         )
 
 
-CARRIERS: Registry[type[TunnelCarrier]] = Registry(
-    "carrier", register_hint="otto.tunnel.register_carrier()", validate=_validate_carrier
+def _validate_carrier_entry(
+    name: str, entry: "ClassEntry[TunnelCarrier]", _proposed: object
+) -> None:
+    if not isinstance(entry.cls, Ref):
+        _check_carrier_class(name, entry.cls)
+
+
+CARRIERS: "Registry[ClassEntry[TunnelCarrier]]" = Registry(
+    "carrier",
+    entry=ClassEntry,
+    register_hint="otto.tunnel.register_carrier()",
+    validate=_validate_carrier_entry,
+    check_resolved=lambda name, entry: _check_carrier_class(name, resolved(entry.cls)),
 )
-# The built-in, by reference; its origin stays the module that defines it.
-CARRIERS.register("socat", Ref("otto.tunnel.socat:SocatCarrier"), origin="otto.tunnel.socat")
+"""The tunnel carrier classes ``--carrier`` can name, keyed by carrier name."""
+CARRIERS.register("socat", ClassEntry(Ref("otto.tunnel.socat:SocatCarrier")))
 
 
-def register_carrier(name: str, cls: type[TunnelCarrier], *, overwrite: bool = False) -> None:
+@registration_boundary
+def register_carrier(
+    name: str, cls: "type[TunnelCarrier] | Ref", *, overwrite: bool = False
+) -> None:
     """Make a custom carrier selectable via ``--carrier <name>``.
 
     Call from an init module listed in ``.otto/settings.toml``. The carrier
     must declare a non-empty :attr:`TunnelCarrier.supported_protocols`;
-    otherwise it could never validate any tunnel and is rejected here.
+    otherwise it could never validate any tunnel and is rejected here. *cls*
+    may be a :class:`~otto.registry.Ref` (``"module:Class"``), imported and
+    checked at its first use.
+
+    Raises:
+        TypeError: If *cls* is not a :class:`TunnelCarrier` subclass.
+        ValueError: If ``cls.supported_protocols`` is empty.
+        otto.registry.DuplicateRegistration: If *name* is taken and *overwrite*
+            is false.
     """
-    CARRIERS.register(name, cls, overwrite=overwrite, origin=caller_module())
+    CARRIERS.register(name, ClassEntry(cls), overwrite=overwrite)
 
 
 def build_carrier(name: str) -> type[TunnelCarrier]:
     """Return the carrier class registered under *name* (rich unknown-name error)."""
-    return CARRIERS.get(name)
+    return resolved(CARRIERS.get(name).cls)

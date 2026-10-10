@@ -22,14 +22,17 @@ import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Generic, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
-from .registry import Ref, Registry, caller_module
+from .registry import Ref, Registry, resolved
+
+if TYPE_CHECKING:
+    from .host.host import Host
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-"""Type variable for instances built by a :class:`KindRegistry`."""
+"""Type variable for instances built by a :class:`KindBuilder`."""
 
 MatchLeaf = bool | int | float | str
 """One TOML scalar in a match table; strings carry the regex/specifier split."""
@@ -62,7 +65,7 @@ class DeclaredEntry:
     """Logical identity — the ``Product.name``/``DevTool.name`` role."""
 
     kind: str | None
-    """Key into the seam's :class:`KindRegistry`; ``None`` when :attr:`cls` names the class."""
+    """Key into the seam's kind registry; ``None`` when :attr:`cls` names the class."""
 
     seam: str
     """The TOML array this entry came from (``"products"``/``"dev_tools"``) —
@@ -271,58 +274,93 @@ replacement. A settings file written for a retired name fails at lab load
 pointing at the fix, instead of the generic unknown-kind listing."""
 
 
-class KindRegistry(Registry[Callable[[DeclaredEntry, Any], T]], Generic[T]):
-    """Named kind factories for ONE declarative seam.
+KindFactory = Callable[[DeclaredEntry, "Host"], T]
+"""The code a declared entry's kind binds to: ``factory(entry, host) -> instance``."""
 
-    A :class:`~otto.registry.Registry` subclass (not composition) on purpose:
-    the test suite's registry isolation discovers global registries by
-    scanning for ``Registry`` instances, and a wrapped inner registry would
-    be invisible to it. Each seam owns its instance — a kind can never attach
-    to the other seam's lifecycle, the same two-list reasoning as the
-    provider registries.
+
+@dataclass(frozen=True)
+class KindEntry(Generic[T]):
+    """The record a seam's kind registry stores: the factory, or a ``Ref`` naming it."""
+
+    factory: "KindFactory[T] | Ref"
+    """The kind's factory; a :class:`~otto.registry.Ref` is imported at its first use."""
+
+
+def _check_kind_factory(name: str, factory: object) -> None:
+    """Refuse a kind whose factory is not callable.
+
+    One check, two call sites: a kind registry's ``validate`` runs it on a
+    factory registered eagerly, its ``check_resolved`` on the object a ``Ref``
+    names, once imported.
+    """
+    if not callable(factory):
+        raise TypeError(f"kind {name!r}: factory {factory!r} is not callable")
+
+
+def _validate_kind_entry(name: str, entry: "KindEntry[Any]", _proposed: object) -> None:
+    """Check an eager factory now (a kind registry's ``validate``)."""
+    if not isinstance(entry.factory, Ref):
+        _check_kind_factory(name, entry.factory)
+
+
+def _check_resolved_kind_entry(name: str, entry: "KindEntry[Any]") -> None:
+    """Check the factory a ``Ref`` named (a kind registry's ``check_resolved``)."""
+    _check_kind_factory(name, resolved(entry.factory))
+
+
+class KindBuilder(Generic[T]):
+    """Builds ONE declarative seam's entries from that seam's kind registry.
+
+    It reads the plain :class:`~otto.registry.Registry` of
+    :class:`KindEntry` records it is given, and holds the two hooks that
+    build a ``class =`` entry. Each seam owns its registry and its builder —
+    a kind can never attach to the other seam's lifecycle, the same two-list
+    reasoning as the provider registries.
     """
 
     def __init__(
         self,
-        kind: str,
+        kinds: "Registry[KindEntry[T]]",
         *,
-        register_hint: str,
         class_factory: Ref | None = None,
         class_resolver: Ref | None = None,
-        collision_hint: str | None = None,
-        validate: "Callable[[str, Callable[[DeclaredEntry, Any], T]], None] | None" = None,
     ) -> None:
-        super().__init__(
-            kind, register_hint=register_hint, collision_hint=collision_hint, validate=validate
-        )
-        # ``Registry.__init__`` recorded THIS frame's module; the owner is whoever built us.
-        self.defined_in = caller_module()
+        """Build entries from *kinds*; *class_factory* and *class_resolver* go together.
+
+        Each is a :class:`~otto.registry.Ref`, so the kind module is not
+        imported until a ``class =`` entry needs it.
+
+        Raises:
+            ValueError: If only one of *class_factory* and *class_resolver*
+                is given.
+        """
         if (class_factory is None) != (class_resolver is None):
             raise ValueError(
-                f"{kind} registry: `class_factory` and `class_resolver` go together — "
-                "a registry that builds `class =` entries needs both"
+                f"{kinds.kind} builder: `class_factory` and `class_resolver` go together — "
+                "a seam that builds `class =` entries needs both"
             )
+        self._kinds = kinds
         self._class_refs: dict[str, Ref | None] = {
             "factory": class_factory,
             "resolver": class_resolver,
         }
         self._class_resolved: dict[str, Callable[..., Any]] = {}
 
-    def _class_hook(self, which: Literal["factory", "resolver"]) -> Callable[..., Any]:
-        """Import one of the two ``class =`` hooks on first use (one cache for both).
+    @property
+    def kinds(self) -> "Registry[KindEntry[T]]":
+        """The kind registry this builder reads."""
+        return self._kinds
 
-        Each is handed in as a :class:`~otto.registry.Ref` so the kind module
-        is not imported until an entry needs it — the same reason the built-in
-        kinds are registered by reference.
-        """
+    def _class_hook(self, which: Literal["factory", "resolver"]) -> Callable[..., Any]:
+        """Import one of the two ``class =`` hooks on first use (one cache for both)."""
         if which not in self._class_resolved:
             ref = self._class_refs[which]
             if ref is None:
-                raise ValueError(f"{self._kind} registry builds no `class =` entries")
+                raise ValueError(f"{self._kinds.kind} registry builds no `class =` entries")
             self._class_resolved[which] = cast("Callable[..., Any]", ref.resolve())
         return self._class_resolved[which]
 
-    def class_factory(self) -> Callable[[DeclaredEntry, Any], T]:
+    def class_factory(self) -> "KindFactory[T]":
         """Return the factory that builds a ``class =`` entry, imported on first use."""
         return self._class_hook("factory")
 
@@ -369,10 +407,10 @@ class KindRegistry(Registry[Callable[[DeclaredEntry, Any], T]], Generic[T]):
             if entry.kind is not None and entry.kind in _RETIRED_KINDS:
                 raise ValueError(f"[[{entry.seam}]] {entry.name!r}: {_RETIRED_KINDS[entry.kind]}")
             if entry.kind is not None:
-                factory = self.get(entry.kind)
+                factory = resolved(self._kinds.get(entry.kind).factory)
             elif self._class_refs["factory"] is None:
                 raise ValueError(
-                    f"[[{entry.seam}]] {entry.name!r}: {self._kind} registry builds no "
+                    f"[[{entry.seam}]] {entry.name!r}: {self._kinds.kind} registry builds no "
                     "`class =` entries"
                 )
             else:

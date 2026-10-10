@@ -9,7 +9,7 @@ keys are comment space.
 import json
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
@@ -17,6 +17,11 @@ from ..models.base import compact_validation_error
 from ..models.inventory import SUPPLIES_EXEMPT_FIELDS, InventoryRecord
 from .errors import InventoryError, InventoryKeyError
 from .protocol import check_supplies
+
+if TYPE_CHECKING:
+    from ..registry import Configured
+    from .config import JsonInventoryConfig
+    from .registry import InventoryEnv
 
 
 def parse_inventory_document(
@@ -105,3 +110,13 @@ class JsonInventory:
     def stat_paths(self) -> "list[Path] | None":
         """Return the one file this backend's fingerprint is derived from."""
         return [self.path]
+
+
+def _json_inventory(c: "Configured[JsonInventoryConfig, InventoryEnv]") -> JsonInventory:
+    """Build the built-in json inventory from its parsed configuration.
+
+    ``Path.resolve()`` runs here, on the way into the backend: §9.1 says a
+    json inventory's ``fingerprint()`` is the RESOLVED path, and doing it here
+    keeps :class:`JsonInventory` a plain reader of the path it is handed.
+    """
+    return JsonInventory(path=c.config.path.resolve(), supplies=c.config.supplies)

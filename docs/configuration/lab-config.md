@@ -26,6 +26,8 @@ Each directory a json `[[lab.sources]]` entry lists in `paths` (in
 `.otto/settings.toml`) may contain a `lab.json` file — and a `paths` entry
 may name a `.json` file directly, or a glob matching several, `**` included
 ({ref}`Splitting lab data across files and directories <lab-data-across-files>`).
+Otto checks `paths` when it prepares the source, after the repo's `init`
+modules have run, not at settings parse.
 The file is a JSON **object** with three sections:
 
 ```json
@@ -301,7 +303,10 @@ An `os_profile` can supply `board` or `slot` as a default, so a host record
 that names no `board` may still get one, and a different id than the record
 alone suggests.  When authoring a link endpoint, take the id from `otto host
 <TAB>` (or `otto --show-lab`) rather than composing it by eye: an endpoint
-naming an id no host answers to fails the lab load.
+naming an id no host answers to fails the lab load.  The profile is resolved
+with every selected repo's `[os_profiles]` tables, so a lab in one repo may
+name a table another repo declares; a custom lab backend receives them as
+`env.profiles` ({doc}`../cookbook/extending/lab-source-backends`).
 
 Element names are unique per source, compared **by slug**: `Server` and
 `server` are the same element and the load fails naming both entries.  Several
@@ -431,9 +436,14 @@ a *controller* host in the lab:
 }
 ```
 
-See {doc}`../cli/host/capabilities/index` for the Power Control section, runtime API
-(`host.power()`, `host.reboot(hard=True)`), and how to register a custom
-controller (`register_power_controller`).
+The controller's config model parses the table, without its `type`, when
+otto constructs the host. An unknown key or a value of the wrong type is a
+parse error ({class}`~otto.host.PowerConstructionError`) naming the field and
+the host (`power_control of host '<id>'`); it never quotes the rejected value.
+
+See {doc}`../cli/host/capabilities/power` for the runtime API (`host.power()`,
+`host.reboot(hard=True)`), and {ref}`power-controllers` for registering a
+custom controller.
 
 ### SNMP monitoring
 

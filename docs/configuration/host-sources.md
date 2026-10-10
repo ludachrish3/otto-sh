@@ -44,7 +44,11 @@ Every entry takes two otto-owned keys:
   (1-based position in *that repo's* list), e.g. `my_project/json#1`. Two
   entries in one repo may not share an explicit `name`.
 
-Every remaining key belongs to the backend the entry selected.
+Every remaining key belongs to the backend the entry selected. Settings
+parse checks only `backend` and `name`; the backend's own keys are parsed when
+otto prepares the source, after every repo's `init` modules have run, so a
+backend registered by any repo can serve an entry in any repo. A json source's
+`paths` (missing, empty, or `""`) fails there, naming the settings file.
 
 A repo with no `[lab]` table declares no sources — normal for a repo that
 ships only libs and tests. The table itself may hold nothing but `sources`.
@@ -268,7 +272,7 @@ the repo-owned one after it:
 [[lab.sources]]
 name = "global"              # optional label, used in warnings and errors
 backend = "cmdb"             # any name registered via register_lab_repository
-server = "cmdb.example.com"  # remaining keys = constructor kwargs for that backend
+server = "cmdb.example.com"  # remaining keys = options that backend's config model parses
 
 [[lab.sources]]
 name = "virtual"
@@ -478,17 +482,13 @@ explicit and ordered, rather than relying on dict insertion order.
 ## Custom backends as sources
 
 Any **registered** backend can be named by a source entry. Register yours from
-an `init` module (one of the modules listed in `init = [...]`), then select it —
-the `LabRepository` protocol the class must satisfy is in
-{doc}`../cookbook/extending/lab-source-backends`:
-
-```python
-# my_lab_source.py  (listed in init = [...])
-from otto.labs import register_lab_repository
-from my_company.cmdb import CmdbLabRepository
-
-register_lab_repository("cmdb", CmdbLabRepository)
-```
+an `init` module (one of the modules listed in `init = [...]`) with the model
+that parses its options and the factory that builds it, then select it. The
+`LabRepository` protocol the backend must satisfy, and the registration
+contract, are in {doc}`../cookbook/extending/lab-source-backends`; its
+{ref}`CMDB example <lab-source-config-model>` registers a `cmdb` backend with
+the config model `CmdbConfig` and the factory `cmdb_source`, which this entry
+selects:
 
 ```toml
 [[lab.sources]]
@@ -497,19 +497,21 @@ backend = "cmdb"
 url = "https://cmdb.example.com"
 ```
 
-Otto constructs that entry as
-`CmdbLabRepository(repo_dir=<repo root>, url="https://cmdb.example.com")` —
-every key other than `backend` and `name` becomes a keyword argument, plus
-`repo_dir` so the backend can resolve relative paths of its own. Otto does not
-interpret those kwargs; validate them in your constructor and fail loud there.
-Two entries may name the same backend with different kwargs (two databases,
-two files) — each is constructed separately. Naming an unregistered backend
-raises [`LabRepositoryError`](../api/labs.rst), listing the registered
-names.
+Otto parses every key other than `backend` and `name` with `CmdbConfig`, so an
+unknown key or a bad value fails naming the field and the settings file, then
+hands the parsed configuration to `cmdb_source`. The model's validator anchors
+a relative path in your options at the declaring repo's root, and the
+factory's `c.env.profiles` holds the selected repos' `[os_profiles]` tables,
+which a backend passes as `profiles=` to the host helpers it calls. Two entries
+may name the same backend with different options (two databases, two files) —
+each is prepared and built separately. Naming an unregistered backend raises
+{class}`~otto.labs.LabSourceConstructionError` (a
+[`LabRepositoryError`](../api/labs.rst)), listing the registered names.
 
 ```{note}
-An `init` module always imports before the lab is loaded, so the name is
-registered by the time settings select it.
+Otto prepares sources only after every repo's `init` modules have run, so the
+name is registered by the time a source is prepared, whichever repo
+registers it. Loading a lab from inside an `init` module is refused.
 ```
 
 See {doc}`Extension points <../architecture/subsystems/extension-points>` for the
@@ -517,9 +519,9 @@ registry machinery behind this and every other seam otto can be extended at.
 
 ## Troubleshooting
 
-`"Unknown lab repository backend '...'"`
+`"... lookup failed: Unknown lab repository backend '...'"`
 : A `[[lab.sources]]` entry's `backend` names a backend that was never
-  registered — raised per entry, as otto constructs that source. Check the
+  registered — raised per entry, as otto prepares that source. Check the
   name against the registered list the message prints, and confirm the `init`
   module that calls `register_lab_repository(...)` is listed in `init = [...]`.
 

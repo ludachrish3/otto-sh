@@ -62,17 +62,6 @@ class _DevTool(DevTool):
         return True
 
 
-@pytest.fixture(autouse=True)
-def _isolate_providers():
-    saved_products = list(product_mod._PRODUCT_PROVIDERS)
-    saved_dev_tools = list(dev_tool_mod._DEV_TOOL_PROVIDERS)
-    try:
-        yield
-    finally:
-        product_mod._PRODUCT_PROVIDERS[:] = saved_products
-        dev_tool_mod._DEV_TOOL_PROVIDERS[:] = saved_dev_tools
-
-
 def _host():
     return SimpleNamespace(id="h1", products=[], dev_tools=[], source_lab="")
 
@@ -82,6 +71,16 @@ def test_apply_providers_stamps_the_default_cov_dir():
     host = _host()
     factory.apply_providers(host)
     assert [p.cov_dir for p in host.products] == ["/tmp/app"]
+
+
+def test_ingest_runs_a_subscribed_provider_with_its_repo():
+    from otto.registry import registering_repo
+
+    with registering_repo("acme"):
+        product_mod.register_product_provider(lambda host: [_P(artifact=Path("/a"), name="app")])
+    host = _host()
+    factory.apply_providers(host)
+    assert [(p.name, p.owner) for p in host.products] == [("app", "acme")]
 
 
 def test_apply_providers_keeps_an_explicit_cov_dir():

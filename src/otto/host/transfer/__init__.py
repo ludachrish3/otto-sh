@@ -28,6 +28,9 @@ from .base import (
 )
 from .registry import (
     TRANSFER_BACKENDS,
+    TransferBackendError,
+    TransferConstructionError,
+    TransferMetadata,
     build_transfer_backend,
     register_transfer_backend,
 )
@@ -95,7 +98,10 @@ __all__ = [
     "SftpFileTransfer",
     "ShellFileTransfer",
     "TftpFileTransfer",
+    "TransferBackendError",
+    "TransferConstructionError",
     "TransferContext",
+    "TransferMetadata",
     "TransferProgressFactory",
     "TransferProgressHandler",
     "UnixFileTransfer",

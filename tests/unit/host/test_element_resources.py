@@ -4,8 +4,8 @@ It rides on the ``Element`` the factory is handed — the element level has no
 runtime registry, so the only way "the union over elements in play" falls out of
 "the union over hosts in play" is for each member host to carry its element.
 
-The product-provider registry these tests write to is snapshot-restored by the
-root conftest's autouse ``_restore_provider_registries``; no local fixture.
+The product-provider subscription these tests write to is snapshot-restored by
+the root conftest's autouse ``_isolate_registries``; no local fixture.
 """
 
 import dataclasses

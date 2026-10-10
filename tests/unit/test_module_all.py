@@ -51,7 +51,11 @@ FIRST_ALL = {
     "otto.examples.login_proxy": ["enter_container"],
     "otto.examples.monitor": ["UptimeParser"],
     "otto.examples.options": ["DeviceTestOptions", "RepoOptions"],
-    "otto.examples.reservations": ["ExampleReservationBackend"],
+    "otto.examples.reservations": [
+        "ExampleReservationBackend",
+        "ExampleReservationConfig",
+        "example_reservations",
+    ],
     "otto.examples.reservations_cli": ["check_report", "translate"],
     "otto.examples.session_setup": ["enter_python", "export_app_env"],
     "otto.host.app_shell": [

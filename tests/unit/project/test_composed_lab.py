@@ -38,7 +38,6 @@ import pytest
 from otto import project
 from otto.config.lab import Lab
 from otto.context import OttoContext, set_context
-from otto.host import product as product_mod
 from otto.host.host import BaseHost
 from otto.host.lab_info import LabInfo
 from otto.host.product import Product, apply_product_providers, register_product_provider
@@ -58,22 +57,6 @@ from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fake_repo import fake_repo
 
 # ── doubles ──────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _isolate_provider_registry():
-    """Restore the product-provider list around each test in this file.
-
-    The root conftest now snapshots this registry too, but per-test at this
-    file's own seam stays deliberately: these tests register providers as part
-    of their arrangement, and a leak between two tests IN this file would be
-    masked by a guard that only fires at session scope.
-    """
-    saved = list(product_mod._PRODUCT_PROVIDERS)
-    try:
-        yield
-    finally:
-        product_mod._PRODUCT_PROVIDERS[:] = saved
 
 
 class _FleetHost(BaseHost):

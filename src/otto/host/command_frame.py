@@ -45,7 +45,7 @@ from typing import ClassVar
 
 from typing_extensions import override
 
-from ..registry import Ref, Registry, caller_module
+from ..registry import ClassEntry, Ref, Registry, registration_boundary, resolved
 from .errors import RawLandingError
 
 __all__ = [
@@ -455,34 +455,22 @@ class AshFrame(BashFrame):
     otherwise) a single obvious home, instead of a conditional inside the
     bash frame.
 
-    Cheap to keep, and the alternative is worse — just not through the path
-    that looks riskiest at first. `register_command_frame("ash", BashFrame)`
-    is already refused: its own `cls.type_name != type_name` check raises
-    before the module can even finish importing (measured:
-    `ValueError: register_command_frame: type_name 'ash' doesn't match
-    BashFrame.type_name = 'bash'`). What that check does not reach is the
-    lower-level registry it wraps — `FRAME_CLASSES.register("ash",
-    BashFrame, overwrite=True)` performs no such comparison and DOES pass
-    every payload-equality assertion, leaving nowhere to put the divergence
-    when one arrives (measured: `build_command_frame("ash")` then returns a
-    plain `BashFrame`). A payload comparison can never catch this bypass —
-    ash's rendered strings ARE bash's rendered strings by design, so nothing
-    about their bytes ever disagrees. What catches it is any assertion that
-    checks TYPE IDENTITY through the registry instead of rendered output —
-    `isinstance(x, AshFrame)`, `type(x) is AshFrame`, or a caller one level up
-    that builds a host and inspects what class its `command_frame` landed as.
-    That is a claim about the *kind* of assertion, not a count of them, on
-    purpose: measured directly, three tests fall over today, in two different
-    files, one of which (`tests/unit/host/test_os_profile.py`'s
-    `TestBusyBoxProfile::test_a_busybox_host_builds_from_a_minimal_lab_entry`)
-    was written later, by the task that added the `busybox` profile, with no
-    idea this bypass existed — it catches the bypass anyway, because it asserts
-    `isinstance(host.command_frame, AshFrame)` on the far side of the
-    registry. A future test that only compares rendered strings will not
-    join that list no matter how many are added; only one that resolves
-    `"ash"` through the registry and checks what came back will. That
-    bypass, not the guarded public path, is the reason a distinguishing test
-    earns its place.
+    Cheap to keep, and the alternative is worse. Registering ``BashFrame``
+    itself under ``ash`` is refused on both paths:
+    `register_command_frame("ash", BashFrame)` and the raw
+    `FRAME_CLASSES.register("ash", ClassEntry(BashFrame), overwrite=True)`
+    run the same check and raise (measured: `ValueError:
+    register_command_frame: type_name 'ash' doesn't match BashFrame.type_name
+    = 'bash'`). What no check can see is a refactor that folds this class
+    back into bash, because ash's rendered strings ARE bash's by design: a
+    payload comparison passes either way. What catches that is an assertion
+    of TYPE IDENTITY through the registry — `isinstance(x, AshFrame)`,
+    `type(x) is AshFrame`, or a caller one level up that builds a host and
+    inspects what class its `command_frame` landed as (as
+    `tests/unit/host/test_os_profile.py`'s
+    `TestBusyBoxProfile::test_a_busybox_host_builds_from_a_minimal_lab_entry`
+    does). That is a claim about the *kind* of assertion, not a count of
+    them: a test that only compares rendered strings never joins that list.
     """
 
     type_name = "ash"
@@ -722,8 +710,16 @@ def history_prefix(frame: CommandFrame | None, shell_history: bool) -> str:
     return (frame or BashFrame()).quiet_history()
 
 
-def _validate_command_frame(type_name: str, cls: type[CommandFrame]) -> None:
-    """Refuse a frame whose ``type_name`` disagrees with the name it is registered under."""
+def _check_frame_class(type_name: str, cls: object) -> None:
+    """Refuse anything but a :class:`CommandFrame` subclass whose ``type_name`` is its name.
+
+    One check, two call sites: ``validate`` runs it on a class registered
+    eagerly, ``check_resolved`` on the class a ``Ref`` names, once imported.
+    """
+    if not (isinstance(cls, type) and issubclass(cls, CommandFrame)):
+        raise TypeError(
+            f"register_command_frame({type_name!r}): {cls!r} is not a CommandFrame subclass"
+        )
     if cls.type_name != type_name:
         raise ValueError(
             f"register_command_frame: type_name {type_name!r} doesn't match "
@@ -731,20 +727,30 @@ def _validate_command_frame(type_name: str, cls: type[CommandFrame]) -> None:
         )
 
 
+def _validate_frame_entry(
+    type_name: str, entry: "ClassEntry[CommandFrame]", _proposed: object
+) -> None:
+    if not isinstance(entry.cls, Ref):
+        _check_frame_class(type_name, entry.cls)
+
+
 # Registry of dialect name -> frame class, mirroring
 # ``embedded_filesystem.FILESYSTEM_CLASSES``. Its built-ins are registered by
-# reference at module end, and its validator holds them to the same
-# ``type_name`` check as a third party's frame.
-FRAME_CLASSES: Registry[type[CommandFrame]] = Registry(
+# reference at module end, and the same check holds them to the ``type_name``
+# rule a third party's frame meets.
+FRAME_CLASSES: "Registry[ClassEntry[CommandFrame]]" = Registry(
     "command frame",
+    entry=ClassEntry,
     register_hint="otto.host.command_frame.register_command_frame()",
-    validate=_validate_command_frame,
+    validate=_validate_frame_entry,
+    check_resolved=lambda name, entry: _check_frame_class(name, resolved(entry.cls)),
 )
 """The command-frame classes lab data can name, keyed by dialect name."""
 
 
+@registration_boundary
 def register_command_frame(
-    type_name: str, cls: type[CommandFrame], *, overwrite: bool = False
+    type_name: str, cls: "type[CommandFrame] | Ref", *, overwrite: bool = False
 ) -> None:
     """Make a custom :class:`CommandFrame` subclass available to lab data.
 
@@ -753,16 +759,21 @@ def register_command_frame(
     Once registered, lab-data entries can reference the subclass by *type_name*
     in the ``command_frame`` field.
 
+    *cls* may be a :class:`~otto.registry.Ref` (``"module:Class"``); its module
+    is imported, and the class checked, when lab data first builds the frame.
+
     *overwrite* replaces an existing registration under *type_name*
     deliberately (e.g. a built-in); by default a duplicate name raises.
 
     Raises
     ------
+    TypeError
+        If *cls* is not a :class:`CommandFrame` subclass.
     ValueError
         If *type_name* doesn't match ``cls.type_name`` (the registry key and
         the class constant should agree).
     """
-    FRAME_CLASSES.register(type_name, cls, overwrite=overwrite, origin=caller_module())
+    FRAME_CLASSES.register(type_name, ClassEntry(cls), overwrite=overwrite)
 
 
 def build_command_frame(type_name: str) -> CommandFrame:
@@ -774,7 +785,7 @@ def build_command_frame(type_name: str) -> CommandFrame:
         If *type_name* is not registered. The error lists the registered names
         so a typo is diagnosable from the message alone.
     """
-    return FRAME_CLASSES.get(type_name)()
+    return resolved(FRAME_CLASSES.get(type_name).cls)()
 
 
 def _register_builtin_frames() -> None:
@@ -789,7 +800,7 @@ def _register_builtin_frames() -> None:
         ("zephyr-serial", "otto.host.command_frame:ZephyrSerialFrame"),
         ("raw", "otto.host.command_frame:RawFrame"),
     ]:
-        FRAME_CLASSES.register(name, Ref(target))
+        FRAME_CLASSES.register(name, ClassEntry(Ref(target)))
 
 
 _register_builtin_frames()

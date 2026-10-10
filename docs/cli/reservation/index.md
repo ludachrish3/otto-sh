@@ -197,8 +197,9 @@ normal `MissingReservationError` path, which does not mention `-R`.
   is in someone else's name, or (if you're certain the data is wrong)
   use `-R` for one command.
 
-`"Unknown reservation backend '...'"`
-: `[reservations] backend` names a backend that was never registered. Check the
+`"... lookup failed: Unknown reservation backend '...'"`
+: `[reservations] backend` names a backend that was never registered.  The
+  message also names the settings file the table came from. Check the
   name, and confirm the `init` module that calls
   `register_reservation_backend(...)` is listed in `init = [...]`.
 

@@ -22,8 +22,10 @@ import pytest
 import typer
 
 from otto.config import completion_cache as cc
+from otto.host.os_profile import ProfileContext
 from otto.labs.json_repository import LAB_FILENAME
-from otto.labs.sources import CompiledLabSource
+from otto.labs.sources import PendingLabSource
+from otto.registry import FrozenMap
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests._fixtures.sutrepo import touch_settings
 from tests.unit.config.test_completion_cache_inventory import (
@@ -41,13 +43,16 @@ def _sections_file(
     generated_at: int | None = None,
     names_payload: dict | None = None,
 ) -> dict:
-    """An on-disk v15 sections file with REAL digests for *repos*.
+    """An on-disk sections file with REAL digests for *repos*.
 
     The hand-built counterpart of ``write_cache``, for tests that need to
     plant an entry with a doctored timestamp/schema/payload and then watch
-    the reader's verdict.
+    the reader's verdict. Each entry stores what the writer stores: the TTL
+    class and, for a lab-keyed section, the lab key paths.
     """
-    from otto.config.cache_sections import SECTIONS, section_digest
+    from otto.config.cache_sections import SECTIONS, lab_key_paths, section_digest
+
+    lab = [str(path) for path in lab_key_paths(repos)]
 
     at = int(time.time()) if generated_at is None else generated_at
     payloads = {
@@ -60,6 +65,8 @@ def _sections_file(
                 "fingerprint": section_digest(s, repos),
                 "generated_at": at,
                 "tainted": False,
+                "ttl_seconds": cc._cache_ttl_seconds(repos),
+                **({"lab_key_paths": lab} if s.lab_keyed else {}),
                 "payload": payloads.get(s.name, {}),
             }
             for s in SECTIONS
@@ -142,6 +149,17 @@ def test_cache_rebuild_is_worthwhile_is_false_for_an_ephemeral_fingerprint(
 # ── Effective TTL: a non-file host source has no invalidation signal ─────────
 
 
+def _pending(label: str, backend: str, sut_dir: Path, **raw: object) -> PendingLabSource:
+    """One declared ``[[lab.sources]]`` entry, as settings parsing leaves it."""
+    return PendingLabSource(
+        backend=backend,
+        label=label,
+        raw=FrozenMap.freeze_json(raw),
+        origin=str(sut_dir / ".otto" / "settings.toml"),
+        repo_dir=sut_dir,
+    )
+
+
 def _ttl_repo(tmp_path: Path, backend: str | None = None) -> MagicMock:
     """A repo declaring one [[lab.sources]] entry on *backend* (None = none)."""
     repo = MagicMock()
@@ -149,10 +167,9 @@ def _ttl_repo(tmp_path: Path, backend: str | None = None) -> MagicMock:
     repo.init = []
     repo.libs = []
     repo.tests = []
+    options = {"paths": ["lab"]} if backend == "json" else {}
     repo.lab_sources = (
-        []
-        if backend is None
-        else [CompiledLabSource(label=f"ttl/{backend}#1", backend=backend, repo_dir=repo.sut_dir)]
+        [] if backend is None else [_pending(f"ttl/{backend}#1", backend, repo.sut_dir, **options)]
     )
     repo.reservation_settings = {}
     return repo
@@ -195,15 +212,23 @@ def test_a_repo_double_without_lab_sources_reads_as_json(tmp_path: Path) -> None
     _has_unfingerprinted_source: without them, every mock-based repo double in
     the suite would silently take the short TTL.
     """
-    bare = MagicMock(spec=["sut_dir"])
+    # Each double pins `os_profiles`, which every repo has: the profile
+    # context reads it unguarded.
+    bare = MagicMock(spec=["sut_dir", "os_profiles"])
+    bare.os_profiles = {}
     assert cc._cache_ttl_seconds([bare]) == cc.CACHE_TTL_SECONDS
 
     automocked = MagicMock()  # .lab_sources iterates empty; .reservation_settings is a Mock
+    automocked.os_profiles = {}
     assert cc._cache_ttl_seconds([automocked]) == cc.CACHE_TTL_SECONDS
 
 
 def test_read_cache_applies_the_short_ttl_to_a_custom_backend(tmp_path: Path, monkeypatch) -> None:
-    """An entry inside the long TTL but past the short one is served or not, by backend."""
+    """An entry inside the long TTL but past the short one is served or not, by its stored class.
+
+    The writer decides the TTL class from the prepared sources and stores it
+    with the entry; the reader enforces the stored class and never asks again.
+    """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     json_repo = _ttl_repo(tmp_path)
     cache_file = cc._cache_path()
@@ -212,16 +237,15 @@ def test_read_cache_applies_the_short_ttl_to_a_custom_backend(tmp_path: Path, mo
 
     six_hours_ago = int(time.time()) - 6 * 60 * 60
     cache_file.write_text(json.dumps(_sections_file([json_repo], generated_at=six_hours_ago)))
-
-    # Same digest inputs (labs=[] either way), different backend verdict.
     assert cc.read_cache([json_repo]) is not None, "6h is well inside the 24h TTL"
 
-    custom = _ttl_repo(tmp_path, {"backend": "cmdb"})
+    custom = _ttl_repo(tmp_path, "cmdb")
     from otto.config.cache_sections import SECTIONS, section_digest
 
     assert [section_digest(s, [custom]) for s in SECTIONS] == [
         section_digest(s, [json_repo]) for s in SECTIONS
     ], "positive control: the digests are identical — only the TTL differs"
+    cache_file.write_text(json.dumps(_sections_file([custom], generated_at=six_hours_ago)))
     assert cc.read_cache([custom]) is None, "6h is past the short TTL"
 
     # ...and a FRESH entry is still served to that same custom repo, so the
@@ -252,7 +276,7 @@ def test_fingerprint_moves_when_a_source_lab_file_is_edited(
     with no file signal falls back to the short TTL instead).
 
     Parametrized over BOTH ``paths`` spellings because the digest reads them
-    through :meth:`~otto.labs.sources.CompiledLabSource.lab_files`: a digest
+    through the prepared source's ``lab_files()``: a digest
     wired to the directory form alone would silently stop tracking a source
     that names its ``.json`` file directly.
     """
@@ -268,11 +292,7 @@ def test_fingerprint_moves_when_a_source_lab_file_is_edited(
     repo.init = []
     repo.libs = []
     repo.tests = []
-    repo.lab_sources = [
-        CompiledLabSource(
-            label=f"fp/{spelling}", backend="json", repo_dir=sut_dir, paths=[path_of(lab_dir)]
-        )
-    ]
+    repo.lab_sources = [_pending(f"fp/{spelling}", "json", sut_dir, paths=[str(path_of(lab_dir))])]
 
     before = _names_digest([repo])
     write_lab_json(
@@ -290,12 +310,13 @@ def test_fingerprint_moves_when_a_source_lab_file_is_edited(
 
 
 def test_fingerprint_ignores_a_custom_source_with_no_files(tmp_path: Path) -> None:
-    """A non-json source contributes nothing — the TTL fallback covers it.
+    """A source that reads no file contributes nothing — the TTL fallback covers it.
 
-    Pins the other half of the rule: ``lab_files()`` is empty for a custom
-    backend, so its digest is constant and ``_has_unfingerprinted_source``
-    is what shortens the TTL. Hashing the repo_dir here would give a custom
-    source a false invalidation signal.
+    Pins the other half of the rule: an unregistered backend (unknown) and a
+    backend that is not file-backed contribute no lab key path, so the digest
+    is constant and ``_has_unfingerprinted_source`` is what shortens the TTL.
+    Hashing the repo_dir here would give such a source a false invalidation
+    signal.
     """
     sut_dir = tmp_path / "sut"
     sut_dir.mkdir(parents=True)
@@ -306,9 +327,7 @@ def test_fingerprint_ignores_a_custom_source_with_no_files(tmp_path: Path) -> No
     repo.init = []
     repo.libs = []
     repo.tests = []
-    repo.lab_sources = [
-        CompiledLabSource(label="fp/cmdb#1", backend="cmdb", repo_dir=sut_dir, paths=[])
-    ]
+    repo.lab_sources = [_pending("fp/cmdb#1", "cmdb", sut_dir)]
 
     before = _names_digest([repo])
     (sut_dir / "anything.json").write_text("{}")
@@ -396,45 +415,47 @@ class TestCollectCurrentCommands:
     def test_nothing_registered_yields_empty_instructions(self, monkeypatch) -> None:
         """A run where no init module registered anything reports [], never an error.
 
-        THE EMPTINESS IS INJECTED, not inherited. This test used to delete
-        ``otto.cli.run`` from ``sys.modules`` and assert the result was empty —
-        which stopped meaning anything when the registry moved to
-        ``otto.instructions``: deleting a module that merely re-exports
-        ``INSTRUCTIONS`` leaves the registry object, and its contents, exactly
-        where they were. What made it pass was collection ORDER. Run alone, or
-        after tests that never bootstrap, ``otto.project.actions`` had not
-        been imported and the registry really was empty; run after anything that
-        calls ``bootstrap()`` — ``tests/unit/config/test_scope.py`` is one — the
-        six first-party instructions are registered as an import side effect and
-        the assertion failed. Nothing leaked: those six are otto's own
-        import-time baseline, and ``importlib.import_module`` is a no-op on the
-        second call, so no snapshot/restore guard may remove them either.
+        THE EMPTINESS IS INJECTED, not inherited: otto's six project
+        instructions derive from a constant, so the live table is never empty.
 
         Replacing the registry with an empty one states the condition the test
         is actually about and holds under every seed.
         """
-        from otto.registry import Registry
+        import sys
 
+        from otto.registry import ClassEntry, Registry
+
+        # A module first imported under this patch would keep the empty table
+        # for the rest of the process if it binds INSTRUCTIONS by name
+        # (`otto.cli.run` does), and every later test that builds an
+        # instruction app would find no instruction at all. So the call runs
+        # once unpatched first, importing everything it needs, and the patched
+        # call must import nothing new.
+        cc.collect_current_commands()
+        before = set(sys.modules)
         monkeypatch.setattr(
             "otto.instructions.INSTRUCTIONS",
-            Registry("instruction", register_hint="@otto.instructions.instruction()"),
+            Registry(
+                "instruction", entry=ClassEntry, register_hint="@otto.instructions.instruction()"
+            ),
         )
         assert cc.collect_current_commands() == []
+        first_imported = sorted(set(sys.modules) - before)
+        assert first_imported == [], (
+            f"{first_imported} first imported under the patched INSTRUCTIONS; a module "
+            "that binds the table by name would keep the empty one for the whole process"
+        )
 
     def test_collects_registered_instruction_with_options(self) -> None:
-        from otto.instructions import INSTRUCTIONS, InstructionEntry
+        from otto.instructions import STANDALONE_INSTRUCTIONS, InstructionEntry
 
         async def _probe_instr(name: Annotated[str, typer.Option("--name")] = "x") -> None: ...
 
-        INSTRUCTIONS.register(
+        STANDALONE_INSTRUCTIONS.register(
             "_cc_probe_instr",
             InstructionEntry(name="_cc_probe_instr", module=__name__, handler=_probe_instr),
-            origin=__name__,
         )
-        try:
-            instructions = cc.collect_current_commands()
-        finally:
-            INSTRUCTIONS.unregister("_cc_probe_instr")
+        instructions = cc.collect_current_commands()
 
         entry = next(e for e in instructions if e["name"] == "_cc_probe_instr")
         assert entry["options"]
@@ -444,21 +465,17 @@ class TestCollectCurrentCommands:
         """A command whose options can't be serialized still completes by name."""
         from decimal import Decimal
 
-        from otto.instructions import INSTRUCTIONS, InstructionEntry
+        from otto.instructions import STANDALONE_INSTRUCTIONS, InstructionEntry
 
         async def _probe_bad(
             bad: Annotated[Decimal, typer.Option("--bad")] = Decimal(0),
         ) -> None: ...
 
-        INSTRUCTIONS.register(
+        STANDALONE_INSTRUCTIONS.register(
             "_cc_probe_bad",
             InstructionEntry(name="_cc_probe_bad", module=__name__, handler=_probe_bad),
-            origin=__name__,
         )
-        try:
-            instructions = cc.collect_current_commands()
-        finally:
-            INSTRUCTIONS.unregister("_cc_probe_bad")
+        instructions = cc.collect_current_commands()
 
         entry = next(e for e in instructions if e["name"] == "_cc_probe_bad")
         assert entry["options"] == []
@@ -585,7 +602,7 @@ def test_collect_cli_commands_includes_decorator_registered_leaves() -> None:
     leaf to otto itself — and the built-in filter then drops it from the
     ``commands`` payload. That is how warm root help silently lost every
     decorated plugin leaf while groups registered by direct call survived.
-    The spec's origin must therefore be the module that APPLIED the
+    The registered origin must therefore be the module that APPLIED the
     decorator, and the leaf must survive collection.
     """
     from otto.cli.registry import CLI_COMMANDS, cli_command
@@ -595,13 +612,44 @@ def test_collect_cli_commands_includes_decorator_registered_leaves() -> None:
     async def _probe() -> None: ...
 
     try:
-        assert CLI_COMMANDS.get("_cc_probe_leaf").origin == __name__
+        assert CLI_COMMANDS.origin("_cc_probe_leaf") == __name__
         commands = {c["name"]: c for c in collect_cli_commands()}
         assert "_cc_probe_leaf" in commands
         assert commands["_cc_probe_leaf"]["help"] == "Probe leaf."
         assert commands["_cc_probe_leaf"]["lab_free"] is True
     finally:
         CLI_COMMANDS.unregister("_cc_probe_leaf")
+
+
+def test_a_decorated_third_party_command_is_not_classified_built_in() -> None:
+    """Built-in means otto REGISTERED it, whatever the command's callable is.
+
+    ``acme_cli`` re-exposes one of otto's own functions as its own command
+    through ``@cli_command``. The engine credits the module that applied the
+    decorator, so the command is acme's and is cached for warm root help; a
+    classifier that read the module of ``spec.loader`` would call it otto's
+    and drop it.
+    """
+    import types
+
+    from otto.cli.registry import CLI_COMMANDS
+    from otto.config.completion_cache import collect_cli_commands
+
+    acme = types.ModuleType("acme_cli")
+    source = (
+        "from otto.cli.registry import cli_command\n"
+        "from otto.version import get_version\n"
+        "cli_command(name='acme-version', help='Acme version.', lab_free=True)(get_version)\n"
+    )
+    exec(compile(source, "<acme_cli>", "exec"), acme.__dict__)  # noqa: S102 — a synthetic plugin
+
+    assert CLI_COMMANDS.origin("acme-version") == "acme_cli"
+    commands = {c["name"]: c for c in collect_cli_commands()}
+    assert commands["acme-version"] == {
+        "name": "acme-version",
+        "help": "Acme version.",
+        "lab_free": True,
+    }
 
 
 def test_collect_cli_commands_skips_otto_builtins() -> None:
@@ -1139,7 +1187,7 @@ def test_a_hanging_host_source_is_bounded_not_waited_on(monkeypatch, caplog) -> 
     monkeypatch.setattr(cc, "HOST_SUMMARY_DEADLINE_SECONDS", 0.05)
     entered = threading.Event()
 
-    def _never_returns(_repo, _inventory, _abandoned=None):
+    def _never_returns(_repo, _inventory, _profiles, _abandoned=None):
         entered.set()
         time.sleep(30)  # pragma: no cover — the point is that we do not wait
 
@@ -1150,7 +1198,9 @@ def test_a_hanging_host_source_is_bounded_not_waited_on(monkeypatch, caplog) -> 
 
     started = time.monotonic()
     with caplog.at_level(logging.WARNING, logger="otto.config.completion_cache"):
-        result = cc.repo_host_summaries(repo, cc.InventoryResolution())
+        result = cc.repo_host_summaries(
+            repo, cc.InventoryResolution(), profiles=ProfileContext.empty()
+        )
     elapsed = time.monotonic() - started
 
     assert result == []
@@ -1167,12 +1217,17 @@ def test_a_working_host_source_is_untouched_by_the_deadline(monkeypatch) -> None
 
     expected = cc.RepoEnumeration(summaries=[HostSummary(id="test1", labs=["unix"])])
     monkeypatch.setattr(
-        cc, "_enumerate_host_summaries", lambda _repo, _inventory, _abandoned=None: expected
+        cc,
+        "_enumerate_host_summaries",
+        lambda _repo, _inventory, _profiles, _abandoned=None: expected,
     )
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
     repo = MagicMock()
     repo.sut_dir = Path("/nowhere-ok")
-    assert cc.repo_host_summaries(repo, cc.InventoryResolution()) == expected.summaries
+    assert (
+        cc.repo_host_summaries(repo, cc.InventoryResolution(), profiles=ProfileContext.empty())
+        == expected.summaries
+    )
 
 
 def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> None:
@@ -1187,7 +1242,7 @@ def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> No
 
     calls = 0
 
-    def _count(_repo, _inventory, _abandoned=None):
+    def _count(_repo, _inventory, _profiles, _abandoned=None):
         nonlocal calls
         calls += 1
         return cc.RepoEnumeration(summaries=[HostSummary(id="test1", labs=["unix"])])
@@ -1198,7 +1253,12 @@ def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> No
     repo.sut_dir = Path("/memo")
 
     for _ in range(3):
-        assert [s.id for s in cc.repo_host_summaries(repo, cc.InventoryResolution())] == ["test1"]
+        assert [
+            s.id
+            for s in cc.repo_host_summaries(
+                repo, cc.InventoryResolution(), profiles=ProfileContext.empty()
+            )
+        ] == ["test1"]
     assert calls == 1, f"enumerated {calls} times for one repo"
 
 
@@ -1225,7 +1285,7 @@ def test_a_backend_that_explodes_does_not_reach_the_terminal(monkeypatch, capsys
     and prints a full traceback to the user's terminal mid-TAB — which is
     exactly what this function's "never crashes the shell" contract forbids."""
 
-    def _explodes(_repo, _inventory, _abandoned=None):
+    def _explodes(_repo, _inventory, _profiles, _abandoned=None):
         raise KeyboardInterrupt  # a BaseException: `except Exception` misses it
 
     monkeypatch.setattr(cc, "_enumerate_host_summaries", _explodes)
@@ -1233,7 +1293,10 @@ def test_a_backend_that_explodes_does_not_reach_the_terminal(monkeypatch, capsys
     repo = MagicMock()
     repo.sut_dir = Path("/boom")
 
-    assert cc.repo_host_summaries(repo, cc.InventoryResolution()) == []
+    assert (
+        cc.repo_host_summaries(repo, cc.InventoryResolution(), profiles=ProfileContext.empty())
+        == []
+    )
     assert "Traceback" not in capsys.readouterr().err
 
 
@@ -1256,13 +1319,13 @@ def test_declining_loader_module_does_not_escape_collect_cli_commands(monkeypatc
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delitem(sys.modules, "declining_loader", raising=False)
 
-    spec = CommandSpec(
-        name="probecmd", loader="declining_loader:app", help="probe", origin="thirdparty.pkg"
-    )
-    # Registered through the registry's own dicts so the entry disappears with the
-    # test; `collect_cli_commands` skips anything whose origin starts with "otto.".
-    monkeypatch.setitem(CLI_COMMANDS._entries, "probecmd", spec)
-    monkeypatch.setitem(CLI_COMMANDS._origins, "probecmd", "thirdparty.pkg")
+    spec = CommandSpec(name="probecmd", loader="declining_loader:app", help="probe")
+    # Registered from a synthetic third-party module (attribution is by calling
+    # frame), so `collect_cli_commands`, which skips anything whose origin starts
+    # with "otto.", sees it; the root registry isolation removes it after the test.
+    code = compile("CLI_COMMANDS.register('probecmd', spec)", "<thirdparty.pkg>", "exec")
+    exec(code, {"__name__": "thirdparty.pkg", "CLI_COMMANDS": CLI_COMMANDS, "spec": spec})  # noqa: S102
+    assert CLI_COMMANDS.origin("probecmd") == "thirdparty.pkg"
 
     try:
         out = cc.collect_cli_commands()

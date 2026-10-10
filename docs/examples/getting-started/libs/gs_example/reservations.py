@@ -1,18 +1,26 @@
 """A reservation backend for a scheduler that is a text file.
 
 The shape every backend has: the base class, two required read-only methods,
-one optional capability, a constructor that forwards what otto passes, and one
-exception for every failure. Replace the file read with your scheduler's API
-and the rest stands.
+one optional capability, one exception for every failure, and the config
+model and factory otto registers it with. Replace the file read with your
+scheduler's API and the rest stands.
 """
 
 # doc: begin team-backend
 from datetime import datetime
 from pathlib import Path
 
+from pydantic import ConfigDict
 from typing_extensions import override
 
-from otto.reservations import Reservation, ReservationBackendBase, ReservationBackendError
+from otto.models import OttoModel
+from otto.registry import Configured
+from otto.reservations import (
+    Reservation,
+    ReservationBackendBase,
+    ReservationBackendError,
+    ReservationEnv,
+)
 
 
 class TeamFileBackend(ReservationBackendBase):
@@ -26,9 +34,9 @@ class TeamFileBackend(ReservationBackendBase):
         username: str | None = None,
         path: str,
     ) -> None:
-        # url, repo_dir and username are otto's; path is this backend's own setting.
+        # url, repo_dir and username come from otto's env; path is this backend's own.
         super().__init__(url=url, repo_dir=repo_dir, username=username)
-        # otto always passes repo_dir; relative paths anchor to it.
+        # A relative path anchors to the repo root the factory passes.
         self._path = (self.repo_dir or Path()) / path
 
     def _reservations(self) -> list[Reservation]:
@@ -67,6 +75,21 @@ class TeamFileBackend(ReservationBackendBase):
     def backend_name(self) -> str:
         """Return the name ``otto reservation whoami`` shows."""
         return "team-file"
+
+
+class TeamFileConfig(OttoModel):
+    """The ``[reservations.team-file]`` sub-table: the schedule file."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+
+
+def team_file(c: Configured[TeamFileConfig, ReservationEnv]) -> TeamFileBackend:
+    """Build the backend from its parsed sub-table and otto's environment."""
+    return TeamFileBackend(
+        url=c.env.url, repo_dir=c.env.repo_dir, username=c.env.username, path=c.config.path
+    )
 
 
 # doc: end team-backend

@@ -13,6 +13,7 @@ from otto.host.session_setup import (
     register_session_setup,
     session_setup_from_spec,
 )
+from otto.registry import resolved
 
 
 async def _noop(session, ctx) -> None:  # signature is the contract
@@ -29,7 +30,7 @@ def registered():
 
 
 def test_register_then_get_returns_the_callable(registered):
-    assert SESSION_SETUPS.get(registered) is _noop
+    assert resolved(SESSION_SETUPS.get(registered).fn) is _noop
 
 
 def test_duplicate_name_is_refused_without_overwrite(registered):
@@ -42,12 +43,12 @@ def test_overwrite_replaces(registered):
         return None
 
     register_session_setup(registered, other, overwrite=True)
-    assert SESSION_SETUPS.get(registered) is other
+    assert resolved(SESSION_SETUPS.get(registered).fn) is other
 
 
 def test_unknown_name_lists_registered_names(registered):
     with pytest.raises(ValueError, match=r"Registered: .*t1-noop"):
-        SESSION_SETUPS.get("t1-nope")
+        resolved(SESSION_SETUPS.get("t1-nope").fn)
 
 
 def test_from_spec_none_passes_through():

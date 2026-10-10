@@ -25,17 +25,9 @@ Then:
     await host.power("on")     # or "off"
     await host.power()         # toggle (needs status_cmd)
 
-Projects register richer controllers (IPMI/redfish/libvirt/PDU) via
-`register_power_controller(type_name, cls)` — pass the type-name string and the
-`PowerController` subclass:
-
-    from otto.host import PowerController, register_power_controller
-
-    class MyIpmiController(PowerController):
-        type_name = "ipmi"
-        ...
-
-    register_power_controller("ipmi", MyIpmiController)
+Projects register richer controllers (IPMI/redfish/libvirt/PDU) with
+`register_power_controller`, as a config model plus a factory; see
+{ref}`power-controllers` for the how-to.
 
 With no controller configured,
 {meth}`~otto.host.host.BaseHost.power` and `reboot(hard=True)` raise.

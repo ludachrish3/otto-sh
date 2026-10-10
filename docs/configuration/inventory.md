@@ -168,7 +168,7 @@ The same table shape works in both places it may be written:
 ```toml
 [inventory]
 backend = "json"                   # a registered backend name
-path = "~/lab/inventory.json"      # json kwarg: "~" expands; relative anchors
+path = "~/lab/inventory.json"      # json key: "~" expands; relative anchors
 cache_ttl = "24h"                  # remote backends only; "0" disables caching
 
 [creds]
@@ -200,8 +200,9 @@ The creds store is declared the same way, in the same two files, and resolves
 independently — a project may override `[inventory]` alone and inherit the
 user file's `[creds]`, or the reverse. `backend` is otto's; the `json` store
 takes `path` (required) and nothing else; a third-party store takes whatever
-its constructor declares. When more than one active repo declares `[creds]`,
-the tables must be identical after anchoring, exactly as for `[inventory]`.
+its config model declares. When more than one active repo declares `[creds]`,
+the tables must parse to the same configuration (defaults filled in, paths
+anchored), exactly as for `[inventory]`.
 
 `creds_file`, the key that used to live under `[inventory]`, is gone: a
 settings file still carrying it fails validation with a message pointing here.
@@ -223,9 +224,10 @@ exactly two files, and a process has exactly one. An empty `[inventory]` table
 declares nothing and falls through to the user file.
 
 When more than one active repo declares `[inventory]`, the tables must be
-**identical** — same backend, same kwargs after anchoring, **and** the same
-`cache_ttl`; the `[creds]` tables are compared among themselves the same way.
-Otherwise bootstrap fails naming both settings files.
+**identical** — same backend, the same parsed configuration (defaults
+filled in, paths anchored), **and** the same `cache_ttl`; the `[creds]`
+tables are compared among themselves the same way. Otherwise bootstrap fails
+naming both settings files.
 
 ```{note}
 The doctor (`otto init`) validates **this** repo's declaration against the user
@@ -251,10 +253,10 @@ three-file shape and grows `supplies` as the inventory takes over more
 fields. The user-level file is still where a shared inventory lives: delete
 the project tables once one exists, or keep them as this repo's override.
 Two active repos that both keep their scaffolded tables fail bootstrap,
-naming both files: tables compare by kwargs **after anchoring**, and each
-repo's own `lab_data/inventory.json` anchors to its own root, so the paths
-never match. Move the tables to `~/.otto/settings.toml`, or delete one
-repo's.
+naming both files: tables compare by their parsed configuration, paths
+**anchored**, and each repo's own `lab_data/inventory.json` anchors to its own
+root, so the paths never match. Move the tables to `~/.otto/settings.toml`, or
+delete one repo's.
 
 ## The json backend
 
@@ -447,18 +449,23 @@ inventory error naming the URL — never a raw traceback out of the HTTP client.
 
 ## Caching remote inventories
 
-A backend is wrapped in the snapshot cache when it is **not** the `json`
-backend, `cache_ttl` is greater than zero, and its `fingerprint()` is `None` —
-the backend's own statement that it cannot report freshness. NetBox says so
-unconditionally; a third-party backend that returns a string opts out.
+A backend is wrapped in the snapshot cache when its registration declares
+`snapshot_cache=True`, `cache_ttl` is greater than zero, and its
+`fingerprint()` is `None` — the backend's own statement that it cannot report
+freshness. The registration decides, not the backend's name: the built-in
+`json` backend declares `snapshot_cache=False`, NetBox declares `True` and
+reports no fingerprint unconditionally, and a third-party backend that
+returns a string opts out ({doc}`../cookbook/extending/inventory-backends`).
 
 - **`cache_ttl`** is `"0"`, or `<n>m` / `<n>h` / `<n>d` — no fractions, no
   whitespace, no leading zeros, no other units. The default is `"24h"`. `"0"`
   means every process fetches, which is how an uncached backend behaves.
 - **Where.** `<otto home>/inventory-cache/` — `~/.otto/inventory-cache/` unless
   `OTTO_HOME` says otherwise. One snapshot per distinct inventory
-  configuration, named for a hash of it, written whole-or-not-at-all at mode
-  `0600` with a small meta file beside it. `otto inventory refresh` prints the
+  configuration — the backend's parsed table, defaults filled in, plus
+  `cache_ttl` — named for a hash of it, written whole-or-not-at-all at mode
+  `0600` with a small meta file beside it. Two repos whose tables parse to the
+  same configuration share one snapshot. `otto inventory refresh` prints the
   snapshot's full path, which saves you guessing the hash.
 - **Fresh.** A snapshot younger than the TTL is served **without contacting the
   backend** — the ordinary otto invocation costs one file read. Older, a fetch
@@ -468,6 +475,13 @@ unconditionally; a third-party backend that returns a string opts out.
   failure is the error, as it would be uncached.
 - **The snapshot is a stage-1 document.** You can copy one out of
   `inventory-cache/` and point a `json` inventory at it.
+
+```{note}
+**Upgrading.** The snapshot key now comes from the backend's normalized
+configuration and `cache_ttl`, so every existing snapshot misses once and is
+fetched again. The old snapshot files are left in `inventory-cache/`; delete
+them at leisure.
+```
 
 ```{important}
 The `otto inventory` read verbs print the stale-snapshot notice before their

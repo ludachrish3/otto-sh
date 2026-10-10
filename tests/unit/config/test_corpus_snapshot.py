@@ -72,11 +72,14 @@ def test_every_consumer_sees_the_same_files_through_the_snapshot(discovered):
     from otto.config import cache_sections as sec
     from otto.config.completion_tree import stat_triple
 
+    names = sec.section_by_name("names")
+
     def observe():
+        keys = sec.writer_key_paths(names, discovered)
         return {
-            "names": sorted(map(str, sec._names_key_paths(discovered))),
+            "names": sorted(map(str, keys)),
             "digests": sec.section_digests(discovered, sec.SECTIONS),
-            "triples": [stat_triple(p) for p in sorted(set(sec._names_key_paths(discovered)))],
+            "triples": [stat_triple(p) for p in sorted(set(keys))],
         }
 
     plain = observe()

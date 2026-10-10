@@ -328,13 +328,13 @@ def _print_this_workspace() -> None:
     typer.echo(f"  collect child: {_collect_child_text(collect_child_state())}")
     typer.echo(f"  docker observed: {_docker_observed_text(repos)}")
     typer.echo(f"  inventory: {inventory.text}")
+    from ..config.cache_sections import describe_lab_sources
+    from ..host.os_profile import ProfileContext
+
+    profiles = ProfileContext.from_repos(repos)
     for repo in repos:
-        for source in repo.lab_sources:
-            if source.backend != "json":
-                files = f"not file-backed ({source.backend})"
-            else:
-                files = ", ".join(str(p) for p in source.lab_files()) or "no lab file found"
-            typer.echo(f"  lab files ({source.label}): {files}")
+        for label, files in describe_lab_sources(repo, profiles=profiles):
+            typer.echo(f"  lab files ({label}): {files}")
     payload = status.payload
     if payload is None:
         typer.echo("  hosts offered: unknown — no entry to read")

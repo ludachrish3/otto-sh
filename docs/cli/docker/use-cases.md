@@ -379,7 +379,15 @@ which merges as channel 2.
 
 Adapters must be **pure with respect to devices** — no host access. They run
 under `--dry-run` too, so the full plan is printable. One adapter per (repo,
-use-case); a second registration for the same use-case fails loud.
+use-case): a second registration for the same use-case raises
+{class}`~otto.registry.DuplicateRegistration`, unless it passes
+`overwrite=True` (`@register_compose_adapter("integration", overwrite=True)`),
+which replaces the repo's adapter deliberately. Registering outside an init
+module's import raises {class}`~otto.registry.RegistrationRefused`, since that
+import is what names the repo. Both are decided when the decorator is
+applied, not when `register_compose_adapter(...)` is called: the adapter
+belongs to the repo whose init import applies it, and applying it outside an
+init import is refused.
 
 See {mod}`otto.docker.adapter` for the API.
 

@@ -39,7 +39,10 @@ if TYPE_CHECKING:
     from .command_frame import build_command_frame as build_command_frame
     from .command_frame import register_command_frame as register_command_frame
     from .connections import ConnectionManager as ConnectionManager
+    from .connections import TermBackendError as TermBackendError
+    from .connections import TermConstructionError as TermConstructionError
     from .connections import TermContext as TermContext
+    from .connections import TermMetadata as TermMetadata
     from .connections import build_term_backend as build_term_backend
     from .connections import register_term_backend as register_term_backend
     from .declared_product import DeclaredProduct as DeclaredProduct
@@ -68,16 +71,25 @@ if TYPE_CHECKING:
     from .loop_owner import HostLoopError as HostLoopError
     from .mount import Mount as Mount
     from .mount import mount_for as mount_for
+    from .os_profile import HostClassEntry as HostClassEntry
     from .os_profile import OsProfile as OsProfile
+    from .os_profile import ProfileContext as ProfileContext
+    from .os_profile import ProfileFields as ProfileFields
     from .os_profile import build_host_class as build_host_class
     from .os_profile import build_os_profile as build_os_profile
+    from .os_profile import check_data_profiles as check_data_profiles
     from .os_profile import check_os_profile as check_os_profile
     from .os_profile import get_host_class as get_host_class
     from .os_profile import get_os_profile as get_os_profile
     from .os_profile import register_host_class as register_host_class
     from .os_profile import register_os_profile as register_os_profile
+    from .os_profile import resolve_os_profile as resolve_os_profile
+    from .power import CommandPowerConfig as CommandPowerConfig
     from .power import CommandPowerController as CommandPowerController
+    from .power import PowerConstructionError as PowerConstructionError
+    from .power import PowerControlError as PowerControlError
     from .power import PowerController as PowerController
+    from .power import PowerEnv as PowerEnv
     from .power import PowerState as PowerState
     from .power import build_power_controller as build_power_controller
     from .power import power_control_from_spec as power_control_from_spec
@@ -104,6 +116,9 @@ if TYPE_CHECKING:
     from .transfer.embedded_base import EmbeddedFileTransfer as EmbeddedFileTransfer
     from .transfer.progress import make_rich_progress_handler as make_rich_progress_handler
     from .transfer.progress import make_transfer_progress as make_transfer_progress
+    from .transfer.registry import TransferBackendError as TransferBackendError
+    from .transfer.registry import TransferConstructionError as TransferConstructionError
+    from .transfer.registry import TransferMetadata as TransferMetadata
     from .transfer.registry import build_transfer_backend as build_transfer_backend
     from .transfer.registry import register_transfer_backend as register_transfer_backend
     from .transport import HopTransport as HopTransport
@@ -124,7 +139,10 @@ _LAZY_ATTRS: dict[str, str] = {
     "build_command_frame": "otto.host.command_frame",
     "register_command_frame": "otto.host.command_frame",
     "ConnectionManager": "otto.host.connections",
+    "TermBackendError": "otto.host.connections",
+    "TermConstructionError": "otto.host.connections",
     "TermContext": "otto.host.connections",
+    "TermMetadata": "otto.host.connections",
     "build_term_backend": "otto.host.connections",
     "register_term_backend": "otto.host.connections",
     "DeclaredProduct": "otto.host.declared_product",
@@ -154,6 +172,11 @@ _LAZY_ATTRS: dict[str, str] = {
     "Mount": "otto.host.mount",
     "mount_for": "otto.host.mount",
     "OsProfile": "otto.host.os_profile",
+    "HostClassEntry": "otto.host.os_profile",
+    "ProfileContext": "otto.host.os_profile",
+    "ProfileFields": "otto.host.os_profile",
+    "check_data_profiles": "otto.host.os_profile",
+    "resolve_os_profile": "otto.host.os_profile",
     "build_host_class": "otto.host.os_profile",
     "build_os_profile": "otto.host.os_profile",
     "check_os_profile": "otto.host.os_profile",
@@ -164,6 +187,10 @@ _LAZY_ATTRS: dict[str, str] = {
     "CommandPowerController": "otto.host.power",
     "PowerController": "otto.host.power",
     "PowerState": "otto.host.power",
+    "PowerConstructionError": "otto.host.power",
+    "PowerControlError": "otto.host.power",
+    "PowerEnv": "otto.host.power",
+    "CommandPowerConfig": "otto.host.power",
     "build_power_controller": "otto.host.power",
     "power_control_from_spec": "otto.host.power",
     "register_power_controller": "otto.host.power",
@@ -189,6 +216,9 @@ _LAZY_ATTRS: dict[str, str] = {
     "EmbeddedFileTransfer": "otto.host.transfer.embedded_base",
     "make_rich_progress_handler": "otto.host.transfer.progress",
     "make_transfer_progress": "otto.host.transfer.progress",
+    "TransferBackendError": "otto.host.transfer.registry",
+    "TransferConstructionError": "otto.host.transfer.registry",
+    "TransferMetadata": "otto.host.transfer.registry",
     "build_transfer_backend": "otto.host.transfer.registry",
     "register_transfer_backend": "otto.host.transfer.registry",
     "HopTransport": "otto.host.transport",
@@ -223,6 +253,7 @@ __all__ = [
     "BaseHost",
     "BashFrame",
     "CommandFrame",
+    "CommandPowerConfig",
     "CommandPowerController",
     "CommandResult",
     "ConnectionManager",
@@ -238,6 +269,7 @@ __all__ = [
     "HopTransport",
     "Host",
     "HostCapabilities",
+    "HostClassEntry",
     "HostFilter",
     "HostLoopError",
     "HostSession",
@@ -252,10 +284,15 @@ __all__ = [
     "OsType",
     "PosixFileOps",
     "PosixPrivilege",
+    "PowerConstructionError",
+    "PowerControlError",
     "PowerController",
+    "PowerEnv",
     "PowerState",
     "Product",
     "ProductProvider",
+    "ProfileContext",
+    "ProfileFields",
     "RawFrame",
     "RawLandingError",
     "RemoteHost",
@@ -270,9 +307,15 @@ __all__ = [
     "SshHopTransport",
     "SuppressCommandOutput",
     "TelnetSession",
+    "TermBackendError",
+    "TermConstructionError",
     "TermContext",
+    "TermMetadata",
     "Toolchain",
     "ToolchainTool",
+    "TransferBackendError",
+    "TransferConstructionError",
+    "TransferMetadata",
     "TransferProgressHandler",
     "UnixHost",
     "UnixHostSpec",
@@ -286,6 +329,7 @@ __all__ = [
     "build_power_controller",
     "build_term_backend",
     "build_transfer_backend",
+    "check_data_profiles",
     "check_os_profile",
     "create_host_from_dict",
     "get_host_class",
@@ -306,5 +350,6 @@ __all__ = [
     "register_transfer_backend",
     "registered_dev_tool_providers",
     "registered_product_providers",
+    "resolve_os_profile",
     "validate_host_dict",
 ]

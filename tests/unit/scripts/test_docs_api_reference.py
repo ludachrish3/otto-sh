@@ -194,13 +194,13 @@ def test_reexported_data_is_looked_up_where_it_is_bound():
 
 
 def test_a_value_is_shown_unless_its_repr_is_the_default_one():
-    from otto.registry import Registry
+    from otto.registry import ClassEntry, Registry
 
     assert shows_value(["a", "b"])
     assert shows_value(frozenset({"x"}))
     assert shows_value(30)
     assert not shows_value(object())
-    assert not shows_value(Registry("thing", register_hint="register_thing()"))
+    assert not shows_value(Registry("thing", entry=ClassEntry, register_hint="register_thing()"))
     assert not shows_value({"disk": object()})
     assert not shows_value([1, object()])
 

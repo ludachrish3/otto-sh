@@ -138,6 +138,10 @@ def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
     and resolving those classes may import their modules -- a cost only
     ``otto run`` should pay. A clash between the instruction's own fields
     and the verb's is found here, before any body runs.
+
+    *entry* must already be registered: its owning repo, which the dispatch
+    gate reads, is looked up in ``INSTRUCTIONS`` by name, and an unregistered
+    name raises rather than running ownerless.
     """
     app = typer.Typer()
     if entry.project is not None:
@@ -146,7 +150,7 @@ def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
     if entry.handler is None:  # unreachable: __post_init__ requires handler xor project
         raise ValueError(f"instruction {entry.name!r} has neither handler nor project set")
     target = prepare_command_target(
-        entry.handler, entry.options_cls, verb="run", repo=entry.registered_by
+        entry.handler, entry.options_cls, verb="run", repo=INSTRUCTIONS.repo(entry.name)
     )
     app.command(entry.name, help=entry.help)(target)
     return app
@@ -170,8 +174,8 @@ def first_party_instructions_panel() -> "Panel | None":
 
     Attribution is by MODULE, exactly like ``Repo.get_instructions_panel``'s
     ``init``-prefix match, so every instruction lands in exactly one panel:
-    otto's defaults are published by ``otto.project.commands`` under
-    ``otto.project.actions`` and a repo's live under its own init modules.
+    otto's defaults are declared in ``otto.project.actions`` and a repo's
+    live under its own init modules.
     Matching on the first-party NAMES instead would
     put a repo's instruction in otto's panel the day one slips past the
     decorator's guard -- hiding the very collision the guard exists to shout

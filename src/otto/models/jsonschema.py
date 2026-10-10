@@ -57,7 +57,7 @@ from pydantic.json_schema import models_json_schema
 from ..host.connections import TERM_BACKENDS
 from ..host.os_profile import registered_host_specs
 from ..host.transfer import TRANSFER_BACKENDS
-from ..link import IMPAIRERS
+from ..link import IMPAIRERS, build_impairer
 from ..version import get_version
 from .host import CredSpec, HostSpec
 from .inventory import FILLABLE_INVENTORY_FIELDS, InventoryRecord
@@ -158,18 +158,22 @@ def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> 
     if "valid_terms" in props:
         names = sorted(
             n
-            for n, backend in TERM_BACKENDS.items()
-            if family is None or family in backend.host_families
+            for n, e in TERM_BACKENDS.raw_items()
+            if family is None or family in e.metadata.host_families
         )
         props["valid_terms"] = _scalar_or_list_with_enum(props["valid_terms"], names)
     if "valid_transfers" in props:
         names = sorted(
-            n for n, c in TRANSFER_BACKENDS.items() if family is None or family in c.host_families
+            n
+            for n, e in TRANSFER_BACKENDS.raw_items()
+            if family is None or family in e.metadata.host_families
         )
         props["valid_transfers"] = _scalar_or_list_with_enum(props["valid_transfers"], names)
     if "valid_impairers" in props:
         names = sorted(
-            n for n, c in IMPAIRERS.items() if family is None or family in c.host_families
+            n
+            for n in IMPAIRERS.names()
+            if family is None or family in build_impairer(n).host_families
         )
         props["valid_impairers"] = _scalar_or_list_with_enum(props["valid_impairers"], names)
 

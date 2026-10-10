@@ -91,11 +91,13 @@ def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
     back to the unnarrowed host list on any error, so this must never raise.
     """
     from ..config.completion_cache import repo_host_summaries, resolve_process_inventory
+    from ..host.os_profile import ProfileContext
 
     ip_by_host: dict[str, str] = {}
     resolution = resolve_process_inventory(repos)
+    profiles = ProfileContext.from_repos(repos)
     for repo in repos:
-        for summary in repo_host_summaries(repo, resolution):
+        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
             if summary.ip:
                 ip_by_host[summary.id] = summary.ip
     return ip_by_host

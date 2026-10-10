@@ -10,6 +10,7 @@ from hypothesis import strategies as st
 from otto.link.impairer import IMPAIRERS, ScopedState
 from otto.link.netem import NetEmImpairer, PortPrefix, netem_args, parse_qdisc_show, port_prefixes
 from otto.link.params import ImpairmentParams, Selector, collides, scope_contains
+from otto.registry import resolved
 
 from ._tc_render import render_scoped_tree
 
@@ -26,7 +27,7 @@ FULL = ImpairmentParams(
 
 class TestCommands:
     def test_registered_as_netem_for_unix(self) -> None:
-        assert IMPAIRERS.get("netem") is NetEmImpairer
+        assert resolved(IMPAIRERS.get("netem").cls) is NetEmImpairer
         assert NetEmImpairer.host_families == frozenset({"unix"})
 
     def test_apply_command_exact(self) -> None:

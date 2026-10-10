@@ -178,7 +178,7 @@ class TestInstructionDecorator:
         # Raised BEFORE registration: a half-registered instruction that
         # `otto run --list-instructions` advertises but cannot dispatch would
         # trade a clear import-time error for a confusing runtime one. This
-        # fails if the check is ever moved below INSTRUCTIONS.register.
+        # fails if the check is ever moved below STANDALONE_INSTRUCTIONS.register.
         assert "_unit_test_sync_rejected" not in INSTRUCTIONS
 
 
@@ -697,20 +697,16 @@ class TestInstructionSeamGuard:
         assert "'leaf'" in str(result.exception)
 
     def test_a_sync_entry_registered_directly_is_refused(self):
-        from otto.instructions import INSTRUCTIONS as REGISTRY
+        from otto.instructions import STANDALONE_INSTRUCTIONS
 
         def _seam_registered():  # pragma: no cover — never invoked
             pass
 
-        REGISTRY.register(
+        STANDALONE_INSTRUCTIONS.register(
             "_seam_registered",
             InstructionEntry(name="_seam_registered", handler=_seam_registered, module=__name__),
-            origin=__name__,
         )
-        try:
-            result = self._dispatch(self._lane(), ["_seam_registered"])
-        finally:
-            REGISTRY.unregister("_seam_registered")
+        result = self._dispatch(self._lane(), ["_seam_registered"])
         assert isinstance(result.exception, TypeError), result.exception
         assert "'_seam_registered'" in str(result.exception)
 
@@ -767,8 +763,8 @@ class TestInstructionOnAMethod:
         class Opts:
             flag: Annotated[bool, typer.Option(help="f")] = False
 
-        # A name otto never declares: `otto.project.actions` registers its own
-        # bodies at import, so a method named `install` here would be asserted
+        # A name otto never declares: otto's own bodies are a constant both
+        # tables derive, so a method named `install` here would be asserted
         # absent from a table that legitimately holds otto's own entry.
         class Actions:
             @instruction(options=Opts, walk="reverse", continue_on_failure=True)
@@ -899,15 +895,15 @@ class TestInstructionOnAMethod:
 
     def test_free_function_on_a_registered_project_instruction_name_is_refused(self) -> None:
         from otto.cli.run import instruction
-        from otto.instructions import ProjectInstructionMark, register_project_instruction_body
+        from otto.project import ProjectActions, register_project_actions
         from otto.registry import registering_repo
 
-        class Base:
-            async def deploy(self, opts): ...
+        class Base(ProjectActions):
+            @instruction()
+            async def deploy(self): ...
 
-        register_project_instruction_body(
-            Base, "deploy", ProjectInstructionMark("deploy", None, {}, None), repo="a"
-        )
+        with registering_repo("a"):
+            register_project_actions(Base)
         with (
             registering_repo("b"),
             pytest.raises(ValueError, match=r"'deploy'.*project instruction"),

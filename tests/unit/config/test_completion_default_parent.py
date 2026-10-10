@@ -152,7 +152,7 @@ def test_read_cache_rejects_a_malformed_default_parent_map(tmp_path, monkeypatch
     assert cc.read_cache([mock_repo]) is None
 
 
-def test_schema_is_26():
+def test_schema_is_27():
     from otto import _shim_complete as sc
 
-    assert cc.SCHEMA_VERSION == 26 == sc.SCHEMA
+    assert cc.SCHEMA_VERSION == 27 == sc.SCHEMA

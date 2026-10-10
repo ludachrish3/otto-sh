@@ -78,7 +78,7 @@ def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
     else:
         from ..host.transfer import TRANSFER_BACKENDS
 
-        names = [n for n, c in TRANSFER_BACKENDS.items() if "unix" in c.host_families]
+        names = [n for n, e in TRANSFER_BACKENDS.raw_items() if "unix" in e.metadata.host_families]
     return sorted(n for n in names if n.startswith(incomplete))
 
 

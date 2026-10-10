@@ -3691,7 +3691,7 @@ async def test_the_transfer_context_carries_the_sftp_options(monkeypatch: pytest
             seen["ctx"] = ctx
             return MagicMock()
 
-    monkeypatch.setattr(uh, "build_transfer_backend", lambda name: _Recorder)
+    monkeypatch.setattr(uh, "build_transfer_backend", lambda name, ctx: _Recorder.create(ctx))
     host = UnixHost(
         ip="10.0.0.1",
         element=Element("box"),

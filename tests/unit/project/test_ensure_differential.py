@@ -28,7 +28,6 @@ from otto.project import (
     orchestrator,
     register_project_actions,
 )
-from otto.project import actions as actions_mod
 from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
@@ -115,7 +114,6 @@ def one_repo_lab(monkeypatch):
 @pytest.fixture
 def widget_lab(monkeypatch, one_repo_lab):
     """One repo 'widget' whose install records the options it was handed."""
-    actions_mod.register_project_instruction_bodies(ProjectActions, None)
     seen: list = []
 
     with registering_repo("widget"):

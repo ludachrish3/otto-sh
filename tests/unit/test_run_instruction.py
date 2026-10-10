@@ -14,7 +14,7 @@ from otto.context import (
     try_get_context,
 )
 from otto.instructions import (
-    INSTRUCTIONS,
+    STANDALONE_INSTRUCTIONS,
     InstructionEntry,
     bind_handler_kwargs,
     instruction,
@@ -38,11 +38,11 @@ def ctx():
 
 @pytest.fixture(autouse=True)
 def _clean_registries():
-    inst = set(INSTRUCTIONS.names())
+    inst = set(STANDALONE_INSTRUCTIONS.names())
     opts = set(OPTIONS.names())
     yield
-    for name in set(INSTRUCTIONS.names()) - inst:
-        INSTRUCTIONS.unregister(name)
+    for name in set(STANDALONE_INSTRUCTIONS.names()) - inst:
+        STANDALONE_INSTRUCTIONS.unregister(name)
     for name in set(OPTIONS.names()) - opts:
         OPTIONS.unregister(name)
 
@@ -200,19 +200,16 @@ async def test_run_instruction_unknown_name_is_the_registry_error(ctx):
         await run_instruction(ctx, "nope")
 
 
-def _publish_project_instructions():
-    """Publish the project instructions (``status``, ``install``, ...); return the orchestrator."""
-    import otto.project.actions
-    import otto.project.commands
+def _orchestrator():
+    """Return the orchestrator; the project instructions (``status``, ...) derive on their own."""
     import otto.project.orchestrator
 
-    otto.project.commands.publish_project_instructions()
     return otto.project.orchestrator
 
 
 @pytest.mark.asyncio
 async def test_run_instruction_routes_a_project_name_through_the_orchestrator(ctx, monkeypatch):
-    orchestrator = _publish_project_instructions()
+    orchestrator = _orchestrator()
     calls = []
 
     def validate(name, c, kwargs, *, announce):
@@ -238,7 +235,7 @@ async def test_run_instruction_passes_a_project_bodys_own_options_instance(ctx, 
     """A body's own class is admitted, as ``otto run install --ensure`` admits its flag."""
     from otto.project.options import InstallOptions
 
-    orchestrator = _publish_project_instructions()
+    orchestrator = _orchestrator()
     received = []
 
     async def fake(name, kwargs):
@@ -255,14 +252,14 @@ async def test_run_instruction_refuses_a_class_registered_for_test_only_for_a_pr
     class TestOnly:
         n: int = 0
 
-    _publish_project_instructions()
+    _orchestrator()
     with pytest.raises(OptionsRegistrationError, match="TestOnly"):
         await run_instruction(ctx, "install", [TestOnly()])
 
 
 @pytest.mark.asyncio
 async def test_run_instruction_validates_project_bodies_before_any_runs(ctx, monkeypatch):
-    orchestrator = _publish_project_instructions()
+    orchestrator = _orchestrator()
     ran = []
 
     def invalid(name, c, kwargs, *, announce):

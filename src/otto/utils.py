@@ -32,7 +32,7 @@ from .errors import OttoError
 __all__ = ["Arg", "Exclude", "Opt", "Status", "cli_exposed"]
 
 
-def anchor_path(value: Path, root: Path) -> Path:
+def anchor_path(value: Path, root: Path, *, quote: bool = True) -> Path:
     """Expand ``~``, then anchor a still-relative path to *root*.
 
     ``settings.toml`` is committed and shared team-wide, so a CWD-relative
@@ -47,11 +47,15 @@ def anchor_path(value: Path, root: Path) -> Path:
             or no home directory at all). ``expanduser`` raises ``RuntimeError``
             there; a ``ValueError`` is what a pydantic validator turns into a
             settings error naming the field, and what tolerant readers catch.
+            The message quotes *value* unless *quote* is false, which a
+            backend config model's validator passes: its message is shown to
+            the user verbatim, and a configured value is never echoed.
     """
     try:
         value = value.expanduser()
     except RuntimeError as e:
-        raise ValueError(f"cannot expand {value}: {e}") from e
+        what = str(value) if quote else "its leading '~'"
+        raise ValueError(f"cannot expand {what}: {e}") from e
     return value if value.is_absolute() else root / value
 
 

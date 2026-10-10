@@ -7,8 +7,13 @@ import pytest
 
 from otto.declared import DeclaredEntry
 from otto.host import shell_kind  # noqa: F401 — import registers the kind
-from otto.host.dev_tool import DEV_TOOL_KINDS, DevTool
-from otto.host.product import LOGIN_HOME_PLACEHOLDER, PRODUCT_KINDS, Product, ProductPlan
+from otto.host.dev_tool import DEV_TOOL_KIND_BUILDER, DevTool
+from otto.host.product import (
+    LOGIN_HOME_PLACEHOLDER,
+    PRODUCT_KIND_BUILDER,
+    Product,
+    ProductPlan,
+)
 from otto.result import Result
 from otto.utils import Status
 
@@ -23,7 +28,7 @@ def _shell(host, **params):
         match={},
         params={"artifact": "build/agent.tar.gz", **params},
     )
-    return PRODUCT_KINDS.build([entry], host)[0]
+    return PRODUCT_KIND_BUILDER.build([entry], host)[0]
 
 
 async def _recorded(product, host) -> ProductPlan:
@@ -109,7 +114,7 @@ def test_a_dev_tool_entry_names_itself_a_dev_tool_in_the_login_home_gap(plan_rec
         match={},
         params={"artifact": "build/helper.tgz"},
     )
-    tool = DEV_TOOL_KINDS.build([entry], host)[0]
+    tool = DEV_TOOL_KIND_BUILDER.build([entry], host)[0]
     assert tool.plan(host).unchecked == [
         "the login home — dev tool 'helper' declares no stage_dir and h1 no default_dest_dir"
     ]

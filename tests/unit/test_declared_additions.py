@@ -62,9 +62,6 @@ ADDITIONS: dict[str, dict[str, str]] = {
 }
 
 RETIRED = [
-    ("otto.creds", "get_creds_backend_class", "otto.creds.registry"),
-    ("otto.inventory", "get_inventory_backend_class", "otto.inventory.registry"),
-    ("otto.reservations", "reset_half_ported_warnings", "otto.reservations.factory"),
     ("otto.models", "EmbeddedHostSpec", "otto.models.host"),
     ("otto.models", "HostSpec", "otto.models.host"),
     ("otto.models", "UnixHostSpec", "otto.models.host"),

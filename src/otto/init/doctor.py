@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from .areas import (
     AREA_NAMES,
+    deferred_lab_sources,
     detect_areas,
     instruction_libs,
     kmodcov_entries,
@@ -28,7 +29,9 @@ if TYPE_CHECKING:
     # Annotation-only: importing ``otto.inventory`` for real pulls ~77 otto
     # modules (see ``otto/inventory/config.py``'s module docstring). Every
     # real use below is a function-local import.
+    from ..config.repo import Repo
     from ..host.element import Element
+    from ..host.os_profile import ProfileContext
     from ..inventory import Inventory
 
 VerdictState = Literal["ok", "failed", "absent", "blocked"]
@@ -80,11 +83,16 @@ class DoctorReport:
 def check_repo(root: Path) -> DoctorReport:
     """Check every area of the repo at *root*; never prints, never raises for its content.
 
-    settings: the loader's own compile (:func:`otto.config.repo.validate_settings`).
-    schemas: ``schema_drift``. lab: the runtime
-    loader's section, entry and duplicate rules, host entries resolved
-    against the inventory, links via ``LinkSpec`` — or ``blocked`` when the
-    settings do not compile, so their error is shown once. tests: a light
+    settings: the loader's own compile (:func:`otto.config.repo.validate_settings`),
+    then the check the loader runs on each ``[os_profiles]`` table after init
+    (:func:`otto.host.os_profile.check_data_profiles`; this doctor imports no
+    init module, so a table over a class an init module registers fails here).
+    schemas: ``schema_drift``. lab: each source's options as its backend
+    parses them, then the runtime loader's section, entry and duplicate
+    rules, host entries resolved against the inventory, links via
+    ``LinkSpec`` — or ``blocked`` when the settings do not compile, so their
+    error is shown once. A source whose backend an init module registers is
+    named in the lab detail as checked after init. tests: a light
     check (dirs, ``test_*.py``, ``ast.parse``). instructions: ``absent``
     when ``init`` is omitted or empty (a repo with no init modules is
     legitimate), ``blocked`` when the settings are not valid TOML, else
@@ -105,7 +113,17 @@ def check_repo(root: Path) -> DoctorReport:
     cache: "dict[Path, Inventory | Exception | None]" = {}
     present = set(detect_areas(root))
     settings_problems = validate_settings(root) if "settings" in present else []
-    lab_blocked = bool(settings_problems) or not _lab_compiles(root)
+    profiles: "ProfileContext | None" = None
+    if "settings" in present and not settings_problems:
+        from ..config.repo import Repo
+        from ..host.os_profile import ProfileContext
+
+        repo = Repo(sut_dir=root)
+        settings_problems = _data_profile_problems(repo)
+        profiles = None if settings_problems else ProfileContext.from_repos([repo])
+    lab_blocked = bool(settings_problems)
+    lab_unprepared = [] if lab_blocked else _lab_preparation_problems(root)
+    deferred = "" if lab_blocked or lab_unprepared else _deferred_detail(root)
     verdicts: list[AreaVerdict] = []
     for name in AREA_NAMES:
         if name == "settings":
@@ -118,37 +136,64 @@ def check_repo(root: Path) -> DoctorReport:
             verdict = None
         elif name == "schemas":
             verdict = _checked(name, schema_drift(root / ".otto" / "schemas"))
+        elif name == "lab" and lab_unprepared:
+            verdict = _checked(name, lab_unprepared)
         elif name == "lab":
-            verdict = _checked(name, _validate_lab(root, cache))
+            verdict = _checked(name, _validate_lab(root, cache, profiles), detail=deferred)
         elif name == "tests":
             verdict = _checked(name, _validate_tests(root))
         else:
             verdict = _checked(name, _validate_kmodcov(root))
+        if verdict is None and name == "lab" and deferred:
+            verdict = AreaVerdict(name, "absent", detail=f"{_ABSENT[name]}; {deferred}")
         verdicts.append(verdict or AreaVerdict(name, "absent", detail=_ABSENT[name]))
-    warnings = [] if lab_blocked else _lab_warnings(root, cache)
+    warnings = [] if lab_blocked or lab_unprepared else _lab_warnings(root, cache)
     warnings.extend(_kmodcov_warnings(root))
     inventory_label, creds_label = _labels(root, cache)
     return DoctorReport(verdicts, warnings, inventory_label, creds_label)
 
 
-def _checked(name: str, problems: list[str]) -> AreaVerdict:
-    return AreaVerdict(name, "failed", problems) if problems else AreaVerdict(name, "ok")
+def _checked(name: str, problems: list[str], *, detail: str = "") -> AreaVerdict:
+    return (
+        AreaVerdict(name, "failed", problems)
+        if problems
+        else AreaVerdict(name, "ok", detail=detail)
+    )
 
 
-def _lab_compiles(root: Path) -> bool:
-    """Report whether :func:`lab_file_groups` can compile *root*'s lab sources.
+def _data_profile_problems(repo: "Repo") -> list[str]:
+    """Check *repo*'s ``[os_profiles]`` tables as the loader does after init."""
+    from ..config.repo import TOML_SETTINGS_PATH
+    from ..host.os_profile import check_data_profiles
 
-    The settings compile already refuses every ``[lab]`` this one does, so
-    today this is False only when the settings verdict has failed too. It is
-    asked separately because the two compiles are separate code: should they
-    ever disagree, the lab area reads blocked rather than ``check_repo``
-    raising the compile error out of the lab check or the warnings pass.
+    try:
+        check_data_profiles([repo])
+    except ValueError as e:
+        return [f"{repo.sut_dir / TOML_SETTINGS_PATH}: {e}"]
+    return []
+
+
+def _lab_preparation_problems(root: Path) -> list[str]:
+    """Return why *root*'s lab sources do not prepare, or ``[]`` when they do.
+
+    A source's options are parsed by its backend's config model when the
+    source is prepared, not by the settings compile, so a ``[[lab.sources]]``
+    entry the settings accept can still be refused here: a json source
+    without ``paths``, an unknown key, a path under an unknown user's home.
+    Reported as the lab area's failure, once, rather than raised out of the
+    lab check or the warnings pass.
     """
     try:
         lab_file_groups(root)
-    except ValueError:
-        return False
-    return True
+    except ValueError as e:
+        return [str(e)]
+    return []
+
+
+def _deferred_detail(root: Path) -> str:
+    """Name each lab source the doctor cannot check: its backend registers in an init module."""
+    deferred = deferred_lab_sources(root)
+    return "; ".join(f"{source}: checked after init" for source in deferred)
 
 
 def _instructions_verdict(root: Path) -> AreaVerdict:
@@ -353,7 +398,9 @@ def _item_problem(validate: Callable[[Any], object], item: Any, prefix: str) -> 
 
 
 def _validate_lab(
-    root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
+    root: Path,
+    cache: "dict[Path, Inventory | Exception | None] | None" = None,
+    profiles: "ProfileContext | None" = None,
 ) -> list[str]:
     """Validate every lab file the settings' ``[[lab.sources]]`` name, via the real specs.
 
@@ -395,7 +442,9 @@ def _validate_lab(
         inventory_broken = True
 
     def _validate_entry(host_data: dict[str, Any], *, element: "Element") -> None:
-        validate_host_dict(resolve_host_entry(host_data, inventory, element).host_data)
+        validate_host_dict(
+            resolve_host_entry(host_data, inventory, element).host_data, profiles=profiles
+        )
 
     for lab_file, _, elements, links in documents:
         for element in elements:

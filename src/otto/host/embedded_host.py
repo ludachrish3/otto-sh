@@ -209,7 +209,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
 
             self.loader = build_binary_loader(self.loader)
 
-        self.power_control = power_control_from_spec(self.power_control)
+        self.power_control = power_control_from_spec(self.power_control, host_id=self.id)
 
         # A bare 'embedded' host carries no shell-framing dialect. Fail loud
         # rather than silently inheriting one, so a misconfigured non-Zephyr
@@ -270,7 +270,8 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         # options are forced in the context, so every backend sees them: an RTOS
         # shell has no login step, and its one console serves one client.
         telnet_options = replace(self.telnet_options, login=False, single_client_console=True)
-        self._connections = build_term_backend(self.term).create(
+        self._connections = build_term_backend(
+            self.term,
             TermContext(
                 ip=self.ip,
                 creds=self.creds,
@@ -282,7 +283,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
                 # The bound method, not its result: the server is looked up in
                 # the lab on the first console dial, never at construction.
                 console_endpoint=self.console_endpoint if self.term == "console" else None,
-            )
+            ),
         )
         self._session_mgr = SessionManager(
             connections=self._connections,
@@ -303,14 +304,15 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         )
         self._file_transfer = cast(
             "EmbeddedFileTransfer",
-            build_transfer_backend(self.transfer).create(
+            build_transfer_backend(
+                self.transfer,
                 TransferContext(
                     transfer=self.transfer,
                     host_name=self.name,
                     exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
                     filesystem=self.filesystem,
                     max_filename_len=self.max_filename_len,
-                )
+                ),
             ),
         )
 

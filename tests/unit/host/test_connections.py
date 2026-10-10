@@ -307,17 +307,17 @@ async def test_ssh_as_resolves_against_ssh(monkeypatch):
 def test_console_term_is_registered_for_both_families():
     from otto.host.connections import TERM_BACKENDS
 
-    backend = TERM_BACKENDS.get("console")
-    assert backend.host_families == frozenset({"unix", "embedded"})
-    assert backend.authenticates is True
+    metadata = TERM_BACKENDS.peek("console").metadata
+    assert metadata.host_families == frozenset({"unix", "embedded"})
+    assert metadata.authenticates is True
 
 
 def test_dials_host_distinguishes_console_from_ssh_and_telnet():
     from otto.host.connections import TERM_BACKENDS, register_term_backend
 
-    assert TERM_BACKENDS.get("ssh").dials_host is True
-    assert TERM_BACKENDS.get("telnet").dials_host is True
-    assert TERM_BACKENDS.get("console").dials_host is False
+    assert TERM_BACKENDS.peek("ssh").metadata.dials_host is True
+    assert TERM_BACKENDS.peek("telnet").metadata.dials_host is True
+    assert TERM_BACKENDS.peek("console").metadata.dials_host is False
     with pytest.raises(ValueError, match="dials_host must be a bool"):
         register_term_backend(
             "bad-dials",

@@ -73,10 +73,10 @@ happens when a backend cannot answer: the run fails.
 
 The JSON file is a stand-in for the scheduler your team already has. A
 backend subclasses `ReservationBackendBase`, implements its two read-only
-methods, and forwards the three constructor arguments otto passes (`url`,
-`repo_dir`, `username`) to the base; this one reads a text file, and
-everything but the file read and its `path` setting is what every backend
-looks like. It also implements the optional `holders` — the inverted "who
+methods, and comes with a config model for its own settings and a factory
+that builds it from that model and otto's environment (`url`, `repo_dir`,
+`username`); this one reads a text file, and everything but the file read
+and its `path` setting is what every backend looks like. It also implements the optional `holders` — the inverted "who
 holds this?" query. `@override` marks only the two required methods
 ([A note on @override](../cookbook/extending/reservation-backends.md#a-note-on-override-in-the-samples)):
 
@@ -90,7 +90,8 @@ When that API is HTTPS, {func}`otto.tls.os_trust_session` gives you a
 client that trusts the CA your organisation installed on the machine, with
 no `verify=` anywhere — see {doc}`../cookbook/extending/https-clients`.
 
-Registered by name from the `init` module, then selected by that name:
+Registered by name, with its config model and factory, from the `init`
+module, then selected by that name:
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/__init__.py
 :language: python

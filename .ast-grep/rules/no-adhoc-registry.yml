@@ -1,0 +1,87 @@
+id: no-adhoc-registry
+language: python
+severity: error
+message: this registration function writes a plain module-level dict, list or set, a registry the engine cannot see. Store the entries in an `otto.registry` table (a `Registry`, `BackendRegistry` or `Subscription`) so duplicates, attribution, the test-load refusal and test isolation apply to them.
+note: >
+  Every extension seam stores its entries in an engine table
+  (docs/architecture/subsystems/registries.md). A registration function
+  that appends to a module global instead builds an ad-hoc registry: no
+  duplicate is reported, nothing records who registered what, a test file
+  can register into it, and the per-test isolation never restores it.
+
+  Flagged: a write to an UPPER_CASE global (a leading underscore and a
+  qualifying module prefix allowed: `_HOST_SPECS`, `hosts._HOST_SPECS`) by
+  `G[k] = v`, `G.append(...)`, `G.setdefault(...)`, `G.update(...)`,
+  `G.add(...)` or `G.extend(...)`, inside a registration-shaped function:
+  one named `register_*`, `add_*`, `subscribe*` or `*_provider`, or one this
+  module applies as a decorator (`@name` or `@name(...)`).
+
+  Not flagged: an operational cache written by any other function
+  (`_ADD_LOCKS` in otto.tunnel.manage, `_LIB_DEP_STATS` in
+  otto.suite.plugin), and a static table that is only read
+  (`DEFAULT_PARSERS`). Not seen, and owned by review (registries.md, "What
+  remains policy"): a registry written from a function with any other name,
+  and a function a decorator factory returns (the factory, not the inner
+  function, is what a module applies). otto.registry, the engine itself, is
+  ignored.
+files:
+- src/otto/**/*.py
+ignores:
+- src/otto/registry.py
+utils:
+  global-target:
+    regex: '^(\w+\.)*_?[A-Z][A-Z0-9_]*$'
+  mutation:
+    any:
+    # G[k] = v
+    - kind: assignment
+      has:
+        field: left
+        kind: subscript
+        has:
+          field: value
+          matches: global-target
+    # G.append(...) and the other in-place writers
+    - kind: call
+      has:
+        field: function
+        kind: attribute
+        all:
+        - has:
+            field: attribute
+            regex: '^(append|setdefault|update|add|extend)$'
+        - has:
+            field: object
+            matches: global-target
+  registration-shaped:
+    kind: function_definition
+    any:
+    - has:
+        field: name
+        regex: '^(register_|add_|subscribe)|_provider$'
+    # A function this module applies as a decorator: @name or @name(...).
+    - all:
+      - has:
+          field: name
+          pattern: $FN
+      - inside:
+          kind: module
+          stopBy: end
+          has:
+            stopBy: end
+            kind: decorator
+            any:
+            - has:
+                kind: identifier
+                pattern: $FN
+            - has:
+                kind: call
+                has:
+                  field: function
+                  pattern: $FN
+rule:
+  all:
+  - matches: mutation
+  - inside:
+      stopBy: end
+      matches: registration-shaped

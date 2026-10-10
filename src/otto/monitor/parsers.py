@@ -44,16 +44,19 @@ import contextlib
 import copy
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from typing_extensions import override
 
 from ..models.monitor import DEFAULT_MAX_SERIES_PER_CHART
-from ..registry import Registry, caller_module
+from ..registry import FrozenMap, Registry, registration_boundary
 from .rates import RateTracker
+
+if TYPE_CHECKING:
+    from ..registry import Proposed
 
 __all__ = [
     "DEFAULT_PARSERS",
@@ -603,43 +606,121 @@ DEFAULT_PARSERS: dict[str, MetricParser] = {
 # Per-host parser registry
 # ---------------------------------------------------------------------------
 
-# Registry of host_id -> its full parser dict (command string -> MetricParser).
-# Unlike otto's other backend registries this is keyed by an arbitrary lab host
-# id rather than a fixed set of dialect/backend names, and re-registering a
-# host_id is normal usage (see register_host_parsers) — so registration always
-# overwrites rather than raising on a second call for the same host_id.
-HOST_PARSERS: Registry[dict[str, "MetricParser"]] = Registry(
-    "host parser set", register_hint="otto.monitor.parsers.register_host_parsers()"
-)
+
+@dataclass(frozen=True)
+class HostParsersEntry:
+    """``HOST_PARSERS``' record: the full parser set registered for one exact host id."""
+
+    parsers: "FrozenMap[str, MetricParser]"
+    """The host's parsers, keyed by the command each one parses."""
 
 
-# Pattern-scoped parser sets, keyed by pattern.pattern. Unlike HOST_PARSERS
-# (re-registering a host_id is normal usage), registering the same pattern
-# string twice is a config bug and raises loudly.
-HOST_PATTERN_PARSERS: Registry[tuple[re.Pattern[str], dict[str, "MetricParser"]]] = Registry(
-    "host-pattern parser set", register_hint="otto.monitor.parsers.register_host_parsers()"
-)
+@dataclass(frozen=True)
+class PatternParsersEntry:
+    """``HOST_PATTERN_PARSERS``' record: a parser set for every host id the pattern matches."""
+
+    pattern: "re.Pattern[str]"
+    """The pattern a host id must ``fullmatch``."""
+
+    parsers: "FrozenMap[str, MetricParser]"
+    """The parsers for every matching host, keyed by the command each one parses."""
 
 
-def register_host_parsers(
-    host_id: str | re.Pattern[str], parsers: dict[str, "MetricParser"]
+@dataclass(frozen=True)
+class ProjectParserEntry:
+    """``PROJECT_PARSERS``' record: one project-level parser."""
+
+    parser: "MetricParser"
+    """The parser; its ``command`` is the record's key."""
+
+
+def pattern_key(pattern: "re.Pattern[str]") -> str:
+    """Return the ``HOST_PATTERN_PARSERS`` key for *pattern*: its flags, then its source.
+
+    The flags are part of the key because one source compiled with different
+    flags matches different host ids.
+    """
+    return f"{pattern.flags}:{pattern.pattern}"
+
+
+def _check_pattern_entry(
+    name: str, entry: PatternParsersEntry, proposed: "Proposed[PatternParsersEntry]"
 ) -> None:
-    """Associate a custom parser dict with a host ID or a host-ID pattern.
+    """``HOST_PATTERN_PARSERS``' validate: the key is the pattern's own."""
+    del proposed
+    key = pattern_key(entry.pattern)
+    if name != key:
+        raise ValueError(
+            f"host-pattern parser set registered under {name!r} but its pattern's key is {key!r}"
+        )
 
-    A plain string is an exact host ID (the key in ``lab.hosts``) — this is a
-    total replacement for that host and may be re-registered freely. A compiled
-    ``re.Pattern`` scopes the dict to every host whose id ``fullmatch``es —
-    one registration covers a family of hosts (e.g.
-    ``re.compile(r"busybox-.*")``). Precedence: exact id > pattern >
-    project-level > defaults; two patterns matching the same host raise at
-    resolution time. Call from an init module listed in ``.otto/settings.toml``.
+
+def _check_project_entry(
+    name: str, entry: ProjectParserEntry, proposed: "Proposed[ProjectParserEntry]"
+) -> None:
+    """``PROJECT_PARSERS``' validate: the key is the parser's command."""
+    del proposed
+    if name != entry.parser.command:
+        raise ValueError(
+            f"project metric parser registered under {name!r} but its command is "
+            f"{entry.parser.command!r}"
+        )
+
+
+# Exact host id -> the host's full parser set. The key is an arbitrary lab
+# host id, so nothing in the record derives it. A host's set is registered
+# once; an init module that deliberately replaces one passes overwrite=True,
+# so two init modules claiming the same host collide loudly.
+HOST_PARSERS: "Registry[HostParsersEntry]" = Registry(
+    "host parser set",
+    entry=HostParsersEntry,
+    register_hint="otto.monitor.parsers.register_host_parsers()",
+)
+
+
+# Pattern-scoped parser sets, keyed by pattern_key(): the flags and the source,
+# so one source compiled with two flag sets is two registrations. Registering
+# the same key twice is a config bug and raises unless overwrite=True.
+HOST_PATTERN_PARSERS: "Registry[PatternParsersEntry]" = Registry(
+    "host-pattern parser set",
+    entry=PatternParsersEntry,
+    register_hint="otto.monitor.parsers.register_host_parsers()",
+    validate=_check_pattern_entry,
+)
+
+
+@registration_boundary
+def register_host_parsers(
+    host_id: "str | re.Pattern[str]",
+    parsers: "Mapping[str, MetricParser]",
+    *,
+    overwrite: bool = False,
+) -> None:
+    """Associate a custom parser set with a host ID or a host-ID pattern.
+
+    A plain string is an exact host ID (the key in ``lab.hosts``): a total
+    replacement of the parsers for that host. A compiled ``re.Pattern`` scopes
+    the set to every host whose id ``fullmatch``es -- one registration covers
+    a family of hosts (e.g. ``re.compile(r"busybox-.*")``); a pattern's key
+    includes its flags, so one source compiled with two flag sets is two
+    registrations. Precedence: exact id > pattern > project-level > defaults;
+    two patterns matching the same host raise at resolution time. Call from an
+    init module listed in ``.otto/settings.toml``.
+
+    *parsers* is copied when registered, so later changes to the caller's
+    mapping do not reach the registry. A second registration of the same host
+    ID or pattern raises :class:`~otto.registry.DuplicateRegistration` unless
+    *overwrite* is true, which replaces the set.
 
     Hosts with no registered parsers automatically fall back to DEFAULT_PARSERS.
     """
+    frozen: "FrozenMap[str, MetricParser]" = FrozenMap(dict(parsers))
     if isinstance(host_id, re.Pattern):
-        HOST_PATTERN_PARSERS.register(host_id.pattern, (host_id, parsers), origin=caller_module())
+        HOST_PATTERN_PARSERS.register(
+            pattern_key(host_id), PatternParsersEntry(host_id, frozen), overwrite=overwrite
+        )
         return
-    HOST_PARSERS.register(host_id, parsers, overwrite=True, origin=caller_module())
+    HOST_PARSERS.register(host_id, HostParsersEntry(frozen), overwrite=overwrite)
 
 
 # ---------------------------------------------------------------------------
@@ -647,26 +728,34 @@ def register_host_parsers(
 # ---------------------------------------------------------------------------
 
 # Project-wide parser additions/overrides, keyed by command string. Unlike
-# HOST_PARSERS (whole-dict per host), entries here merge over DEFAULT_PARSERS
-# for every host that has no per-host registration. Re-registering the same
-# command is a config bug and raises loudly (Registry dupe machinery).
-PROJECT_PARSERS: Registry[MetricParser] = Registry(
-    "project metric parser", register_hint="otto.monitor.parsers.register_parsers()"
+# HOST_PARSERS (whole set per host), entries here merge over DEFAULT_PARSERS
+# for every host that has no per-host registration. Registering the same
+# command twice is a config bug and raises unless overwrite=True.
+PROJECT_PARSERS: "Registry[ProjectParserEntry]" = Registry(
+    "project metric parser",
+    entry=ProjectParserEntry,
+    register_hint="otto.monitor.parsers.register_parsers()",
+    validate=_check_project_entry,
 )
 
 
-def register_parsers(parsers: Sequence[MetricParser]) -> None:
-    """Register project-level parsers that apply to every monitored host.
+@registration_boundary
+def register_parsers(parsers: "Iterable[MetricParser]", *, overwrite: bool = False) -> None:
+    """Register project-level parsers that apply to every monitored host, all or none.
 
     Call from an init module (listed in ``.otto/settings.toml``). Each parser's
     ``command`` becomes its key: a command matching a DEFAULT_PARSERS entry
     overrides that built-in; a new command extends the set. Per-host
     registrations (``register_host_parsers``) take total precedence for their
-    host. Registering the same command twice raises.
+    host. A command already registered raises
+    :class:`~otto.registry.DuplicateRegistration` unless *overwrite* is true; a
+    command repeated within *parsers* always raises. Every parser is checked
+    before any is stored, so a failure registers none of them.
     """
-    origin = caller_module()
-    for p in parsers:
-        PROJECT_PARSERS.register(p.command, p, origin=origin)
+    batch = list(parsers)  # a generator is consumed once, before anything is checked
+    PROJECT_PARSERS.register_many(
+        [(p.command, ProjectParserEntry(p)) for p in batch], overwrite=overwrite
+    )
 
 
 def default_catalog() -> dict[str, "MetricParser"]:
@@ -675,7 +764,7 @@ def default_catalog() -> dict[str, "MetricParser"]:
     DEFAULT_PARSERS extended/overridden by project-level registrations.
     """
     merged = dict(DEFAULT_PARSERS)
-    merged.update(PROJECT_PARSERS.items())
+    merged.update((command, entry.parser) for command, entry in PROJECT_PARSERS.items())
     return merged
 
 
@@ -691,18 +780,22 @@ def get_host_parsers(host_id: str) -> dict[str, "MetricParser"]:
     for unregistered hosts by design: no registration at all is normal.
     """
     if host_id in HOST_PARSERS:
-        return copy.deepcopy(HOST_PARSERS.get(host_id))
+        return copy.deepcopy(dict(HOST_PARSERS.get(host_id).parsers))
     matches = [
-        (key, parsers)
-        for key, (pattern, parsers) in HOST_PATTERN_PARSERS.items()
-        if pattern.fullmatch(host_id)
+        entry for _, entry in HOST_PATTERN_PARSERS.items() if entry.pattern.fullmatch(host_id)
     ]
     if len(matches) > 1:
-        patterns = ", ".join(repr(key) for key, _ in matches)
+        sources = [entry.pattern.pattern for entry in matches]
+        # One source registered with two flag sets is named by its keys, so no
+        # pattern appears twice in the list.
+        patterns = ", ".join(
+            repr(pattern_key(entry.pattern) if sources.count(source) > 1 else source)
+            for entry, source in zip(matches, sources, strict=True)
+        )
         raise ValueError(
             f"Host {host_id!r} matches multiple parser patterns ({patterns}); "
             "register an exact host id to disambiguate"
         )
     if matches:
-        return copy.deepcopy(matches[0][1])
+        return copy.deepcopy(dict(matches[0].parsers))
     return copy.deepcopy(default_catalog())

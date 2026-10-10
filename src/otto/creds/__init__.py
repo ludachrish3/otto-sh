@@ -17,13 +17,16 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .config import CompiledCreds as CompiledCreds
+    from .config import JsonCredsConfig as JsonCredsConfig
     from .config import compile_creds as compile_creds
     from .config import compile_creds_table as compile_creds_table
     from .config import construct_creds_store as construct_creds_store
+    from .errors import CredsConstructionError as CredsConstructionError
     from .errors import CredsError as CredsError
     from .json_store import JsonCredsStore as JsonCredsStore
     from .json_store import parse_creds_document as parse_creds_document
     from .protocol import CredsStore as CredsStore
+    from .registry import CredsEnv as CredsEnv
     from .registry import register_creds_backend as register_creds_backend
 
 # name -> the module that defines it, imported on first access by __getattr__.
@@ -37,6 +40,9 @@ _LAZY_ATTRS: dict[str, str] = {
     "parse_creds_document": "otto.creds.json_store",
     "CredsStore": "otto.creds.protocol",
     "register_creds_backend": "otto.creds.registry",
+    "CredsEnv": "otto.creds.registry",
+    "CredsConstructionError": "otto.creds.errors",
+    "JsonCredsConfig": "otto.creds.config",
 }
 
 
@@ -56,8 +62,11 @@ def __dir__() -> list[str]:
 
 __all__ = [
     "CompiledCreds",
+    "CredsConstructionError",
+    "CredsEnv",
     "CredsError",
     "CredsStore",
+    "JsonCredsConfig",
     "JsonCredsStore",
     "compile_creds",
     "compile_creds_table",

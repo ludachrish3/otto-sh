@@ -54,9 +54,12 @@ def test_a_host_whose_summary_has_no_logins_is_omitted(monkeypatch):
     monkeypatch.setattr(
         cc,
         "repo_host_summaries",
-        lambda repo, resolution: [HostSummary(id="bare"), HostSummary(id="u1", logins=[])],
+        lambda repo, resolution, *, profiles: [
+            HostSummary(id="bare"),
+            HostSummary(id="u1", logins=[]),
+        ],
     )
-    assert collect_logins_by_host([SimpleNamespace()]) == {}
+    assert collect_logins_by_host([SimpleNamespace(os_profiles={})]) == {}
 
 
 def test_empty_without_repos():
@@ -81,7 +84,7 @@ def test_write_and_read_round_trip_and_no_password_is_written(tmp_path, monkeypa
     raw = cc._cache_path().read_text()
     assert "hunter2" not in raw
     assert "toor" not in raw
-    assert json.loads(raw)["schema"] == cc.SCHEMA_VERSION == 26
+    assert json.loads(raw)["schema"] == cc.SCHEMA_VERSION == 27
 
 
 def test_read_cache_rejects_a_malformed_login_map(tmp_path, monkeypatch):

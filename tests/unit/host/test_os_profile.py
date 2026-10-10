@@ -1,12 +1,14 @@
 import pytest
 
-from otto.host import os_profile
 from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost, ZephyrHost
 from otto.host.os_profile import (
+    OS_PROFILES,
     OsProfile,
+    ProfileFields,
     build_host_class,
     build_os_profile,
+    check_os_profile,
     get_host_class,
     get_os_profile,
     register_host_class,
@@ -14,74 +16,43 @@ from otto.host.os_profile import (
     registered_profile_names,
 )
 from otto.host.unix_host import UnixHost
-
-
-@pytest.fixture(autouse=True)
-def restore_registry():
-    """Snapshot and restore the global profile and host-class registries around
-    each test.
-
-    ``register_os_profile`` and ``register_host_class`` mutate module-global
-    state — including in-place overwrites of built-in entries (last-writer-wins
-    is documented behavior for this module, see ``test_last_writer_wins_on_name_collision``
-    / ``test_overriding_builtin_warns``) — so a diff-only cleanup (as used by the
-    term/transfer registries, which never overwrite a built-in in tests) is not
-    enough here; a full snapshot/restore of each ``Registry``'s internal entry
-    and origin maps is required.
-    """
-    saved_profiles = dict(os_profile.OS_PROFILES._entries)
-    saved_profile_origins = dict(os_profile.OS_PROFILES._origins)
-    saved_classes = dict(os_profile.HOST_CLASSES._entries)
-    saved_class_origins = dict(os_profile.HOST_CLASSES._origins)
-    saved_specs = dict(os_profile._HOST_SPECS)
-    try:
-        yield
-    finally:
-        os_profile.OS_PROFILES._entries.clear()
-        os_profile.OS_PROFILES._entries.update(saved_profiles)
-        os_profile.OS_PROFILES._origins.clear()
-        os_profile.OS_PROFILES._origins.update(saved_profile_origins)
-        os_profile.HOST_CLASSES._entries.clear()
-        os_profile.HOST_CLASSES._entries.update(saved_classes)
-        os_profile.HOST_CLASSES._origins.clear()
-        os_profile.HOST_CLASSES._origins.update(saved_class_origins)
-        os_profile._HOST_SPECS.clear()
-        os_profile._HOST_SPECS.update(saved_specs)
+from otto.registry import DuplicateRegistration, FrozenMap
 
 
 class TestBuiltins:
     def test_builtins_registered(self):
         assert set(registered_profile_names()) >= {"unix", "embedded", "zephyr"}
 
-    def test_builtin_profiles_pass_register_os_profiles_checks(self):
-        """The built-ins are written straight into OS_PROFILES, so run the public checks here.
+    def test_builtin_profiles_pass_check_os_profile(self):
+        """The built-ins are registered without importing their classes, so run the public check.
 
-        ``register_os_profile`` validates ``defaults`` against the base class's
-        fields, which would import the host class the built-ins name by
-        reference; re-registering each built-in through it holds them to the
-        same checks a third party's profile gets, and changes nothing.
+        ``check_os_profile`` validates ``defaults`` against the base class's
+        fields, which imports the host class the built-ins name by reference;
+        running it over each built-in holds them to the same check a third
+        party's profile gets.
         """
         for name in ["unix", "embedded", "zephyr", "busybox"]:
             profile = build_os_profile(name)
-            register_os_profile(
+            check_os_profile(
                 profile.name,
                 profile.base,
-                profile.defaults,
-                login_prompt=profile.login_prompt,
-                password_prompt=profile.password_prompt,
+                profile.fields.defaults.thaw_json(),
+                login_prompt=profile.fields.login_prompt,
+                password_prompt=profile.fields.password_prompt,
             )
-            assert build_os_profile(name) == profile
 
     def test_unix_and_embedded_have_no_defaults(self):
         assert build_os_profile("unix") == OsProfile(
-            "unix", "unix", {}, login_prompt=r"login: ?$", password_prompt=r"[Pp]assword: ?$"
+            "unix",
+            "unix",
+            ProfileFields(login_prompt=r"login: ?$", password_prompt=r"[Pp]assword: ?$"),
         )
-        assert build_os_profile("embedded") == OsProfile("embedded", "embedded", {})
+        assert build_os_profile("embedded") == OsProfile("embedded", "embedded")
 
     def test_zephyr_profile_points_to_zephyr_class(self):
         z = build_os_profile("zephyr")
         assert z.base == "zephyr"
-        assert z.defaults == {}
+        assert dict(z.fields.defaults) == {}
 
 
 class TestRegistry:
@@ -97,11 +68,11 @@ class TestRegistry:
     def test_register_then_build_round_trips(self):
         register_os_profile("riot", base="embedded", defaults={"os_name": "RIOT"})
         prof = build_os_profile("riot")
-        assert prof == OsProfile("riot", "embedded", {"os_name": "RIOT"})
+        assert prof == OsProfile("riot", "embedded", ProfileFields(FrozenMap({"os_name": "RIOT"})))
 
     def test_register_defaults_are_optional(self):
         register_os_profile("bare", base="unix")
-        assert build_os_profile("bare").defaults == {}
+        assert dict(build_os_profile("bare").fields.defaults) == {}
 
     def test_register_rejects_bad_base(self):
         with pytest.raises(ValueError, match="base"):
@@ -118,12 +89,14 @@ class TestRegistry:
         # but it is fine on a unix-base profile
         register_os_profile("ok-unix", base="unix", defaults={"docker_capable": True})
 
-    def test_last_writer_wins_on_name_collision(self):
+    def test_re_registering_a_name_needs_overwrite(self):
         register_os_profile("dup", base="unix", defaults={"os_name": "First"})
-        register_os_profile("dup", base="embedded", defaults={"os_name": "Second"})
+        with pytest.raises(DuplicateRegistration):
+            register_os_profile("dup", base="embedded", defaults={"os_name": "Second"})
+        register_os_profile("dup", base="embedded", defaults={"os_name": "Second"}, overwrite=True)
         prof = build_os_profile("dup")
         assert prof.base == "embedded"
-        assert prof.defaults == {"os_name": "Second"}
+        assert dict(prof.fields.defaults) == {"os_name": "Second"}
 
     def test_overriding_builtin_warns(self, caplog):
         import logging
@@ -137,17 +110,17 @@ class TestConsolePrompts:
     def test_unix_and_busybox_carry_the_getty_prompts(self):
         for name in ("unix", "busybox"):
             prof = build_os_profile(name)
-            assert prof.login_prompt == r"login: ?$", name
-            assert prof.password_prompt == r"[Pp]assword: ?$", name
+            assert prof.fields.login_prompt == r"login: ?$", name
+            assert prof.fields.password_prompt == r"[Pp]assword: ?$", name
 
     def test_embedded_and_zephyr_carry_none(self):
         for name in ("embedded", "zephyr"):
-            prof = build_os_profile(name)
-            assert prof.login_prompt is None and prof.password_prompt is None, name  # noqa: PT018
+            fields = build_os_profile(name).fields
+            assert fields.login_prompt is None and fields.password_prompt is None, name  # noqa: PT018
 
     def test_register_accepts_prompt_keywords_and_compiles_them(self):
         register_os_profile("vendor", base="unix", login_prompt=r"Username: ?$")
-        assert build_os_profile("vendor").login_prompt == r"Username: ?$"
+        assert build_os_profile("vendor").fields.login_prompt == r"Username: ?$"
         with pytest.raises(ValueError, match="login_prompt"):
             register_os_profile("bad", base="unix", login_prompt="(")
 
@@ -155,17 +128,18 @@ class TestConsolePrompts:
         from otto.host.options import ConsoleOptions
         from otto.host.os_profile import resolve_console_prompts
 
-        resolved = resolve_console_prompts(ConsoleOptions(password_prompt="pw: $"), "unix")
+        unix = build_os_profile("unix").fields
+        resolved = resolve_console_prompts(ConsoleOptions(password_prompt="pw: $"), unix)
         assert resolved.login_prompt == r"login: ?$"
         assert resolved.password_prompt == "pw: $"
-        untouched = resolve_console_prompts(ConsoleOptions(), "zephyr")
+        untouched = resolve_console_prompts(ConsoleOptions(), build_os_profile("zephyr").fields)
         assert untouched.login_prompt is None
 
-    def test_resolve_on_an_unknown_profile_leaves_the_options_alone(self):
+    def test_resolve_with_no_profile_fields_leaves_the_options_alone(self):
         from otto.host.options import ConsoleOptions
         from otto.host.os_profile import resolve_console_prompts
 
-        assert resolve_console_prompts(ConsoleOptions(), "no-such-profile").login_prompt is None
+        assert resolve_console_prompts(ConsoleOptions(), None).login_prompt is None
 
 
 class TestHostClassRegistry:
@@ -174,16 +148,17 @@ class TestHostClassRegistry:
         assert build_host_class("embedded") is EmbeddedHost
         assert build_host_class("zephyr") is ZephyrHost
 
-    def test_register_host_class_round_trips_and_autoregisters_profile(self):
+    def test_register_host_class_round_trips_and_its_name_resolves_as_a_profile(self):
         class FooHost(EmbeddedHost):
             pass
 
         register_host_class("foo", FooHost)
         assert build_host_class("foo") is FooHost
-        # registering a class also makes os_type:"foo" resolvable as a profile
+        # the class's own name resolves as a profile, with nothing registered
+        assert "foo" not in OS_PROFILES
         prof = build_os_profile("foo")
         assert prof.base == "foo"
-        assert prof.defaults == {}
+        assert dict(prof.fields.defaults) == {}
 
     def test_get_host_class_missing_returns_none(self):
         assert get_host_class("does-not-exist") is None
@@ -200,7 +175,7 @@ class TestHostClassRegistry:
         # max_filename_len is an EmbeddedHost field; a profile over 'embedded'
         # must accept it (MRO-union slots), not reject it as unknown.
         register_os_profile("emb-variant", base="embedded", defaults={"max_filename_len": 32})
-        assert build_os_profile("emb-variant").defaults["max_filename_len"] == 32
+        assert build_os_profile("emb-variant").fields.defaults["max_filename_len"] == 32
 
     def test_build_host_class_unknown_raises_with_known_list(self):
         with pytest.raises(ValueError, match="Unknown host class") as exc:
@@ -225,7 +200,7 @@ class TestHostSpecRegistry:
         class MyHost(EmbeddedHost):
             pass
 
-        register_host_class("myos", MyHost, EmbeddedHostSpec)
+        register_host_class("myos", MyHost, spec=EmbeddedHostSpec)
         assert build_host_spec("myos") is EmbeddedHostSpec
 
     def test_register_defaults_spec_via_mro(self):
@@ -244,7 +219,7 @@ class TestHostSpecRegistry:
         from otto.host.unix_host import UnixHost
 
         with pytest.raises(ValueError, match="HostSpec"):
-            register_host_class("bad", UnixHost, dict)  # dict is not a HostSpec
+            register_host_class("bad", UnixHost, spec=dict)  # type: ignore[arg-type] — not a HostSpec
 
     def test_register_no_spec_and_no_base_spec_raises(self):
         # A direct RemoteHost subclass: no base in its MRO has a registered
@@ -325,7 +300,7 @@ class TestBusyBoxProfile:
         """
         from otto.host.os_profile import build_os_profile
 
-        assert build_os_profile("busybox").defaults["has_bash"] is False
+        assert build_os_profile("busybox").fields.defaults["has_bash"] is False
 
     def test_busybox_selects_the_ash_frame_by_its_registered_name(self):
         """Profiles hold RAW lab-data values — a string, coerced by the factory.
@@ -336,7 +311,7 @@ class TestBusyBoxProfile:
         """
         from otto.host.os_profile import build_os_profile
 
-        assert build_os_profile("busybox").defaults["command_frame"] == "ash"
+        assert build_os_profile("busybox").fields.defaults["command_frame"] == "ash"
 
     def test_the_frame_the_profile_names_is_actually_registered(self):
         """A profile naming an unregistered frame fails at host BUILD time, on a
@@ -344,7 +319,7 @@ class TestBusyBoxProfile:
         from otto.host.command_frame import FRAME_CLASSES
         from otto.host.os_profile import build_os_profile
 
-        named = build_os_profile("busybox").defaults["command_frame"]
+        named = build_os_profile("busybox").fields.defaults["command_frame"]
         assert named in FRAME_CLASSES, (
             f"the busybox profile names frame {named!r}, which is not registered"
         )
@@ -353,7 +328,7 @@ class TestBusyBoxProfile:
         """The deferral is over: `shell` is the default, and both registries agree.
 
         `register_os_profile` validates default *keys* against the base
-        class's fields, never values (see `_register_builtin_os_profiles`),
+        class's fields, never values (see `_builtin_profiles`),
         so a profile naming an unregistered backend registers cleanly
         regardless -- the mismatch only surfaces later, at host-build time,
         not here (measured during this test's own mutation verification:
@@ -368,7 +343,7 @@ class TestBusyBoxProfile:
         from otto.host.os_profile import build_os_profile
         from otto.host.transfer import TRANSFER_BACKENDS
 
-        defaults = build_os_profile("busybox").defaults
+        defaults = build_os_profile("busybox").fields.defaults
         assert defaults["transfer"] == "shell"
         assert "shell" in defaults["valid_transfers"]
         assert "shell" in TRANSFER_BACKENDS, (
@@ -385,10 +360,9 @@ class TestBusyBoxProfile:
 
         This covers the `register_os_profile` override path only. `busybox`
         is unusual among the built-ins: it names no host class of its own, so
-        it has an entry in `OS_PROFILES` but never one in `HOST_CLASSES`. The
-        *other* override path — `register_host_class("busybox", ...)`, which
-        also silently touches `OS_PROFILES` via its own auto-registration —
-        is a separate guard, checked by
+        it is in `BUILTIN_PROFILES` but never in `HOST_CLASSES`. The *other*
+        override path — `register_host_class("busybox", ...)`, whose class
+        layer shadows the built-in — is a separate guard, checked by
         `test_busybox_is_also_a_builtin_via_register_host_class` below.
         """
         import logging
@@ -402,15 +376,11 @@ class TestBusyBoxProfile:
         fire for `busybox`, even though `busybox` has never had an entry in
         `HOST_CLASSES` (it names no class of its own — only `unix` does).
 
-        `register_host_class`'s own guard historically checked only
-        `name in HOST_CLASSES`, which is False here on a first-ever
-        registration under this name — so a naive guard would stay silent
-        while this call's own auto-registered trivial `OsProfile`
-        (`base="busybox", defaults={}`) silently destroys the real
-        `has_bash`/`command_frame` defaults underneath it. Measured directly
-        before the guard was widened to check `OS_PROFILES` too: zero log
-        records were emitted for this exact call, and
-        `build_os_profile("busybox").defaults` came back `{}` afterward.
+        A guard that checked only `name in HOST_CLASSES` would stay silent on
+        a first-ever registration under this name, while the class's own
+        profile (the class layer resolves before the built-ins) shadows the
+        real `has_bash`/`command_frame` defaults. So it checks
+        `BUILTIN_PROFILES` too.
         """
         import logging
 
@@ -420,7 +390,7 @@ class TestBusyBoxProfile:
             pass
 
         with caplog.at_level(logging.WARNING):
-            register_host_class("busybox", Rogue, UnixHostSpec)
+            register_host_class("busybox", Rogue, spec=UnixHostSpec)
         assert any("built-in" in r.message for r in caplog.records)
 
     def test_a_hosts_own_field_still_beats_the_profile_default(self):

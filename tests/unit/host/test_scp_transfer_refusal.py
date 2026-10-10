@@ -631,7 +631,7 @@ class TestTheRefusalIsKeyedOnTheDeviceNotTheProfile:
     def test_the_busybox_profile_still_offers_scp(self) -> None:
         profile = get_os_profile("busybox")
         assert profile is not None
-        assert "scp" in profile.defaults["valid_transfers"]
+        assert "scp" in profile.fields.defaults["valid_transfers"]
 
     @pytest.mark.asyncio
     async def test_a_busybox_shaped_device_that_has_scp_transfers(self) -> None:

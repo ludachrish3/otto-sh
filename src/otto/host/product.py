@@ -37,8 +37,16 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from .. import layout
-from ..declared import DeclaredEntry, KindRegistry, declared_for_host
-from ..registry import Ref, caller_module, get_registering_repo, refuse_during_test_load
+from ..declared import (
+    DeclaredEntry,
+    KindBuilder,
+    KindEntry,
+    KindFactory,
+    _check_resolved_kind_entry,
+    _validate_kind_entry,
+    declared_for_host,
+)
+from ..registry import Ref, Registry, Subscription, registration_boundary
 from ..result import Result
 from ..utils import Status
 from .log_haul import haul_globs
@@ -312,7 +320,7 @@ class Product(ABC):
 
     kind: str = "code"
     """The declared kind that built this product (``"shell"``, ``"kmod"``, ...),
-    stamped by :meth:`~otto.declared.KindRegistry.build`; ``"code"`` for a
+    stamped by :meth:`~otto.declared.KindBuilder.build`; ``"code"`` for a
     product a provider constructed. Read by ``otto --list-products``."""
 
     origin: str = "provider"
@@ -322,7 +330,7 @@ class Product(ABC):
 
     source_entry: "DeclaredEntry | None" = None
     """The ``[[products]]`` entry that built this product, stamped by
-    :meth:`~otto.declared.KindRegistry.build`; ``None`` for a provider product.
+    :meth:`~otto.declared.KindBuilder.build`; ``None`` for a provider product.
     ``otto --list-products`` uses it to tell which entries built somewhere."""
 
     debug_log_globs: Sequence[str] = ()
@@ -680,20 +688,23 @@ Registered from a ``.otto`` init module via :func:`register_product_provider`
 and run once per lab-ingested host. All product knowledge stays in product-repo
 code; lab data never names a product."""
 
-_PRODUCT_PROVIDERS: list[tuple[ProductProvider, str | None]] = []
-"""Registered providers paired with the repo that registered each one."""
+PRODUCT_PROVIDERS: "Subscription[ProductProvider]" = Subscription(
+    "product provider", register_hint="otto.host.register_product_provider()"
+)
+"""The registered product providers in registration order, each with its registering repo."""
 
 
 def registered_product_providers() -> list[tuple[ProductProvider, str | None]]:
     """Return a snapshot of the registered product providers, in registration order.
 
     Each item pairs the provider with the name of the repo that registered it
-    (``None`` for a registration made outside any repo's init import). A copy:
-    the registry itself stays private to this module.
+    (``None`` for a registration made outside any repo's init import). A
+    snapshot list built from the subscription.
     """
-    return list(_PRODUCT_PROVIDERS)
+    return [(s.value, s.repo) for s in PRODUCT_PROVIDERS.items()]
 
 
+@registration_boundary
 def register_product_provider(provider: ProductProvider) -> None:
     """Register a function that decides which products a host carries.
 
@@ -713,33 +724,37 @@ def register_product_provider(provider: ProductProvider) -> None:
     A returned instance must accept ``kind``, ``origin`` and ``owner``
     attribute assignment: ingest stamps all three on it.
     """
-    refuse_during_test_load(
-        "product provider",
-        getattr(provider, "__name__", repr(provider)),
-        getattr(provider, "__module__", None) or "<unknown>",
-    )
-    _PRODUCT_PROVIDERS.append((provider, get_registering_repo()))
+    PRODUCT_PROVIDERS.subscribe(provider)
 
 
-PRODUCT_KINDS: KindRegistry["Product"] = KindRegistry(
+PRODUCT_KINDS: "Registry[KindEntry[Product]]" = Registry(
     "product kind",
+    entry=KindEntry,
     register_hint="otto.host.product.register_product_kind()",
-    class_factory=Ref("otto.host.shell_kind:class_entry"),
-    class_resolver=Ref("otto.host.shell_kind:resolve_class"),
+    validate=_validate_kind_entry,
+    check_resolved=_check_resolved_kind_entry,
 )
 """Named factories for settings-declared products (spec 2026-09-01 §5-§6).
 
 Separate from :data:`otto.host.dev_tool.DEV_TOOL_KINDS` on purpose — each
 seam owns its registry, the same two-list reasoning as the providers.
 
-The built-in kinds are registered below by :class:`~otto.registry.Ref`, each
-keeping its kind module as its origin, so no kind module is imported until a
-declared entry names it."""
+The built-in kinds are registered below by :class:`~otto.registry.Ref`, so no
+kind module is imported until a declared entry names it.
+:data:`PRODUCT_KIND_BUILDER` builds the declared entries from it."""
+
+PRODUCT_KIND_BUILDER: "KindBuilder[Product]" = KindBuilder(
+    PRODUCT_KINDS,
+    class_factory=Ref("otto.host.shell_kind:class_entry"),
+    class_resolver=Ref("otto.host.shell_kind:resolve_class"),
+)
+"""Builds the ``[[products]]`` entries a host matches, from :data:`PRODUCT_KINDS`."""
 
 
+@registration_boundary
 def register_product_kind(
     name: str,
-    factory: "Callable[[DeclaredEntry, Host], Product]",
+    factory: "KindFactory[Product] | Ref",
     *,
     overwrite: bool = False,
 ) -> None:
@@ -752,8 +767,16 @@ def register_product_kind(
     returns the :class:`Product` to attach; it should validate its params and
     raise ``ValueError`` naming the entry on a bad one — a misdeclared entry
     fails ingest loudly, exactly as a misconfigured provider does.
+
+    *factory* may be a :class:`~otto.registry.Ref` (``"module:function"``),
+    imported and checked when a declared entry first names the kind.
+
+    Raises
+    ------
+    TypeError
+        If *factory* is not callable.
     """
-    PRODUCT_KINDS.register(name, factory, overwrite=overwrite, origin=caller_module())
+    PRODUCT_KINDS.register(name, KindEntry(factory), overwrite=overwrite)
 
 
 def apply_declared_products(host: "Host") -> None:
@@ -765,11 +788,11 @@ def apply_declared_products(host: "Host") -> None:
     naming both. Entry collection and the §5
     ``[project]`` gate live in :func:`otto.declared.declared_for_host`;
     matching, first-match-wins and owner stamping in
-    :meth:`~otto.declared.KindRegistry.build`. A product whose name the host
+    :meth:`~otto.declared.KindBuilder.build`. A product whose name the host
     already carries is skipped, the provider loop's identical guard.
     """
     seen = {p.name for p in host.products}
-    for product in PRODUCT_KINDS.build(declared_for_host(host, "declared_products"), host):
+    for product in PRODUCT_KIND_BUILDER.build(declared_for_host(host, "declared_products"), host):
         if product.name in seen:
             logger.debug(
                 "declared product: skipping duplicate %r on host %s", product.name, host.id
@@ -841,7 +864,7 @@ def apply_product_providers(host: "Host") -> None:
     from ..config.scope import repo_targets, scope_for_repo  # function-scope: import-light seam
 
     seen = {p.name for p in host.products}
-    for provider, provider_owner in _PRODUCT_PROVIDERS:
+    for provider, provider_owner in registered_product_providers():
         if host.source_lab and not repo_targets(
             scope_for_repo(provider_owner), host.source_lab, host.id
         ):
@@ -875,14 +898,14 @@ def apply_product_providers(host: "Host") -> None:
 
 
 def _register_builtin_kinds() -> None:
-    """Register otto's built-in kinds by reference, each with its kind module as origin."""
+    """Register otto's built-in kinds by reference; no kind module is imported here."""
     for kind, module, factory in [
         ("shell", "otto.host.shell_kind", "_shell_kind"),
         ("docker_image", "otto.host.docker_image_kind", "_docker_image_kind"),
         ("kmod", "otto.host.kmod_kind", "_kmod_kind"),
         ("embedded", "otto.host.embedded_kind", "_embedded_kind"),
     ]:
-        PRODUCT_KINDS.register(kind, Ref(f"{module}:{factory}"), origin=module)
+        PRODUCT_KINDS.register(kind, KindEntry(Ref(f"{module}:{factory}")))
 
 
 _register_builtin_kinds()

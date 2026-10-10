@@ -72,7 +72,8 @@ needs:
 
 ```text
 {"schema": N,
- "sections": {"names": {"fingerprint", "generated_at", "tainted", "payload"},
+ "sections": {"names": {"fingerprint", "generated_at", "tainted", "payload",
+                        "ttl_seconds", "lab_key_paths"},
               "shim":  {...}},
  "__collected_tests__": {...},
  "__dynamic_tunnels__": {...},
@@ -102,9 +103,9 @@ a lab the rule refuses is absent, and the container ids in `hosts` and `hosts_by
   when a TAB completes one of them, and `otto cache info`, which reads
   `host_drops` and the host lists.
 - Its key set is small: each repo's `.otto/settings.toml`, the files of its
-  init modules and its lab files, plus every directory those were found in.
-  Test files and pytest configs are not in it: a test file cannot register
-  anything, and nothing in this payload reads one.
+  init modules and its lab key paths (below), plus every directory those were
+  found in. Test files and pytest configs are not in it: a test file cannot
+  register anything, and nothing in this payload reads one.
 
 **`shim`** holds what the console-script shim needs to answer a TAB without
 importing otto's CLI: the serialised command `tree`, the stat triples of the
@@ -130,8 +131,21 @@ This is how a section is validated; a repo's table has rules of its own
 hold:
 
 - it is not tainted;
-- its `generated_at` is within the TTL;
-- its stored `fingerprint` equals a digest recomputed now.
+- its `generated_at` is within its stored `ttl_seconds`;
+- its stored `fingerprint` equals a digest computed now over its static key
+  paths and its stored `lab_key_paths`.
+
+An entry without a usable `ttl_seconds` or `lab_key_paths` is a miss.
+
+**The lab key paths** are the files each lab source reads, then every
+directory their enumeration entered. Only the writer computes them: it runs
+after init, prepares each repo's sources and asks each for the files it
+reads ({doc}`../../cookbook/extending/lab-source-backends`, "Files and the
+completion cache"), then stores the list with the entry. A reader re-stats
+the stored paths and never prepares a source or expands a glob, so a new
+file matching a glob is seen through its directory's mtime. A source whose
+backend is not registered, or that is not file-backed, contributes no path;
+its TTL class covers it.
 
 **The per-section digest** is a sha256 over the section's key paths, sorted
 and deduplicated. Each path contributes its stat triple, `path|mtime_ns|size`,
@@ -156,18 +170,22 @@ paths. It carries the two inputs no path list can:
 moves. Both are computed through one memo, so checking both sections hashes
 the `names` key set once.
 
-**The TTL** bounds staleness that no stat can see. It is `CACHE_TTL_SECONDS`
-(a day) normally. It drops to `UNFINGERPRINTED_CACHE_TTL_SECONDS` (five
-minutes) when any repo has one of these:
+**The TTL** bounds staleness that no stat can see. The writer decides it
+and stores it with each entry as `ttl_seconds`; a reader enforces the stored
+value against the entry's own `generated_at` and never decides it again. It
+is `CACHE_TTL_SECONDS` (a day) normally. It drops to
+`UNFINGERPRINTED_CACHE_TTL_SECONDS` (five minutes) for the whole workspace
+when any repo has one of these:
 
-- a `[[lab.sources]]` entry on a non-`json` backend;
+- a `[[lab.sources]]` entry whose backend is not registered, whose options
+  do not prepare, or that is not file-backed (decided by the prepared
+  source, never by the backend's name);
 - any `[reservations]` table, since `--holder` names come only from custom
   backends;
 - an init module that resolves under no `libs` entry.
 
 Each of these feeds completion data that the digest cannot track, so the TTL
-is the only thing that bounds it. There is one TTL for the whole file, but it
-is compared with each section's own `generated_at`.
+is the only thing that bounds it.
 
 Nothing is written at all when the inventory cannot report its freshness, or
 when asking it raised. A digest built from such an answer is not stable, so
@@ -214,12 +232,15 @@ and each has writers of its own:
   discovered, for `otto tunnel remove <TAB>`. It is written by
   `otto tunnel list` and `otto tunnel remove` and expires after two minutes,
   because tunnels come and go without any file changing. It is keyed by a
-  narrow *tunnel-scope digest* (`_tunnel_scope_digest`): the settings, the
-  lab files and the inventory term, but no init modules, no pytest config
-  and no test file. Tunnel ids are discovered from the workspace's lab and
-  the live process/argv state, never from a test, so a wider digest would
-  cost a command that never reads a test file a stat per test file. The
-  short TTL does the rest of the freshness work.
+  narrow *tunnel-scope key* (`_tunnel_scope_key`): the settings, one
+  `unknown:<label>` line per lab source whose backend is not registered, and
+  the inventory term, but no init modules, no pytest config and no test
+  file. The lab files are the entry's own: like a section, it stores its
+  `lab_key_paths` and their digest, which a reader re-stats. Tunnel ids are
+  discovered from the workspace's lab and the live process/argv state, never
+  from a test, so a wider key would cost a command that never reads a test
+  file a stat per test file. The short TTL does the rest of the freshness
+  work.
 - **`__docker_observed__`** holds what each docker host's daemon last said,
   for the docker completers (container names and ids, image references).
   Its own `schema_version` (1) sits beside a `hosts` map; each host has up to

@@ -282,8 +282,8 @@ def test_library_use_populates_registries():
     code = (
         "import otto; "
         "from otto import all_hosts; "  # triggers config -> host graph
-        "from otto.host.transfer.registry import build_transfer_backend; "
-        "build_transfer_backend('scp'); build_transfer_backend('tftp'); "
+        "from otto.host.transfer.registry import TRANSFER_BACKENDS; "
+        "TRANSFER_BACKENDS.get('scp'); TRANSFER_BACKENDS.get('tftp'); "
         "print('registries OK')"
     )
     out = subprocess.run(

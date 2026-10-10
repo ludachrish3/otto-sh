@@ -7,7 +7,7 @@ import pytest
 from otto.context import OttoContext
 from otto.host.host import BaseHost
 from otto.host.product import ProductPlan
-from otto.project.actions import PROJECT_ACTIONS, ProjectActions, register_project_actions
+from otto.project.actions import ProjectActions, register_project_actions
 from otto.project.options import InstallOptions
 from otto.project.plan import HostPlan, ProductPlanEntry, RepoPlan, plan_instruction
 from otto.registry import registering_repo
@@ -155,7 +155,8 @@ def test_an_unmarked_override_is_a_gap_too(monkeypatch):
         async def install(self, opts):  # pragma: no cover
             return Result(Status.Success)
 
-    PROJECT_ACTIONS.register("r1", _Unmarked, overwrite=True, origin="test")
+    with registering_repo("r1"):
+        register_project_actions(_Unmarked, overwrite=True)
     product = _Planned("agent", "r1", _plan(install=["sh a"]))
     ctx = _Ctx([_Host("h1", [product])])
     _wire(monkeypatch, ["r1"], ctx)
@@ -212,7 +213,8 @@ def test_ensure_covers_a_repo_whose_body_is_overridden(monkeypatch):
         async def install(self, opts):  # pragma: no cover
             return Result(Status.Success)
 
-    PROJECT_ACTIONS.register("r1", _Unmarked, overwrite=True, origin="test")
+    with registering_repo("r1"):
+        register_project_actions(_Unmarked, overwrite=True)
     ctx = _Ctx([_Host("h1")])
     _wire(monkeypatch, ["r1"], ctx)
     [repo] = plan_instruction("install", ctx, {"ensure": True})
@@ -264,7 +266,8 @@ def test_the_debug_sweep_is_named_even_for_an_overridden_repo(monkeypatch):
         async def uninstall(self, opts):  # pragma: no cover
             return Result(Status.Success)
 
-    PROJECT_ACTIONS.register("r1", _Unmarked, overwrite=True, origin="test")
+    with registering_repo("r1"):
+        register_project_actions(_Unmarked, overwrite=True)
     ctx = _Ctx([_Host("h1", globs=["/g"])])
     _wire(monkeypatch, ["r1"], ctx)
     [repo] = plan_instruction("uninstall", ctx, {"product_logs": True, "debug_logs": True})

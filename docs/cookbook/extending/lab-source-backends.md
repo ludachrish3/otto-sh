@@ -3,8 +3,8 @@
 Otto reads its hosts through **host-data sources** declared in
 `[[lab.sources]]` — see {doc}`../../configuration/host-sources` for the
 declaration syntax and merge order. The `json` backend ships with otto;
-anything else (a CMDB, an inventory API, a scheduler's asset list) is a class
-you register from your own repo. This page is that contract.
+anything else (a CMDB, an inventory API, a scheduler's asset list) is a
+backend you register from your own repo. This page is that contract.
 
 ## The interface
 
@@ -37,7 +37,7 @@ two read-only methods:
   loaded even if `load_lab` would happily build it.
 
 Configuration is supplied at construction time, so a backend is built once and
-then queried.
+then queried. How otto constructs it is [Registering a backend](#registering-a-backend).
 
 ```{important}
 Return a **fresh `Lab`** from every `load_lab` call. When more than one source
@@ -74,8 +74,9 @@ just make it a decision rather than an omission.
 
   - **Every id you return must be one `load_lab()` produces**, or completion
     offers names that cannot dispatch. Derive ids with
-    `host_identity(record, element)` (the same `element` you build for
-    `create_host_from_dict`) rather than formatting your records by hand: it
+    `host_identity(record, element, profiles=...)` (the same `element` and
+    `profiles` you pass to `create_host_from_dict`) rather than formatting
+    your records by hand: it
     applies the same profile merge and validation the host factory applies,
     which hand-formatting silently gets wrong (a numeric field arriving as
     `3.0`, or an `os_profile` that supplies `board`/`slot`). See
@@ -114,7 +115,8 @@ dicts — builds one `Element` per group, resolves each host dict's inventory
 reference with `resolve_host_entry(record, inventory, element)` (a
 pass-through when the record carries no `inventory` key), and builds real
 hosts with [`create_host_from_dict`](../../api/host/index.rst) (`element=`
-that same `Element`, `inventory_ref=` the resolution's `ref`) so each becomes
+that same `Element`, `inventory_ref=` the resolution's `ref`, `profiles=` the
+data profiles its factory kept from `c.env.profiles`) so each becomes
 a `RemoteHost` keyed by its `id`, as [the interface](#the-interface) requires.
 Note where its resources live: a *second* mapping, lab name to
 resource set, mirroring `lab.json`'s `labs` table. That is the lab level
@@ -150,6 +152,126 @@ Loading an unknown lab raises the contract's error — never a bare `KeyError` o
 not found
 ```
 
+## Registering a backend
+
+Register a backend from an `init` module, with
+{func}`~otto.labs.register_lab_repository`: a name, the model that parses a
+source's options, and the factory that builds the source. It is a
+{ref}`configured backend <configured-backends>`, and the
+shape is the same as every other configured seam's:
+
+```python
+# .otto/init.py — listed in init = [...] in .otto/settings.toml
+from otto.labs import register_lab_repository
+from otto.examples.lab_repository import ExampleLabSourceConfig, example_lab_source
+
+register_lab_repository("example", config=ExampleLabSourceConfig, factory=example_lab_source)
+```
+
+A `[[lab.sources]]` entry then selects it, and every key but `backend` and
+`name` is an option the config model parses:
+
+```toml
+[[lab.sources]]
+backend = "example"
+```
+
+What otto does with it, and when:
+
+- **At settings parse**, only the entry's envelope is checked: `backend`,
+  `name`, and that labels are unique within the repo. The options are kept
+  as they were written.
+- **After every repo's `init` modules have run**, otto prepares each source:
+  it calls the config model's `model_validate(options, context={"env": env})`
+  once. `env` is a {class}`~otto.labs.LabSourceEnv`: the declaring repo's root
+  (`repo_dir`, where a relative path anchors), the source's `label`, its
+  `origin` (the settings file) and `profiles`, the selected repos'
+  `[os_profiles]` tables as a {class}`~otto.host.ProfileContext`. Keep
+  `profiles` and pass it as `profiles=` to every host helper you call
+  (`create_host_from_dict`, `host_identity`, `validate_host_dict`), so a
+  host's `os_type` may name a table any selected repo declares; without it,
+  such a host is refused as an unknown `os_type`. An unknown option or a bad
+  value fails here,
+  naming the source's settings file. Preparing a source while an init module
+  is still being imported is refused, because registration is not complete
+  then; so is building one, and so is {func}`otto.session.build_lab`.
+- **When a lab is loaded**, otto calls the factory once per source with
+  `Configured(config, env)` and checks that what it returns has callable
+  `load_lab` and `list_labs`. What a config model must be is stated once,
+  under {ref}`configured-backends`.
+
+The factory is where your constructor's signature lives; otto never calls the
+class itself. The shipped sample's factory is one line:
+
+```python
+def example_lab_source(c: Configured[ExampleLabSourceConfig, LabSourceEnv]) -> ExampleLabRepository:
+    return ExampleLabRepository(labs=c.config.labs, resources=..., profiles=c.env.profiles)
+```
+
+(lab-source-config-model)=
+### A config model of your own
+
+A CMDB source takes the server's URL and, optionally, a CA bundle file. The
+config model parses both, and its validator anchors a relative `ca_bundle`
+to the root of the repo that declares the source, which it reads from
+`info.context["env"].repo_dir`:
+
+```python
+# my_lab_source.py  (listed in init = [...])
+from pathlib import Path
+
+from pydantic import ConfigDict, ValidationInfo, field_validator
+
+from otto.labs import LabSourceEnv, register_lab_repository
+from otto.models import OttoModel
+from otto.registry import Configured
+from my_company.cmdb import CmdbLabRepository
+
+
+class CmdbConfig(OttoModel):
+    model_config = ConfigDict(frozen=True)
+
+    url: str
+    ca_bundle: Path | None = None
+
+    @field_validator("ca_bundle", mode="after")
+    @classmethod
+    def _anchor(cls, value: Path | None, info: ValidationInfo) -> Path | None:
+        if value is None or value.is_absolute():
+            return value
+        return info.context["env"].repo_dir / value
+
+
+def cmdb_source(c: Configured[CmdbConfig, LabSourceEnv]) -> CmdbLabRepository:
+    return CmdbLabRepository(
+        url=c.config.url, ca_bundle=c.config.ca_bundle, profiles=c.env.profiles
+    )
+
+
+register_lab_repository("cmdb", config=CmdbConfig, factory=cmdb_source)
+```
+
+`OttoModel` refuses an unknown key, so a typo in the source's options fails
+when the source is prepared, naming the field and the settings file. The
+anchored path is part of the parsed configuration, so the factory never
+needs `repo_dir` itself; when it does, it reads `c.env.repo_dir`.
+
+### Files and the completion cache
+
+Otto's completion cache invalidates a source's hosts when the files it reads
+change, but only if it knows which files those are. A config model tells it
+by defining `prepared_facts()`, returning an object whose `file_inputs` is a
+tuple of anchored paths: directories (their `lab.json` is read), `.json`
+files, or globs over `.json` files, by the json backend's rule. Otto
+fingerprints those files, and the directories they were found in, when it
+writes the cache.
+
+A source whose config model defines no `prepared_facts()` is not file-backed:
+nothing it reads can invalidate the cache, so otto gives every entry written
+for the workspace the short TTL (five minutes). A source whose backend is not
+registered yet is reported as unprepared (`otto cache info`), and
+`otto init`'s doctor names it as checked after init.
+
 ## Error contract
 
 A backend signals trouble through two exceptions (from
@@ -163,6 +285,13 @@ A backend signals trouble through two exceptions (from
 : Any other failure (I/O, network, parse, credentials) that prevents a
   definitive answer. `LabNotFoundError` is a subclass, so callers can catch the
   base.
+
+Otto raises a third, {class}`~otto.labs.LabSourceConstructionError` (a
+`LabRepositoryError` and a `ValueError`), when a source cannot be prepared or
+built: its backend is not registered, its options do not parse, your factory
+raised, or it returned something that is not a lab source. Your backend does
+not raise it; the message names the stage, the backend, the module that
+registered it and the settings file that declared the source.
 
 ## Verify your backend
 
@@ -182,13 +311,24 @@ Call it from your own test suite, passing `expected_labs=[...]` to also assert
 specific labs are present and loadable against your known fixtures:
 
 ```python
+from otto.host import ProfileContext
+from otto.labs import LabSourceEnv
+from otto.registry import Configured
 from otto.testing import assert_lab_repository_conforms
-from my_lab_source import CmdbLabRepository
+from my_lab_source import CmdbConfig, cmdb_source
 
 
-def test_cmdb_conforms():
-    assert_lab_repository_conforms(CmdbLabRepository(repo_dir="."))
+def test_cmdb_conforms(tmp_path):
+    env = LabSourceEnv(
+        repo_dir=tmp_path, label="test/cmdb", origin="test", profiles=ProfileContext.empty()
+    )
+    config = CmdbConfig.model_validate({"url": "https://cmdb.example.com"}, context={"env": env})
+    assert_lab_repository_conforms(cmdb_source(Configured(config, env)))
 ```
+
+The source is built as otto builds it: the options parsed with the
+environment, then the factory, so the test covers what your registration
+hands otto.
 
 If your repository implements the optional `list_host_summaries`, pass
 `expect_host_summaries=True` as well. The capability is legitimately absent from

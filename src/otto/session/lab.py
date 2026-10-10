@@ -47,7 +47,9 @@ def build_lab(repos: "list[Repo]", labs: list[str]) -> "Lab":
     placeholder hosts, so they list and complete before ``compose up``.
 
     Raises :class:`~otto.session.LabBuildError`: no labs, an unknown lab, a
-    bad source or unknown backend, or a broken inventory declaration. A source
+    bad source or unknown backend, a broken inventory declaration, or a call
+    made while an init import is running (lab sources are built only after
+    every repo has registered its backends). A source
     that fails only at load time (malformed lab data, composite conflicts)
     propagates as :class:`otto.labs.LabRepositoryError
     <otto.labs.errors.LabRepositoryError>`, as it does on the CLI.

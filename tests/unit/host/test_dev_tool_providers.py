@@ -4,30 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from otto.host import dev_tool as dev_tool_mod
 from otto.host.dev_tool import apply_dev_tool_providers, register_dev_tool_provider
 from otto.host.element import Element
-
-
-@pytest.fixture(autouse=True)
-def _isolate_provider_registry():
-    saved = list(dev_tool_mod._DEV_TOOL_PROVIDERS)
-    try:
-        yield
-    finally:
-        dev_tool_mod._DEV_TOOL_PROVIDERS[:] = saved
-
-
-@pytest.fixture
-def _isolate_product_registry():
-    """Sibling isolation for the tests that also touch the product registry."""
-    from otto.host import product as product_mod
-
-    saved = list(product_mod._PRODUCT_PROVIDERS)
-    try:
-        yield
-    finally:
-        product_mod._PRODUCT_PROVIDERS[:] = saved
 
 
 def _tool(name):
@@ -54,6 +32,16 @@ def test_registered_provider_attaches_dev_tools():
     host = _host()
     apply_dev_tool_providers(host)
     assert [t.name for t in host.dev_tools] == ["gdbserver"]
+
+
+def test_ingest_runs_a_subscribed_provider_with_its_repo():
+    from otto.registry import registering_repo
+
+    with registering_repo("acme"):
+        register_dev_tool_provider(lambda host: [_tool("gdbserver")])
+    host = _host()
+    apply_dev_tool_providers(host)
+    assert [(t.name, t.owner) for t in host.dev_tools] == [("gdbserver", "acme")]
 
 
 def test_provider_keys_on_host_attributes():
@@ -164,7 +152,6 @@ def test_dev_tools_and_products_are_separate_lists():
     assert host.products == []
 
 
-@pytest.mark.usefixtures("_isolate_product_registry")
 def test_registries_are_independent():
     # Kills: sharing one provider list between products and dev tools —
     # a dev-tool provider would then run at product apply and vice versa,

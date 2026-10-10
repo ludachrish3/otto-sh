@@ -104,7 +104,7 @@ def test_builtins_only_in_otto_schemas_prunes_a_custom_host_types_schema(tmp_pat
         pass
 
     register_host_class(
-        "pinnedos", PinnedHost, PinnedHostSpec
+        "pinnedos", PinnedHost, spec=PinnedHostSpec
     )  # the root guard restores the registries
     out = _otto_schemas(tmp_path)
     custom = out / "pinned-host.schema.json"

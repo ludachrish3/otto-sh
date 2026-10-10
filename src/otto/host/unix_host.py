@@ -98,7 +98,7 @@ from .options import (
     SshOptions,
     UserlandOptions,
 )
-from .os_profile import resolve_console_prompts
+from .os_profile import ProfileFields, construction_fields, resolve_console_prompts
 from .power import power_control_from_spec
 from .privilege import PosixPrivilege
 from .remote_host import RemoteHost
@@ -373,6 +373,16 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     the one session (see ``_console_line`` and ``_exec_on_console``); created
     on first use, so a ``dataclasses.replace`` copy gets its own."""
 
+    _profile_fields: ProfileFields | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    """The fields of the profile this host was built from, filled once by
+    :meth:`_build_connections`: what the factory resolved
+    (:func:`~otto.host.os_profile.constructing_with`), else the code, class or
+    built-in profile ``os_type`` names. Kept across a rebuild, and carried into
+    a copy by :func:`~otto.host.os_profile.copy_host`, so the console prompts
+    stay those of the profile the host was built from."""
+
     ####################
     #  Privilege
     ####################
@@ -466,7 +476,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
             self.session_setup = session_setup_from_spec(self.session_setup)
 
-        self.power_control = power_control_from_spec(self.power_control)
+        self.power_control = power_control_from_spec(self.power_control, host_id=self.id)
 
         TERM_RESOLVER.validate_choice(self.valid_terms, self.term)
         TRANSFER_RESOLVER.validate_choice(self.valid_transfers, self.transfer)
@@ -536,8 +546,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """Construct the connection backend for the current ``term`` via the registry seam.
 
         Shared by ``__post_init__`` / ``rebuild_connections`` (and the override-copy seam, via
-        ``dataclasses.replace``) so a custom term backend builds the right class.
+        :func:`~otto.host.os_profile.copy_host`) so a custom term backend builds the right
+        class. The first call fills :attr:`_profile_fields`; the console prompts come from it.
         """
+        if self._profile_fields is None:
+            self._profile_fields = construction_fields(self.os_type)
         hop_transport = self._build_hop_transport() if self.hop else None
         term_ctx = TermContext(
             ip=self.ip,
@@ -549,12 +562,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             telnet_options=self.telnet_options,
             sftp_options=self.sftp_options,
             ftp_options=self.ftp_options,
-            console_options=resolve_console_prompts(self.console_options, self.os_type),
+            console_options=resolve_console_prompts(self.console_options, self._profile_fields),
             # The bound method, not its result: the server is looked up in
             # the lab on the first console dial, never at construction.
             console_endpoint=self.console_endpoint if self.term == "console" else None,
         )
-        return build_term_backend(self.term).create(term_ctx)
+        return build_term_backend(self.term, term_ctx)
 
     def _build_file_transfer(self, user: "str | None" = None) -> UnixFileTransfer:
         """Construct the transfer backend for the current ``transfer`` via the registry seam.
@@ -591,7 +604,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         )
         return cast(
             "UnixFileTransfer",
-            build_transfer_backend(self.transfer).create(
+            build_transfer_backend(
+                self.transfer,
                 TransferContext(
                     transfer=self.transfer,
                     host_name=self.name,
@@ -609,7 +623,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     # subtracts is its frame's.
                     exec_line_budget=lambda: self._session_mgr.exec_line_budget,
                     max_filename_len=self.max_filename_len,
-                )
+                ),
             ),
         )
 

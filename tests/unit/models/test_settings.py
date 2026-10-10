@@ -838,7 +838,9 @@ def test_lab_sources_parse_and_reach_repo(tmp_path):
     repo = Repo(sut)
     (src,) = repo.lab_sources
     assert src.label == "srcrepo/json#1"
-    assert src.paths == [sut / "lab_data"]
+    assert src.backend == "json"
+    assert src.raw.thaw_json() == {"paths": ["lab_data"]}
+    assert src.repo_dir == sut
 
 
 # ── [[products]] / [[dev_tools]] declared entries ────────────────────────────

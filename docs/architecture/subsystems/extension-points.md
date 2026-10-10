@@ -25,7 +25,7 @@ inside `otto test`'s pytest session, so they may register nothing
 | a shell dialect | `register_command_frame` | {doc}`../../cookbook/extending/extending-embedded` |
 | an embedded binary loader | `register_binary_loader` | {doc}`../../cookbook/extending/extending-embedded` |
 | an embedded filesystem type | `register_filesystem` | {doc}`../../cookbook/extending/extending-embedded` |
-| a power controller | `register_power_controller` | {doc}`../../cli/host/capabilities/power` |
+| a power controller | `register_power_controller` | {ref}`power-controllers` |
 | a session setup hook | `register_session_setup` | {doc}`../../cookbook/extending/extending-backends` |
 | a login proxy | `register_login_proxy` | {doc}`../../cookbook/extending/extending-backends` |
 | a settings-declared product kind | `register_product_kind` | {doc}`../../configuration/declared-products-tools` |
@@ -103,8 +103,9 @@ Each seam's user-facing how-to lives in the guide:
 - Host classes, OS profiles & host verbs — {doc}`../../cookbook/extending/custom-host-classes`,
   {doc}`../../configuration/os-profiles`,
   {doc}`../../cli/host/capabilities/index`
-- Power controllers & product providers — {doc}`../../cli/host/capabilities/power`,
-  {doc}`../../cli/host/capabilities/index`
+- Power controllers — {ref}`power-controllers`,
+  {doc}`../../cli/host/capabilities/power`
+- Product providers — {doc}`../../cli/host/capabilities/index`
 - Host sources — {doc}`../../configuration/host-sources`
 - Reservation backends — {doc}`../../cli/reservation/index`
 - Monitor parsers & SNMP metrics — {doc}`../../cli/monitor/index`
@@ -114,7 +115,8 @@ Each seam's user-facing how-to lives in the guide:
 ## Where the code lives
 
 - {mod}`otto.instructions` — the `@instruction` decorator behind an `otto run`
-  subcommand, and the `INSTRUCTIONS` registry it fills
+  subcommand, the `STANDALONE_INSTRUCTIONS` table it fills, and the
+  `INSTRUCTIONS` view every `otto run` command is read from
 - {mod}`otto.params` — `register_options` and `@options(verbs=[...])`, the
   options registry behind `otto run`'s and `otto test`'s verb-wide flags
 - {mod}`otto.cli.registry` — `register_cli_command` / `cli_command` for a

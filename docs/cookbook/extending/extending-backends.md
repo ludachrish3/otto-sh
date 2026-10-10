@@ -24,7 +24,9 @@ For the lab-data fields that select them (`term`, `transfer`), see
 ## Registration errors and replacing a built-in
 
 Both seams (and every other extension point in otto — host classes, lab
-repositories, CLI commands) share one {class}`~otto.registry.Registry` engine.
+repositories, CLI commands) share one registry engine
+({class}`~otto.registry.Registry` and {class}`~otto.registry.BackendRegistry`
+tables).
 An unknown selector doesn't just fail — the error lists every registered name
 for that seam and, when your typo is close to a real one, suggests it:
 
@@ -45,10 +47,64 @@ register_transfer_backend("scp", MyHardenedScp, overwrite=True)
 ```
 
 Without `overwrite=True` this raises
-`ValueError: transfer backend 'scp' is already registered by 'otto.host.transfer.unix'; ...`.
-CLI top-level commands are the one seam with no `overwrite` parameter at all
-— a duplicate `otto <name>` registration always fails; see
-{doc}`extending-cli`'s [Collisions](extending-cli.md#collisions) section.
+`DuplicateRegistration: transfer backend 'scp' is already registered by 'otto.host.transfer.registry'; ...`
+(a `ValueError`).
+CLI top-level commands follow the same rule; see {doc}`extending-cli`'s
+[Collisions](extending-cli.md#collisions) section.
+
+(configured-backends)=
+## Configured backends: one wrapper shape
+
+A backend that takes its own options from a settings table is a
+*configured* backend. Lab sources ({doc}`lab-source-backends`), inventories
+({doc}`inventory-backends`), creds stores ({doc}`creds-backends`),
+reservation backends ({doc}`reservation-backends`) and power controllers
+({ref}`power-controllers`) are configured backends. Every configured seam
+registers with the same wrapper shape (an inventory backend also takes
+`snapshot_cache=`):
+
+```python
+register_<seam>(name, *, config, factory, overwrite=False)
+```
+
+`config`
+: The model that parses one declaration's options: a pydantic model, or any
+  class with a `model_validate(raw, context=...)` classmethod and a
+  `model_dump(mode="json")` method. Otto calls
+  `config.model_validate(options, context={"env": env})` once per
+  declaration, where `env` is the seam's environment (a
+  {class}`~otto.labs.LabSourceEnv`, {class}`~otto.inventory.InventoryEnv`,
+  {class}`~otto.creds.CredsEnv`, {class}`~otto.reservations.ReservationEnv`
+  or {class}`~otto.host.PowerEnv`); a validator reads `info.context["env"]`
+  to anchor a relative path. A validator's error message is shown to users
+  verbatim, so never interpolate the value into it: name the field and the
+  rule instead (`"must name the inventory file"`, never `f"bad path {value}"`),
+  because the value may be a token. The parsed configuration
+  must be **deep-copyable**: otto hands the factory a fresh copy at every
+  build, so a factory that changes its configuration cannot change the next
+  build.
+
+`factory`
+: A callable that receives one {class}`~otto.registry.Configured` (its
+  `config` is the parsed configuration, its `env` the seam's environment) and
+  returns the backend.
+
+Either may be a {class}`~otto.registry.Ref` (`"module:attr"`), which otto
+imports the first time it needs it, so registering costs no import.
+
+Otto **prepares** a declaration (parses its options, once) and then
+**builds** it (calls the factory) as two stages, after every repo's `init`
+modules have run, so a backend registered by any repo serves a declaration
+in any repo. Each stage's failure raises the seam's construction error (a
+`ValueError` beneath the seam's domain error), and the message names the
+stage (`lookup`, `resolution`, `parse`, `stale preparation`, `construction`
+or `result`), the backend, the module that registered it and the file that
+declared it. A parse failure names the field and why; it never quotes the
+value it rejected, which may be a token.
+
+A config model may also define `prepared_facts()`, which otto reads after
+parsing. A lab source uses it to say which files it reads; see
+{doc}`lab-source-backends`.
 
 ## `host_families` applicability
 
@@ -151,8 +207,11 @@ that declares `True` without overriding it fails every put given a mode.
 Both seams construct through a uniform classmethod. The host assembles a frozen
 DTO — a {class}`~otto.host.transfer.TransferContext` (or a
 {class}`~otto.host.connections.TermContext`) — carrying everything any backend in
-that family needs at its call site, then calls `cls.create(ctx)`. A custom
-backend overrides `create` and reads only the fields it needs:
+that family needs at its call site, and hands it to the registry:
+{func}`~otto.host.transfer.build_transfer_backend` (or
+{func}`~otto.host.connections.build_term_backend`) takes the selected name and
+the context, calls the registered class's `create(ctx)`, and returns the built
+backend. A custom backend overrides `create` and reads only the fields it needs:
 
 - a **unix** transfer backend reads `connections`, `exec_cmd`, `nc_options`,
   `scp_options`, `get_local_ip`, `userland` — the host's shared capability
@@ -166,10 +225,31 @@ backend overrides `create` and reads only the fields it needs:
 Selector validation runs before construction, so a backend never sees a ctx
 missing the fields its family supplies. The registered string is the **only**
 way to select a backend: unix and embedded hosts both build their term backend
-through `build_term_backend(term).create(ctx)`, so a replacement registered over
-a built-in name with `overwrite=True` reaches every host that selects that name,
+through `build_term_backend(term, ctx)` and their transfer backend through
+`build_transfer_backend(transfer, ctx)`, so a replacement registered over a
+built-in name with `overwrite=True` reaches every host that selects that name,
 a test double included. The options an embedded host forces are listed on
 {class}`~otto.host.connections.TermContext`.
+
+A failed build raises the seam's construction error,
+{class}`~otto.host.connections.TermConstructionError` or
+{class}`~otto.host.transfer.TransferConstructionError` (each a `ValueError`),
+with the cause chained. Its message names the stage — `lookup` (the name is
+not registered; registered names and a near miss are listed), `resolution`
+(the class failed to import, or a built-in's class disagrees with the
+declarations stated for it), `construction` (`create` raised) or `result`
+(`create` returned something that is not a `ConnectionManager` or a
+`BaseFileTransfer`) — the backend, and the module that registered it.
+
+Each registration also records its declarations as metadata, a
+{class}`~otto.host.connections.TermMetadata` or a
+{class}`~otto.host.transfer.TransferMetadata`, which is read without
+importing the backend: `TERM_BACKENDS.peek(name).metadata.host_families`
+answers for a backend registered by reference without loading its module.
+`register_transfer_backend` copies the three class declarations into the
+metadata; `register_term_backend` takes them as keywords, and its class may be
+a {class}`~otto.registry.Ref` (`Ref("my_pkg.terms:MyTerm")`), imported the
+first time a host builds the term.
 
 ## `tftp` is reserved
 
@@ -569,6 +649,75 @@ register_os_profile(
 
 A host entry then says `"os_type": "uboot-linux"` and inherits both fields;
 a host that sets either key itself wins over the profile, field by field.
+
+(power-controllers)=
+## Power controllers
+
+A power controller powers a host on and off from somewhere the host can be
+reached: a hypervisor, a PDU, a BMC. The built-in `command` controller runs
+configured shell commands on a controller host
+({doc}`../../cli/host/capabilities/power`). A controller of your own is a
+configured backend ({ref}`configured-backends`): a config model parses the
+host's `power_control` table (every key but `type`), and a factory builds the
+{class}`~otto.host.PowerController` from it. Register it from an `init`
+module:
+
+```python
+# .otto/init.py — registered via [init] in .otto/settings.toml
+from pydantic import ConfigDict
+
+from otto.host import Host, PowerController, PowerEnv, register_power_controller
+from otto.models import OttoModel
+from otto.registry import Configured
+from otto.result import Result
+
+
+class PduConfig(OttoModel):
+    model_config = ConfigDict(frozen=True)
+
+    pdu: str
+    outlet: int
+
+
+class PduController(PowerController):
+    def __init__(self, config: PduConfig) -> None:
+        self.config = config
+
+    async def on(self, host: Host) -> Result: ...
+
+    async def off(self, host: Host) -> Result: ...
+
+
+def pdu(c: Configured[PduConfig, PowerEnv]) -> PduController:
+    return PduController(c.config)
+
+
+register_power_controller("pdu", config=PduConfig, factory=pdu)
+```
+
+A host then selects it in lab data:
+
+```json
+{
+    "power_control": {"type": "pdu", "pdu": "pdu-rack1", "outlet": 3}
+}
+```
+
+Otto prepares and builds a host's controller when it constructs the host. The
+config model receives a {class}`~otto.host.PowerEnv` whose `host_id` names
+that host, and so does the factory, as `c.env`. A table that does not parse,
+a factory that raises, or a factory that returns something other than a
+`PowerController` fails with {class}`~otto.host.PowerConstructionError`,
+naming the stage, the controller, the module that registered it and
+`power_control of host '<id>'`; a parse failure never quotes the rejected
+value. A bare string, `"power_control": "pdu"`, builds from an empty table,
+so it suits a controller whose config model needs no keys.
+
+The host to act on is passed to every call (`on(host)`, `off(host)`,
+`status(host)`, `cycle(host)`), so a controller holds only its configuration.
+`status` returns `None` unless you override it (the host then cannot toggle),
+and `cycle` runs `off` then `on` unless you override it with a native reset.
+Pass `overwrite=True` to replace the built-in `command`.
 
 ## See also
 

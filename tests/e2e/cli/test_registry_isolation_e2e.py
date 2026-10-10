@@ -22,13 +22,10 @@ different workers — which would make the guard pass by luck exactly when it is
 broken.
 """
 
-import sys
-import types
-
 import pytest
 
 from otto.params import OPTIONS
-from otto.registry import Registry
+from otto.registry import ClassEntry, Registry
 
 pytestmark = pytest.mark.hostless
 
@@ -41,7 +38,6 @@ GLOBAL_GUARDS = (
     "_reset_otto_context",
     "_restore_otto_logger_state",
     "_restore_bootstrap_state",
-    "_restore_provider_registries",
     "_coverage_preinit_failure_is_loud",
 )
 
@@ -57,55 +53,38 @@ def test_global_guards_apply_to_the_e2e_tree(request: pytest.FixtureRequest) -> 
 
 
 def test_registry_discovery_sees_ottos_registries() -> None:
-    """Sanity: the guard's dynamic discovery can see otto's registries at all.
+    """Sanity: the guard's discovery can see otto's registries at all.
 
-    ``_isolate_registries`` finds registries by scanning loaded ``otto.*``
-    modules for ``Registry`` instances. If that discovery silently found
-    nothing, the guard would "pass" while protecting nothing.
+    ``_isolate_registries`` snapshots the tables :func:`otto.registry.instances`
+    lists. If that discovery silently found nothing, the guard would "pass"
+    while protecting nothing.
     """
-    from tests.conftest import _loaded_registries
+    from tests.conftest import _snapshot_tables
 
-    found = _loaded_registries()
+    found = [table for table, _state in _snapshot_tables()]
     assert found, "registry discovery found no otto registries — the guard is a no-op"
     assert isinstance(OPTIONS, Registry)
     assert any(reg is OPTIONS for reg in found), "OPTIONS is not among the guarded registries"
 
 
-def test_discovery_sees_a_new_registry_at_unchanged_module_count(monkeypatch) -> None:
-    """Completeness: a registry imported mid-test is discovered even when
-    ``len(sys.modules)`` did not change.
+def test_discovery_sees_a_registry_built_mid_test() -> None:
+    """Completeness: a registry built mid-test is discovered at once.
 
-    Import one module and evict another in the same test — the exact shape a
-    count-keyed memo was blind to: same count, stale cache, and a brand-new
-    ``Registry`` was silently NOT isolated (its guard "passed" while
-    protecting nothing). Discovery now re-scans every call — measured at
-    0.2 ms with all of otto imported, 25x under the plan's keep-the-cache
-    threshold — so this pin holds by construction, and fails loudly if
-    anyone re-adds a cache without an identity-safe key.
+    Discovery is the engine's own list of the tables it built, not a scan of
+    ``sys.modules``, so a table is guarded from the moment it is constructed,
+    whatever module (if any) binds it and whatever the module count does.
     """
-    from tests.conftest import _loaded_registries
+    from tests.conftest import _snapshot_tables
 
-    _loaded_registries()  # prime any memo a future edit might reintroduce
+    _snapshot_tables()  # prime any memo a future edit might introduce
 
-    probe_mod = types.ModuleType("otto._registry_probe_w11")
-    probe_registry: Registry[object] = Registry(
-        "w11 probe", register_hint="tests.e2e.cli.test_registry_isolation_e2e (test-local)"
+    probe_registry: Registry[ClassEntry[object]] = Registry(
+        "w11 probe",
+        entry=ClassEntry,
+        register_hint="tests.e2e.cli.test_registry_isolation_e2e (test-local)",
     )
-    probe_mod.PROBE = probe_registry
 
-    # Evict a loaded otto module (monkeypatch restores it) so the module
-    # COUNT is unchanged by the paired insert below. Any otto.* module works;
-    # nothing re-imports it inside this test.
-    evictable = next(
-        name
-        for name, mod in sys.modules.items()
-        if name.startswith("otto.") and mod is not None and name != "otto.registry"
-    )
-    monkeypatch.delitem(sys.modules, evictable)
-    monkeypatch.setitem(sys.modules, "otto._registry_probe_w11", probe_mod)
-
-    found = _loaded_registries()
+    found = [table for table, _state in _snapshot_tables()]
     assert any(reg is probe_registry for reg in found), (
-        "a Registry imported mid-test (module count unchanged) was not "
-        "discovered — the isolation guard would silently skip it"
+        "a Registry built mid-test was not discovered — the isolation guard would silently skip it"
     )

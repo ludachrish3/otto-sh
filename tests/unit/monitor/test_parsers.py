@@ -596,11 +596,10 @@ class TestHostParserRegistry:
         got.clear()
         assert set(get_host_parsers("gpu-02")) == {"free -b"}  # unaffected by caller mutation
 
-    def test_reregistering_same_host_id_overwrites(self):
-        # Re-registering a host_id is normal usage (e.g. an init module composing
-        # {**DEFAULT_PARSERS, ...}), not a mistake — it must not raise.
+    def test_reregistering_same_host_id_with_overwrite_replaces(self):
+        # A deliberate replacement passes overwrite=True and replaces the whole set.
         register_host_parsers("gpu-03", {"free -b": MemParser()})
-        register_host_parsers("gpu-03", {"df -h": DiskParser()})
+        register_host_parsers("gpu-03", {"df -h": DiskParser()}, overwrite=True)
         assert set(get_host_parsers("gpu-03")) == {"df -h"}
 
 

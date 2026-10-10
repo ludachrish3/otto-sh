@@ -62,7 +62,7 @@ class TestRegistrationRefusesAnUndeclaredClass:
 
         assert "capabilities" not in dir(NoPromise)
         with pytest.raises(ValueError, match="capabilities is missing"):
-            register_host_class("nopromise", NoPromise, EmbeddedHostSpec)
+            register_host_class("nopromise", NoPromise, spec=EmbeddedHostSpec)
 
     def test_a_class_declaring_something_else_under_the_name_is_refused(self):
         """The refusal checks the TYPE, not the name -- a string promises nothing."""
@@ -71,7 +71,7 @@ class TestRegistrationRefusesAnUndeclaredClass:
             capabilities = "everything"
 
         with pytest.raises(ValueError, match="capabilities is missing"):
-            register_host_class("barestring", BareString, EmbeddedHostSpec)
+            register_host_class("barestring", BareString, spec=EmbeddedHostSpec)
 
     def test_a_class_that_declares_one_registers(self):
         """The positive control: without it, a refusal of EVERY class would pass above."""
@@ -79,7 +79,7 @@ class TestRegistrationRefusesAnUndeclaredClass:
         class Declared(RemoteHost):
             capabilities = _capabilities()
 
-        register_host_class("declared", Declared, EmbeddedHostSpec)
+        register_host_class("declared", Declared, spec=EmbeddedHostSpec)
         from otto.host.os_profile import build_host_class
 
         assert build_host_class("declared") is Declared

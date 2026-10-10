@@ -113,30 +113,40 @@ def format_age(age: timedelta) -> str:
     return f"{days}d {spare_hours}h"
 
 
-def snapshot_slug_material(backend: str, label: str, kwargs: "Mapping[str, Any]") -> str:
-    """Return the identity a snapshot is keyed by (§9.5): the backend's label plus its kwargs.
+def snapshot_slug_material(
+    backend: str, label: str, normalized: "Mapping[str, Any]", *, cache_ttl: timedelta
+) -> str:
+    """Return the identity a snapshot is keyed by (§9.5).
 
-    The backend's own ``label`` rather than the raw settings values, because a
-    backend NORMALISES its identity and a settings table does not:
-    ``url = "https://nb/"`` and ``url = "https://nb"`` are one NetBox, and two
-    spellings of one inventory must not keep two snapshots — each refreshing
-    on its own schedule, neither ever seeing the other's fetch. A kwarg the
-    backend adopted VERBATIM as its label is therefore dropped rather than
-    re-added raw; the match is exact (``<backend>:<value>``, trailing slashes
-    aside) so a coincidentally-similar value cannot silently merge two
-    configurations.
+    The inputs are the ones :meth:`~otto.inventory.config.CompiledInventory.same_as`
+    compares: the backend, its NORMALIZED configuration (what its config model
+    parsed, defaults included; a :class:`~otto.registry.FrozenMap` is thawed)
+    and ``cache_ttl`` (``|ttl=<whole seconds>``). Never where the table was
+    declared: two repos naming one inventory share its snapshot.
+
+    The backend's own ``label`` stands in for a key the backend adopted
+    verbatim, because a backend NORMALISES its identity and a configuration
+    does not: ``url = "https://nb/"`` and ``url = "https://nb"`` are one
+    NetBox, and two spellings of one inventory must not keep two snapshots —
+    each refreshing on its own schedule, neither ever seeing the other's
+    fetch. Such a key is dropped rather than re-added raw; the match is exact
+    (``<backend>:<value>``, trailing slashes aside) so a coincidentally-similar
+    value cannot silently merge two configurations.
 
     Everything else stays: filter, ip_source, custom-field mappings and token
     variable all separate two configurations of the SAME server, which §9.5
     requires them to.
     """
+    thaw = getattr(normalized, "thaw_json", None)
+    config: dict[str, Any] = thaw() if callable(thaw) else dict(normalized)
     adopted = {
         key
-        for key, value in kwargs.items()
+        for key, value in config.items()
         if isinstance(value, str) and label == f"{backend}:{value.rstrip('/')}"
     }
-    residue = {key: value for key, value in kwargs.items() if key not in adopted}
-    return f"{backend}|{label}|{json.dumps(residue, sort_keys=True, default=str)}"
+    residue = {key: value for key, value in config.items() if key not in adopted}
+    ttl = int(cache_ttl.total_seconds())
+    return f"{backend}|{label}|{json.dumps(residue, sort_keys=True, default=str)}|ttl={ttl}"
 
 
 @dataclass(frozen=True)

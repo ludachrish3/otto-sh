@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from .base import ReservationBackendBase as ReservationBackendBase
     from .check import MissingReservationError as MissingReservationError
     from .check import ReservationBackendError as ReservationBackendError
+    from .check import ReservationConstructionError as ReservationConstructionError
     from .check import ReservationGate as ReservationGate
     from .check import ReservationGateResult as ReservationGateResult
     from .check import ResourceLevel as ResourceLevel
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
     from .identity import ResolvedIdentity as ResolvedIdentity
     from .identity import resolve_username as resolve_username
     from .json_backend import JsonReservationBackend as JsonReservationBackend
+    from .json_backend import JsonReservationConfig as JsonReservationConfig
+    from .null_backend import NoneReservationConfig as NoneReservationConfig
     from .null_backend import NullReservationBackend as NullReservationBackend
     from .null_backend import is_null_backend as is_null_backend
     from .protocol import Reservation as Reservation
@@ -39,6 +42,7 @@ if TYPE_CHECKING:
     from .protocol import SupportsResourceHolders as SupportsResourceHolders
     from .protocol import SupportsUsernameCompletion as SupportsUsernameCompletion
     from .registry import RESERVATION_BACKENDS as RESERVATION_BACKENDS
+    from .registry import ReservationEnv as ReservationEnv
     from .registry import register_reservation_backend as register_reservation_backend
     from .report import MissingResource as MissingResource
     from .report import ReservationReport as ReservationReport
@@ -50,6 +54,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "ReservationBackendBase": "otto.reservations.base",
     "MissingReservationError": "otto.reservations.check",
     "ReservationBackendError": "otto.reservations.check",
+    "ReservationConstructionError": "otto.reservations.check",
     "ReservationGate": "otto.reservations.check",
     "ReservationGateResult": "otto.reservations.check",
     "ResourceLevel": "otto.reservations.check",
@@ -67,6 +72,8 @@ _LAZY_ATTRS: dict[str, str] = {
     "ResolvedIdentity": "otto.reservations.identity",
     "resolve_username": "otto.reservations.identity",
     "JsonReservationBackend": "otto.reservations.json_backend",
+    "JsonReservationConfig": "otto.reservations.json_backend",
+    "NoneReservationConfig": "otto.reservations.null_backend",
     "NullReservationBackend": "otto.reservations.null_backend",
     "is_null_backend": "otto.reservations.null_backend",
     "Reservation": "otto.reservations.protocol",
@@ -74,6 +81,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "SupportsResourceHolders": "otto.reservations.protocol",
     "SupportsUsernameCompletion": "otto.reservations.protocol",
     "RESERVATION_BACKENDS": "otto.reservations.registry",
+    "ReservationEnv": "otto.reservations.registry",
     "register_reservation_backend": "otto.reservations.registry",
     "MissingResource": "otto.reservations.report",
     "ReservationReport": "otto.reservations.report",
@@ -99,13 +107,17 @@ def __dir__() -> list[str]:
 __all__ = [
     "RESERVATION_BACKENDS",
     "JsonReservationBackend",
+    "JsonReservationConfig",
     "MissingReservationError",
     "MissingResource",
+    "NoneReservationConfig",
     "NullReservationBackend",
     "Reservation",
     "ReservationBackend",
     "ReservationBackendBase",
     "ReservationBackendError",
+    "ReservationConstructionError",
+    "ReservationEnv",
     "ReservationGate",
     "ReservationGateResult",
     "ReservationIdentity",

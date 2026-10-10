@@ -30,17 +30,6 @@ ROOT1 = Path("/work/repo1")
 ROOT2 = Path("/work/repo2")
 
 
-@pytest.fixture(autouse=True)
-def _isolate_provider_registries():
-    saved_p = list(product_mod._PRODUCT_PROVIDERS)
-    saved_t = list(dev_tool_mod._DEV_TOOL_PROVIDERS)
-    try:
-        yield
-    finally:
-        product_mod._PRODUCT_PROVIDERS[:] = saved_p
-        dev_tool_mod._DEV_TOOL_PROVIDERS[:] = saved_t
-
-
 class ProbeProduct(Product):
     """A code product with no artifact."""
 

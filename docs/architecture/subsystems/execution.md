@@ -53,8 +53,10 @@ populated instance is reconstructed at call time
   class: pytest's options are one flat namespace, and a flag that only one
   test file reads is rare, while one that some tests ignore is harmless.
 
-`@instruction()` stores a data entry in the `INSTRUCTIONS` registry
-({doc}`registries`), so tab completion of instruction names and
+`@instruction()` on a plain function stores a data entry in
+`STANDALONE_INSTRUCTIONS`. `INSTRUCTIONS` is a view ({doc}`registries`) that
+derives every `otto run` command from those entries and from the project
+instructions, so tab completion of instruction names and
 `--list-instructions` come for free, as for every other registry.
 `otto run` builds the Typer command from it when it resolves the
 name. Tests are not registered anywhere: pytest finds them.

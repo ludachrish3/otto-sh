@@ -58,7 +58,8 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
     ``Repo.apply_settings()`` / ``apply_repo_settings()``: per repo it adds libs
     to ``sys.path`` and imports init modules — which register repo1's
     instructions and its verb-wide options classes into the shared
-    ``INSTRUCTIONS``/``OPTIONS`` registries (module-level, process-wide).
+    ``STANDALONE_INSTRUCTIONS``/``PROJECT_ACTIONS``/``OPTIONS`` registries
+    (module-level, process-wide), which the ``INSTRUCTIONS`` view derives from.
 
     Isolation: Python's import cache couples this test to any earlier test in
     the same worker that imported repo1's modules — the cached modules make
@@ -68,7 +69,7 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
     entries, evict the cached modules, and restore both afterwards.
     """
     from otto import bootstrap as bs
-    from otto.cli.run import INSTRUCTIONS
+    from otto.instructions import INSTRUCTIONS, PROJECT_ACTIONS, STANDALONE_INSTRUCTIONS
     from otto.params import OPTIONS
 
     repo1 = tests_root / "repo1"
@@ -85,22 +86,22 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
 
     assert pylib not in sys.path
 
-    def _park(registry) -> dict:
-        # Raw entries, so parking never resolves a lazy ``Ref``. Park by
+    def _park(registry) -> list:
+        # The raw snapshot, so parking never resolves a lazy ``Ref``. Park by
         # ORIGIN and by NAME: an earlier test in this worker may have left one
         # of repo1's option names registered under another origin, and an
         # entry that is already present makes the delta below come out empty.
-        parked = {}
-        for name, entry, origin in registry._raw_items():
-            if origin.startswith("repo1_instructions") or name in repo1_options:
-                parked[name] = (entry, origin)
+        state = registry._snapshot()
+        for name in registry.names():
+            if registry.origin(name).startswith("repo1_instructions") or name in repo1_options:
                 registry.unregister(name)
-        return parked
+        return state
 
-    registries = [INSTRUCTIONS, OPTIONS]
+    registries = [STANDALONE_INSTRUCTIONS, PROJECT_ACTIONS, OPTIONS]
     parked = {registry: _park(registry) for registry in registries}
     evicted = {m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("repo1_")}
-    before = {registry: set(registry.names()) for registry in registries}
+    before_instructions = set(INSTRUCTIONS.names())
+    before_options = set(OPTIONS.names())
 
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo1))
     bs._reset()
@@ -109,8 +110,8 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
         assert result.errors == []
 
         assert pylib in sys.path
-        assert set(INSTRUCTIONS.names()) > before[INSTRUCTIONS]
-        assert sorted(set(OPTIONS.names()) - before[OPTIONS]) == repo1_options
+        assert set(INSTRUCTIONS.names()) > before_instructions
+        assert sorted(set(OPTIONS.names()) - before_options) == repo1_options
         assert [OPTIONS.origin(name) for name in repo1_options] == ["repo1_instructions"] * 2
     finally:
         bs._reset()
@@ -119,10 +120,7 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
         while pylib in sys.path:
             sys.path.remove(pylib)
         for registry in registries:
-            for name in set(registry.names()) - before[registry]:
-                registry.unregister(name)
-            for name, (entry, origin) in parked[registry].items():
-                registry._restore_raw(name, entry, origin)
+            registry._restore(parked[registry])
         for mod in [m for m in sys.modules if m.startswith("repo1_")]:
             sys.modules.pop(mod, None)
         sys.modules.update(evicted)
@@ -261,34 +259,16 @@ class TestHostPreferencesParsing:
             Repo(sut_dir=sut)
 
 
-@pytest.fixture
-def restore_profiles():
-    """Snapshot/restore the global os-profile registry around a test, since
-    ``Repo.parse_settings`` registers data profiles into module-global state.
-    """
-    from otto.host import os_profile
-
-    saved = dict(os_profile.OS_PROFILES._entries)
-    saved_origins = dict(os_profile.OS_PROFILES._origins)
-    try:
-        yield
-    finally:
-        os_profile.OS_PROFILES._entries.clear()
-        os_profile.OS_PROFILES._entries.update(saved)
-        os_profile.OS_PROFILES._origins.clear()
-        os_profile.OS_PROFILES._origins.update(saved_origins)
-
-
 class TestOsProfilesParsing:
     """Tests for ``[os_profiles]`` parsing in ``Repo.parse_settings``."""
 
-    def test_absent_section_yields_empty_dict(self, tmp_path, restore_profiles):
+    def test_absent_section_yields_empty_dict(self, tmp_path):
         sut = _write_repo(tmp_path, "")
         repo = Repo(sut_dir=sut)
         assert repo.os_profiles == {}
 
-    def test_profile_parsed_and_registered(self, tmp_path, restore_profiles):
-        from otto.host.os_profile import build_os_profile
+    def test_profile_parsed_and_kept_as_data(self, tmp_path):
+        from otto.host.os_profile import OS_PROFILES, ProfileContext, build_os_profile
 
         sut = _write_repo(
             tmp_path,
@@ -304,15 +284,16 @@ class TestOsProfilesParsing:
         )
         repo = Repo(sut_dir=sut)
         assert "zephyr-3_7" in repo.os_profiles
-        # Registered globally so lab data can select it by name.
-        prof = build_os_profile("zephyr-3_7")
+        # Data, never registered: it resolves through the repos' context.
+        assert "zephyr-3_7" not in OS_PROFILES
+        prof = build_os_profile("zephyr-3_7", data=ProfileContext.from_repos([repo]))
         assert prof.base == "embedded"
-        assert prof.defaults["os_version"] == "3.7"
-        assert prof.defaults["max_filename_len"] == 32
+        assert prof.fields.defaults["os_version"] == "3.7"
+        assert prof.fields.defaults["max_filename_len"] == 32
         # The ``base`` key is consumed, not kept as a default field.
-        assert "base" not in prof.defaults
+        assert "base" not in prof.fields.defaults
 
-    def test_missing_base_raises(self, tmp_path, restore_profiles):
+    def test_missing_base_raises(self, tmp_path):
         sut = _write_repo(
             tmp_path,
             textwrap.dedent("""
@@ -325,7 +306,7 @@ class TestOsProfilesParsing:
         with pytest.raises(ValueError, match=r"os_profiles\.broken\.base"):
             Repo(sut_dir=sut)
 
-    def test_invalid_base_raises(self, tmp_path, restore_profiles):
+    def test_invalid_base_raises(self, tmp_path):
         sut = _write_repo(
             tmp_path,
             textwrap.dedent("""
@@ -333,12 +314,18 @@ class TestOsProfilesParsing:
             base = "windows"
         """),
         )
-        # _register_os_profiles wraps register_os_profile's rejection of an
-        # unregistered base host class.
-        with pytest.raises(ValueError, match="base must name a registered host class"):
-            Repo(sut_dir=sut)
+        # Parsing keeps the table; the after-init check refuses the base,
+        # naming the table and the repo.
+        from otto.host.os_profile import check_data_profiles
 
-    def test_unknown_default_field_raises(self, tmp_path, restore_profiles):
+        repo = Repo(sut_dir=sut)
+        with pytest.raises(
+            ValueError,
+            match=r"\[os_profiles\.broken\] in repo .*base must name a registered host class",
+        ):
+            check_data_profiles([repo])
+
+    def test_unknown_default_field_raises(self, tmp_path):
         sut = _write_repo(
             tmp_path,
             textwrap.dedent("""
@@ -347,24 +334,28 @@ class TestOsProfilesParsing:
             osTyp = "unix"
         """),
         )
+        from otto.host.os_profile import check_data_profiles
+
+        repo = Repo(sut_dir=sut)
         with pytest.raises(ValueError, match="unknown default field"):
-            Repo(sut_dir=sut)
+            check_data_profiles([repo])
 
 
 class TestOsProfilesIntegration:
     """End-to-end: the repo1 fixture's ``[os_profiles]`` tables flow through
-    settings parse → registry → factory, including a data-defined profile that
-    references a *code-registered* command frame.
+    settings parse → profile context → factory, including a data-defined
+    profile that references a *code-registered* command frame.
     """
 
-    def test_repo1_profile_resolves_code_registered_frame(self, restore_profiles):
+    def test_repo1_profile_resolves_code_registered_frame(self):
         import sys
 
         from otto.host.embedded_filesystem import FatRamFileSystem
         from otto.host.embedded_host import EmbeddedHost
         from otto.host.factory import create_host_from_dict
+        from otto.host.os_profile import ProfileContext
 
-        # Constructing the repo parses settings, registering the data profiles.
+        # Constructing the repo parses settings, keeping the data profiles.
         repo = MockRepo(tests_root / "repo1")
         assert {"zephyr-3.7", "zephyr-2.7", "zephyr-4.4"} <= set(repo.os_profiles)
 
@@ -385,6 +376,7 @@ class TestOsProfilesIntegration:
                     "filesystem": "fat-ram",
                 },
                 element=Element("zephyr27_demo"),
+                profiles=ProfileContext.from_repos([repo]),
             )
         finally:
             if added:

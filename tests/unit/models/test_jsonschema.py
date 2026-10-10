@@ -3,6 +3,7 @@
 import pytest
 
 import otto.host.os_profile as op
+from otto.host.unix_host import UnixHost
 from otto.models.host import HostSpec
 from otto.models.jsonschema import build_schemas
 
@@ -169,13 +170,13 @@ def test_link_schema_emitted():
     assert "endpoints" in link["properties"]
 
 
-def test_custom_registered_spec_appears(monkeypatch):
+def test_custom_registered_spec_appears():
     # A custom host class + spec registered at runtime must flow into both its
     # own file and the hosts wrapper, without touching the real registry.
     class AcmeSpec(HostSpec):
         pass
 
-    monkeypatch.setitem(op._HOST_SPECS, "acme", AcmeSpec)
+    op.register_host_class("acme", UnixHost, spec=AcmeSpec)
     docs = build_schemas()
     mapping = _element_host_discriminator_mapping(docs)
     assert "acme" in mapping
@@ -183,23 +184,23 @@ def test_custom_registered_spec_appears(monkeypatch):
     assert "acme" in docs  # its own per-spec file (stem from the class name)
 
 
-def test_stem_handles_runs_of_capitals(monkeypatch):
+def test_stem_handles_runs_of_capitals():
     # A contrib spec name with consecutive capitals still kebab-cases cleanly.
     class ACMEHostSpec(HostSpec):
         pass
 
-    monkeypatch.setitem(op._HOST_SPECS, "acme", ACMEHostSpec)
+    op.register_host_class("acme", UnixHost, spec=ACMEHostSpec)
     docs = build_schemas()
     assert "acme-host" in docs  # not 'a-c-m-e-host'
 
 
-def test_builtins_only_excludes_custom_specs(monkeypatch):
+def test_builtins_only_excludes_custom_specs():
     # build_schemas(builtins_only=True) emits only the in-tree host types, even
     # when a custom spec is registered.
     class AcmeSpec(HostSpec):
         pass
 
-    monkeypatch.setitem(op._HOST_SPECS, "acme", AcmeSpec)
+    op.register_host_class("acme", UnixHost, spec=AcmeSpec)
 
     full = build_schemas()
     assert "acme" in full
@@ -274,7 +275,7 @@ class TestSelectorEnums:
             host_families = frozenset({"unix"})
             progress_granularity = ProgressGranularity(put=128, get=128)
 
-        xfer_mod.TRANSFER_BACKENDS.register("xmodem", XmodemTransfer)
+        xfer_mod.register_transfer_backend("xmodem", XmodemTransfer)
         try:
             props = build_schemas()["unix-host"]["properties"]
             assert "xmodem" in props["valid_transfers"]["anyOf"][1]["items"]["enum"]

@@ -157,9 +157,7 @@ def test_registering_from_a_test_file_or_conftest_is_refused(sut_repo, tmp_path,
         run_tests(["test_reg"], output_dir=tmp_path / "out")
 
 
-def test_a_test_file_that_first_imports_an_otto_module_is_not_refused(
-    sut_repo, tmp_path, monkeypatch
-):
+def test_a_test_file_that_first_imports_an_otto_module_is_not_refused(sut_repo, tmp_path):
     """otto's own import-time registration is otto's, even when a test file triggers it.
 
     A registry's defining module registers its built-ins (by reference) when
@@ -167,21 +165,43 @@ def test_a_test_file_that_first_imports_an_otto_module_is_not_refused(
     file may import it. The module is evicted first so the test file is its
     FIRST importer: the registration then runs while test files load, and
     must not be refused as the test file's.
+
+    THE SECOND COPY IS COLLECTED BEFORE THE TEST ENDS. The re-import builds a
+    second ``LOADER_CLASSES``, and once the original module is put back that
+    copy is unreachable but alive: a module's globals, functions and classes
+    form reference cycles, so only the cycle collector frees them. Until it
+    runs, the copy stays in :func:`otto.registry.instances`, and the next
+    test's ``_isolate_registries`` snapshot holds it again -- where a guard
+    that walks every table (``test_every_builtin_reference_resolves``) finds a
+    loader table whose ``BinaryLoader`` is not the one ``llext-hex`` subclasses.
     """
+    import gc
     import sys
 
     import otto.host as host_pkg
     import otto.host.binary_loader as original
+    from otto import registry as reg
 
-    monkeypatch.setattr(host_pkg, "binary_loader", original)  # restored at teardown
-    monkeypatch.delitem(sys.modules, "otto.host.binary_loader")
     sut_repo(
         files={"tests/test_first.py": "import otto.host.binary_loader\ndef test_first(): pass\n"}
     )
-    assert run_tests(["test_first"], output_dir=tmp_path / "out").exit_code == 0
-    reimported = sys.modules.get("otto.host.binary_loader")
-    assert reimported is not None, "the test file was not the first importer"
-    assert reimported.LOADER_CLASSES.origin("llext-hex") == "otto.host.binary_loader"
+    # Its own patch context, so the original module is back in sys.modules and on
+    # otto.host before the collect. Nothing then refers to the re-imported copy
+    # from outside; its own reference cycles (globals, functions, classes) keep
+    # it alive until the cycle collector runs.
+    try:
+        with pytest.MonkeyPatch.context() as modules:
+            modules.setattr(host_pkg, "binary_loader", original)
+            modules.delitem(sys.modules, "otto.host.binary_loader")
+            assert run_tests(["test_first"], output_dir=tmp_path / "out").exit_code == 0
+            origin = sys.modules["otto.host.binary_loader"].LOADER_CLASSES.origin("llext-hex")
+            first_importer = sys.modules["otto.host.binary_loader"] is not original
+    finally:
+        gc.collect()
+    assert first_importer, "the test file was not the first importer"
+    assert origin == "otto.host.binary_loader"
+    loaders = [t for t in reg.instances() if t.kind == original.LOADER_CLASSES.kind]
+    assert loaders == [original.LOADER_CLASSES]
 
 
 def test_two_repos_get_a_repo_layer(two_sut_repos, tmp_path):

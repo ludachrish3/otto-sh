@@ -16,8 +16,6 @@ from typer.testing import CliRunner
 from otto.cli.main import app
 from otto.config.scope import ProjectScopeConfig
 from otto.declared import DeclaredEntry
-from otto.host import dev_tool as dev_tool_mod
-from otto.host import product as product_mod
 from otto.host.product import Product, register_product_provider
 from otto.registry import registering_repo
 from otto.result import Result
@@ -62,12 +60,8 @@ class ProbeProduct(Product):
 def listing_world(real_main_mocks):
     """The real lab with declared entries on its repo; ``ordered_repos`` pinned to it."""
     repo = real_main_mocks["repo"]
-    saved_p = list(product_mod._PRODUCT_PROVIDERS)
-    saved_t = list(dev_tool_mod._DEV_TOOL_PROVIDERS)
     with patch("otto.bootstrap.get_ordered_repos", return_value=[repo]):
         yield repo
-    product_mod._PRODUCT_PROVIDERS[:] = saved_p
-    dev_tool_mod._DEV_TOOL_PROVIDERS[:] = saved_t
 
 
 def _invoke(*args, env=None):

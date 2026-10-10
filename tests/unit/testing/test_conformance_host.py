@@ -621,7 +621,7 @@ class TestHostRegistrability:
 class TestEveryRegisteredTransferBackendConforms:
     @pytest.mark.parametrize("name", sorted(TRANSFER_BACKENDS.names()))
     def test_backend_conforms(self, name):
-        assert_transfer_backend_conforms(TRANSFER_BACKENDS.get(name))
+        assert_transfer_backend_conforms(TRANSFER_BACKENDS.get(name).cls)
 
 
 class _Conforming(BaseFileTransfer):

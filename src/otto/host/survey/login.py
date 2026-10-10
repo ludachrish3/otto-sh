@@ -1,6 +1,7 @@
 """The login tier: a real login per (protocol, port), on a copy that owns its transports.
 
-``dataclasses.replace`` re-runs ``__post_init__``, so the copy has its own
+:func:`~otto.host.os_profile.copy_host` (``dataclasses.replace``, keeping the
+host's resolved profile) re-runs ``__post_init__``, so the copy has its own
 ConnectionManager and SessionManager and the surveyed host's sessions are
 untouched (the seam ``otto host --term`` already relies on). One attempt per
 pair; the copy is closed afterwards whatever happened -- including when the
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING
 from ...logger.mode import LogMode
 from ..connections import teardown_step
 from ..login_proxy import Cred, LoginProxyError, cred_for, cred_identity, default_login
+from ..os_profile import copy_host
 from .verdict import State
 
 if TYPE_CHECKING:
@@ -56,7 +58,7 @@ def host_copy_on_port(
     """Build a copy of *host* that reaches *protocol* on *port*, with *login*'s cred first."""
     creds = _front_loaded(host, protocol, login)
     if protocol == "ssh":
-        return replace(
+        return copy_host(
             host,
             term="ssh",
             valid_terms=["ssh"],
@@ -64,7 +66,7 @@ def host_copy_on_port(
             ssh_options=replace(host.ssh_options, port=port),
         )
     if protocol == "telnet":
-        return replace(
+        return copy_host(
             host,
             term="telnet",
             valid_terms=["telnet"],
@@ -72,7 +74,7 @@ def host_copy_on_port(
             telnet_options=replace(host.telnet_options, port=port),
         )
     if protocol == "ftp":
-        return replace(
+        return copy_host(
             host,
             transfer="ftp",
             valid_transfers=["ftp"],
@@ -302,7 +304,7 @@ async def attempt_ftp_login(
 
 async def attempt_console_open(host: "RemoteHost", port: int, *, timeout: float) -> LoginOutcome:
     """Open the embedded console on *port* once, on a copy; report what happened."""
-    copy = replace(host, telnet_options=replace(host.telnet_options, port=port))
+    copy = copy_host(host, telnet_options=replace(host.telnet_options, port=port))
     try:
         await asyncio.wait_for(copy.connections.telnet(), timeout)
         outcome = LoginOutcome("supported", "console connected")

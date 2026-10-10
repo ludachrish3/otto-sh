@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from otto.config.repo import Repo
+from otto.labs.sources import prepared_lab_sources
 from tests._fixtures.sutrepo import make_sut_repo
 
 
@@ -38,7 +39,9 @@ def test_relative_paths_anchor_to_repo_root_not_cwd(tmp_path, monkeypatch):
 
     repo = Repo(sut_dir=sut)
 
-    assert repo.lab_sources[0].paths == [sut / "lab_data"]
+    (lab_source,) = prepared_lab_sources(repo)
+    assert lab_source.prepared is not None
+    assert lab_source.prepared.facts.file_inputs == (sut / "lab_data",)
     assert repo.libs == [sut / "pylib"]
     assert repo.tests == [sut / "tests"]
 

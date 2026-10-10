@@ -220,7 +220,10 @@ path = "otto.examples"
 # otto.inventory: the reference LabRepository resolves each record through
 # `resolve_host_entry` — the sample IS the documentation of how a backend
 # honours `inventory=` (spec 2026-08-28 host-inventory §6).
-depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "otto.inventory"]
+# otto.models: the sample lab source's config model subclasses OttoModel, as
+# every otto pydantic model does (defer_build), so the copyable sample shows
+# the public base a backend's config model uses.
+depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "otto.inventory", "otto.models"]
 
 [[modules]]
 path = "otto.filesystem"

@@ -1,0 +1,42 @@
+# Rule test for .ast-grep/rules/no-registry-subclass.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: no-registry-subclass
+valid:
+- |
+  class K(dict): ...
+# A builder that holds a table instead of subclassing it.
+- |
+  from otto.registry import Registry
+
+
+  class KindBuilder:
+      def __init__(self, kinds: Registry[KindEntry]) -> None:
+          self._kinds = kinds
+# A name that only ends like an engine type.
+- |
+  class Spec(SpecRegistryMixin): ...
+# A keyword argument is not a base.
+- |
+  class Meta(Base, metaclass=Registry): ...
+invalid:
+- |
+  from otto.registry import Registry
+
+
+  class K(Registry[int]): ...
+- |
+  from otto import registry
+
+
+  class K(registry.Registry): ...
+- |
+  import otto.registry
+
+
+  class K(otto.registry.BackendRegistry[Env, T, M]): ...
+- |
+  class K(Base, Subscription): ...
+- |
+  class K(RegistryView): ...

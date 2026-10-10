@@ -9,7 +9,7 @@ import logging
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from difflib import get_close_matches
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.element import Element
@@ -17,6 +17,9 @@ from ..host.factory import host_identity
 from ..host.remote_host import slug
 from ..models.link import LinkSpec
 from .model import Link, LinkEndpoint, Provenance
+
+if TYPE_CHECKING:
+    from ..host.os_profile import ProfileContext
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,9 @@ class HostAddressing:
 
 # DEBT(no-tuple-return): resolved id plus its addressing.
 # ast-grep-ignore: no-tuple-return
-def addressing_from_dict(host_data: dict[str, Any], element: Element) -> tuple[str, HostAddressing]:
+def addressing_from_dict(
+    host_data: dict[str, Any], element: Element, *, profiles: "ProfileContext | None" = None
+) -> tuple[str, HostAddressing]:
     """``(host_id, HostAddressing)`` from a raw lab.json host dict and its element.
 
     Applies the interface string-shorthand (a bare string value is the ip),
@@ -50,9 +55,10 @@ def addressing_from_dict(host_data: dict[str, Any], element: Element) -> tuple[s
     through the ``os_profile`` / ``command_frame`` registries and validates.
     A record naming a profile or frame the current process never registered
     RAISES, and callers enumerating whole files must skip such records rather
-    than let one deny the rest.
+    than let one deny the rest. *profiles* is the repo data the ``os_type``
+    resolves through, as in :func:`~otto.host.factory.host_identity`.
     """
-    host_id = host_identity(host_data, element).id
+    host_id = host_identity(host_data, element, profiles=profiles).id
     raw = host_data.get("interfaces", {})
     interfaces = {
         name: (entry if isinstance(entry, str) else entry.get("ip", ""))

@@ -9,12 +9,15 @@ multi-holder ``holders`` and the optional
 :class:`~otto.reservations.SupportsUsernameCompletion` capability, and is
 conformance-verified in otto's own suite.
 
-Register it from an ``init`` module and select it by name::
+Register it from an ``init`` module, with its config model and factory, and
+select it by name::
 
     from otto.reservations import register_reservation_backend
-    from otto.examples.reservations import ExampleReservationBackend
+    from otto.examples.reservations import ExampleReservationConfig, example_reservations
 
-    register_reservation_backend("example", ExampleReservationBackend)
+    register_reservation_backend(
+        "example", config=ExampleReservationConfig, factory=example_reservations
+    )
 
 then in ``.otto/settings.toml``::
 
@@ -37,12 +40,19 @@ Direct usage:
 
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from pydantic import ConfigDict
 from typing_extensions import override
 
+from otto.models import OttoModel
 from otto.reservations import Reservation, ReservationBackendBase
 
-__all__ = ["ExampleReservationBackend"]
+if TYPE_CHECKING:
+    from otto.registry import Configured
+    from otto.reservations import ReservationEnv
+
+__all__ = ["ExampleReservationBackend", "ExampleReservationConfig", "example_reservations"]
 
 # A tiny built-in dataset: "shared" is held by two users to demonstrate the
 # multi-holder holders() contract.
@@ -130,3 +140,24 @@ class ExampleReservationBackend(ReservationBackendBase):
     def list_usernames(self) -> list[str]:
         """Return a sorted list of all known usernames in this backend."""
         return sorted(self._by_user)
+
+
+class ExampleReservationConfig(OttoModel):
+    """The ``[reservations.example]`` sub-table: an optional dataset override."""
+
+    model_config = ConfigDict(frozen=True)
+
+    reservations: dict[str, list[str]] | None = None
+    """Username to the resources they hold; ``None`` keeps the built-in demo dataset."""
+
+
+def example_reservations(
+    c: "Configured[ExampleReservationConfig, ReservationEnv]",
+) -> ExampleReservationBackend:
+    """Build the example backend from its parsed sub-table and otto's environment."""
+    return ExampleReservationBackend(
+        url=c.env.url,
+        repo_dir=c.env.repo_dir,
+        username=c.env.username,
+        reservations=c.config.reservations,
+    )

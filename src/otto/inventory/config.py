@@ -26,18 +26,79 @@ from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import ValidationError
+from pydantic import ConfigDict, ValidationError, ValidationInfo, field_validator
 
+from ..models.base import OttoModel
 from ..utils import anchor_path, parse_cache_ttl
 from .creds import CredsOverlay
-from .errors import InventoryError
+from .errors import InventoryConstructionError, InventoryError
 from .protocol import Inventory
-from .registry import get_inventory_backend_class
+from .registry import INVENTORY_BACKENDS, InventoryEnv, InventoryMetadata
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
     from ..creds.config import CompiledCreds
     from ..models.settings import InventoryConfigSpec, UserSettingsModel
+    from ..registry import Prepared
+
+
+def _anchored(value: Path, info: ValidationInfo) -> Path:
+    """Anchor *value* to the env's ``anchor_dir`` when the table is prepared with one."""
+    env = (info.context or {}).get("env")
+    return anchor_path(value, env.anchor_dir, quote=False) if env is not None else value
+
+
+class JsonInventoryConfig(OttoModel):
+    """The json inventory's table: an anchored file path, and the fields it supplies."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: Path
+    """The inventory file; a relative path anchors to the declaring repo; ``~`` is expanded."""
+
+    supplies: list[str] | None = None
+    """The record fields this inventory supplies; ``None`` means every fillable field."""
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _not_empty(cls, value: object) -> object:
+        """Refuse an empty string, which would otherwise read as the repo root."""
+        if value == "":
+            raise ValueError("must name the inventory file")
+        return value
+
+    @field_validator("path", mode="after")
+    @classmethod
+    def _anchor(cls, value: Path, info: ValidationInfo) -> Path:
+        """Anchor a relative path to the directory the table was declared in."""
+        return _anchored(value, info)
+
+
+class NetBoxInventoryConfig(OttoModel):
+    """The NetBox inventory's table; ``NetBoxInventory`` itself checks the values."""
+
+    model_config = ConfigDict(frozen=True)
+
+    url: str
+    """Base URL of the NetBox instance."""
+
+    token_env: str = "NETBOX_TOKEN"  # noqa: S105 — the NAME of the variable, not a token
+    """Name of the environment variable holding the API token."""
+
+    filter: dict[str, object] | None = None
+    """NetBox device filter, forwarded verbatim."""
+
+    ip_source: str = "primary_ip4"
+    """Where a device's management address comes from."""
+
+    custom_fields: dict[str, str] | None = None
+    """Record field -> NetBox custom field name."""
+
+    extra_custom_fields: list[str] | None = None
+    """NetBox custom field names carried through in ``record.extra``."""
+
+    timeout: float = 30.0
+    """Seconds one HTTP request to NetBox may take."""
 
 
 @dataclass(frozen=True)
@@ -55,20 +116,24 @@ class InventoryDeclaration:
 
 @dataclass(frozen=True)
 class CompiledInventory:
-    """A validated, anchored ``[inventory]`` table."""
+    """An ``[inventory]`` table, prepared by its backend's configuration model."""
 
-    backend: str
-    kwargs: dict[str, Any]
+    prepared: "Prepared[InventoryEnv, Inventory, InventoryMetadata]"
+    """The backend's parsed configuration, ready to build."""
     cache_ttl: timedelta
+    """How long a snapshot of the inventory stays fresh."""
     anchor_dir: Path
+    """Directory relative paths anchored to."""
     origin: str
+    """The settings file that declared the table — for error text."""
     creds: "CompiledCreds | None" = None
+    """The ``[creds]`` table the inventory's creds come from, if one is declared."""
 
     def same_as(self, other: "CompiledInventory") -> bool:
         """Return whether this is the same inventory as *other*.
 
-        Backend, anchored kwargs AND ``cache_ttl`` must agree — every field
-        the table configures. ``cache_ttl`` is in here because it is
+        Backend, normalized configuration AND ``cache_ttl`` must agree — every
+        field the table configures. ``cache_ttl`` is in here because it is
         behaviour, not decoration: two repos declaring ``"0"`` and ``"7d"``
         would otherwise be "the same", and declaration order would silently
         decide whether the process caches at all (spec §8 requires identical
@@ -77,11 +142,12 @@ class CompiledInventory:
         files, each anchoring it to its own root, are not a conflict. ``creds``
         is excluded too: it is compared per table by
         :meth:`~otto.creds.config.CompiledCreds.same_as` in ``_resolve_creds``,
-        which resolves independently of the inventory.
+        which resolves independently of the inventory. The snapshot slug is
+        derived from these same inputs.
         """
-        return (self.backend, self.kwargs, self.cache_ttl) == (
-            other.backend,
-            other.kwargs,
+        return (self.prepared.backend, self.prepared.normalized, self.cache_ttl) == (
+            other.prepared.backend,
+            other.prepared.normalized,
             other.cache_ttl,
         )
 
@@ -89,40 +155,30 @@ class CompiledInventory:
 def compile_inventory(
     cfg: "InventoryConfigSpec", *, anchor_dir: Path, origin: str
 ) -> CompiledInventory:
-    """Validate the backend's kwargs knowing the backend; anchor paths to *anchor_dir*.
+    """Prepare the table's backend keys with the selected backend's configuration model.
 
-    The json backend takes ``path`` (required) and ``supplies`` (optional);
-    anything else is an error naming it. Other backends validate their own
-    kwargs in their constructor (the ``compile_lab_sources`` precedent —
-    otto core cannot type a third-party backend's kwargs).
+    Every key but ``backend`` and ``cache_ttl`` is parsed by the model the
+    backend registered, with an :class:`~otto.inventory.registry.InventoryEnv`
+    carrying *anchor_dir* and *origin*; an unknown key or a bad value fails
+    here, naming the backend, the module that registered it and *origin*.
 
     Anchoring, not resolving: ``anchor_dir`` makes a committed relative path
     resolve stably wherever the repo is checked out. Symlink resolution
-    happens later, in :func:`construct_inventory`, where the path reaches the
+    happens later, in the backend's factory, where the path reaches the
     object whose ``fingerprint()`` the spec says is the resolved one (§9.1).
+
+    Raises:
+        otto.inventory.errors.InventoryConstructionError: The backend is not
+            registered, or its keys do not parse.
     """
-    extras: dict[str, Any] = dict(cfg.model_extra or {})
-    if cfg.backend == "json":
-        path = extras.pop("path", None)
-        if not isinstance(path, str) or not path:
-            raise InventoryError(f"{origin}: [inventory] backend 'json' requires a 'path' string")
-        supplies = extras.pop("supplies", None)
-        if supplies is not None and not (
-            isinstance(supplies, list) and all(isinstance(s, str) for s in supplies)
-        ):
-            raise InventoryError(
-                f"{origin}: [inventory] 'supplies' must be a list of record field names"
-            )
-        if extras:
-            raise InventoryError(
-                f"{origin}: [inventory] unknown key(s) for the json backend: {sorted(extras)}"
-            )
-        kwargs: dict[str, Any] = {"path": anchor_path(Path(path), anchor_dir), "supplies": supplies}
-    else:
-        kwargs = extras
+    prepared = INVENTORY_BACKENDS.prepare(
+        cfg.backend,
+        dict(cfg.model_extra or {}),
+        InventoryEnv(anchor_dir, origin),
+        source=origin,
+    )
     return CompiledInventory(
-        backend=cfg.backend,
-        kwargs=kwargs,
+        prepared=prepared,
         cache_ttl=parse_cache_ttl(cfg.cache_ttl),
         anchor_dir=anchor_dir,
         origin=origin,
@@ -134,10 +190,11 @@ def _maybe_cached(inventory: Inventory, compiled: CompiledInventory) -> Inventor
 
     Three conditions, in the order they are cheapest to check:
 
-    - Not the ``json`` backend. Short-circuited BY NAME rather than left to
-      the ``fingerprint()`` test below, because ``JsonInventory.fingerprint()``
-      stats the file — and construction does no I/O, which is what lets a lab
-      with no referenced entry never touch a broken inventory at all.
+    - The backend's registration states ``snapshot_cache=True``. The built-in
+      ``json`` states ``False``, so it is passed by before the
+      ``fingerprint()`` test below: ``JsonInventory.fingerprint()`` stats the
+      file — and construction does no I/O, which is what lets a lab with no
+      referenced entry never touch a broken inventory at all.
     - ``cache_ttl`` greater than zero. ``"0"`` means "every process fetches",
       the behaviour of an uncached backend (§9.5).
     - ``fingerprint()`` is ``None``, the backend's own statement that it cannot
@@ -155,7 +212,8 @@ def _maybe_cached(inventory: Inventory, compiled: CompiledInventory) -> Inventor
     with nothing in the message naming the cache. Neither half is negotiable,
     so the configuration is.
     """
-    if compiled.backend == "json" or compiled.cache_ttl <= timedelta(0):
+    prepared = compiled.prepared
+    if not prepared.metadata.snapshot_cache or compiled.cache_ttl <= timedelta(0):
         return inventory
     if inventory.fingerprint() is not None:
         return inventory
@@ -165,7 +223,7 @@ def _maybe_cached(inventory: Inventory, compiled: CompiledInventory) -> Inventor
         # so checking the constructed object would refuse the configuration
         # §9.4 actually recommends.
         raise InventoryError(
-            f"{compiled.origin}: backend {compiled.backend!r} supplies 'creds', which a "
+            f"{compiled.origin}: backend {prepared.backend!r} supplies 'creds', which a "
             'snapshot cannot carry; set cache_ttl = "0" for this backend, or have the '
             "backend leave creds to a [creds] store"
         )
@@ -180,17 +238,19 @@ def _maybe_cached(inventory: Inventory, compiled: CompiledInventory) -> Inventor
         inventory,
         ttl=compiled.cache_ttl,
         cache_dir=snapshot_cache_dir(),
-        slug_material=snapshot_slug_material(compiled.backend, inventory.label, compiled.kwargs),
+        slug_material=snapshot_slug_material(
+            prepared.backend, inventory.label, prepared.normalized, cache_ttl=compiled.cache_ttl
+        ),
     )
 
 
 def construct_inventory(compiled: CompiledInventory) -> Inventory:
-    """Instantiate the backend, then the core wrappers (the snapshot cache, then creds).
+    """Build the backend, then the core wrappers (the snapshot cache, then creds).
 
-    ``Path.resolve()`` runs here, on the way into the backend: §9.1 says a
-    json inventory's ``fingerprint()`` is the RESOLVED path, and doing it here
-    rather than inside :class:`~otto.inventory.json_backend.JsonInventory`
-    keeps the backend a plain reader of the path it was handed.
+    The backend's registered factory builds it from the prepared
+    configuration; a factory that fails, or builds something that is not an
+    inventory, raises :class:`~otto.inventory.errors.InventoryConstructionError`
+    naming the settings file, the backend and the module that registered it.
 
     A compiled ``[creds]`` table means the inventory supplies ``creds`` (spec
     2026-09-06 §5.4): the overlay merges the store's entries UNDER the
@@ -201,39 +261,20 @@ def construct_inventory(compiled: CompiledInventory) -> Inventory:
     snapshot must never contain credentials (§9.4/§9.5), and a cache wrapped
     around the overlay would be caching exactly that; the doctor also reads
     ``isinstance(inventory, CredsOverlay)`` to report the creds store's mode.
-
-    A non-json backend validates its own kwargs in its constructor, so a
-    typo'd key surfaces as its ``TypeError``/``ValueError``. That is wrapped
-    here naming the origin and the backend, because the raw
-    ``__init__() got an unexpected keyword argument 'urll'`` names neither the
-    settings file nor the backend the user selected — the json arm already
-    says both.
     """
-    try:
-        cls = get_inventory_backend_class(compiled.backend)
-    except ValueError as e:
-        raise InventoryError(f"{compiled.origin}: {e}") from e
-    inventory: Inventory
-    if compiled.backend == "json":
-        inventory = cls(
-            path=Path(compiled.kwargs["path"]).resolve(), supplies=compiled.kwargs["supplies"]
-        )
-    else:
-        try:
-            inventory = cls(repo_dir=compiled.anchor_dir, **compiled.kwargs)
-        except (TypeError, ValueError) as e:
-            raise InventoryError(
-                f"{compiled.origin}: [inventory] backend {compiled.backend!r}: {e}"
-            ) from e
-    inventory = _maybe_cached(inventory, compiled)
+    inventory = _maybe_cached(INVENTORY_BACKENDS.build(compiled.prepared), compiled)
     if compiled.creds is not None:
         # Function-local, both: otto.inventory is on the bootstrap path and
         # otto.creds is only needed once a store is actually declared.
         from ..creds.config import construct_creds_store
-        from ..creds.errors import CredsError
+        from ..creds.errors import CredsConstructionError, CredsError
 
         try:
             store = construct_creds_store(compiled.creds)
+        except CredsConstructionError as e:
+            # Still a construction error (and a ValueError) to its catcher;
+            # the creds error rides along as the cause.
+            raise InventoryConstructionError(str(e)) from e
         except CredsError as e:
             raise InventoryError(str(e)) from e
         inventory = CredsOverlay(inventory, store=store)
@@ -260,7 +301,9 @@ def _resolve_creds(
 
     Independent of the ``[inventory]`` walk — each table finds its own first
     declaration. Every ``CredsError`` becomes an ``InventoryError`` here so
-    the callers of ``build_inventory`` keep catching one type.
+    the callers of ``build_inventory`` keep catching one type; a
+    ``CredsConstructionError`` becomes an ``InventoryConstructionError``, so it
+    stays a construction error and a ``ValueError``.
 
     Checks emptiness BEFORE importing ``otto.creds``: this runs on every
     ``build_inventory`` call, declared or not, and the import-budget guard
@@ -272,7 +315,7 @@ def _resolve_creds(
     ):
         return None
     from ..creds.config import compile_creds, compile_creds_table  # deferred: bootstrap path
-    from ..creds.errors import CredsError
+    from ..creds.errors import CredsConstructionError, CredsError
 
     try:
         compiled = [
@@ -293,6 +336,8 @@ def _resolve_creds(
 
             path = user_settings_file if user_settings_file is not None else user_settings_path()
             return compile_creds(user_settings.creds, anchor_dir=path.parent, origin=str(path))
+    except CredsConstructionError as e:
+        raise InventoryConstructionError(str(e)) from e
     except CredsError as e:
         raise InventoryError(str(e)) from e
     return None

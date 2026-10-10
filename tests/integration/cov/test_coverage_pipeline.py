@@ -27,7 +27,7 @@ from otto.config.lab import Lab
 from otto.coverage.fetcher.remote import GcdaFetcher
 from otto.coverage.reporter import CoverageReporter, discover_gcda_dirs
 from otto.host.local_host import LocalHost
-from otto.host.product import PRODUCT_KINDS, stamp_cov_dir
+from otto.host.product import PRODUCT_KIND_BUILDER, stamp_cov_dir
 from otto.host.unix_host import UnixHost
 from otto.models.settings import DeclaredEntrySpec
 from otto.utils import Status
@@ -72,11 +72,11 @@ def _declared_entry():
 def attach_product(host: UnixHost) -> None:
     """Give *host* repo1's declared product, the way lab ingest would.
 
-    ``PRODUCT_KINDS.build`` applies the entry's match table, so a host these
+    ``PRODUCT_KIND_BUILDER.build`` applies the entry's match table, so a host these
     tests point at that repo1 does not declare fails here — loudly — instead
     of silently fetching nothing.
     """
-    built = PRODUCT_KINDS.build([_declared_entry()], host)
+    built = PRODUCT_KIND_BUILDER.build([_declared_entry()], host)
     assert built, f"repo1's {PRODUCT_NAME!r} entry does not match host {host.id}"
     for product in built:
         stamp_cov_dir(product)

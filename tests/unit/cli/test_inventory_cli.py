@@ -187,7 +187,8 @@ def test_a_broken_inventory_declaration_names_the_settings_file(tmp_path, monkey
     result = _run(["list"])
     assert result.exit_code == 1
     assert "Inventory unavailable:" in result.output
-    assert "backend 'json' requires a 'path' string" in result.output
+    assert "backend 'json'" in result.output
+    assert "parse failed: path: Field required" in result.output
 
 
 # ── export ───────────────────────────────────────────────────────────────────

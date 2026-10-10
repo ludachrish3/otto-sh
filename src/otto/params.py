@@ -9,19 +9,33 @@ merge them.
 
 import dataclasses
 import inspect
-from typing import TYPE_CHECKING, Annotated, Any, cast, get_args, get_origin, get_type_hints
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from typing_extensions import dataclass_transform
 
 from .errors import OttoError
-from .registry import Ref, Registry, caller_module, get_registering_repo
+from .registry import Ref, Registry, registration_boundary
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import pydantic
     from _typeshed import DataclassInstance
 
+    from .registry import Proposed
+
 __all__ = [
     "OPTIONS",
+    "OptionVerb",
     "OptionsCollisionError",
     "OptionsNotAvailableError",
     "OptionsRegistrationError",
@@ -331,12 +345,21 @@ class OptionsSource:
 
 # ── Per-verb options registry ────────────────────────────────────────────
 
-OPTION_VERBS: list[str] = ["run", "test"]
-"""Verbs whose flags include every options class registered for them."""
+OptionVerb = Literal["run", "test"]
+"""A verb whose flags include every options class registered for it."""
+
+OPTION_VERBS: list[str] = list(get_args(OptionVerb))
+"""The :data:`OptionVerb` values in order, as the CLI's help lists them."""
 
 
 class OptionsRegistrationError(OttoError, ValueError):
-    """A ``register_options`` call named a bad verb list, or a class twice."""
+    """An options registration that otto refuses.
+
+    It named a bad verb list, or a key that is not its class's own (a raw
+    record under the wrong key, or a string naming a re-export); or a string
+    registration did not import; or an options instance was passed for a verb
+    its class is not registered for.
+    """
 
 
 class OptionsCollisionError(OttoError):
@@ -365,11 +388,13 @@ class OptionsNotAvailableError(OttoError, LookupError):
 
 @dataclasses.dataclass(frozen=True)
 class OptionsEntry:
-    """One registration: the class (or a lazy reference to it) and the verbs it serves."""
+    """One registration: the class (or a lazy reference to it) and the verbs it serves.
+
+    The repo that registered it is the engine's: ``OPTIONS.repo(key)``.
+    """
 
     target: "type | Ref"
-    verbs: list[str]
-    repo: str | None
+    verbs: "tuple[OptionVerb, ...]"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -378,13 +403,6 @@ class OptionsOrigin:
 
     cls: type
     repo: str | None
-
-
-OPTIONS: "Registry[OptionsEntry]" = Registry(
-    "options class",
-    register_hint="@otto.options(verbs=[...]) in an init module",
-)
-"""The registered options classes, keyed by class path, with the verbs each serves."""
 
 
 def options_key(cls_or_path: "type | str | Ref") -> str:
@@ -396,11 +414,17 @@ def options_key(cls_or_path: "type | str | Ref") -> str:
     return f"{cls_or_path.__module__}:{cls_or_path.__qualname__}"
 
 
-def _check_verbs(verbs: list[str]) -> None:
+def _check_verbs(verbs: "list[OptionVerb]") -> None:
+    """Refuse a verb list that is not a list, before any record is built."""
     if not isinstance(verbs, list):
         raise OptionsRegistrationError(
             f'verbs must be a list of verb names, such as ["test"]; got {verbs!r}'
         )
+    _check_verb_values(verbs)
+
+
+def _check_verb_values(verbs: "Sequence[str]") -> None:
+    """Refuse an empty verb list, an unknown verb or a repeated one."""
     if not verbs:
         raise OptionsRegistrationError("register_options(...) names no verbs")
     for verb in verbs:
@@ -412,35 +436,77 @@ def _check_verbs(verbs: list[str]) -> None:
             raise OptionsRegistrationError(f"register_options(...) names {verb!r} twice")
 
 
-def _register(target: "type | Ref", verbs: list[str], *, origin: str) -> None:
-    key = options_key(target)
-    if key in OPTIONS:
+def _check_options_entry(
+    name: str, entry: OptionsEntry, proposed: "Proposed[OptionsEntry]"
+) -> None:
+    """``OPTIONS``' validate: the key is the class's own, and the verbs are known and unrepeated."""
+    del proposed
+    key = options_key(entry.target)
+    if name != key:
         raise OptionsRegistrationError(
-            f"options class {key} is already registered for "
-            f"{', '.join(OPTIONS.get(key).verbs)}; name every verb in one register_options call"
+            f"options class registered under {name!r} but its key is {key!r}"
         )
-    OPTIONS.register(
-        key,
-        OptionsEntry(target=target, verbs=list(verbs), repo=get_registering_repo()),
-        origin=origin,
-    )
+    _check_verb_values(entry.verbs)
 
 
-def register_options(cls_or_path: "type | str", *, verbs: list[str]) -> None:
+def _check_options_resolved(name: str, entry: OptionsEntry) -> None:
+    """``OPTIONS``' check on a resolved string registration: it names the class's own path.
+
+    A string registration resolves to the ``Ref``'s TARGET class, which may be
+    a re-export -- a name imported into the module the string names, rather
+    than the class's own defining module. That class's OWN key
+    (``module:qualname``) then differs from the key it was registered under,
+    so ``verbs_for(cls)`` would answer "not registered" for the very class
+    just resolved, and nothing would stop the same class from being
+    registered again under its defining path.
+    """
+    resolved_key = options_key(entry.target)
+    if resolved_key != name:
+        raise OptionsRegistrationError(
+            f"{name!r} is a re-export: it resolves to a class whose own defining "
+            f"path is {resolved_key!r}, not {name!r}; register it by its defining "
+            f"path (module:qualname) instead of the re-exported one"
+        )
+
+
+OPTIONS: "Registry[OptionsEntry]" = Registry(
+    "options class",
+    entry=OptionsEntry,
+    register_hint="@otto.options(verbs=[...]) in an init module",
+    validate=_check_options_entry,
+    check_resolved=_check_options_resolved,
+)
+"""The registered options classes, keyed by class path, with the verbs each serves."""
+
+
+@registration_boundary
+def register_options(
+    cls_or_path: "type | str", *, verbs: "list[OptionVerb]", overwrite: bool = False
+) -> None:
     """Register an options class for the verbs whose flags it joins.
 
     Call it from an init module. *cls_or_path* is the class, or a
     ``"package.module:Attr"`` string that is imported only when one of *verbs*
-    is dispatched. Each class registers once, naming every verb it serves.
+    is dispatched. Each class registers once, naming every verb it serves; a
+    second registration raises :class:`~otto.registry.DuplicateRegistration`
+    unless *overwrite* is true, which replaces the verb list.
     """
     _check_verbs(verbs)
     target: "type | Ref" = Ref(cls_or_path) if isinstance(cls_or_path, str) else cls_or_path
-    _register(target, verbs, origin=caller_module())
+    OPTIONS.register(
+        options_key(target), OptionsEntry(target=target, verbs=tuple(verbs)), overwrite=overwrite
+    )
 
 
 @dataclass_transform(field_specifiers=(dataclasses.field,))
+@registration_boundary
 def options(
-    cls: "type | None" = None, /, *, verbs: "list[str] | None" = None, **dataclass_kwargs: Any
+    cls: "type | None" = None,
+    /,
+    *,
+    verbs: "list[OptionVerb] | None" = None,
+    overwrite: bool = False,
+    **dataclass_kwargs: Any,
 ) -> Any:
     """Declare an options class (a pydantic dataclass); with *verbs*, also register it for them.
 
@@ -448,7 +514,8 @@ def options(
     options class or a shared base. ``@options(verbs=["run", "test"])`` is
     ``register_options(Cls, verbs=[...])`` at the definition site, which
     imports the module at startup; the string form of ``register_options``
-    stays the lazy choice.
+    stays the lazy choice. The registration is credited to the module that
+    applies the decorator; *overwrite* is ``register_options``'.
 
     Passes ``defer_build=True`` into pydantic's dataclass config by default
     (merged under an inherited or class-body ``__pydantic_config__`` and any
@@ -465,6 +532,7 @@ def options(
     """
     import pydantic.dataclasses
 
+    @registration_boundary
     def build(target: type) -> type:
         # Merge order: an inherited or class-body ``__pydantic_config__``
         # first, then the caller's ``config`` (wins on a shared key), then
@@ -486,7 +554,11 @@ def options(
         built = cast("type", pydantic.dataclasses.dataclass(target, **call_kwargs))
         if verbs is not None:
             _check_verbs(verbs)
-            _register(built, verbs, origin=target.__module__)
+            OPTIONS.register(
+                options_key(built),
+                OptionsEntry(target=built, verbs=tuple(verbs)),
+                overwrite=overwrite,
+            )
         return built
 
     return build if cls is None else build(cls)
@@ -495,51 +567,38 @@ def options(
 def verb_option_classes(verb: str) -> list[OptionsOrigin]:
     """Every class registered for *verb*, resolved, in registration order.
 
-    A string registration resolves to the ``Ref``'s TARGET class, which may
-    be a re-export -- a name imported into the module the string names,
-    rather than the class's own defining module. That class's OWN key
-    (``module:qualname``) then differs from the key it was registered under,
-    so ``verbs_for(cls)`` would answer "not registered" for the very class
-    this function just resolved, and nothing stops the same class from being
-    registered again under its defining path. Caught here, at the one point
-    every string registration is resolved, rather than left for a caller to
-    discover as a silent double-registration.
+    A string registration is resolved here, the one point every string
+    registration is resolved for a verb, so a re-export
+    (``OPTIONS``' resolved check) is refused here rather than left for a
+    caller to discover as a silent double-registration.
 
     A string registration whose module or attribute fails to import raises
     ``OptionsRegistrationError`` naming the target and the registering repo,
     with the import error chained.
     """
     found: list[OptionsOrigin] = []
-    for key, entry in OPTIONS.items():
-        if verb not in entry.verbs:
+    for key, stored in OPTIONS.raw_items():
+        if verb not in stored.verbs:
             continue
-        if isinstance(entry.target, Ref):
+        if isinstance(stored.target, Ref):
             try:
-                cls = cast("type", entry.target.resolve())
+                stored.target.resolve()
             except Exception as exc:  # any failure to import it, chained below
                 # An OttoError, so a reader that walks every command can
                 # contain it and `otto run` says it in one line.
                 raise OptionsRegistrationError(
-                    f"options class {key!r}, registered for {verb} by {_who(entry.repo)}, "
-                    f"cannot be imported: {exc}"
+                    f"options class {key!r}, registered for {verb} by "
+                    f"{_who(OPTIONS.repo(key))}, cannot be imported: {exc}"
                 ) from exc
-            resolved_key = options_key(cls)
-            if resolved_key != key:
-                raise OptionsRegistrationError(
-                    f"{key!r} is a re-export: it resolves to a class whose own defining "
-                    f"path is {resolved_key!r}, not {key!r}; register it by its defining "
-                    f"path (module:qualname) instead of the re-exported one"
-                )
-        else:
-            cls = entry.target
-        found.append(OptionsOrigin(cls=cls, repo=entry.repo))
+        cls = cast("type", OPTIONS.get(key).target)
+        found.append(OptionsOrigin(cls=cls, repo=OPTIONS.repo(key)))
     return found
 
 
-def verbs_for(cls: type) -> list[str] | None:
+def verbs_for(cls: type) -> "list[OptionVerb] | None":
     """Return the verbs *cls* is registered for, or ``None`` when it is not registered."""
     key = options_key(cls)
-    return list(OPTIONS.get(key).verbs) if key in OPTIONS else None
+    return list(OPTIONS.peek(key).verbs) if key in OPTIONS else None
 
 
 def _who(repo: str | None) -> str:

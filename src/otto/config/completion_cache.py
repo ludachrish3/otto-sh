@@ -105,24 +105,24 @@ Digests
 Each section's digest (:mod:`otto.config.cache_sections`) is a sha256 over
 ``(path, mtime_ns, size)`` triples for every file in its key set
 (:func:`hash_file`): each SUT's ``settings.toml``, every ``.py`` file under
-any ``init`` module and every lab file named by a repo's json
-``[[lab.sources]]`` entries (directory entries contribute their
-``lab.json``; ``.json`` entries are the file themselves), plus the
-directories the lab-file enumeration entered. File contents are never read,
-so a digest is cheap to compute. No test file keys a section: a test file
-cannot register anything.
+any ``init`` module, and the lab key paths: the files each prepared lab
+source says it reads, plus the directories their enumeration entered. The
+writer computes the lab key paths and stores them with the entry; a reader
+re-stats the stored ones and never prepares a source. File contents are
+never read, so a digest is cheap to compute. No test file keys a section: a
+test file cannot register anything.
 
 A stale digest is always safe: the fast path is skipped, the slow path
 runs as normal and rewrites the cache afterward.
 
-A *constant* digest is the failure mode worth knowing about. A repo with a
-``[[lab.sources]]`` entry on a non-json backend, or which configures a
-``[reservations]`` backend, keeps that inventory somewhere no stat can see —
-so edits to it never move the digest, even though the repo may still have a
-``lab.json`` on disk for other reasons. Those repos fall back to a short TTL
-(``UNFINGERPRINTED_CACHE_TTL_SECONDS``) rather than the usual day, which is the
-only staleness bound available without querying the backend on the completion
-fast path.
+A *constant* digest is the failure mode worth knowing about. A lab source
+that is not file-backed (or whose backend is not registered, or whose
+options do not prepare), or a configured ``[reservations]`` backend, keeps
+its data somewhere no stat can see — so edits to it never move the digest.
+When any repo has one, the writer stores the short TTL
+(``UNFINGERPRINTED_CACHE_TTL_SECONDS``) with the entry rather than the usual
+day; it is the only staleness bound available without querying the backend
+on the completion fast path.
 """
 
 import contextlib
@@ -131,6 +131,7 @@ import inspect
 import json
 import logging
 import os
+import stat as stat_module
 import tempfile
 import time
 import types
@@ -145,6 +146,7 @@ if TYPE_CHECKING:
     import threading
     from collections.abc import Callable, Collection, Sequence
 
+    from ..host.os_profile import ProfileContext
     from ..inventory.protocol import Inventory
     from ..labs import HostSummary
     from ..labs.drops import HostDrop
@@ -237,7 +239,11 @@ CACHE_FILENAME = "completion_cache.json"
 #      lab's docker verbs default to, by the one rule — and the container ids
 #      are synthesized under that parent only, not under every docker-capable
 #      host. A v25 entry offers ids the lab no longer registers.
-SCHEMA_VERSION = 26
+# v27: each section entry stores its lab key paths and its TTL class, which
+#      the writer computes from the prepared lab sources; a warm reader takes
+#      both from the entry and never prepares a source or globs. A v26 entry
+#      stores neither.
+SCHEMA_VERSION = 27
 
 # A conftest holds no test of its own, but pytest loads it before collecting
 # anything under its directory, so the per-file tables watch every one.
@@ -249,7 +255,8 @@ CONFTEST_FILENAME = "conftest.py"
 CACHE_TTL_SECONDS = 24 * 60 * 60
 
 # The TTL that applies when a repo's completion data comes from somewhere the
-# fingerprint cannot stat: a custom [lab] host source, or any [reservations]
+# fingerprint cannot stat: a [lab] host source that is not file-backed (or
+# whose backend is not registered), or any [reservations]
 # backend (the built-in json one supplies no usernames, so that field is
 # always custom-backend data). Such a source contributes real completion data
 # but NO invalidation signal — the digest never moves however much the
@@ -434,30 +441,52 @@ def _has_unresolved_init_module(repo: "Repo") -> bool:
     built with ``MagicMock(spec=[...])`` that omits ``init``/``libs`` must
     read as "nothing declared", not raise — while the digest enumerators
     above deliberately fail by name on such a double.
+
+    Its stats go through :func:`~otto.config.corpus_snapshot.stat`: a cache
+    write asks for the TTL class twice (the shim payload, then each stored
+    entry), and inside the rebuild's scope the second ask is free.
     """
     libs = getattr(repo, "libs", [])
     for init_mod in getattr(repo, "init", []):
         mod_base = init_mod.split(".")[0]
-        resolved = any(
-            (lib / mod_base).is_dir() or (lib / f"{mod_base}.py").is_file() for lib in libs
-        )
+        resolved = any(_is_dir(lib / mod_base) or _is_file(lib / f"{mod_base}.py") for lib in libs)
         if not resolved:
             return True
     return False
 
 
+def _is_dir(path: Path) -> bool:
+    st = corpus_snapshot.stat(path)
+    return st is not None and stat_module.S_ISDIR(st.st_mode)
+
+
+def _is_file(path: Path) -> bool:
+    st = corpus_snapshot.stat(path)
+    return st is not None and stat_module.S_ISREG(st.st_mode)
+
+
+def _profiles(repos: "Sequence[Repo]") -> "ProfileContext":
+    """Return the repo data profiles of *repos*, which every host read of one pass resolves through.
+
+    Computed once per collector over the WHOLE repo list, so a host of one
+    repo may select a table another selected repo declares.
+    """
+    from ..host.os_profile import ProfileContext
+
+    return ProfileContext.from_repos(repos)
+
+
 def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
     """Report whether any repo's completion data comes from outside the digest.
 
-    Three such sources, all read off already-parsed settings — the compiled
-    source list, the raw ``[reservations]`` dict, and the ``init`` name list —
-    with no pydantic and no backend construction, so this is safe on the
-    completion fast path (the third bullet stats candidate init paths via
-    ``is_dir()``/``is_file()`` — a handful of stats bounded by the ``init``
-    list, never a walk):
+    For the cache WRITER only, after init: it prepares the lab sources, and
+    the writer stores the answer with the entry as its TTL class
+    (``ttl_seconds``), so a warm reader never asks again. Three such sources:
 
-    - any ``[[lab.sources]]`` entry with a non-json backend (hosts, lab
-      names).
+    - any ``[[lab.sources]]`` entry whose backend is not registered, whose
+      options do not prepare, or that is not file-backed (hosts, lab names) —
+      decided by the prepared source, never by the backend's name, so a
+      replacement registered over ``json`` is judged by what it reads.
     - any ``[reservations]`` backend (``--holder`` names). The built-in json
       reservation backend does not implement username completion at all, so
       that field is populated *exclusively* by custom, typically networked
@@ -472,21 +501,25 @@ def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
     digest, so a repo can never inherit a cache entry written under a
     different backend choice. That invariant is what makes an entry-wide (not
     per-repo) TTL correct.
-
-    Known limitation: a repo may re-register ``"json"`` with a replacement
-    class (``register_lab_repository("json", ..., overwrite=True)``), which
-    this cannot see without constructing the backend. ``build_lab_sources``
-    hardcodes the ``cls(search_paths=...)`` contract for that name, so a
-    replacement is deliberately impersonating the file backend; it inherits
-    file-backed invalidation and ``otto cache clear``.
     """
+    from ..labs.errors import LabRepositoryError
+    from ..labs.sources import prepared_lab_sources
+
+    profiles = _profiles(repos)
     for repo in repos:
-        if any(src.backend != "json" for src in getattr(repo, "lab_sources", [])):
+        try:
+            # A repo double with no `lab_sources` declares no source.
+            states = (
+                prepared_lab_sources(repo, profiles=profiles)
+                if getattr(repo, "lab_sources", None)
+                else []
+            )
+        except LabRepositoryError:
+            return True
+        if any(not state.is_known() or not state.is_file_backed() for state in states):
             return True
         # `isinstance(..., dict)`: a test double's auto-attribute is truthy but
-        # is not settings. The lab check above needs no such guard — a double
-        # with no `lab_sources` reads as the empty list, and a MagicMock's
-        # auto-attribute iterates empty.
+        # is not settings.
         reservations = getattr(repo, "reservation_settings", None)
         if isinstance(reservations, dict) and reservations:
             return True
@@ -496,10 +529,11 @@ def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
 
 
 def _cache_ttl_seconds(repos: list["Repo"]) -> int:
-    """Effective completion-cache TTL for *repos*.
+    """Effective completion-cache TTL for *repos*: the TTL class the writer stores.
 
     Shortened when any repo's completion data comes from a source the
     fingerprint cannot see — see :data:`UNFINGERPRINTED_CACHE_TTL_SECONDS`.
+    Writer-only: a reader uses the class stored with the entry.
 
     Applies to the sections only. The per-file test tables keep the long
     TTL (:data:`CACHE_TTL_SECONDS`): each validates itself by one ``stat`` per
@@ -534,7 +568,7 @@ def hash_file(h: "hashlib._Hash", path: Path) -> None:
     A path that fails to stat folds in as ``missing:<path>`` — deliberately,
     so the digest moves when the file APPEARS. Contents are never read. The
     shared primitive under :func:`otto.config.cache_sections.section_digest`
-    and :func:`_tunnel_scope_digest`.
+    and the tunnel ids' lab digest (:func:`_lab_paths_digest`).
     """
     st = corpus_snapshot.stat(path)
     if st is None:
@@ -543,34 +577,39 @@ def hash_file(h: "hashlib._Hash", path: Path) -> None:
     h.update(f"{path}|{st.st_mtime_ns}|{st.st_size}\n".encode())
 
 
-def _hash_lab_files(h: "hashlib._Hash", repo: "Repo") -> None:
-    """Fold every file a repo's compiled ``[[lab.sources]]`` entries read into *h*.
-
-    What :func:`_tunnel_scope_digest` hashes besides the settings. A non-file
-    backend contributes no lab files, so its digest never moves; it falls back
-    to a short TTL instead (:data:`UNFINGERPRINTED_CACHE_TTL_SECONDS`).
-    """
-    for src in repo.lab_sources:
-        for lab_file in src.lab_files():
-            hash_file(h, lab_file)
+def _lab_paths_digest(paths: "list[Path]") -> str:
+    """Sha256 over the stat triples of *paths*, in order: the tunnel ids' lab term."""
+    h = hashlib.sha256()
+    for path in paths:
+        hash_file(h, path)
+    return h.hexdigest()
 
 
-def _tunnel_scope_digest(repos: list["Repo"]) -> str:
-    """Sha256 of what a tunnel id actually depends on: settings, lab, inventory.
+def _tunnel_scope_key(repos: list["Repo"]) -> str:
+    """Sha256 of what a tunnel id depends on besides the lab files: settings and inventory.
 
     Tunnel ids are discovered by process/argv inspection against the live
     lab (spec 2026-09-25-dispatch-startup-cost-design.md §4.2) — they do not
-    depend on test sources at all, so they were moved off the whole-corpus
-    digest they were first keyed by: an ordinary ``otto tunnel
-    list``/``remove`` paid a corpus-proportional cost for no reason. This
-    mixes in the settings file, the lab files (:func:`_hash_lab_files`) and
-    the inventory term (:func:`_inventory_fingerprint`), and nothing else —
-    no init modules, no pytest config, no test sources.
+    depend on test sources at all, so no init module, pytest config or test
+    source keys them. The lab files are the other half of the scope: the
+    writer stores their key paths and digest with the entry
+    (:func:`record_tunnel_ids`), so a reader never prepares a source or globs.
+
+    A source whose backend is not registered reads files nobody can name, so
+    it folds in as ``unknown:<label>`` instead: registering its backend later
+    moves the key. That is a name lookup in the backend table, not a
+    preparation.
     """
     h = hashlib.sha256()
     for repo in sorted(repos, key=lambda r: str(r.sut_dir)):
         hash_file(h, repo.sut_dir / ".otto" / "settings.toml")
-        _hash_lab_files(h, repo)
+        sources = getattr(repo, "lab_sources", None) or []
+        if sources:
+            from ..labs.registry import LAB_REPOSITORIES
+
+            for source in sources:
+                if source.backend not in LAB_REPOSITORIES:
+                    h.update(f"unknown:{source.label}\n".encode())
     h.update(f"inventory:{_inventory_fingerprint(repos).text}\n".encode())
     return h.hexdigest()
 
@@ -598,8 +637,8 @@ def _inventory_fingerprint(repos: list["Repo"]) -> "_InventoryDigest":
 
     ``except Exception``, and ``fingerprint()`` INSIDE the guard, for the
     reason :func:`_enumerate_host_summaries` gives: completion never crashes
-    the shell. ``construct_inventory`` wraps only ``TypeError``/``ValueError``
-    from a third-party constructor, and a third-party ``fingerprint()`` —
+    the shell. ``construct_inventory`` reports a failing third-party factory
+    as an ``InventoryConstructionError``, but a third-party ``fingerprint()`` —
     local state only, by the protocol, but nothing makes it correct — can
     still raise anything at all (an unreadable file, a plain bug), and
     this runs inside ``write_cache``, past ``otto.cli.main``'s
@@ -870,11 +909,17 @@ def read_sections(
     :func:`cache_rebuild_is_worthwhile` into :func:`write_cache` is what
     keeps each section's key set stat-hashed AT MOST ONCE per invocation.
 
-    The TTL is one value for the whole file (:func:`_cache_ttl_seconds` —
-    the unfingerprinted-source rules are repo-wide, not per-section) but is
-    enforced against each section's own ``generated_at``.
+    Each section is judged against what its writer stored: its lab key
+    paths (statted, never recomputed) and its TTL class (``ttl_seconds``,
+    enforced against its own ``generated_at``), so a read never prepares a
+    lab source or globs. An entry without them is a miss.
     """
-    from .cache_sections import section_by_name, section_digests
+    from .cache_sections import (
+        _StoredKeysMissingError,
+        section_by_name,
+        section_digests,
+        stored_ttl_seconds,
+    )
 
     # Resolve names FIRST: an unknown section is a caller bug and must raise
     # even when the cache file is absent, not read as a miss.
@@ -894,17 +939,21 @@ def read_sections(
     if not isinstance(stored, dict):
         return None
 
-    fresh = section_digests(repos, chosen, known=digests)
+    try:
+        fresh = section_digests(repos, chosen, known=digests, stored=stored)
+    except _StoredKeysMissingError:
+        return None
     if digests is not None:
         digests.update(fresh)
 
-    ttl = _cache_ttl_seconds(repos)
     now = time.time()
     payloads: dict[str, dict[str, Any]] = {}
     for section in chosen:
-        payload = _section_payload_if_fresh(
-            stored.get(section.name), fresh[section.name], ttl=ttl, now=now
-        )
+        entry = stored.get(section.name)
+        ttl = stored_ttl_seconds(entry)
+        if ttl is None:
+            return None
+        payload = _section_payload_if_fresh(entry, fresh[section.name], ttl=ttl, now=now)
         if payload is None:
             return None
         payloads[section.name] = payload
@@ -1227,9 +1276,21 @@ def write_sections(
     this write, so no key set is hashed twice. The stored digest then
     describes the tree AS THE VALIDITY CHECK SAW IT; anything user code
     moved in between simply makes the next read a miss, which is the safe
-    direction.
+    direction. A lab-keyed digest is trusted only while the entry on disk
+    stored the same lab key paths this write computes: the check digested
+    the stored ones.
+
+    Each written entry stores its TTL class (``ttl_seconds``) and, for a
+    lab-keyed section, its lab key paths (``lab_key_paths``), computed here
+    from the prepared lab sources, so a warm reader recomputes neither.
     """
-    from .cache_sections import section_by_name, section_digests
+    from .cache_sections import (
+        SECTIONS,
+        lab_key_paths,
+        needs_lab_keys,
+        section_by_name,
+        section_digests,
+    )
 
     chosen = [section_by_name(name) for name in payloads]
     if not repos or _fingerprint_is_ephemeral(repos):
@@ -1261,17 +1322,42 @@ def write_sections(
         if existing.get("schema") == SCHEMA_VERSION and isinstance(stored, dict)
         else {}
     )
-    fresh = section_digests(repos, chosen, known=digests)
+    lab_keyed = [section for section in SECTIONS if section.lab_keyed]
+    lab = (
+        [str(path) for path in lab_key_paths(repos)]
+        if any(needs_lab_keys(section) for section in chosen)
+        else []
+    )
+    trusted = dict(digests or {})
+    stale = [
+        section.name
+        for section in lab_keyed
+        if section.name in trusted
+        and (sections_map.get(section.name) or {}).get("lab_key_paths") != lab
+    ]
+    if stale:
+        for name in stale:
+            del trusted[name]
+        for section in SECTIONS:
+            if section.derived_from:
+                trusted.pop(section.name, None)
+    keys = {section.name: {"lab_key_paths": lab} for section in lab_keyed}
+    fresh = section_digests(repos, chosen, known=trusted, stored=keys)
     if tainted and _tainted_entry_is_already_current(sections_map, chosen, fresh):
         return
     now = int(time.time())
+    ttl = _cache_ttl_seconds(repos)
     for section in chosen:
-        sections_map[section.name] = {
+        entry: dict[str, Any] = {
             "fingerprint": fresh[section.name],
             "generated_at": now,
             "tainted": bool(tainted),
+            "ttl_seconds": ttl,
             "payload": payloads[section.name],
         }
+        if section.lab_keyed:
+            entry["lab_key_paths"] = lab
+        sections_map[section.name] = entry
     top["schema"] = SCHEMA_VERSION
     top["sections"] = sections_map
     _atomic_write_json(cache_path, top)
@@ -1403,8 +1489,8 @@ def collect_backend_names() -> dict[str, Any]:
     return {
         "term_backends": sorted(TERM_BACKENDS.names()),
         "transfer_backends": [
-            {"name": name, "host_families": sorted(cls.host_families)}
-            for name, cls in sorted(TRANSFER_BACKENDS.items())
+            {"name": name, "host_families": sorted(e.metadata.host_families)}
+            for name, e in sorted(TRANSFER_BACKENDS.raw_items(), key=lambda item: item[0])
         ],
     }
 
@@ -1456,7 +1542,8 @@ def collect_cli_commands() -> list[dict[str, Any]]:
 
     Reads the live :data:`otto.cli.registry.CLI_COMMANDS` registry and
     returns one ``{"name", "help", "lab_free"}`` dict per entry whose
-    ``origin`` module is *not* under ``otto.`` — built-in commands re-register
+    registering module (``CLI_COMMANDS.origin(name)``) is *not* under
+    ``otto.`` — built-in commands re-register
     on every real invocation (bootstrap always runs), so caching them would
     be redundant and risks masking a genuine removal. Third-party commands,
     by contrast, only exist in the registry after a plugin's init module has
@@ -1479,7 +1566,7 @@ def collect_cli_commands() -> list[dict[str, Any]]:
     log = logging.getLogger(__name__)
     out: list[dict[str, Any]] = []
     for name, spec in CLI_COMMANDS.items():
-        if spec.origin.startswith("otto."):
+        if CLI_COMMANDS.origin(name).startswith("otto."):
             continue
         entry: dict[str, Any] = {"name": name, "help": spec.help, "lab_free": spec.lab_free}
         try:
@@ -1683,7 +1770,9 @@ def resolve_process_inventory(repos: "Sequence[Repo]") -> InventoryResolution:
         return InventoryResolution(error=f"{type(e).__name__}: {e}")
 
 
-def repo_host_summaries(repo: "Repo", resolution: InventoryResolution) -> list["HostSummary"]:
+def repo_host_summaries(
+    repo: "Repo", resolution: InventoryResolution, *, profiles: "ProfileContext"
+) -> list["HostSummary"]:
     """Every host *repo*'s configured host source knows — best-effort.
 
     *resolution* is the process inventory from :func:`resolve_process_inventory`
@@ -1691,6 +1780,9 @@ def repo_host_summaries(repo: "Repo", resolution: InventoryResolution) -> list["
     handed to every repo: a referenced entry joins against the same inventory
     it dispatches through, whichever repo declared it. A failed resolution
     answers empty here for every repo, warned once where it failed.
+    *profiles* is likewise the data profiles of the whole repo list
+    (:meth:`~otto.host.os_profile.ProfileContext.from_repos`), so a host may
+    select another selected repo's table.
 
     Goes through the repo's own ``[[lab.sources]]`` backends rather than
     reading its ``lab.json`` files directly, so a project with a custom host
@@ -1715,10 +1807,12 @@ def repo_host_summaries(repo: "Repo", resolution: InventoryResolution) -> list["
     """
     if resolution.error is not None:
         return []
-    return _repo_enumeration(repo, resolution).summaries
+    return _repo_enumeration(repo, resolution, profiles).summaries
 
 
-def repo_host_drops(repo: "Repo", resolution: InventoryResolution) -> list["HostDrop"]:
+def repo_host_drops(
+    repo: "Repo", resolution: InventoryResolution, *, profiles: "ProfileContext"
+) -> list["HostDrop"]:
     """Return what *repo*'s enumeration left OUT, with reasons — the outlet's read side.
 
     The same memoized enumeration :func:`repo_host_summaries` reads, so
@@ -1729,22 +1823,27 @@ def repo_host_drops(repo: "Repo", resolution: InventoryResolution) -> list["Host
     """
     if resolution.error is not None:
         return []
-    return list(_repo_enumeration(repo, resolution).drops)
+    return list(_repo_enumeration(repo, resolution, profiles).drops)
 
 
-def _repo_enumeration(repo: "Repo", resolution: InventoryResolution) -> RepoEnumeration:
-    key = f"{getattr(repo, 'sut_dir', repo)}|{resolution.label}"
+def _repo_enumeration(
+    repo: "Repo", resolution: InventoryResolution, profiles: "ProfileContext"
+) -> RepoEnumeration:
+    key = f"{getattr(repo, 'sut_dir', repo)}|{resolution.label}|{profiles.digest()}"
     cached = _SUMMARY_MEMO.get(key)
     if cached is None:
         cached = _bounded(
-            lambda abandoned: _enumerate_host_summaries(repo, resolution.inventory, abandoned),
+            lambda abandoned: _enumerate_host_summaries(
+                repo, resolution.inventory, profiles, abandoned
+            ),
             repo,
         )
         _SUMMARY_MEMO[key] = cached
     return cached
 
 
-#: Per-process memo, keyed by SUT dir and the inventory's label. Three
+#: Per-process memo, keyed by SUT dir, the inventory's label and the data
+#: profiles' digest (another repo selection may resolve a host differently). Three
 #: collectors enumerate the same repo on one cache-write pass; without this a
 #: stalled backend cost three deadlines and — worse — could time out for one
 #: collector and not another, writing a cache where `otto host <TAB>` is full
@@ -1756,6 +1855,7 @@ _SUMMARY_MEMO: dict[str, RepoEnumeration] = {}
 def _enumerate_host_summaries(
     repo: "Repo",
     inventory: "Inventory | None",
+    profiles: "ProfileContext",
     abandoned: "threading.Event | None" = None,
 ) -> RepoEnumeration:
     from ..labs import build_lab_sources, host_summaries
@@ -1765,7 +1865,7 @@ def _enumerate_host_summaries(
     # on a worker), so every skip the backends record lands in this list.
     with collecting_drops() as drops:
         try:
-            repository = build_lab_sources([repo])
+            repository = build_lab_sources([repo], profiles=profiles)
             summaries = host_summaries(repository, inventory=inventory)
         except Exception as e:  # noqa: BLE001 — completion never crashes the shell
             if abandoned is None or not abandoned.is_set():
@@ -1789,12 +1889,13 @@ def collect_host_drops(repos: list["Repo"]) -> list[dict[str, str]]:
     nothing of its own — it reads the same memo the id collectors filled.
     """
     resolution = resolve_process_inventory(repos)
+    profiles = _profiles(repos)
     out: list[dict[str, str]] = []
     for repo in repos:
         label = getattr(repo, "name", None) or str(repo.sut_dir)
         out.extend(
             {"repo": str(label), "where": drop.where, "reason": drop.reason}
-            for drop in repo_host_drops(repo, resolution)
+            for drop in repo_host_drops(repo, resolution, profiles=profiles)
         )
     return out
 
@@ -1814,8 +1915,9 @@ def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
     """
     ids: set[str] = set()
     resolution = resolve_process_inventory(repos)
+    profiles = _profiles(repos)
     for repo in repos:
-        for summary in repo_host_summaries(repo, resolution):
+        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
             if summary.docker_capable:
                 ids.add(summary.id)
     return sorted(ids)
@@ -1945,13 +2047,13 @@ def default_parent_from_summaries(summaries: "list[HostSummary]") -> "str | None
 
 
 def _summaries_by_lab(
-    repos: list["Repo"], resolution: InventoryResolution
+    repos: list["Repo"], resolution: InventoryResolution, profiles: "ProfileContext"
 ) -> "dict[str, list[HostSummary]]":
     """Every enumerable host summary grouped by lab, a host once however many repos list it."""
     by_lab: dict[str, list[HostSummary]] = {}
     seen: set[str] = set()
     for repo in repos:
-        for summary in repo_host_summaries(repo, resolution):
+        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
             if summary.id in seen:
                 continue
             seen.add(summary.id)
@@ -1960,10 +2062,12 @@ def _summaries_by_lab(
     return by_lab
 
 
-def _default_parents_by_lab(repos: list["Repo"], resolution: InventoryResolution) -> dict[str, str]:
+def _default_parents_by_lab(
+    repos: list["Repo"], resolution: InventoryResolution, profiles: "ProfileContext"
+) -> dict[str, str]:
     """Each lab to its default docker parent; a lab the rule refuses is absent."""
     out: dict[str, str] = {}
-    for lab, summaries in sorted(_summaries_by_lab(repos, resolution).items()):
+    for lab, summaries in sorted(_summaries_by_lab(repos, resolution, profiles).items()):
         parent = default_parent_from_summaries(summaries)
         if parent is not None:
             out[lab] = parent
@@ -1972,7 +2076,7 @@ def _default_parents_by_lab(repos: list["Repo"], resolution: InventoryResolution
 
 def collect_docker_default_parent_by_lab(repos: list["Repo"]) -> dict[str, str]:
     """Each lab to the parent the docker verbs default to; a lab the rule refuses is absent."""
-    return _default_parents_by_lab(repos, resolve_process_inventory(repos))
+    return _default_parents_by_lab(repos, resolve_process_inventory(repos), _profiles(repos))
 
 
 def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) -> list[str]:
@@ -2009,8 +2113,9 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     # they are tab-completable in every repo, mirroring load_lab's injection.
     ids: set[str] = set(builtin_host_ids())
     resolution = resolve_process_inventory(repos)
+    profiles = _profiles(repos)
     for repo in repos:
-        for summary in repo_host_summaries(repo, resolution):
+        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
             # Lab filter: keep only hosts tagged with a requested lab.
             if wanted is not None and wanted.isdisjoint(summary.labs):
                 continue
@@ -2022,7 +2127,7 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     parents = sorted(
         {
             parent
-            for lab, parent in _default_parents_by_lab(repos, resolution).items()
+            for lab, parent in _default_parents_by_lab(repos, resolution, profiles).items()
             if wanted is None or lab in wanted
         }
     )
@@ -2096,29 +2201,39 @@ def _declared_links(repos: list["Repo"]) -> list[tuple[str, list[str]]]:
     One entry per id: an id declared twice (two sources, two entries) keeps the
     endpoint hosts of EVERY declaration, so a reader's "any endpoint in the lab"
     test equals the per-entry filter (an id passes if any declaration passes).
+    Reads the files of every prepared, known source; a repo whose sources fail
+    to prepare contributes none (the host enumeration reports it).
     """
+    from ..labs.errors import LabRepositoryError
+    from ..labs.sources import prepared_lab_sources
     from ..link.derive import raw_endpoint_host_ids
     from ..link.model import LinkEndpoint, make_static_link_id
 
-    out: dict[str, list[str]] = {}
+    lab_files: list[Path] = []
+    profiles = _profiles(repos)
     for repo in repos:
-        for src in repo.lab_sources:
-            for lab_file in src.lab_files():
-                for entry in _read_lab_links(lab_file):
-                    if not isinstance(entry, dict):
-                        continue
-                    hosts = [h for h in raw_endpoint_host_ids(entry) if isinstance(h, str) and h]
-                    name = entry.get("name")
-                    if isinstance(name, str) and name:
-                        link_id = name
-                    else:
-                        raw = raw_endpoint_host_ids(entry)
-                        if len(raw) != 2 or not all(h for h in raw):  # noqa: PLR2004
-                            continue
-                        a, b = (LinkEndpoint(host=h) for h in raw)
-                        link_id = make_static_link_id(a, b, None)
-                    bucket = out.setdefault(link_id, [])
-                    bucket.extend(h for h in hosts if h not in bucket)
+        try:
+            states = prepared_lab_sources(repo, profiles=profiles)
+        except LabRepositoryError:
+            continue
+        lab_files.extend(f for state in states if state.is_known() for f in state.lab_files())
+    out: dict[str, list[str]] = {}
+    for lab_file in lab_files:
+        for entry in _read_lab_links(lab_file):
+            if not isinstance(entry, dict):
+                continue
+            hosts = [h for h in raw_endpoint_host_ids(entry) if isinstance(h, str) and h]
+            name = entry.get("name")
+            if isinstance(name, str) and name:
+                link_id = name
+            else:
+                raw = raw_endpoint_host_ids(entry)
+                if len(raw) != 2 or not all(h for h in raw):  # noqa: PLR2004
+                    continue
+                a, b = (LinkEndpoint(host=h) for h in raw)
+                link_id = make_static_link_id(a, b, None)
+            bucket = out.setdefault(link_id, [])
+            bucket.extend(h for h in hosts if h not in bucket)
     return list(out.items())
 
 
@@ -2152,9 +2267,10 @@ def collect_lab_names(repos: list["Repo"]) -> list[str]:
     from ..labs import build_lab_sources
 
     names: set[str] = set()
+    profiles = _profiles(repos)
     for repo in repos:
         try:
-            repository = build_lab_sources([repo])
+            repository = build_lab_sources([repo], profiles=profiles)
             names.update(repository.list_labs())
         except Exception as e:  # noqa: BLE001, PERF203 — per-repo resilience: one bad backend must not deny the rest
             logging.getLogger(__name__).warning(
@@ -2189,15 +2305,16 @@ def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
     # an (empty) bucket, keeping this shape identical to the per-lab form.
     by_lab: dict[str, set[str]] = {lab: set() for lab in collect_lab_names(repos)}
     resolution = resolve_process_inventory(repos)
+    profiles = _profiles(repos)
     for repo in repos:
-        for summary in repo_host_summaries(repo, resolution):
+        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
             if summary.id in builtins:
                 continue
             for lab in summary.labs:
                 by_lab.setdefault(lab, set()).add(summary.id)
     # The declared container ids belong to the lab whose default parent they sit
     # under, exactly as `collect_host_ids(lab_names=...)` scopes them.
-    for lab, parent in _default_parents_by_lab(repos, resolution).items():
+    for lab, parent in _default_parents_by_lab(repos, resolution, profiles).items():
         for repo in repos:
             by_lab.setdefault(lab, set()).update(_declared_container_ids(repo, [parent]))
 
@@ -2211,20 +2328,25 @@ def collect_host_classes_by_id(repos: list["Repo"]) -> dict[str, str]:
     dispatch path that class comes from building the host; completion must
     not build hosts, so the class is derived here from the summary's
     ``os_type`` through the same profile lookup the factory uses
-    (``get_os_profile(os_type).base``), data-only. A host whose backend does
-    not report an ``os_type``, or whose profile is not registered in THIS
-    process, is omitted rather than guessed — the completer then offers the
+    (``get_os_profile(os_type, data=...).base``, seeing every selected repo's
+    data profiles), data-only. A host whose backend does not report an
+    ``os_type``, or whose profile no layer resolves in THIS process, is
+    omitted rather than guessed — the completer then offers the
     union menu, exactly as it did before the map existed.
     """
     from ..host.os_profile import get_os_profile
 
     classes: dict[str, str] = {}
     resolution = resolve_process_inventory(repos)
+    profiles = _profiles(repos)
     for repo in repos:
-        for summary in repo_host_summaries(repo, resolution):
+        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
             if summary.os_type is None:
                 continue
-            profile = get_os_profile(summary.os_type)
+            try:
+                profile = get_os_profile(summary.os_type, data=profiles)
+            except ValueError:  # a repo table that fails its check resolves no class
+                continue
             if profile is not None:
                 classes[summary.id] = profile.base  # the registered class NAME
     return dict(sorted(classes.items()))
@@ -2242,8 +2364,9 @@ def collect_logins_by_host(repos: list["Repo"]) -> dict[str, list[dict[str, Any]
     """
     by_host: dict[str, list[dict[str, Any]]] = {}
     resolution = resolve_process_inventory(repos)
+    profiles = _profiles(repos)
     for repo in repos:
-        for summary in repo_host_summaries(repo, resolution):
+        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
             if not summary.logins:
                 continue
             by_host[summary.id] = sorted(
@@ -2578,25 +2701,28 @@ def spawn_requested_refresh() -> None:
 # independently of otto invocations, so a stale id list is wrong far sooner
 # than the main cache's config-derived data would be.
 DYNAMIC_TUNNELS_KEY = "__dynamic_tunnels__"
-DYNAMIC_TUNNELS_SCHEMA_VERSION = 2
-"""Bumped 1 → 2 when tunnel ids stopped keying by the whole-corpus digest in
-favor of :func:`_tunnel_scope_digest` (spec §4.2): the two digests are
-computed differently, so an old-schema entry's key would never match a
-new-schema lookup anyway, but the bump makes that explicit rather than
-relying on an accidental digest mismatch. Old entries are simply never
-matched again — they expire on their own short TTL either way."""
+DYNAMIC_TUNNELS_SCHEMA_VERSION = 3
+"""Bumped 1 → 2 when tunnel ids stopped keying by the whole-corpus digest
+(spec §4.2), and 2 → 3 when the lab files left the key: an entry now stores
+its lab key paths and their digest, which a reader re-stats instead of
+preparing the lab sources. An older entry is never matched again — it
+expires on its own short TTL either way."""
 DYNAMIC_TUNNELS_TTL_SECONDS = 120  # tunnel state is volatile; short TTL (spec §11.2)
 
 
 def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
     """Cache the freshly-discovered tunnel ids for ``remove <id>`` completion.
 
-    Keyed by :func:`_tunnel_scope_digest`: tunnel ids depend on the
-    workspace's lab and inventory, never on test sources, so this must not
-    pay for (or invalidate on) a corpus walk.
+    Keyed by :func:`_tunnel_scope_key` (settings and inventory): tunnel ids
+    depend on the workspace's lab and inventory, never on test sources, so
+    this must not pay for (or invalidate on) a corpus walk. The entry stores
+    the lab key paths (computed here, after init, from the prepared lab
+    sources) and their digest, which :func:`read_tunnel_ids` re-stats.
     Skipped, like every ephemeral-inventory-guarded writer, when the digest is
     ephemeral (:func:`_fingerprint_is_ephemeral`).
     """
+    from .cache_sections import lab_key_paths
+
     if not repos or _fingerprint_is_ephemeral(repos):
         return
     cache_path = _cache_path()
@@ -2614,9 +2740,12 @@ def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
     namespace = existing.get(DYNAMIC_TUNNELS_KEY)
     if not isinstance(namespace, dict):
         namespace = {}
-    namespace[_tunnel_scope_digest(repos)] = {
+    lab = lab_key_paths(repos)
+    namespace[_tunnel_scope_key(repos)] = {
         "schema_version": DYNAMIC_TUNNELS_SCHEMA_VERSION,
         "generated_at": int(time.time()),
+        "lab_key_paths": [str(path) for path in lab],
+        "lab_digest": _lab_paths_digest(lab),
         "ids": list(ids),
     }
     existing[DYNAMIC_TUNNELS_KEY] = namespace
@@ -2624,10 +2753,15 @@ def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
 
 
 def read_tunnel_ids(repos: list["Repo"]) -> list[str] | None:
-    """Fresh cached tunnel ids, or ``None`` (cold / expired / malformed).
+    """Fresh cached tunnel ids, or ``None`` (cold / expired / malformed / a lab file moved).
 
-    Keyed by :func:`_tunnel_scope_digest` — see :func:`record_tunnel_ids`.
+    Keyed by :func:`_tunnel_scope_key` — see :func:`record_tunnel_ids`. The
+    lab half is judged from the entry alone: its stored lab key paths are
+    re-statted and must still digest to its stored ``lab_digest``, so this
+    never prepares a lab source or globs. An entry without them is a miss.
     """
+    from .cache_sections import stored_lab_key_paths
+
     if not repos:
         return None
     cache_path = _cache_path()
@@ -2638,8 +2772,11 @@ def read_tunnel_ids(repos: list["Repo"]) -> list[str] | None:
     except (OSError, json.JSONDecodeError):
         return None
     namespace = data.get(DYNAMIC_TUNNELS_KEY) if isinstance(data, dict) else None
-    entry = namespace.get(_tunnel_scope_digest(repos)) if isinstance(namespace, dict) else None
+    entry = namespace.get(_tunnel_scope_key(repos)) if isinstance(namespace, dict) else None
     if not isinstance(entry, dict) or entry.get("schema_version") != DYNAMIC_TUNNELS_SCHEMA_VERSION:
+        return None
+    lab = stored_lab_key_paths(entry)
+    if lab is None or entry.get("lab_digest") != _lab_paths_digest(lab):
         return None
     generated_at = entry.get("generated_at")
     if not isinstance(generated_at, (int, float)):
@@ -2835,10 +2972,17 @@ def inspect_section(repos: list["Repo"], name: str) -> SectionStatus:
     """Return section *name*'s standing for *repos*, judged as :func:`read_sections` judges it.
 
     Same file, same schema check, same order of tests — taint, then TTL, then
-    digest — but a verdict with a reason instead of ``None``, and the payload
-    regardless of the verdict. ``KeyError`` for an unregistered *name*.
+    digest — against the same stored lab key paths and TTL class, but a
+    verdict with a reason instead of ``None``, and the payload regardless of
+    the verdict. An entry without a usable TTL class or lab key paths is
+    ``unreadable``. ``KeyError`` for an unregistered *name*.
     """
-    from .cache_sections import section_by_name, section_digests
+    from .cache_sections import (
+        _StoredKeysMissingError,
+        section_by_name,
+        section_digests,
+        stored_ttl_seconds,
+    )
 
     section = section_by_name(name)
     cache_path = _cache_path()
@@ -2858,12 +3002,18 @@ def inspect_section(repos: list["Repo"], name: str) -> SectionStatus:
     payload = raw_payload if isinstance(raw_payload, dict) else None
     raw_generated = entry.get("generated_at")
     generated_at = float(raw_generated) if isinstance(raw_generated, (int, float)) else None
-    ttl = _cache_ttl_seconds(repos)
+    ttl = stored_ttl_seconds(entry)
+    if ttl is None:
+        return SectionStatus(state="unreadable", generated_at=generated_at, payload=payload)
+    try:
+        digest = section_digests(repos, [section], stored=stored)[name]
+    except _StoredKeysMissingError:
+        return SectionStatus(state="unreadable", generated_at=generated_at, payload=payload)
     if entry.get("tainted"):
         state = "tainted"
     elif generated_at is None or time.time() - generated_at > ttl:
         state = "expired"
-    elif entry.get("fingerprint") != section_digests(repos, [section])[name]:
+    elif entry.get("fingerprint") != digest:
         state = "stale"
     elif payload is None:
         state = "unreadable"

@@ -265,7 +265,7 @@ def _own_field_names(cls: type[DeclaredProduct]) -> list[str]:
 
 def build_declared(
     entry: DeclaredEntry,
-    host: "Host",  # noqa: ARG001 — the KindRegistry factory signature; this kind ignores host
+    host: "Host",  # noqa: ARG001 — the KindFactory signature; this kind ignores host
     cls: type[DeclaredProduct],
 ) -> DeclaredProduct:
     """Build *cls* from a validated entry's params.

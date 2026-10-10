@@ -8,14 +8,24 @@ set up a scheduler yet aren't blocked.
 
 from typing import TYPE_CHECKING
 
+from pydantic import ConfigDict
 from typing_extensions import override
 
+from ..models.base import OttoModel
 from .base import ReservationBackendBase
 
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from ..registry import Configured
     from .protocol import Reservation, ReservationBackend
+    from .registry import ReservationEnv
+
+
+class NoneReservationConfig(OttoModel):
+    """The ``none`` backend's sub-table: it takes no keys."""
+
+    model_config = ConfigDict(frozen=True)
 
 
 class NullReservationBackend(ReservationBackendBase):
@@ -39,6 +49,13 @@ class NullReservationBackend(ReservationBackendBase):
     def backend_name(self) -> str:
         """Return the registry key for this backend (``"none"``)."""
         return "none"
+
+
+def _none_reservations(
+    c: "Configured[NoneReservationConfig, ReservationEnv]",
+) -> NullReservationBackend:
+    """Build the ``none`` backend for the invoking user."""
+    return NullReservationBackend(username=c.env.username)
 
 
 def is_null_backend(backend: "ReservationBackend") -> bool:

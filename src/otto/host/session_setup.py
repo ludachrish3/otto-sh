@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from ..registry import Registry, caller_module
+from ..registry import Ref, Registry, registration_boundary, resolved
 from .command_frame import CommandFrame
 
 # The error MOVED to `errors` -- `session.py` names it in an `except` arm at
@@ -31,7 +31,13 @@ from .errors import SessionSetupError as SessionSetupError  # noqa: PLC0414 — 
 if TYPE_CHECKING:
     from .session import HostSession, ShellSession
 
-__all__ = ["SESSION_SETUPS", "SetupContext", "register_session_setup", "session_setup_from_spec"]
+__all__ = [
+    "SESSION_SETUPS",
+    "SessionSetupEntry",
+    "SetupContext",
+    "register_session_setup",
+    "session_setup_from_spec",
+]
 
 SetupKind = Literal["default", "named", "exec_pool", "bridge"]
 """Which session is being set up. A hook that provisions something once (a
@@ -69,15 +75,54 @@ class SessionSetup:
     params: dict[str, Any] = field(default_factory=dict)
 
 
-SESSION_SETUPS: Registry[SessionSetupFn] = Registry(
-    "session setup", register_hint="otto.register_session_setup()"
+@dataclass(frozen=True)
+class SessionSetupEntry:
+    """The record :data:`SESSION_SETUPS` stores: the hook, or a ``Ref`` naming it."""
+
+    fn: "SessionSetupFn | Ref"
+    """The hook; a :class:`~otto.registry.Ref` is imported at its first use."""
+
+
+def _check_session_setup_fn(name: str, fn: object) -> None:
+    """Refuse a hook that is not callable.
+
+    One check, two call sites: ``validate`` runs it on a hook registered
+    eagerly, ``check_resolved`` on the object a ``Ref`` names, once imported.
+    """
+    if not callable(fn):
+        raise TypeError(f"session setup {name!r}: {fn!r} is not callable")
+
+
+def _validate_session_setup_entry(name: str, entry: SessionSetupEntry, _proposed: object) -> None:
+    if not isinstance(entry.fn, Ref):
+        _check_session_setup_fn(name, entry.fn)
+
+
+SESSION_SETUPS: "Registry[SessionSetupEntry]" = Registry(
+    "session setup",
+    entry=SessionSetupEntry,
+    register_hint="otto.register_session_setup()",
+    validate=_validate_session_setup_entry,
+    check_resolved=lambda name, entry: _check_session_setup_fn(name, resolved(entry.fn)),
 )
 """The session-setup hooks lab data can name, keyed by hook name."""
 
 
-def register_session_setup(name: str, fn: SessionSetupFn, *, overwrite: bool = False) -> None:
-    """Register *fn* under *name*; lab data selects it by that name."""
-    SESSION_SETUPS.register(name, fn, overwrite=overwrite, origin=caller_module())
+@registration_boundary
+def register_session_setup(
+    name: str, fn: "SessionSetupFn | Ref", *, overwrite: bool = False
+) -> None:
+    """Register *fn* under *name*; lab data selects it by that name.
+
+    *fn* may be a :class:`~otto.registry.Ref` (``"module:function"``), imported
+    and checked the first time a host's session runs the hook.
+
+    Raises
+    ------
+    TypeError
+        If *fn* is not callable.
+    """
+    SESSION_SETUPS.register(name, SessionSetupEntry(fn), overwrite=overwrite)
 
 
 def session_setup_from_spec(value: Any) -> SessionSetup | None:
@@ -137,7 +182,7 @@ async def apply_session_setup(
     """
     from .errors import ConsoleError, RawLandingError
 
-    fn = SESSION_SETUPS.get(setup.name)
+    fn = resolved(SESSION_SETUPS.get(setup.name).fn)
     try:
         await fn(handle, ctx)
     except (RawLandingError, SessionSetupError):

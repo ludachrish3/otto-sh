@@ -6,7 +6,8 @@ This lets many hosts that share a characteristic bundle — a particular Zephyr
 build's `command_frame`, `filesystem`, and `max_filename_len` — name that
 bundle once instead of copy-pasting it into every entry.
 
-Built-in profiles registered at startup:
+The built-in profiles — `unix`, `embedded` and `zephyr` are each their host
+class's own profile; `busybox` names no class of its own:
 
 | `os_type` | Host class | Console `login_prompt` / `password_prompt` | Notes |
 |----------|------------|-----------------|-------|
@@ -26,13 +27,29 @@ registration passes them
 `console_options`, or its first connect fails with `no login prompt
 pattern`.
 
-Profiles are authorable two ways, both feeding the same registry:
+## Where a profile comes from
 
-- **Data** — an `[os_profiles.<name>]` table in `.otto/settings.toml`,
-  registered at settings-parse time.
-- **Code** — `register_os_profile()` called from an init module listed in
-  `settings.toml`, registered after settings parse.  A code registration
-  overrides a data table of the same name (last writer wins).
+A profile can come from three places. Otto looks for the `os_type` name in
+each, in this order, and the first that has it supplies the **whole**
+profile:
+
+1. **Code** — `register_os_profile()` called from an init module listed in
+   `settings.toml` ({doc}`../cookbook/extending/custom-host-classes`).
+2. **Data** — an `[os_profiles.<name>]` table in a selected repo's
+   `.otto/settings.toml` (below). When two repos declare the same name, the
+   later repo in `OTTO_SUT_DIRS` wins.
+3. **The host class's own profile** — the one `register_host_class()` was
+   given, or a built-in from the table above.
+
+Fields never merge across these layers. A data table named `unix` replaces
+the `unix` class's profile, console prompts included, so a console host
+under it needs its prompts in `console_options`. A code profile wins over a
+data table of the same name whichever is defined first, and a data table
+named after a host class wins over that class's own profile even when the
+class is registered after the table is read. A data table is not a
+registration: it is read for the repos otto runs with, so a data profile
+whose `base` is a host class an init module registers works.
+
 ## Data profiles
 
 Add an `[os_profiles.<name>]` sub-table to `.otto/settings.toml`.  The only
@@ -68,7 +85,21 @@ With this profile in place, a host entry only needs to name the profile:
 }
 ```
 
-Unknown `base` values and unknown default field names raise `ValueError` at
-startup so typos fail loudly instead of silently no-opping.
+Settings parsing checks a table's shape: a `base` string and default
+values. What it means is checked after every repo's `init` modules have run,
+so `base` may name a host class one of them registers. An unknown `base` or
+an unknown default field name is that repo's load error, named the way a
+malformed settings file is (`[os_profiles.<name>] in repo '<repo>': ...`).
+Otto treats it as it treats a repo whose `init` module failed to import:
+the repo's `init` modules have already run, so the repo keeps its place in
+the dependency order and its dependents still load, and the other repos keep
+working; a run the broken repo is part of fails loudly, and one it is not
+part of reports the error as a warning, so typos never silently no-op.
+A repo the dependency pass skips never ran its `init` modules, so only its
+tables' shape is checked: what they mean is not judged.
+`otto init`'s doctor reports the same problems, but it does not run `init` modules,
+so it also reports a table whose `base` is a host class only an `init` module
+registers.
+
 Registering a *code* profile — a new host class, or a subclass of one otto
 ships — is a Python author's job; see {doc}`../cookbook/extending/custom-host-classes`.

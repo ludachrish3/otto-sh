@@ -1,5 +1,6 @@
 """SnapshotCache: fresh → no fetch; stale → refetch; down → snapshot + warning (spec §9.5)."""
 
+import dataclasses
 import json
 import logging
 import os
@@ -17,7 +18,8 @@ from otto.inventory import (
 )
 from otto.inventory import cache as cache_module
 from otto.inventory.cache import SnapshotCache, format_age, reset_stale_warnings
-from otto.inventory.config import CompiledInventory, construct_inventory
+from otto.inventory.config import compile_inventory, construct_inventory
+from otto.models.settings import InventoryConfigSpec
 from otto.testing import assert_inventory_conforms
 
 from .netbox_stub import TOKEN, NetBoxStub, device
@@ -508,18 +510,17 @@ _HOUR = timedelta(hours=1)
 
 
 def _json_kwargs(tmp_path):
-    return {"path": tmp_path / "i.json", "supplies": None}
+    return {"path": str(tmp_path / "i.json")}
 
 
-def _compiled(backend, kwargs, ttl, tmp_path):
-    return CompiledInventory(
-        backend=backend,
-        kwargs=kwargs,
-        creds=None,
-        cache_ttl=ttl,
+def _compiled(backend, table, ttl, tmp_path):
+    """The table prepared as ``compile_inventory`` prepares it, at *ttl*."""
+    compiled = compile_inventory(
+        InventoryConfigSpec.model_validate({"backend": backend, **table}),
         anchor_dir=tmp_path,
         origin="o",
     )
+    return dataclasses.replace(compiled, cache_ttl=ttl)
 
 
 def test_construct_wraps_netbox_but_never_json_and_ttl_zero_disables(tmp_path, monkeypatch):
@@ -544,15 +545,11 @@ def test_construct_wraps_netbox_but_never_json_and_ttl_zero_disables(tmp_path, m
     creds = tmp_path / "c.json"
     creds.write_text("{}")
     wrapped = construct_inventory(
-        CompiledInventory(
-            backend="netbox",
-            kwargs={"url": "http://127.0.0.1:9"},
+        dataclasses.replace(
+            _compiled("netbox", {"url": "http://127.0.0.1:9"}, timedelta(hours=1), tmp_path),
             creds=compile_creds_table(
                 {"backend": "json", "path": str(creds)}, anchor_dir=tmp_path, origin="o"
             ),
-            cache_ttl=timedelta(hours=1),
-            anchor_dir=tmp_path,
-            origin="o",
         )
     )
     assert isinstance(wrapped, CredsOverlay)  # the overlay stays OUTERMOST

@@ -1,5 +1,7 @@
 """Unified transfer backend registry + create seam + applicability (WS#4)."""
 
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,11 +17,13 @@ from otto.host.transfer import (
     ProgressGranularity,
     ScpFileTransfer,
     SftpFileTransfer,
+    TransferConstructionError,
     TransferContext,
     build_transfer_backend,
     register_transfer_backend,
 )
 from otto.host.userland import Userland
+from otto.registry import Ref, class_backend
 
 
 def _ctx(**overrides: object) -> TransferContext:
@@ -45,6 +49,11 @@ def _ctx(**overrides: object) -> TransferContext:
     return TransferContext(**fields)  # type: ignore[arg-type]
 
 
+def _cls(name: str) -> type[BaseFileTransfer]:
+    """The class registered under *name*, resolved."""
+    return TRANSFER_BACKENDS.get(name).cls
+
+
 @pytest.fixture(autouse=True)
 def _isolate_transfer_registry():
     """Unregister any test-added transfer backend after each test."""
@@ -58,22 +67,22 @@ def _isolate_transfer_registry():
 
 class TestBuiltins:
     def test_nc_registered_to_ncfiletransfer(self):
-        cls = build_transfer_backend("nc")
+        cls = _cls("nc")
         assert cls is NcFileTransfer
         assert cls.host_families == frozenset({"unix"})
 
     def test_ftp_registered_to_ftpfiletransfer(self):
-        cls = build_transfer_backend("ftp")
+        cls = _cls("ftp")
         assert cls is FtpFileTransfer
         assert cls.host_families == frozenset({"unix"})
 
     def test_scp_registered_to_scpfiletransfer(self):
-        cls = build_transfer_backend("scp")
+        cls = _cls("scp")
         assert cls is ScpFileTransfer
         assert cls.host_families == frozenset({"unix"})
 
     def test_sftp_registered_to_sftpfiletransfer(self):
-        cls = build_transfer_backend("sftp")
+        cls = _cls("sftp")
         assert cls is SftpFileTransfer
         assert cls.host_families == frozenset({"unix"})
 
@@ -81,7 +90,7 @@ class TestBuiltins:
 class TestRegistry:
     def test_unknown_raises_with_known_list(self):
         with pytest.raises(ValueError, match="Unknown transfer backend"):
-            build_transfer_backend("nope")
+            build_transfer_backend("nope", _ctx())
 
     def test_register_rejects_empty_host_families(self):
         class NoFamilies(BaseFileTransfer):
@@ -101,7 +110,7 @@ class TestRegistry:
             host_families = frozenset({"unix"})
 
         register_transfer_backend("xmodem", XmodemTransfer)
-        assert build_transfer_backend("xmodem") is XmodemTransfer
+        assert _cls("xmodem") is XmodemTransfer
 
     def test_register_rejects_a_backend_without_a_progress_granularity(self):
         class NoPromise(BaseFileTransfer):
@@ -142,7 +151,7 @@ class TestRegistry:
 
     def test_every_registered_backend_declares_its_promise(self):
         for name in TRANSFER_BACKENDS.names():
-            cls = build_transfer_backend(name)
+            cls = _cls(name)
             declared = cls.progress_granularity
             assert isinstance(declared, ProgressGranularity), name
             for arm in ("put", "get"):
@@ -150,9 +159,9 @@ class TestRegistry:
                     assert declared.note.strip(), f"{name}.{arm} is None with no note"
 
     def test_built_in_transfers_declare_whether_they_authenticate(self):
-        assert build_transfer_backend("ftp").authenticates is True
+        assert _cls("ftp").authenticates is True
         for name in ("scp", "sftp", "nc", "shell", "console", "tftp"):
-            assert build_transfer_backend(name).authenticates is False, name
+            assert _cls(name).authenticates is False, name
 
     def test_register_rejects_a_non_bool_authenticates(self):
         """A truthy string is not a declaration -- the refusal checks the TYPE."""
@@ -199,15 +208,14 @@ def test_each_selector_resolves_to_its_own_backend_class():
         ScpFileTransfer,
         SftpFileTransfer,
         TftpFileTransfer,
-        build_transfer_backend,
     )
 
-    assert build_transfer_backend("scp") is ScpFileTransfer
-    assert build_transfer_backend("sftp") is SftpFileTransfer
-    assert build_transfer_backend("ftp") is FtpFileTransfer
-    assert build_transfer_backend("nc") is NcFileTransfer
-    assert build_transfer_backend("console") is ConsoleFileTransfer
-    assert build_transfer_backend("tftp") is TftpFileTransfer
+    assert _cls("scp") is ScpFileTransfer
+    assert _cls("sftp") is SftpFileTransfer
+    assert _cls("ftp") is FtpFileTransfer
+    assert _cls("nc") is NcFileTransfer
+    assert _cls("console") is ConsoleFileTransfer
+    assert _cls("tftp") is TftpFileTransfer
 
 
 def test_public_import_surface_preserved():
@@ -247,7 +255,7 @@ class TestEmbeddedTransferRegistration:
     def test_console_registered_embedded_only(self):
         from otto.host.transfer import ConsoleFileTransfer, EmbeddedFileTransfer
 
-        cls = build_transfer_backend("console")
+        cls = _cls("console")
         assert cls is ConsoleFileTransfer
         assert issubclass(cls, EmbeddedFileTransfer)
         assert cls.host_families == frozenset({"embedded"})
@@ -255,7 +263,7 @@ class TestEmbeddedTransferRegistration:
     def test_tftp_registered_embedded_only(self):
         from otto.host.transfer import EmbeddedFileTransfer, TftpFileTransfer
 
-        cls = build_transfer_backend("tftp")
+        cls = _cls("tftp")
         assert cls is TftpFileTransfer
         assert issubclass(cls, EmbeddedFileTransfer)
         assert cls.host_families == frozenset({"embedded"})
@@ -369,3 +377,48 @@ def test_the_ftp_stride_is_aioftps_own_block_size():
     assert _FTP_BLOCK_SIZE == aioftp.DEFAULT_BLOCK_SIZE
     assert FtpFileTransfer.progress_granularity.put == aioftp.DEFAULT_BLOCK_SIZE
     assert FtpFileTransfer.progress_granularity.get == aioftp.DEFAULT_BLOCK_SIZE
+
+
+# ── built through the registry: a context in, a built backend out ────────────
+
+
+def test_build_transfer_backend_returns_a_built_backend():
+    built = build_transfer_backend("nc", _ctx())
+    assert isinstance(built, NcFileTransfer)
+
+
+def test_transfer_metadata_is_read_without_importing():
+    """Reading a built-in's metadata imports no backend module."""
+    script = (
+        "import sys\n"
+        "from otto.host.transfer.registry import TRANSFER_BACKENDS\n"
+        "metadata = TRANSFER_BACKENDS.peek('tftp').metadata\n"
+        "assert metadata.host_families == frozenset({'embedded'}), metadata\n"
+        "print('otto.host.transfer.tftp' in sys.modules)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "False"
+
+
+@pytest.mark.parametrize("built_first", [False, True])
+def test_a_built_in_whose_class_disagrees_with_its_stated_metadata_is_refused_at_first_build(
+    monkeypatch, built_first
+):
+    from otto.host.transfer.nc import NcFileTransfer as Nc
+
+    if built_first:
+        build_transfer_backend("nc", _ctx())
+    # A fresh registration BY REFERENCE, as otto registers the built-in: after
+    # a build, peek() returns the resolved record, whose class needs no check.
+    stated = TRANSFER_BACKENDS.peek("nc").metadata
+    TRANSFER_BACKENDS.register(
+        "nc",
+        class_backend(cls=Ref("otto.host.transfer.nc:NcFileTransfer"), metadata=stated),
+        overwrite=True,
+    )
+    monkeypatch.setattr(Nc, "authenticates", True)
+    with pytest.raises(TransferConstructionError, match="authenticates"):
+        build_transfer_backend("nc", _ctx())

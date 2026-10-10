@@ -1,0 +1,59 @@
+id: backend-no-name-dispatch
+language: python
+severity: error
+message: this branches on a backend's NAME, so a backend registered over "json" (or "none") with overwrite=True is treated as the built-in it replaced, and a third-party backend never gets the built-in's treatment. Read what you need from the prepared backend (its config model's prepared facts, or the entry's static metadata) instead.
+note: >
+  A configured seam's name is a registry key, and any backend can be
+  registered under any key: a repo can replace the built-in "json" with its
+  own. Code that compares the name against "json" or "none" keeps treating a
+  replacement as the built-in (reading the built-in's files, skipping the
+  built-in's work), which the replacement differential cannot see when the
+  comparison sits off the build path. What a caller needs to know about a
+  backend comes from it: the config model's `prepared_facts()` (the lab
+  files a json source reads, a TTL class) or the entry's static metadata
+  (`BackendRegistry.peek(name).metadata`).
+
+  Flagged: `==` / `!=` against the string literal "json" or "none" on
+  either side, and `in` / `not in` against a tuple, list or set literal
+  holding one of them. Scoped to the orchestration modules that dispatched
+  on the name when the backend registries landed (inventory and creds
+  config, lab sources, the reservation factory, the completion cache, `otto
+  cache`, `otto init`'s areas) and to the five configured seams' registry
+  modules (labs, inventory, creds and reservations `registry.py`, and
+  host/power.py for power controllers). A string in a docstring or a
+  message is not a comparison and is not seen.
+files:
+- src/otto/inventory/config.py
+- src/otto/creds/config.py
+- src/otto/labs/sources.py
+- src/otto/reservations/factory.py
+- src/otto/config/completion_cache.py
+- src/otto/cli/cache.py
+- src/otto/init/areas.py
+- src/otto/labs/registry.py
+- src/otto/inventory/registry.py
+- src/otto/creds/registry.py
+- src/otto/reservations/registry.py
+- src/otto/host/power.py
+utils:
+  builtin-name:
+    kind: string
+    regex: '^[rRbBuU]?("json"|''json''|"none"|''none'')$'
+rule:
+  kind: comparison_operator
+  any:
+  # x == "json", "none" != x
+  - all:
+    - regex: '(==|!=)'
+    - has:
+        matches: builtin-name
+  # x in ("json", "none"), x not in ["json"]
+  - all:
+    - regex: '\bin\b'
+    - has:
+        any:
+        - kind: tuple
+        - kind: list
+        - kind: set
+        has:
+          matches: builtin-name

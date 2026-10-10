@@ -198,13 +198,12 @@ class _IngestProduct(ShellProduct):
 
 @contextlib.contextmanager
 def _product_provider(provider):
-    """Register *provider* in the real provider registry for the block only."""
-    saved = list(product_mod._PRODUCT_PROVIDERS)
-    product_mod.register_product_provider(provider)
+    """Subscribe *provider* to the real provider subscription for the block only."""
+    token = product_mod.PRODUCT_PROVIDERS.subscribe(provider)
     try:
         yield
     finally:
-        product_mod._PRODUCT_PROVIDERS[:] = saved
+        token.cancel()
 
 
 # ---------------------------------------------------------------------------

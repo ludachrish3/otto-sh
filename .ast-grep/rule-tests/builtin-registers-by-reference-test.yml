@@ -7,10 +7,11 @@ valid:
 # The house shape: the module that defines the registry registers the
 # built-in by reference.
 - |
-  from otto.registry import Ref
+  from otto.registry import BackendRegistry, Ref, class_backend
 
+  TRANSFER_BACKENDS = BackendRegistry("transfer backend", register_hint="x")
   TRANSFER_BACKENDS.register(
-      "nc", Ref("otto.host.transfer.nc:NcFileTransfer"), origin="otto.host.transfer.nc"
+      "nc", class_backend(cls=Ref("otto.host.transfer.nc:NcFileTransfer"), metadata=meta)
   )
 # A plugin registers at call time, from a function body nothing calls at import.
 - |
@@ -38,17 +39,18 @@ valid:
 
 
   register_login_proxy("su", _su_proxy, prompt=_SU_PROMPT)
-# The introspective project.actions site: the class's own marked methods.
+# The same with the wrapper marked as a registration boundary: a decorated
+# definition is still the file's own registration API.
 - |
-  class ProjectActions: ...
+  LOGIN_PROXIES = Registry("login proxies")
 
 
-  def register_project_instruction_bodies(cls, repo) -> None:
-      for attr, mark in _marked(cls):
-          register_project_instruction_body(cls, attr, mark, repo=repo)
+  @registration_boundary
+  def register_login_proxy(name, proxy, *, prompt=None) -> None:
+      LOGIN_PROXIES.register(name, LoginProxy(proxy, prompt))
 
 
-  register_project_instruction_bodies(ProjectActions, None)
+  register_login_proxy("su", _su_proxy, prompt=_SU_PROMPT)
 # Not registrations: a stdlib hook and a function with no arguments.
 - |
   import atexit
@@ -108,9 +110,6 @@ invalid:
 
 
   register_nc_backend("nc", NcFileTransfer)
-# `origin=` names where an entry came from; it does not make the entry a Ref.
-- |
-  register_transfer_backend("nc", NcFileTransfer, origin=Ref("otto.host.transfer.nc:NcFileTransfer"))
 # A local `register_*` helper that registers into an imported registry, in a
 # file that assigns an unrelated registry of its own.
 - |
@@ -140,8 +139,46 @@ invalid:
 
 
   register_thing("nc", NcFileTransfer)
-# The introspective call, outside the file that defines its class.
+# Registering a class's own marked methods at import, even beside the class:
+# otto's project-instruction bodies are a constant, so no site is exempt.
 - |
-  from otto.project.actions import ProjectActions, register_project_instruction_bodies
+  class ProjectActions: ...
+
+
+  def register_project_instruction_bodies(cls, repo) -> None:
+      for attr, mark in _marked(cls):
+          register_project_instruction_body(cls, attr, mark, repo=repo)
+
 
   register_project_instruction_bodies(ProjectActions, None)
+# A decorated local `register_*` wrapper around another module's registry:
+# the decorator does not make the foreign registration local.
+- |
+  from otto.host.transfer.registry import TRANSFER_BACKENDS
+
+
+  class NcFileTransfer: ...
+
+
+  @registration_boundary
+  def register_nc_backend(name, cls) -> None:
+      TRANSFER_BACKENDS.register(name, cls)
+
+
+  register_nc_backend("nc", NcFileTransfer)
+# A decorated local zero-argument `register_*` wrapper around a real
+# registration: decorated or not, it is defined here, so its call site is
+# checked rather than taken for an imported API.
+- |
+  from otto.host.transfer.registry import register_transfer_backend
+
+
+  class NcFileTransfer: ...
+
+
+  @registration_boundary
+  def register_nc() -> None:
+      register_transfer_backend("nc", NcFileTransfer)
+
+
+  register_nc()

@@ -5,15 +5,20 @@ bare word a repr or a locals dump could satisfy.
 """
 
 import sys
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-from otto.inventory import InventoryError, InventoryKeyError
-from otto.inventory.config import CompiledInventory, construct_inventory
+from otto.inventory import (
+    InventoryConstructionError,
+    InventoryEnv,
+    InventoryError,
+    InventoryKeyError,
+)
+from otto.inventory.config import compile_inventory, construct_inventory
 from otto.inventory.netbox import NATIVE_SUPPLIES, NetBoxInventory
-from otto.inventory.registry import get_inventory_backend_class
+from otto.inventory.registry import INVENTORY_BACKENDS
+from otto.models.settings import InventoryConfigSpec
 from otto.testing import assert_inventory_conforms
 
 from .netbox_stub import TOKEN, NetBoxStub, device, self_signed_cert
@@ -32,9 +37,10 @@ def _inv(stub, **kw):
     return NetBoxInventory(url=stub.base, **kw)
 
 
-def test_netbox_is_registered_and_construction_is_lazy():
-    assert get_inventory_backend_class("netbox") is NetBoxInventory
-    inv = NetBoxInventory(url=DEAD)  # nothing listens; no error until first use
+def test_netbox_is_registered_and_construction_is_lazy(tmp_path):
+    prepared = INVENTORY_BACKENDS.prepare("netbox", {"url": DEAD}, InventoryEnv(tmp_path, "o.toml"))
+    inv = INVENTORY_BACKENDS.build(prepared)  # nothing listens; no error until first use
+    assert isinstance(inv, NetBoxInventory)
     assert inv.label == f"netbox:{DEAD}"
     assert inv.supplies == NATIVE_SUPPLIES
     with pytest.raises(InventoryError, match=f"netbox inventory {DEAD}"):
@@ -228,63 +234,52 @@ def test_a_timeout_that_is_not_a_positive_number_is_refused_at_construction(bad)
         NetBoxInventory(url=DEAD, timeout=bad)
 
 
-def test_a_refused_timeout_names_the_settings_file_and_the_backend(tmp_path):
-    """The construction path turns the ValueError into an InventoryError the user can act on."""
-    compiled = CompiledInventory(
-        backend="netbox",
-        kwargs={"url": DEAD, "timeout": 0},
-        creds=None,
-        cache_ttl=timedelta(0),
-        anchor_dir=tmp_path,
+def _compiled(tmp_path, table, *, anchor=None):
+    """The ``[inventory]`` table prepared as a repo's settings file would declare it."""
+    return compile_inventory(
+        InventoryConfigSpec.model_validate({"backend": "netbox", "cache_ttl": "0", **table}),
+        anchor_dir=anchor or tmp_path,
         origin=str(tmp_path / ".otto" / "settings.toml"),
     )
+
+
+def test_a_refused_timeout_names_the_settings_file_and_the_backend(tmp_path):
+    """The construction stage turns the ValueError into an error the user can act on."""
     with pytest.raises(
-        InventoryError,
-        match=r"settings\.toml: \[inventory\] backend 'netbox': "
-        r"timeout must be a positive number of seconds",
+        InventoryConstructionError,
+        match=r"'netbox' \(registered by .*; configured in .*settings\.toml\): "
+        r"construction failed: ValueError: timeout must be a positive number of seconds",
     ):
-        construct_inventory(compiled)
+        construct_inventory(_compiled(tmp_path, {"url": DEAD, "timeout": 0}))
 
 
-def test_repo_dir_is_accepted_and_reaches_no_instance_attribute(tmp_path):
-    # The registry's uniform constructor contract: construct_inventory always
-    # passes repo_dir. Nothing here interprets a path, so two repos declaring
-    # the same table build an inventory identical in EVERY attribute — the
-    # whole `vars()`, not a chosen pair, because `CompiledInventory.same_as`
-    # ignores anchor_dir and an attribute that quietly remembered it would
-    # make two such repos disagree about an inventory they call the same.
-    a = NetBoxInventory(tmp_path / "repo-a", url=DEAD)
-    b = NetBoxInventory(tmp_path / "repo-b", url=DEAD)
+def test_two_repos_declaring_one_table_build_identical_inventories(tmp_path):
+    # Nothing here interprets a path, so two repos declaring the same table
+    # build an inventory identical in EVERY attribute — the whole `vars()`,
+    # not a chosen pair, because `CompiledInventory.same_as` ignores
+    # anchor_dir and an attribute that quietly remembered it would make two
+    # such repos disagree about an inventory they call the same.
+    a = construct_inventory(_compiled(tmp_path, {"url": DEAD}, anchor=tmp_path / "repo-a"))
+    b = construct_inventory(_compiled(tmp_path, {"url": DEAD}, anchor=tmp_path / "repo-b"))
     assert vars(a) == vars(b)
     assert not [v for v in vars(a).values() if isinstance(v, Path)]
 
 
-def test_a_bad_kwarg_names_the_settings_file_and_the_backend(tmp_path):
-    # Why the constructor raises ValueError rather than InventoryError:
-    # construct_inventory wraps it with the origin the user must go and edit.
-    compiled = CompiledInventory(
-        backend="netbox",
-        kwargs={"url": DEAD, "ip_source": "bogus"},
-        creds=None,
-        cache_ttl=timedelta(0),
-        anchor_dir=tmp_path,
-        origin=str(tmp_path / ".otto" / "settings.toml"),
-    )
-    with pytest.raises(InventoryError, match=r"settings\.toml: \[inventory\] backend 'netbox':"):
-        construct_inventory(compiled)
+def test_a_bad_value_names_the_settings_file_and_the_backend(tmp_path):
+    # Why the constructor raises ValueError rather than InventoryError: the
+    # registry's construction stage wraps it with the origin the user must edit.
+    with pytest.raises(
+        InventoryConstructionError, match=r"'netbox' \(.*settings\.toml\): construction failed"
+    ):
+        construct_inventory(_compiled(tmp_path, {"url": DEAD, "ip_source": "bogus"}))
 
 
-def test_an_unknown_kwarg_names_the_settings_file_and_the_backend(tmp_path):
-    compiled = CompiledInventory(
-        backend="netbox",
-        kwargs={"url": DEAD, "urll": "typo"},
-        creds=None,
-        cache_ttl=timedelta(0),
-        anchor_dir=tmp_path,
-        origin=str(tmp_path / ".otto" / "settings.toml"),
-    )
-    with pytest.raises(InventoryError, match=r"backend 'netbox':.*unexpected keyword argument"):
-        construct_inventory(compiled)
+def test_an_unknown_key_names_the_settings_file_and_the_backend(tmp_path):
+    with pytest.raises(
+        InventoryConstructionError,
+        match=r"'netbox' \(.*settings\.toml\): parse failed: urll: Extra inputs",
+    ):
+        _compiled(tmp_path, {"url": DEAD, "urll": "typo"})
 
 
 # -- round 1: the wire-shape seam ------------------------------------------
@@ -484,3 +479,19 @@ def test_the_http_session_is_closed_after_the_fetch(monkeypatch):
         monkeypatch.setattr(pynetbox, "api", spy)
         assert _inv(stub).list_keys() == ["d1"]
     assert closed, "pynetbox builds its own requests.Session and never closes it"
+
+
+def test_the_config_model_s_defaults_are_the_constructor_s():
+    """One set of defaults: the model and ``NetBoxInventory`` must never drift apart."""
+    import inspect
+
+    from otto.inventory.config import NetBoxInventoryConfig
+
+    params = inspect.signature(NetBoxInventory).parameters
+    fields = NetBoxInventoryConfig.model_fields
+    assert set(fields) <= set(params)
+    for name, field in sorted(fields.items()):
+        if field.is_required():
+            assert params[name].default is inspect.Parameter.empty, name
+        else:
+            assert field.get_default(call_default_factory=True) == params[name].default, name

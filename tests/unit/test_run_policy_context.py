@@ -305,13 +305,15 @@ def test_peer_lookup_prefers_the_back_reference_then_the_installed_resolver():
 
 @pytest.mark.asyncio
 async def test_a_power_controller_resolves_through_the_installed_resolver():
-    from otto.host.power import CommandPowerController
+    from otto.host.power import CommandPowerConfig, CommandPowerController
 
     controller_host = make_host("test2")
     lab = Lab(name="rig")
     lab.add_host(controller_host)
     target = make_host("test1")  # no back-reference
-    power = CommandPowerController(on_cmd="on", off_cmd="off", controller=controller_host.id)
+    power = CommandPowerController(
+        CommandPowerConfig(on_cmd="on", off_cmd="off", controller=controller_host.id)
+    )
     binding = set_context(OttoContext(lab=lab))
     try:
         assert await power._runner(target) is controller_host

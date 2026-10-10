@@ -28,9 +28,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import ValidationError
+from pydantic import ConfigDict, ValidationError, ValidationInfo, field_validator
 from typing_extensions import override
 
+from ..models.base import OttoModel
+from ..utils import anchor_path
 from .base import ReservationBackendBase
 from .check import ReservationBackendError
 from .protocol import Reservation
@@ -41,6 +43,32 @@ from .protocol import Reservation
 # read (import budget). _load() imports them when it actually parses one.
 if TYPE_CHECKING:
     from ..models.settings import ReservationFile
+    from ..registry import Configured
+    from .registry import ReservationEnv
+
+
+class JsonReservationConfig(OttoModel):
+    """The json backend's ``[reservations.json]`` sub-table: the reservation file."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: Path
+    """The reservation file; a relative path anchors to the repo root; ``~`` is expanded."""
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _not_empty(cls, value: object) -> object:
+        """Refuse an empty string, which would otherwise read as the repo root."""
+        if value == "":
+            raise ValueError("must name the reservation file")
+        return value
+
+    @field_validator("path", mode="after")
+    @classmethod
+    def _anchor(cls, value: Path, info: ValidationInfo) -> Path:
+        """Anchor a relative path to the env's ``repo_dir`` when prepared with one."""
+        env = (info.context or {}).get("env")
+        return anchor_path(value, env.repo_dir, quote=False) if env is not None else value
 
 
 class JsonReservationBackend(ReservationBackendBase):
@@ -54,9 +82,8 @@ class JsonReservationBackend(ReservationBackendBase):
     Parameters
     ----------
     url : str | None
-        Accepted and ignored.  Kept in the signature so the factory
-        (:func:`otto.reservations.build_backend`) can pass ``url=url``
-        uniformly to any backend.
+        Kept on the base as ``self.url`` and otherwise ignored: the file is
+        the whole backend.
     path : Path
         Location of the reservation file on disk.  Required.
     username : str | None
@@ -159,3 +186,10 @@ class JsonReservationBackend(ReservationBackendBase):
             return ReservationFile.model_validate(data)
         except ValidationError as e:
             raise ReservationBackendError(f"Invalid reservation file {self._path}: {e}") from e
+
+
+def _json_reservations(
+    c: "Configured[JsonReservationConfig, ReservationEnv]",
+) -> JsonReservationBackend:
+    """Build the json backend from its prepared sub-table."""
+    return JsonReservationBackend(c.env.url, path=c.config.path, username=c.env.username)

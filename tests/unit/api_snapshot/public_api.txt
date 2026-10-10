@@ -48,7 +48,7 @@ call	otto.bootstrap:is_bootstrapped	sync	-
 name	otto.cli.registry:CLI_COMMANDS	value
 name	otto.cli.registry:CommandSpec	class
 mro	otto.cli.registry:CommandSpec	-
-call	otto.cli.registry:CommandSpec	sync	PK:name:- PK:loader:- PK:help:N PK:lab_free:B:false PK:output_dir:B:true PK:gate:B:true PK:dry_run_preview:B:false PK:async_leaves:B:false PK:origin:S:""
+call	otto.cli.registry:CommandSpec	sync	PK:name:- PK:loader:- PK:help:N PK:lab_free:B:false PK:output_dir:B:true PK:gate:B:true PK:dry_run_preview:B:false PK:async_leaves:B:false
 member	otto.cli.registry:CommandSpec.__eq__	method	sync	PK:other:-
 member	otto.cli.registry:CommandSpec.__hash__	method	sync	-
 member	otto.cli.registry:CommandSpec.async_leaves	field
@@ -58,13 +58,12 @@ member	otto.cli.registry:CommandSpec.help	field
 member	otto.cli.registry:CommandSpec.lab_free	field
 member	otto.cli.registry:CommandSpec.loader	field
 member	otto.cli.registry:CommandSpec.name	field
-member	otto.cli.registry:CommandSpec.origin	field
 member	otto.cli.registry:CommandSpec.output_dir	field
 abstract	otto.cli.registry:CommandSpec	-
 name	otto.cli.registry:cli_command	function
 call	otto.cli.registry:cli_command	sync	KO:options:N KO:name:N KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:dry_run_preview:B:false
 name	otto.cli.registry:register_cli_command	function
-call	otto.cli.registry:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:origin:N
+call	otto.cli.registry:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:overwrite:B:false
 name	otto.config:DockerCompose	class
 mro	otto.config:DockerCompose	-
 call	otto.config:DockerCompose	sync	PK:path:- PK:services:T:[] PK:name:S:"" PK:users:T:[]
@@ -387,15 +386,26 @@ name	otto.coverage:run_coverage_report	function
 call	otto.coverage:run_coverage_report	coroutine	PK:cov_dirs:- PK:output_dir:- PK:inputs:- KO:project_name:S:"Coverage\u0020Report" KO:tier_specs:N KO:prefix:N KO:overwrite:B:false
 name	otto.creds:CompiledCreds	class
 mro	otto.creds:CompiledCreds	-
-call	otto.creds:CompiledCreds	sync	PK:backend:- PK:kwargs:- PK:anchor_dir:- PK:origin:-
+call	otto.creds:CompiledCreds	sync	PK:prepared:- PK:anchor_dir:- PK:origin:-
 member	otto.creds:CompiledCreds.__eq__	method	sync	PK:other:-
 member	otto.creds:CompiledCreds.__hash__	method	sync	-
 member	otto.creds:CompiledCreds.anchor_dir	field
-member	otto.creds:CompiledCreds.backend	field
-member	otto.creds:CompiledCreds.kwargs	field
 member	otto.creds:CompiledCreds.origin	field
+member	otto.creds:CompiledCreds.prepared	field
 member	otto.creds:CompiledCreds.same_as	method	sync	PK:other:-
 abstract	otto.creds:CompiledCreds	-
+name	otto.creds:CredsConstructionError	class
+mro	otto.creds:CredsConstructionError	{otto.creds:CredsError} {otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.creds:CredsConstructionError	sync	@builtin:builtins.ValueError
+abstract	otto.creds:CredsConstructionError	-
+name	otto.creds:CredsEnv	class
+mro	otto.creds:CredsEnv	-
+call	otto.creds:CredsEnv	sync	PK:anchor_dir:- PK:origin:-
+member	otto.creds:CredsEnv.__eq__	method	sync	PK:other:-
+member	otto.creds:CredsEnv.__hash__	method	sync	-
+member	otto.creds:CredsEnv.anchor_dir	field
+member	otto.creds:CredsEnv.origin	field
+abstract	otto.creds:CredsEnv	-
 name	otto.creds:CredsError	class
 mro	otto.creds:CredsError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.creds:CredsError	sync	@builtin:builtins.Exception
@@ -407,6 +417,13 @@ member	otto.creds:CredsStore.label	property:g--
 member	otto.creds:CredsStore.list_keys	method	sync	-
 member	otto.creds:CredsStore.lookup	method	sync	PK:key:-
 requires	otto.creds:CredsStore	fingerprint label list_keys lookup
+name	otto.creds:JsonCredsConfig	model
+mro	otto.creds:JsonCredsConfig	{otto.models:OttoModel}
+input	otto.creds:JsonCredsConfig	S:"path"	required	-	S:"path"
+member	otto.creds:JsonCredsConfig.__hash__	method	sync	-
+member	otto.creds:JsonCredsConfig.model_config	attribute
+member	otto.creds:JsonCredsConfig.path	field
+abstract	otto.creds:JsonCredsConfig	-
 name	otto.creds:JsonCredsStore	class
 mro	otto.creds:JsonCredsStore	-
 call	otto.creds:JsonCredsStore	sync	PK:path:-
@@ -424,7 +441,7 @@ call	otto.creds:construct_creds_store	sync	PK:compiled:-
 name	otto.creds:parse_creds_document	function
 call	otto.creds:parse_creds_document	sync	PK:data:- KO:source:-
 name	otto.creds:register_creds_backend	function
-call	otto.creds:register_creds_backend	sync	PK:name:- PK:cls:- KO:overwrite:B:false
+call	otto.creds:register_creds_backend	sync	PK:name:- KO:config:- KO:factory:- KO:overwrite:B:false
 name	otto.docker:AdapterResult	class
 mro	otto.docker:AdapterResult	-
 call	otto.docker:AdapterResult	sync	PK:files:O PK:env:O PK:extra_files:O
@@ -581,7 +598,7 @@ call	otto.docker:list_containers	coroutine	PK:parent:N KO:all:B:false
 name	otto.docker:list_images	function
 call	otto.docker:list_images	coroutine	PK:parent:N
 name	otto.docker:register_compose_adapter	function
-call	otto.docker:register_compose_adapter	sync	PK:use_case:-
+call	otto.docker:register_compose_adapter	sync	PK:use_case:- KO:overwrite:B:false
 name	otto.docker:resolve_compose_logs	function
 call	otto.docker:resolve_compose_logs	sync	PK:use_case:- PK:services:T:[] KO:parent:N KO:provide:N KO:tail:N KO:since:N KO:timestamps:B:false
 name	otto.docker:resolve_logs	function
@@ -636,11 +653,22 @@ member	otto.examples.app_shell:Version.pattern	attribute
 abstract	otto.examples.app_shell:Version	-
 name	otto.examples.lab_repository:ExampleLabRepository	class
 mro	otto.examples.lab_repository:ExampleLabRepository	-
-call	otto.examples.lab_repository:ExampleLabRepository	sync	KO:repo_dir:N KO:labs:N KO:resources:N
+call	otto.examples.lab_repository:ExampleLabRepository	sync	KO:labs:N KO:resources:N KO:profiles:N
 member	otto.examples.lab_repository:ExampleLabRepository.list_host_summaries	method	sync	PK:inventory:N
 member	otto.examples.lab_repository:ExampleLabRepository.list_labs	method	sync	-
 member	otto.examples.lab_repository:ExampleLabRepository.load_lab	method	sync	PK:name:- PK:preferences:N PK:inventory:N
 abstract	otto.examples.lab_repository:ExampleLabRepository	-
+name	otto.examples.lab_repository:ExampleLabSourceConfig	model
+mro	otto.examples.lab_repository:ExampleLabSourceConfig	{otto.models:OttoModel}
+input	otto.examples.lab_repository:ExampleLabSourceConfig	S:"labs"	optional	N	S:"labs"
+input	otto.examples.lab_repository:ExampleLabSourceConfig	S:"resources"	optional	N	S:"resources"
+member	otto.examples.lab_repository:ExampleLabSourceConfig.__hash__	method	sync	-
+member	otto.examples.lab_repository:ExampleLabSourceConfig.labs	field
+member	otto.examples.lab_repository:ExampleLabSourceConfig.model_config	attribute
+member	otto.examples.lab_repository:ExampleLabSourceConfig.resources	field
+abstract	otto.examples.lab_repository:ExampleLabSourceConfig	-
+name	otto.examples.lab_repository:example_lab_source	function
+call	otto.examples.lab_repository:example_lab_source	sync	PK:c:-
 name	otto.examples.login_proxy:enter_container	function
 call	otto.examples.login_proxy:enter_container	coroutine	PK:io:- PK:ctx:-
 name	otto.examples.monitor:UptimeParser	class
@@ -682,6 +710,15 @@ member	otto.examples.reservations:ExampleReservationBackend.holders	method	sync	
 member	otto.examples.reservations:ExampleReservationBackend.list_usernames	method	sync	-
 member	otto.examples.reservations:ExampleReservationBackend.reservations	property:g--
 abstract	otto.examples.reservations:ExampleReservationBackend	-
+name	otto.examples.reservations:ExampleReservationConfig	model
+mro	otto.examples.reservations:ExampleReservationConfig	{otto.models:OttoModel}
+input	otto.examples.reservations:ExampleReservationConfig	S:"reservations"	optional	N	S:"reservations"
+member	otto.examples.reservations:ExampleReservationConfig.__hash__	method	sync	-
+member	otto.examples.reservations:ExampleReservationConfig.model_config	attribute
+member	otto.examples.reservations:ExampleReservationConfig.reservations	field
+abstract	otto.examples.reservations:ExampleReservationConfig	-
+name	otto.examples.reservations:example_reservations	function
+call	otto.examples.reservations:example_reservations	sync	PK:c:-
 name	otto.examples.reservations_cli:check_report	function
 call	otto.examples.reservations_cli:check_report	sync	PK:gate:- PK:lab:-
 name	otto.examples.reservations_cli:translate	function
@@ -1056,6 +1093,13 @@ call	otto.host.product:sudo_line	sync	PK:command:-
 name	otto.host.product:unplanned	function
 call	otto.host.product:unplanned	sync	PK:obj:-
 name	otto.host.session_setup:SESSION_SETUPS	value
+name	otto.host.session_setup:SessionSetupEntry	class
+mro	otto.host.session_setup:SessionSetupEntry	-
+call	otto.host.session_setup:SessionSetupEntry	sync	PK:fn:-
+member	otto.host.session_setup:SessionSetupEntry.__eq__	method	sync	PK:other:-
+member	otto.host.session_setup:SessionSetupEntry.__hash__	method	sync	-
+member	otto.host.session_setup:SessionSetupEntry.fn	field
+abstract	otto.host.session_setup:SessionSetupEntry	-
 name	otto.host.session_setup:SetupContext	class
 mro	otto.host.session_setup:SetupContext	-
 call	otto.host.session_setup:SetupContext	sync	PK:host_id:- PK:host_name:- PK:user:- PK:params:- PK:kind:-
@@ -1240,6 +1284,14 @@ member	otto.host.transfer:TftpFileTransfer.run_get	method	coroutine	PK:src_files
 member	otto.host.transfer:TftpFileTransfer.run_put	method	coroutine	PK:src_files:- PK:dest_dir:- PK:progress_factory:- KO:concurrent:B:true
 member	otto.host.transfer:TftpFileTransfer.supports_mode	attribute
 abstract	otto.host.transfer:TftpFileTransfer	-
+name	otto.host.transfer:TransferBackendError	class
+mro	otto.host.transfer:TransferBackendError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.host.transfer:TransferBackendError	sync	@builtin:builtins.Exception
+abstract	otto.host.transfer:TransferBackendError	-
+name	otto.host.transfer:TransferConstructionError	class
+mro	otto.host.transfer:TransferConstructionError	{otto.host.transfer:TransferBackendError,otto.host:TransferBackendError} {otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.host.transfer:TransferConstructionError	sync	@builtin:builtins.ValueError
+abstract	otto.host.transfer:TransferConstructionError	-
 name	otto.host.transfer:TransferContext	class
 mro	otto.host.transfer:TransferContext	-
 call	otto.host.transfer:TransferContext	sync	PK:transfer:- PK:host_name:- PK:max_filename_len:I:255 PK:exec_cmd:N PK:connections:N PK:nc_options:N PK:scp_options:N PK:sftp_options:N PK:get_local_ip:N PK:userland:N PK:exec_line_budget:N PK:filesystem:N
@@ -1258,6 +1310,15 @@ member	otto.host.transfer:TransferContext.sftp_options	field
 member	otto.host.transfer:TransferContext.transfer	field
 member	otto.host.transfer:TransferContext.userland	field
 abstract	otto.host.transfer:TransferContext	-
+name	otto.host.transfer:TransferMetadata	class
+mro	otto.host.transfer:TransferMetadata	-
+call	otto.host.transfer:TransferMetadata	sync	PK:host_families:- PK:progress_granularity:- PK:authenticates:-
+member	otto.host.transfer:TransferMetadata.__eq__	method	sync	PK:other:-
+member	otto.host.transfer:TransferMetadata.__hash__	method	sync	-
+member	otto.host.transfer:TransferMetadata.authenticates	field
+member	otto.host.transfer:TransferMetadata.host_families	field
+member	otto.host.transfer:TransferMetadata.progress_granularity	field
+abstract	otto.host.transfer:TransferMetadata	-
 name	otto.host.transfer:TransferProgressFactory	alias
 name	otto.host.transfer:TransferProgressHandler	alias
 name	otto.host.transfer:UnixFileTransfer	class
@@ -1280,7 +1341,7 @@ abstract	otto.host.transfer:UnixFileTransfer	run_get run_put
 name	otto.host.transfer:aggregate_transfer	function
 call	otto.host.transfer:aggregate_transfer	sync	PK:per_file:-
 name	otto.host.transfer:build_transfer_backend	function
-call	otto.host.transfer:build_transfer_backend	sync	PK:name:-
+call	otto.host.transfer:build_transfer_backend	sync	PK:name:- PK:ctx:-
 name	otto.host.transfer:chmod_command	function
 call	otto.host.transfer:chmod_command	sync	PK:mode:- PK:paths:-
 name	otto.host.transfer:make_rich_progress_factory	function
@@ -1392,20 +1453,30 @@ member	otto.host:CommandFrame.restore_interactive	method	sync	-
 member	otto.host:CommandFrame.single_client_console	attribute
 member	otto.host:CommandFrame.streams_output_live	attribute
 abstract	otto.host:CommandFrame	end_pattern extract_retcode frame handshake marks_begin parse_output recover
+name	otto.host:CommandPowerConfig	model
+mro	otto.host:CommandPowerConfig	{otto.models:OttoModel}
+input	otto.host:CommandPowerConfig	S:"controller"	optional	N	S:"controller"
+input	otto.host:CommandPowerConfig	S:"off_cmd"	required	-	S:"off_cmd"
+input	otto.host:CommandPowerConfig	S:"on_cmd"	required	-	S:"on_cmd"
+input	otto.host:CommandPowerConfig	S:"status_cmd"	optional	N	S:"status_cmd"
+input	otto.host:CommandPowerConfig	S:"status_on"	optional	S:""	S:"status_on"
+member	otto.host:CommandPowerConfig.__hash__	method	sync	-
+member	otto.host:CommandPowerConfig.controller	field
+member	otto.host:CommandPowerConfig.model_config	attribute
+member	otto.host:CommandPowerConfig.off_cmd	field
+member	otto.host:CommandPowerConfig.on_cmd	field
+member	otto.host:CommandPowerConfig.status_cmd	field
+member	otto.host:CommandPowerConfig.status_on	field
+abstract	otto.host:CommandPowerConfig	-
 name	otto.host:CommandPowerController	class
 mro	otto.host:CommandPowerController	{otto.host:PowerController}
-call	otto.host:CommandPowerController	sync	PK:on_cmd:- PK:off_cmd:- PK:status_cmd:N PK:status_on:S:"" PK:controller:N
+call	otto.host:CommandPowerController	sync	PK:config:-
 member	otto.host:CommandPowerController.__eq__	method	sync	PK:other:-
-member	otto.host:CommandPowerController.controller	field
+member	otto.host:CommandPowerController.__hash__	method	sync	-
 member	otto.host:CommandPowerController.cycle	method	coroutine	PK:host:-
 member	otto.host:CommandPowerController.off	method	coroutine	PK:host:-
-member	otto.host:CommandPowerController.off_cmd	field
 member	otto.host:CommandPowerController.on	method	coroutine	PK:host:-
-member	otto.host:CommandPowerController.on_cmd	field
 member	otto.host:CommandPowerController.status	method	coroutine	PK:host:-
-member	otto.host:CommandPowerController.status_cmd	field
-member	otto.host:CommandPowerController.status_on	field
-member	otto.host:CommandPowerController.type_name	attribute
 abstract	otto.host:CommandPowerController	-
 name	otto.host:CommandResult	class
 mro	otto.host:CommandResult	{otto.result:Result,otto:Result}
@@ -1888,6 +1959,15 @@ member	otto.host:HostCapabilities.show_progress	field
 member	otto.host:HostCapabilities.transfer	field
 member	otto.host:HostCapabilities.transfer_family	field
 abstract	otto.host:HostCapabilities	-
+name	otto.host:HostClassEntry	class
+mro	otto.host:HostClassEntry	-
+call	otto.host:HostClassEntry	sync	PK:cls:- PK:spec:- PK:profile:O
+member	otto.host:HostClassEntry.__eq__	method	sync	PK:other:-
+member	otto.host:HostClassEntry.__hash__	method	sync	-
+member	otto.host:HostClassEntry.cls	field
+member	otto.host:HostClassEntry.profile	field
+member	otto.host:HostClassEntry.spec	field
+abstract	otto.host:HostClassEntry	-
 name	otto.host:HostFilter	class
 mro	otto.host:HostFilter	-
 call	otto.host:HostFilter	sync	PK:name:S:""
@@ -2093,14 +2173,12 @@ name	otto.host:NcListenerCheck	alias
 name	otto.host:NcPortStrategy	alias
 name	otto.host:OsProfile	class
 mro	otto.host:OsProfile	-
-call	otto.host:OsProfile	sync	PK:name:- PK:base:- PK:defaults:O PK:login_prompt:N PK:password_prompt:N
+call	otto.host:OsProfile	sync	PK:name:- PK:base:- PK:fields:O
 member	otto.host:OsProfile.__eq__	method	sync	PK:other:-
 member	otto.host:OsProfile.__hash__	method	sync	-
 member	otto.host:OsProfile.base	field
-member	otto.host:OsProfile.defaults	field
-member	otto.host:OsProfile.login_prompt	field
+member	otto.host:OsProfile.fields	field
 member	otto.host:OsProfile.name	field
-member	otto.host:OsProfile.password_prompt	field
 abstract	otto.host:OsProfile	-
 name	otto.host:OsType	class
 mro	otto.host:OsType	-
@@ -2129,6 +2207,14 @@ member	otto.host:PosixPrivilege.probe	method	coroutine	PK:user:N PK:scan_ports:N
 member	otto.host:PosixPrivilege.switch_user	method	coroutine	PK:user:S:"" PK:password:N
 member	otto.host:PosixPrivilege.userland	method	sync	-
 abstract	otto.host:PosixPrivilege	-
+name	otto.host:PowerConstructionError	class
+mro	otto.host:PowerConstructionError	{otto.host:PowerControlError} {otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.host:PowerConstructionError	sync	@builtin:builtins.ValueError
+abstract	otto.host:PowerConstructionError	-
+name	otto.host:PowerControlError	class
+mro	otto.host:PowerControlError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.host:PowerControlError	sync	@builtin:builtins.Exception
+abstract	otto.host:PowerControlError	-
 name	otto.host:PowerController	class
 mro	otto.host:PowerController	-
 call	otto.host:PowerController	sync	-
@@ -2137,6 +2223,13 @@ member	otto.host:PowerController.off	method	coroutine	PK:host:-
 member	otto.host:PowerController.on	method	coroutine	PK:host:-
 member	otto.host:PowerController.status	method	coroutine	PK:host:-
 abstract	otto.host:PowerController	off on
+name	otto.host:PowerEnv	class
+mro	otto.host:PowerEnv	-
+call	otto.host:PowerEnv	sync	PK:host_id:-
+member	otto.host:PowerEnv.__eq__	method	sync	PK:other:-
+member	otto.host:PowerEnv.__hash__	method	sync	-
+member	otto.host:PowerEnv.host_id	field
+abstract	otto.host:PowerEnv	-
 name	otto.host:PowerState	enum
 mro	otto.host:PowerState	-
 enum	otto.host:PowerState	ON	S:"on"
@@ -2166,6 +2259,26 @@ member	otto.host:Product.stages_artifact	property:g--
 member	otto.host:Product.uninstall	method	coroutine	PK:host:-
 abstract	otto.host:Product	install is_installed stage uninstall
 name	otto.host:ProductProvider	alias
+name	otto.host:ProfileContext	class
+mro	otto.host:ProfileContext	-
+call	otto.host:ProfileContext	sync	PK:profiles:- PK:owners:-
+member	otto.host:ProfileContext.__eq__	method	sync	PK:other:-
+member	otto.host:ProfileContext.__hash__	method	sync	-
+member	otto.host:ProfileContext.digest	method	sync	-
+member	otto.host:ProfileContext.empty	classmethod	sync	-
+member	otto.host:ProfileContext.from_repos	classmethod	sync	PK:repos:-
+member	otto.host:ProfileContext.owners	field
+member	otto.host:ProfileContext.profiles	field
+abstract	otto.host:ProfileContext	-
+name	otto.host:ProfileFields	class
+mro	otto.host:ProfileFields	-
+call	otto.host:ProfileFields	sync	PK:defaults:O PK:login_prompt:N PK:password_prompt:N
+member	otto.host:ProfileFields.__eq__	method	sync	PK:other:-
+member	otto.host:ProfileFields.__hash__	method	sync	-
+member	otto.host:ProfileFields.defaults	field
+member	otto.host:ProfileFields.login_prompt	field
+member	otto.host:ProfileFields.password_prompt	field
+abstract	otto.host:ProfileFields	-
 name	otto.host:RawFrame	class
 mro	otto.host:RawFrame	{otto.host.command_frame:CommandFrame,otto.host:CommandFrame}
 call	otto.host:RawFrame	sync	-
@@ -2420,6 +2533,14 @@ member	otto.host:TelnetSession.run_cmd	method	coroutine	PK:cmd:- PK:expects:N PK
 member	otto.host:TelnetSession.send	method	coroutine	PK:text:-
 member	otto.host:TelnetSession.write_transport	method	coroutine	PK:data:-
 abstract	otto.host:TelnetSession	-
+name	otto.host:TermBackendError	class
+mro	otto.host:TermBackendError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.host:TermBackendError	sync	@builtin:builtins.Exception
+abstract	otto.host:TermBackendError	-
+name	otto.host:TermConstructionError	class
+mro	otto.host:TermConstructionError	{otto.host:TermBackendError} {otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.host:TermConstructionError	sync	@builtin:builtins.ValueError
+abstract	otto.host:TermConstructionError	-
 name	otto.host:TermContext	class
 mro	otto.host:TermContext	-
 call	otto.host:TermContext	sync	PK:ip:- PK:creds:- PK:term:- PK:name:- PK:hop:N PK:ssh_options:N PK:telnet_options:N PK:sftp_options:N PK:ftp_options:N PK:console_options:N PK:console_endpoint:N
@@ -2437,6 +2558,15 @@ member	otto.host:TermContext.ssh_options	field
 member	otto.host:TermContext.telnet_options	field
 member	otto.host:TermContext.term	field
 abstract	otto.host:TermContext	-
+name	otto.host:TermMetadata	class
+mro	otto.host:TermMetadata	-
+call	otto.host:TermMetadata	sync	PK:host_families:- PK:authenticates:- PK:dials_host:B:true
+member	otto.host:TermMetadata.__eq__	method	sync	PK:other:-
+member	otto.host:TermMetadata.__hash__	method	sync	-
+member	otto.host:TermMetadata.authenticates	field
+member	otto.host:TermMetadata.dials_host	field
+member	otto.host:TermMetadata.host_families	field
+abstract	otto.host:TermMetadata	-
 name	otto.host:Toolchain	class
 mro	otto.host:Toolchain	-
 call	otto.host:Toolchain	sync	PK:sysroot:O PK:lcov:O PK:gcov:O PK:lcov_args:O PK:tools:O
@@ -2460,6 +2590,23 @@ member	otto.host:ToolchainTool.name	field
 member	otto.host:ToolchainTool.source	field
 member	otto.host:ToolchainTool.user	field
 abstract	otto.host:ToolchainTool	-
+name	otto.host:TransferBackendError	class
+mro	otto.host:TransferBackendError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.host:TransferBackendError	sync	@builtin:builtins.Exception
+abstract	otto.host:TransferBackendError	-
+name	otto.host:TransferConstructionError	class
+mro	otto.host:TransferConstructionError	{otto.host.transfer:TransferBackendError,otto.host:TransferBackendError} {otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.host:TransferConstructionError	sync	@builtin:builtins.ValueError
+abstract	otto.host:TransferConstructionError	-
+name	otto.host:TransferMetadata	class
+mro	otto.host:TransferMetadata	-
+call	otto.host:TransferMetadata	sync	PK:host_families:- PK:progress_granularity:- PK:authenticates:-
+member	otto.host:TransferMetadata.__eq__	method	sync	PK:other:-
+member	otto.host:TransferMetadata.__hash__	method	sync	-
+member	otto.host:TransferMetadata.authenticates	field
+member	otto.host:TransferMetadata.host_families	field
+member	otto.host:TransferMetadata.progress_granularity	field
+abstract	otto.host:TransferMetadata	-
 name	otto.host:TransferProgressHandler	alias
 name	otto.host:UnixHost	class
 mro	otto.host:UnixHost	{otto.host:PosixPrivilege} {otto.host:PosixFileOps} {otto.host:RemoteHost} {otto.host:BaseHost}
@@ -2843,23 +2990,25 @@ call	otto.host:build_command_frame	sync	PK:type_name:-
 name	otto.host:build_host_class	function
 call	otto.host:build_host_class	sync	PK:name:-
 name	otto.host:build_os_profile	function
-call	otto.host:build_os_profile	sync	PK:name:-
+call	otto.host:build_os_profile	sync	PK:name:- KO:data:N
 name	otto.host:build_power_controller	function
-call	otto.host:build_power_controller	sync	PK:type_name:-
+call	otto.host:build_power_controller	sync	PK:type_name:- PK:config:- KO:host_id:-
 name	otto.host:build_term_backend	function
-call	otto.host:build_term_backend	sync	PK:name:-
+call	otto.host:build_term_backend	sync	PK:name:- PK:ctx:-
 name	otto.host:build_transfer_backend	function
-call	otto.host:build_transfer_backend	sync	PK:name:-
+call	otto.host:build_transfer_backend	sync	PK:name:- PK:ctx:-
+name	otto.host:check_data_profiles	function
+call	otto.host:check_data_profiles	sync	PK:repos:-
 name	otto.host:check_os_profile	function
 call	otto.host:check_os_profile	sync	PK:name:- PK:base:- PK:defaults:N KO:login_prompt:N KO:password_prompt:N
 name	otto.host:create_host_from_dict	function
-call	otto.host:create_host_from_dict	sync	PK:host_data:- PK:preferences:N PK:lab_name:N KO:element:- KO:inventory_ref:N
+call	otto.host:create_host_from_dict	sync	PK:host_data:- PK:preferences:N PK:lab_name:N KO:element:- KO:inventory_ref:N KO:profiles:N
 name	otto.host:get_host_class	function
 call	otto.host:get_host_class	sync	PK:name:-
 name	otto.host:get_os_profile	function
-call	otto.host:get_os_profile	sync	PK:name:-
+call	otto.host:get_os_profile	sync	PK:name:- KO:data:N
 name	otto.host:host_identity	function
-call	otto.host:host_identity	sync	PK:host_data:- PK:element:-
+call	otto.host:host_identity	sync	PK:host_data:- PK:element:- KO:profiles:N
 name	otto.host:is_dry_run	function
 call	otto.host:is_dry_run	sync	-
 name	otto.host:make_rich_progress_handler	function
@@ -2869,17 +3018,17 @@ call	otto.host:make_transfer_progress	sync	-
 name	otto.host:mount_for	function
 call	otto.host:mount_for	sync	PK:mounts:- PK:container_path:-
 name	otto.host:power_control_from_spec	function
-call	otto.host:power_control_from_spec	sync	PK:value:-
+call	otto.host:power_control_from_spec	sync	PK:value:- KO:host_id:-
 name	otto.host:register_command_frame	function
 call	otto.host:register_command_frame	sync	PK:type_name:- PK:cls:- KO:overwrite:B:false
 name	otto.host:register_dev_tool_provider	function
 call	otto.host:register_dev_tool_provider	sync	PK:provider:-
 name	otto.host:register_host_class	function
-call	otto.host:register_host_class	sync	PK:name:- PK:cls:- PK:spec:N
+call	otto.host:register_host_class	sync	PK:name:- PK:cls:- KO:spec:N KO:profile:N KO:overwrite:B:false
 name	otto.host:register_os_profile	function
-call	otto.host:register_os_profile	sync	PK:name:- PK:base:- PK:defaults:N KO:login_prompt:N KO:password_prompt:N
+call	otto.host:register_os_profile	sync	PK:name:- PK:base:- PK:defaults:N KO:login_prompt:N KO:password_prompt:N KO:overwrite:B:false
 name	otto.host:register_power_controller	function
-call	otto.host:register_power_controller	sync	PK:type_name:- PK:cls:- KO:overwrite:B:false
+call	otto.host:register_power_controller	sync	PK:type_name:- KO:config:- KO:factory:- KO:overwrite:B:false
 name	otto.host:register_product_provider	function
 call	otto.host:register_product_provider	sync	PK:provider:-
 name	otto.host:register_term_backend	function
@@ -2890,8 +3039,10 @@ name	otto.host:registered_dev_tool_providers	function
 call	otto.host:registered_dev_tool_providers	sync	-
 name	otto.host:registered_product_providers	function
 call	otto.host:registered_product_providers	sync	-
+name	otto.host:resolve_os_profile	function
+call	otto.host:resolve_os_profile	sync	PK:name:- KO:data:-
 name	otto.host:validate_host_dict	function
-call	otto.host:validate_host_dict	sync	PK:host_data:-
+call	otto.host:validate_host_dict	sync	PK:host_data:- KO:profiles:N
 name	otto.init:AREA_NAMES	value
 name	otto.init:AreaVerdict	class
 mro	otto.init:AreaVerdict	-
@@ -2962,20 +3113,19 @@ call	otto.init:scaffold_candidates	sync	PK:root:- KO:requested:N KO:all_areas:B:
 name	otto.init:scaffold_prerequisites	function
 call	otto.init:scaffold_prerequisites	sync	PK:root:- PK:areas:-
 name	otto.instructions:instruction	function
-call	otto.instructions:instruction	sync	VP:args:- KO:options:N KO:walk:N KO:continue_on_failure:N KO:require_dependencies:N KO:dry_run_preview:N KO:combine_results:N KO:render:N KO:name:N KO:help:N
+call	otto.instructions:instruction	sync	VP:args:- KO:options:N KO:walk:N KO:continue_on_failure:N KO:require_dependencies:N KO:dry_run_preview:N KO:combine_results:N KO:render:N KO:name:N KO:help:N KO:overwrite:B:false
 name	otto.instructions:run_instruction	function
 call	otto.instructions:run_instruction	coroutine	PK:ctx:- PK:name:- PK:opts:N
 name	otto.inventory:CompiledInventory	class
 mro	otto.inventory:CompiledInventory	-
-call	otto.inventory:CompiledInventory	sync	PK:backend:- PK:kwargs:- PK:cache_ttl:- PK:anchor_dir:- PK:origin:- PK:creds:N
+call	otto.inventory:CompiledInventory	sync	PK:prepared:- PK:cache_ttl:- PK:anchor_dir:- PK:origin:- PK:creds:N
 member	otto.inventory:CompiledInventory.__eq__	method	sync	PK:other:-
 member	otto.inventory:CompiledInventory.__hash__	method	sync	-
 member	otto.inventory:CompiledInventory.anchor_dir	field
-member	otto.inventory:CompiledInventory.backend	field
 member	otto.inventory:CompiledInventory.cache_ttl	field
 member	otto.inventory:CompiledInventory.creds	field
-member	otto.inventory:CompiledInventory.kwargs	field
 member	otto.inventory:CompiledInventory.origin	field
+member	otto.inventory:CompiledInventory.prepared	field
 member	otto.inventory:CompiledInventory.same_as	method	sync	PK:other:-
 abstract	otto.inventory:CompiledInventory	-
 name	otto.inventory:CredsOverlay	class
@@ -2996,6 +3146,10 @@ member	otto.inventory:Inventory.list_keys	method	sync	-
 member	otto.inventory:Inventory.lookup	method	sync	PK:key:-
 member	otto.inventory:Inventory.supplies	property:g--
 requires	otto.inventory:Inventory	fingerprint label list_keys lookup supplies
+name	otto.inventory:InventoryConstructionError	class
+mro	otto.inventory:InventoryConstructionError	{otto.inventory:InventoryError} {otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.inventory:InventoryConstructionError	sync	@builtin:builtins.ValueError
+abstract	otto.inventory:InventoryConstructionError	-
 name	otto.inventory:InventoryDeclaration	class
 mro	otto.inventory:InventoryDeclaration	-
 call	otto.inventory:InventoryDeclaration	sync	PK:origin:- PK:anchor_dir:- PK:table:O PK:creds_table:O
@@ -3006,6 +3160,14 @@ member	otto.inventory:InventoryDeclaration.creds_table	field
 member	otto.inventory:InventoryDeclaration.origin	field
 member	otto.inventory:InventoryDeclaration.table	field
 abstract	otto.inventory:InventoryDeclaration	-
+name	otto.inventory:InventoryEnv	class
+mro	otto.inventory:InventoryEnv	-
+call	otto.inventory:InventoryEnv	sync	PK:anchor_dir:- PK:origin:-
+member	otto.inventory:InventoryEnv.__eq__	method	sync	PK:other:-
+member	otto.inventory:InventoryEnv.__hash__	method	sync	-
+member	otto.inventory:InventoryEnv.anchor_dir	field
+member	otto.inventory:InventoryEnv.origin	field
+abstract	otto.inventory:InventoryEnv	-
 name	otto.inventory:InventoryError	class
 mro	otto.inventory:InventoryError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.inventory:InventoryError	sync	@builtin:builtins.Exception
@@ -3014,6 +3176,13 @@ name	otto.inventory:InventoryKeyError	class
 mro	otto.inventory:InventoryKeyError	{otto.inventory:InventoryError} {otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.inventory:InventoryKeyError	sync	PK:key:- PK:label:-
 abstract	otto.inventory:InventoryKeyError	-
+name	otto.inventory:InventoryMetadata	class
+mro	otto.inventory:InventoryMetadata	-
+call	otto.inventory:InventoryMetadata	sync	PK:snapshot_cache:B:true
+member	otto.inventory:InventoryMetadata.__eq__	method	sync	PK:other:-
+member	otto.inventory:InventoryMetadata.__hash__	method	sync	-
+member	otto.inventory:InventoryMetadata.snapshot_cache	field
+abstract	otto.inventory:InventoryMetadata	-
 name	otto.inventory:JsonInventory	class
 mro	otto.inventory:JsonInventory	-
 call	otto.inventory:JsonInventory	sync	PK:path:- KO:supplies:N
@@ -3022,14 +3191,42 @@ member	otto.inventory:JsonInventory.list_keys	method	sync	-
 member	otto.inventory:JsonInventory.lookup	method	sync	PK:key:-
 member	otto.inventory:JsonInventory.stat_paths	method	sync	-
 abstract	otto.inventory:JsonInventory	-
+name	otto.inventory:JsonInventoryConfig	model
+mro	otto.inventory:JsonInventoryConfig	{otto.models:OttoModel}
+input	otto.inventory:JsonInventoryConfig	S:"path"	required	-	S:"path"
+input	otto.inventory:JsonInventoryConfig	S:"supplies"	optional	N	S:"supplies"
+member	otto.inventory:JsonInventoryConfig.__hash__	method	sync	-
+member	otto.inventory:JsonInventoryConfig.model_config	attribute
+member	otto.inventory:JsonInventoryConfig.path	field
+member	otto.inventory:JsonInventoryConfig.supplies	field
+abstract	otto.inventory:JsonInventoryConfig	-
 name	otto.inventory:NetBoxInventory	class
 mro	otto.inventory:NetBoxInventory	-
-call	otto.inventory:NetBoxInventory	sync	PK:repo_dir:N KO:url:- KO:token_env:S:"NETBOX_TOKEN" KO:filter:N KO:ip_source:S:"primary_ip4" KO:custom_fields:N KO:extra_custom_fields:N KO:timeout:F:0x1.e000000000000p+4
+call	otto.inventory:NetBoxInventory	sync	KO:url:- KO:token_env:S:"NETBOX_TOKEN" KO:filter:N KO:ip_source:S:"primary_ip4" KO:custom_fields:N KO:extra_custom_fields:N KO:timeout:F:0x1.e000000000000p+4
 member	otto.inventory:NetBoxInventory.addressless_device_names	property:g--
 member	otto.inventory:NetBoxInventory.fingerprint	method	sync	-
 member	otto.inventory:NetBoxInventory.list_keys	method	sync	-
 member	otto.inventory:NetBoxInventory.lookup	method	sync	PK:key:-
 abstract	otto.inventory:NetBoxInventory	-
+name	otto.inventory:NetBoxInventoryConfig	model
+mro	otto.inventory:NetBoxInventoryConfig	{otto.models:OttoModel}
+input	otto.inventory:NetBoxInventoryConfig	S:"custom_fields"	optional	N	S:"custom_fields"
+input	otto.inventory:NetBoxInventoryConfig	S:"extra_custom_fields"	optional	N	S:"extra_custom_fields"
+input	otto.inventory:NetBoxInventoryConfig	S:"filter"	optional	N	S:"filter"
+input	otto.inventory:NetBoxInventoryConfig	S:"ip_source"	optional	S:"primary_ip4"	S:"ip_source"
+input	otto.inventory:NetBoxInventoryConfig	S:"timeout"	optional	F:0x1.e000000000000p+4	S:"timeout"
+input	otto.inventory:NetBoxInventoryConfig	S:"token_env"	optional	S:"NETBOX_TOKEN"	S:"token_env"
+input	otto.inventory:NetBoxInventoryConfig	S:"url"	required	-	S:"url"
+member	otto.inventory:NetBoxInventoryConfig.__hash__	method	sync	-
+member	otto.inventory:NetBoxInventoryConfig.custom_fields	field
+member	otto.inventory:NetBoxInventoryConfig.extra_custom_fields	field
+member	otto.inventory:NetBoxInventoryConfig.filter	field
+member	otto.inventory:NetBoxInventoryConfig.ip_source	field
+member	otto.inventory:NetBoxInventoryConfig.model_config	attribute
+member	otto.inventory:NetBoxInventoryConfig.timeout	field
+member	otto.inventory:NetBoxInventoryConfig.token_env	field
+member	otto.inventory:NetBoxInventoryConfig.url	field
+abstract	otto.inventory:NetBoxInventoryConfig	-
 name	otto.inventory:RecordDifference	class
 mro	otto.inventory:RecordDifference	-
 call	otto.inventory:RecordDifference	sync	PK:key:- PK:field:- PK:left:- PK:right:-
@@ -3089,7 +3286,7 @@ call	otto.inventory:parse_inventory_document	sync	PK:data:- KO:source:- KO:suppl
 name	otto.inventory:records_to_document	function
 call	otto.inventory:records_to_document	sync	PK:records:-
 name	otto.inventory:register_inventory_backend	function
-call	otto.inventory:register_inventory_backend	sync	PK:name:- PK:cls:- KO:overwrite:B:false
+call	otto.inventory:register_inventory_backend	sync	PK:name:- KO:config:- KO:factory:- KO:snapshot_cache:B:true KO:overwrite:B:false
 name	otto.inventory:resolve_host_entry	function
 call	otto.inventory:resolve_host_entry	sync	PK:host_data:- PK:inventory:- PK:element:-
 name	otto.inventory:snapshot_cache_of	function
@@ -3148,7 +3345,7 @@ member	otto.labs:HostSummary.os_type	field
 abstract	otto.labs:HostSummary	-
 name	otto.labs:JsonFileLabRepository	class
 mro	otto.labs:JsonFileLabRepository	-
-call	otto.labs:JsonFileLabRepository	sync	PK:search_paths:N
+call	otto.labs:JsonFileLabRepository	sync	PK:search_paths:N KO:profiles:N
 member	otto.labs:JsonFileLabRepository.list_host_summaries	method	sync	PK:inventory:N
 member	otto.labs:JsonFileLabRepository.list_labs	method	sync	-
 member	otto.labs:JsonFileLabRepository.load_lab	method	sync	PK:name:- PK:preferences:N PK:inventory:N
@@ -3173,6 +3370,20 @@ member	otto.labs:LabSource.__eq__	method	sync	PK:other:-
 member	otto.labs:LabSource.label	field
 member	otto.labs:LabSource.repository	field
 abstract	otto.labs:LabSource	-
+name	otto.labs:LabSourceConstructionError	class
+mro	otto.labs:LabSourceConstructionError	{otto.labs:LabRepositoryError} {otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.labs:LabSourceConstructionError	sync	@builtin:builtins.ValueError
+abstract	otto.labs:LabSourceConstructionError	-
+name	otto.labs:LabSourceEnv	class
+mro	otto.labs:LabSourceEnv	-
+call	otto.labs:LabSourceEnv	sync	PK:repo_dir:- PK:label:- PK:origin:- PK:profiles:-
+member	otto.labs:LabSourceEnv.__eq__	method	sync	PK:other:-
+member	otto.labs:LabSourceEnv.__hash__	method	sync	-
+member	otto.labs:LabSourceEnv.label	field
+member	otto.labs:LabSourceEnv.origin	field
+member	otto.labs:LabSourceEnv.profiles	field
+member	otto.labs:LabSourceEnv.repo_dir	field
+abstract	otto.labs:LabSourceEnv	-
 name	otto.labs:LoginSummary	class
 mro	otto.labs:LoginSummary	-
 call	otto.labs:LoginSummary	sync	PK:login:- PK:protocols:O PK:proxy:B:false
@@ -3187,7 +3398,7 @@ mro	otto.labs:SupportsHostSummaries	-
 member	otto.labs:SupportsHostSummaries.list_host_summaries	method	sync	PK:inventory:N
 requires	otto.labs:SupportsHostSummaries	list_host_summaries
 name	otto.labs:build_lab_sources	function
-call	otto.labs:build_lab_sources	sync	PK:repos:-
+call	otto.labs:build_lab_sources	sync	PK:repos:- KO:profiles:N
 name	otto.labs:host_summaries	function
 call	otto.labs:host_summaries	sync	PK:repository:- PK:inventory:N
 name	otto.labs:list_host_ids	function
@@ -3197,7 +3408,7 @@ call	otto.labs:logins_of_creds	sync	PK:creds:-
 name	otto.labs:logins_of_host_data	function
 call	otto.labs:logins_of_host_data	sync	PK:host_data:-
 name	otto.labs:register_lab_repository	function
-call	otto.labs:register_lab_repository	sync	PK:name:- PK:cls:- KO:overwrite:B:false
+call	otto.labs:register_lab_repository	sync	PK:name:- KO:config:- KO:factory:- KO:overwrite:B:false
 name	otto.link:AppliedPlacement	class
 mro	otto.link:AppliedPlacement	-
 call	otto.link:AppliedPlacement	sync	PK:placement:- PK:params:- PK:selector:N
@@ -4190,9 +4401,9 @@ member	otto.monitor.parsers:ParseContext.__hash__	method	sync	-
 member	otto.monitor.parsers:ParseContext.ts	field
 abstract	otto.monitor.parsers:ParseContext	-
 name	otto.monitor.parsers:register_host_parsers	function
-call	otto.monitor.parsers:register_host_parsers	sync	PK:host_id:- PK:parsers:-
+call	otto.monitor.parsers:register_host_parsers	sync	PK:host_id:- PK:parsers:- KO:overwrite:B:false
 name	otto.monitor.parsers:register_parsers	function
-call	otto.monitor.parsers:register_parsers	sync	PK:parsers:-
+call	otto.monitor.parsers:register_parsers	sync	PK:parsers:- KO:overwrite:B:false
 name	otto.monitor.snmp:SnmpMetric	model
 mro	otto.monitor.snmp:SnmpMetric	{otto.models:OttoModel}
 input	otto.monitor.snmp:SnmpMetric	S:"chart"	required	-	S:"chart"
@@ -4220,7 +4431,7 @@ member	otto.monitor.snmp:SnmpMetric.unit	field
 member	otto.monitor.snmp:SnmpMetric.y_title	field
 abstract	otto.monitor.snmp:SnmpMetric	-
 name	otto.monitor.snmp:register_snmp_metric	function
-call	otto.monitor.snmp:register_snmp_metric	sync	PK:metric:-
+call	otto.monitor.snmp:register_snmp_metric	sync	PK:metric:- KO:overwrite:B:false
 name	otto.monitor:DEFAULT_PARSERS	value
 name	otto.monitor:LiveReport	class
 mro	otto.monitor:LiveReport	-
@@ -4343,6 +4554,7 @@ call	otto.monitor:select_monitor_hosts	sync	PK:pattern:-
 name	otto.monitor:serve_review	function
 call	otto.monitor:serve_review	coroutine	PK:path:- KO:repos:-
 name	otto.params:OPTIONS	value
+name	otto.params:OptionVerb	alias
 name	otto.params:OptionsCollisionError	class
 mro	otto.params:OptionsCollisionError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.params:OptionsCollisionError	sync	@builtin:builtins.Exception
@@ -4360,11 +4572,11 @@ mro	otto.params:OptionsValidationError	{otto.errors:OttoError} @builtin:builtins
 call	otto.params:OptionsValidationError	sync	@builtin:builtins.ValueError
 abstract	otto.params:OptionsValidationError	-
 name	otto.params:options	function
-call	otto.params:options	sync	PO:cls:N KO:verbs:N VK:dataclass_kwargs:-
+call	otto.params:options	sync	PO:cls:N KO:verbs:N KO:overwrite:B:false VK:dataclass_kwargs:-
 name	otto.params:options_key	function
 call	otto.params:options_key	sync	PK:cls_or_path:-
 name	otto.params:register_options	function
-call	otto.params:register_options	sync	PK:cls_or_path:- KO:verbs:-
+call	otto.params:register_options	sync	PK:cls_or_path:- KO:verbs:- KO:overwrite:B:false
 name	otto.params:verbs_for	function
 call	otto.params:verbs_for	sync	PK:cls:-
 name	otto.project:Cleanliness	enum
@@ -4530,11 +4742,90 @@ call	otto.project:is_uninstalled	coroutine	-
 name	otto.project:plan_instruction	function
 call	otto.project:plan_instruction	sync	PK:name:- PK:ctx:- PK:kwargs:-
 name	otto.project:register_project_actions	function
-call	otto.project:register_project_actions	sync	PK:cls:-
+call	otto.project:register_project_actions	sync	PK:cls:- KO:overwrite:B:false
 name	otto.project:status	function
 call	otto.project:status	coroutine	PK:opts:N
 name	otto.project:uninstall	function
 call	otto.project:uninstall	coroutine	PK:opts:N
+name	otto.registry:BackendRegistry	class
+mro	otto.registry:BackendRegistry	-
+call	otto.registry:BackendRegistry	sync	PK:kind:- KO:register_hint:- KO:error:- KO:describe_parse_error:- KO:result:- KO:validate:N KO:check_resolved:N
+member	otto.registry:BackendRegistry.__contains__	method	sync	PK:name:-
+member	otto.registry:BackendRegistry.__len__	method	sync	-
+member	otto.registry:BackendRegistry.build	method	sync	PK:prepared:-
+member	otto.registry:BackendRegistry.capabilities	property:g--
+member	otto.registry:BackendRegistry.find	method	sync	PK:name:-
+member	otto.registry:BackendRegistry.get	method	sync	PK:name:-
+member	otto.registry:BackendRegistry.items	method	sync	-
+member	otto.registry:BackendRegistry.kind	property:g--
+member	otto.registry:BackendRegistry.names	method	sync	-
+member	otto.registry:BackendRegistry.origin	method	sync	PK:name:-
+member	otto.registry:BackendRegistry.peek	method	sync	PK:name:-
+member	otto.registry:BackendRegistry.prepare	method	sync	PK:name:- PK:raw:- PK:env:- KO:source:N
+member	otto.registry:BackendRegistry.raw_items	method	sync	-
+member	otto.registry:BackendRegistry.register	method	sync	PK:name:- PK:entry:- KO:overwrite:B:false
+member	otto.registry:BackendRegistry.register_many	method	sync	PK:entries:- KO:overwrite:B:false
+member	otto.registry:BackendRegistry.repo	method	sync	PK:name:-
+member	otto.registry:BackendRegistry.revision	property:g--
+member	otto.registry:BackendRegistry.unregister	method	sync	PK:name:-
+abstract	otto.registry:BackendRegistry	-
+name	otto.registry:ClassEntry	class
+mro	otto.registry:ClassEntry	-
+call	otto.registry:ClassEntry	sync	PK:cls:-
+member	otto.registry:ClassEntry.__eq__	method	sync	PK:other:-
+member	otto.registry:ClassEntry.__hash__	method	sync	-
+member	otto.registry:ClassEntry.cls	field
+abstract	otto.registry:ClassEntry	-
+name	otto.registry:Configured	class
+mro	otto.registry:Configured	-
+call	otto.registry:Configured	sync	PK:config:- PK:env:-
+member	otto.registry:Configured.__eq__	method	sync	PK:other:-
+member	otto.registry:Configured.__hash__	method	sync	-
+member	otto.registry:Configured.config	field
+member	otto.registry:Configured.env	field
+abstract	otto.registry:Configured	-
+name	otto.registry:DuplicateRegistration	class
+mro	otto.registry:DuplicateRegistration	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.registry:DuplicateRegistration	sync	@builtin:builtins.ValueError
+abstract	otto.registry:DuplicateRegistration	-
+name	otto.registry:FrozenMap	class
+mro	otto.registry:FrozenMap	-
+call	otto.registry:FrozenMap	sync	PK:mapping:N
+member	otto.registry:FrozenMap.__eq__	method	sync	PK:other:-
+member	otto.registry:FrozenMap.__getitem__	method	sync	PK:key:-
+member	otto.registry:FrozenMap.__hash__	method	sync	-
+member	otto.registry:FrozenMap.__iter__	method	sync	-
+member	otto.registry:FrozenMap.__len__	method	sync	-
+member	otto.registry:FrozenMap.freeze_json	classmethod	sync	PK:value:-
+member	otto.registry:FrozenMap.thaw_json	method	sync	-
+abstract	otto.registry:FrozenMap	-
+name	otto.registry:IncompleteRegistration	class
+mro	otto.registry:IncompleteRegistration	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.registry:IncompleteRegistration	sync	@builtin:builtins.ValueError
+abstract	otto.registry:IncompleteRegistration	-
+name	otto.registry:Justified	class
+mro	otto.registry:Justified	-
+call	otto.registry:Justified	sync	PK:capability:- PK:reason:-
+member	otto.registry:Justified.__eq__	method	sync	PK:other:-
+member	otto.registry:Justified.__hash__	method	sync	-
+member	otto.registry:Justified.capability	field
+member	otto.registry:Justified.reason	field
+abstract	otto.registry:Justified	-
+name	otto.registry:Prepared	class
+mro	otto.registry:Prepared	-
+call	otto.registry:Prepared	sync	PK:registry:- PK:backend:- PK:generation:- PK:env:- PK:source:- PK:config:- PK:normalized:- PK:metadata:- PK:facts:-
+member	otto.registry:Prepared.__eq__	method	sync	PK:other:-
+member	otto.registry:Prepared.__hash__	method	sync	-
+member	otto.registry:Prepared.backend	field
+member	otto.registry:Prepared.config	field
+member	otto.registry:Prepared.env	field
+member	otto.registry:Prepared.facts	field
+member	otto.registry:Prepared.generation	field
+member	otto.registry:Prepared.metadata	field
+member	otto.registry:Prepared.normalized	field
+member	otto.registry:Prepared.registry	field
+member	otto.registry:Prepared.source	field
+abstract	otto.registry:Prepared	-
 name	otto.registry:Ref	class
 mro	otto.registry:Ref	-
 call	otto.registry:Ref	sync	PK:target:-
@@ -4549,17 +4840,57 @@ call	otto.registry:RegistrationRefused	sync	@builtin:builtins.ValueError
 abstract	otto.registry:RegistrationRefused	-
 name	otto.registry:Registry	class
 mro	otto.registry:Registry	-
-call	otto.registry:Registry	sync	PK:kind:- KO:register_hint:- KO:collision_hint:N KO:validate:N
+call	otto.registry:Registry	sync	PK:kind:- KO:entry:- KO:register_hint:- KO:validate:N KO:check_resolved:N KO:capabilities:T:[] KO:_owned:B:false
 member	otto.registry:Registry.__contains__	method	sync	PK:name:-
 member	otto.registry:Registry.__len__	method	sync	-
+member	otto.registry:Registry.capabilities	property:g--
+member	otto.registry:Registry.find	method	sync	PK:name:-
 member	otto.registry:Registry.get	method	sync	PK:name:-
-member	otto.registry:Registry.instances	classmethod	sync	-
 member	otto.registry:Registry.items	method	sync	-
+member	otto.registry:Registry.kind	property:g--
 member	otto.registry:Registry.names	method	sync	-
 member	otto.registry:Registry.origin	method	sync	PK:name:-
-member	otto.registry:Registry.register	method	sync	PK:name:- PK:obj:- KO:overwrite:B:false KO:origin:N
+member	otto.registry:Registry.peek	method	sync	PK:name:-
+member	otto.registry:Registry.raw_items	method	sync	-
+member	otto.registry:Registry.register	method	sync	PK:name:- PK:entry:- KO:overwrite:B:false
+member	otto.registry:Registry.register_many	method	sync	PK:entries:- KO:overwrite:B:false
+member	otto.registry:Registry.repo	method	sync	PK:name:-
+member	otto.registry:Registry.revision	property:g--
 member	otto.registry:Registry.unregister	method	sync	PK:name:-
 abstract	otto.registry:Registry	-
+name	otto.registry:RegistryView	class
+mro	otto.registry:RegistryView	-
+call	otto.registry:RegistryView	sync	PK:kind:- KO:register_hint:- KO:sources:- KO:derive:-
+member	otto.registry:RegistryView.__contains__	method	sync	PK:name:-
+member	otto.registry:RegistryView.__len__	method	sync	-
+member	otto.registry:RegistryView.find	method	sync	PK:name:-
+member	otto.registry:RegistryView.get	method	sync	PK:name:-
+member	otto.registry:RegistryView.items	method	sync	-
+member	otto.registry:RegistryView.kind	property:g--
+member	otto.registry:RegistryView.names	method	sync	-
+member	otto.registry:RegistryView.origin	method	sync	PK:name:-
+member	otto.registry:RegistryView.repo	method	sync	PK:name:-
+member	otto.registry:RegistryView.revision	property:g--
+abstract	otto.registry:RegistryView	-
+name	otto.registry:RequireRepo	class
+mro	otto.registry:RequireRepo	-
+call	otto.registry:RequireRepo	sync	-
+member	otto.registry:RequireRepo.__eq__	method	sync	PK:other:-
+member	otto.registry:RequireRepo.__hash__	method	sync	-
+abstract	otto.registry:RequireRepo	-
+name	otto.registry:Subscription	class
+mro	otto.registry:Subscription	-
+call	otto.registry:Subscription	sync	PK:kind:- KO:register_hint:-
+member	otto.registry:Subscription.__len__	method	sync	-
+member	otto.registry:Subscription.items	method	sync	-
+member	otto.registry:Subscription.kind	property:g--
+member	otto.registry:Subscription.revision	property:g--
+member	otto.registry:Subscription.subscribe	method	sync	PK:value:-
+abstract	otto.registry:Subscription	-
+name	otto.registry:class_backend	function
+call	otto.registry:class_backend	sync	KO:cls:- KO:metadata:-
+name	otto.registry:configured_backend	function
+call	otto.registry:configured_backend	sync	KO:config:- KO:factory:- KO:metadata:-
 name	otto.registry:registering_repo	function
 call	otto.registry:registering_repo	sync	PK:name:-
 name	otto.reservations:JsonReservationBackend	class
@@ -4570,6 +4901,13 @@ member	otto.reservations:JsonReservationBackend.fetch_reservations	method	sync	P
 member	otto.reservations:JsonReservationBackend.holders	method	sync	PK:resource:-
 member	otto.reservations:JsonReservationBackend.reservations	property:g--
 abstract	otto.reservations:JsonReservationBackend	-
+name	otto.reservations:JsonReservationConfig	model
+mro	otto.reservations:JsonReservationConfig	{otto.models:OttoModel}
+input	otto.reservations:JsonReservationConfig	S:"path"	required	-	S:"path"
+member	otto.reservations:JsonReservationConfig.__hash__	method	sync	-
+member	otto.reservations:JsonReservationConfig.model_config	attribute
+member	otto.reservations:JsonReservationConfig.path	field
+abstract	otto.reservations:JsonReservationConfig	-
 name	otto.reservations:MissingReservationError	class
 mro	otto.reservations:MissingReservationError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.reservations:MissingReservationError	sync	PK:message:- KO:report:N
@@ -4583,6 +4921,11 @@ member	otto.reservations:MissingResource.__hash__	method	sync	-
 member	otto.reservations:MissingResource.holders	field
 member	otto.reservations:MissingResource.resource	field
 abstract	otto.reservations:MissingResource	-
+name	otto.reservations:NoneReservationConfig	model
+mro	otto.reservations:NoneReservationConfig	{otto.models:OttoModel}
+member	otto.reservations:NoneReservationConfig.__hash__	method	sync	-
+member	otto.reservations:NoneReservationConfig.model_config	attribute
+abstract	otto.reservations:NoneReservationConfig	-
 name	otto.reservations:NullReservationBackend	class
 mro	otto.reservations:NullReservationBackend	{otto.reservations:ReservationBackendBase}
 call	otto.reservations:NullReservationBackend	sync	KO:url:N KO:repo_dir:N KO:username:N
@@ -4620,6 +4963,20 @@ name	otto.reservations:ReservationBackendError	class
 mro	otto.reservations:ReservationBackendError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.reservations:ReservationBackendError	sync	@builtin:builtins.Exception
 abstract	otto.reservations:ReservationBackendError	-
+name	otto.reservations:ReservationConstructionError	class
+mro	otto.reservations:ReservationConstructionError	{otto.reservations:ReservationBackendError} {otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.reservations:ReservationConstructionError	sync	@builtin:builtins.ValueError
+abstract	otto.reservations:ReservationConstructionError	-
+name	otto.reservations:ReservationEnv	class
+mro	otto.reservations:ReservationEnv	-
+call	otto.reservations:ReservationEnv	sync	PK:repo_dir:- PK:username:- PK:origin:- PK:url:-
+member	otto.reservations:ReservationEnv.__eq__	method	sync	PK:other:-
+member	otto.reservations:ReservationEnv.__hash__	method	sync	-
+member	otto.reservations:ReservationEnv.origin	field
+member	otto.reservations:ReservationEnv.repo_dir	field
+member	otto.reservations:ReservationEnv.url	field
+member	otto.reservations:ReservationEnv.username	field
+abstract	otto.reservations:ReservationEnv	-
 name	otto.reservations:ReservationGate	class
 mro	otto.reservations:ReservationGate	-
 call	otto.reservations:ReservationGate	sync	PK:backend:N PK:identity:N PK:skip_check:B:false PK:backend_factory:N
@@ -4708,7 +5065,7 @@ call	otto.reservations:active_reservations	sync	PK:backend:-
 name	otto.reservations:announce_expiring	function
 call	otto.reservations:announce_expiring	sync	PK:report:- KO:now:N
 name	otto.reservations:build_backend	function
-call	otto.reservations:build_backend	sync	PK:settings:- PK:repo_dir:- KO:username:N
+call	otto.reservations:build_backend	sync	PK:settings:- PK:repo_dir:- KO:username:N KO:origin:N
 name	otto.reservations:build_report	function
 call	otto.reservations:build_report	sync	PK:lab:- PK:username:- PK:backend:- KO:host_ids:N KO:now:N
 name	otto.reservations:build_reservation_gate	function
@@ -4720,7 +5077,7 @@ call	otto.reservations:gate_from_settings	sync	PK:settings:- PK:repo_dir:- KO:ho
 name	otto.reservations:is_null_backend	function
 call	otto.reservations:is_null_backend	sync	PK:backend:-
 name	otto.reservations:register_reservation_backend	function
-call	otto.reservations:register_reservation_backend	sync	PK:name:- PK:cls:- KO:overwrite:B:false
+call	otto.reservations:register_reservation_backend	sync	PK:name:- KO:config:- KO:factory:- KO:overwrite:B:false
 name	otto.reservations:required_resource_origins	function
 call	otto.reservations:required_resource_origins	sync	PK:lab:- KO:host_ids:N
 name	otto.reservations:required_resources	function
@@ -5352,15 +5709,15 @@ call	otto:load_lab	sync	PK:labnames:- PK:search_paths:N PK:preferences:N PK:repo
 name	otto:open_context	function
 call	otto:open_context	asyncgen	KO:lab:- KO:include_projects:N KO:exclude_projects:N KO:variant:N KO:dry_run:B:false KO:log_command_output:B:true KO:holder:N KO:skip_reservation_check:B:false
 name	otto:options	function
-call	otto:options	sync	PO:cls:N KO:verbs:N VK:dataclass_kwargs:-
+call	otto:options	sync	PO:cls:N KO:verbs:N KO:overwrite:B:false VK:dataclass_kwargs:-
 name	otto:register_cli_command	function
-call	otto:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:origin:N
+call	otto:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:overwrite:B:false
 name	otto:register_login_proxy	function
 call	otto:register_login_proxy	sync	PK:name:- PK:fn:- KO:undo:N KO:prompt:N KO:overwrite:B:false
 name	otto:register_options	function
-call	otto:register_options	sync	PK:cls_or_path:- KO:verbs:-
+call	otto:register_options	sync	PK:cls_or_path:- KO:verbs:- KO:overwrite:B:false
 name	otto:register_project_actions	function
-call	otto:register_project_actions	sync	PK:cls:-
+call	otto:register_project_actions	sync	PK:cls:- KO:overwrite:B:false
 name	otto:register_session_setup	function
 call	otto:register_session_setup	sync	PK:name:- PK:fn:- KO:overwrite:B:false
 name	otto:run_on_all_hosts	function

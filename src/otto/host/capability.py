@@ -132,6 +132,6 @@ def authenticating_protocols() -> list[str]:
     from .connections import TERM_BACKENDS  # off the startup graph on purpose
     from .transfer.registry import TRANSFER_BACKENDS
 
-    terms = [name for name, backend in TERM_BACKENDS.items() if backend.authenticates]
-    transfers = [name for name, cls in TRANSFER_BACKENDS.items() if cls.authenticates]
+    terms = [name for name, e in TERM_BACKENDS.raw_items() if e.metadata.authenticates]
+    transfers = [name for name, e in TRANSFER_BACKENDS.raw_items() if e.metadata.authenticates]
     return sorted({*terms, *transfers})

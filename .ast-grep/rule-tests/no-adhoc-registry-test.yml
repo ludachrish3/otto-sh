@@ -1,0 +1,108 @@
+# Rule test for .ast-grep/rules/no-adhoc-registry.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: no-adhoc-registry
+valid:
+# An operational cache written by a lock helper (otto.tunnel.manage's shape).
+- |
+  import asyncio
+
+  _ADD_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+  def _lock_for(tunnel_id: str) -> asyncio.Lock:
+      return _ADD_LOCKS.setdefault(tunnel_id, asyncio.Lock())
+# Indexed writes to a stat cache from a non-registration method
+# (otto.suite.plugin's shape).
+- |
+  _LIB_DEP_STATS: dict[str, list[int] | None] = {}
+
+
+  class Plugin:
+      def library_stats(self, deps):
+          found = {}
+          for dep in sorted(deps):
+              if dep in _LIB_DEP_STATS:
+                  found[dep] = _LIB_DEP_STATS[dep]
+              else:
+                  _LIB_DEP_STATS[dep] = _stat_pair(dep)
+          return found
+# A static table read by a registration function.
+- |
+  DEFAULT_PARSERS = [CpuParser(), MemParser()]
+
+
+  def register_defaults(*, overwrite=False):
+      register_parsers(DEFAULT_PARSERS, overwrite=overwrite)
+# A registration function writing a local, or an engine table.
+- |
+  def register_product_provider(provider):
+      seen = []
+      seen.append(provider)
+      PRODUCT_PROVIDERS.subscribe(provider)
+invalid:
+# The parent's provider list.
+- |
+  _PRODUCT_PROVIDERS: list[ProductProvider] = []
+
+
+  def register_product_provider(provider: ProductProvider) -> None:
+      _PRODUCT_PROVIDERS.append(provider)
+# The parent's host-spec dict.
+- |
+  _HOST_SPECS = {}
+
+
+  def register_host_class(name, cls, spec=None):
+      _HOST_SPECS[name] = spec
+# An annotated dict written by an add_* function.
+- |
+  _X: dict[str, int] = {}
+
+
+  def add_x(name: str, value: int) -> None:
+      _X[name] = value
+# subscribe* and *_provider names.
+- |
+  HOOKS = []
+
+
+  def subscribe_hook(fn):
+      HOOKS.extend([fn])
+- |
+  _SEEN = set()
+
+
+  def note_provider(p):
+      _SEEN.add(p)
+# A function the module applies as a decorator, bare or called.
+- |
+  ADAPTERS = {}
+
+
+  def adapter(fn):
+      ADAPTERS.update({fn.__name__: fn})
+      return fn
+
+
+  @adapter
+  def deploy(ctx): ...
+- |
+  ADAPTERS = {}
+
+
+  def adapter(name):
+      ADAPTERS.setdefault(name, [])
+      return lambda fn: fn
+
+
+  @adapter("deploy")
+  def deploy(ctx): ...
+# A global reached through a qualifying module.
+- |
+  from otto.host import os_profile as profiles
+
+
+  def register_host_class(name, cls, spec=None):
+      profiles._HOST_SPECS[name] = spec

@@ -1097,15 +1097,16 @@ async def test_no_reservations_table_is_a_no_op(monkeypatch):
 async def test_an_unbuildable_backend_refuses_before_any_context(tmp_path, monkeypatch):
     import otto
     from otto.context import variant
-    from otto.reservations import ReservationBackendError
+    from otto.models.base import OttoModel
+    from otto.reservations import ReservationBackendError, register_reservation_backend
 
-    class _Boom:
-        def __init__(self, **kwargs):
-            raise TypeError("cannot connect")
+    class _NoKeys(OttoModel, frozen=True):
+        pass
 
-    monkeypatch.setattr(
-        "otto.reservations.registry.get_reservation_backend_class", lambda name: _Boom
-    )
+    def _boom(c):
+        raise TypeError("cannot connect")
+
+    register_reservation_backend("boom", config=_NoKeys, factory=_boom)
     repo = fake_repo("res", sut_dir=tmp_path, settings={"reservations": {"backend": "boom"}})
     _install_result(monkeypatch, repos=[repo])
     installed = []

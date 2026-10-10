@@ -240,6 +240,7 @@ for _var in [k for k in os.environ if k.startswith("OTTO_") and k not in AMBIENT
 
 import asyncio
 import atexit
+import collections
 import contextlib
 import dataclasses
 import errno
@@ -262,7 +263,6 @@ from otto.host.login_proxy import Cred
 from otto.host.remote_host import make_host_id
 from otto.host.unix_host import UnixHost
 from otto.invocation import RegistrySnapshot
-from otto.registry import Registry
 from otto.suite._retry import report_retries, retry_hookwrapper
 from tests._fixtures import _conftest_rebind
 from tests._fixtures._coverage_preinit import (
@@ -724,7 +724,7 @@ def _reap_after_teardown(item) -> None:  # type: ignore[no-untyped-def]
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):  # type: ignore[no-untyped-def]
-    """Fail the session if a host registration outlived it, or it wrote bytecode into ``src/otto``.
+    """Fail the session on leftover registrations, duplicate tables, or bytecode in ``src/otto``.
 
     Registrations first (:func:`_fail_on_registrations_left`), in every
     process, since each xdist worker has its own registries: what the
@@ -733,6 +733,10 @@ def pytest_sessionfinish(session, exitstatus):  # type: ignore[no-untyped-def]
     registry still holding records now. It forgets nothing first, so a
     closed loop's leftover hosts are reported too. A worker hands its lines
     to the controller, which reports every process's and fails the session.
+
+    Then the engine tables (:func:`_fail_on_duplicate_tables`), in every
+    process the same way: no two live otto tables may share a
+    ``(defined_in, kind)``.
 
     The rest of this docstring is about the bytecode check: a NEW
     ``__pycache__`` under ``src/otto``.
@@ -772,6 +776,7 @@ def pytest_sessionfinish(session, exitstatus):  # type: ignore[no-untyped-def]
       attribute it to the session that spawned it.
     """
     _fail_on_registrations_left(session, exitstatus)
+    _fail_on_duplicate_tables(session, exitstatus)
     if os.environ.get("PYTEST_XDIST_WORKER"):
         return
     created = sorted(_src_otto_pycache_dirs() - _PYCACHE_AT_SESSION_START)
@@ -824,11 +829,19 @@ def _registrations_left() -> list[str]:
     return [f"{snap.loop!r}: {', '.join(snap.display_ids)}" for snap in left]
 
 
+_WORKER_DUPLICATE_TABLES: list[str] = []
+"""The controller's copy of the duplicate tables each xdist worker reported at its session end."""
+
+_DUPLICATE_TABLES_KEY = "otto_duplicate_tables"
+"""The ``workeroutput`` key a worker's duplicate tables travel under."""
+
+
 @pytest.hookimpl(optionalhook=True)
 def pytest_testnodedown(node, error):  # type: ignore[no-untyped-def]
-    """Controller side: collect what a finished xdist worker reported left registered."""
+    """Controller side: collect what a finished xdist worker reported at its session end."""
     output = getattr(node, "workeroutput", None) or {}
     _WORKER_REGISTRATIONS_LEFT.extend(output.get(_REGISTRATIONS_LEFT_KEY, []))
+    _WORKER_DUPLICATE_TABLES.extend(output.get(_DUPLICATE_TABLES_KEY, []))
 
 
 def _fail_on_registrations_left(session, exitstatus) -> None:  # type: ignore[no-untyped-def]
@@ -853,6 +866,65 @@ def _fail_on_registrations_left(session, exitstatus) -> None:  # type: ignore[no
     if reporter is not None:
         reporter.write_sep("=", "registrations outlived the session", red=True)
         reporter.write_line("host registrations left at session end: " + "; ".join(lines))
+    if exitstatus == 0:
+        session.exitstatus = 1
+
+
+def _duplicate_tables() -> list[str]:
+    """``"<defined_in>: <kind> (xN)"`` for each key that several live otto tables share.
+
+    ``(defined_in, kind)`` is the key every registry guard compares on, and
+    an otto module builds each of its tables once. Two live tables under one
+    key mean the module was imported a second time (evicted from
+    ``sys.modules`` and imported again) while its first copy stayed alive:
+    every walk of :func:`otto.registry.instances` then meets both, and a
+    guard reading one gets the other's entries (the binary-loader flake).
+
+    It reads the table list as it is, WITHOUT collecting garbage first, on
+    purpose. A copy kept alive only by its own reference cycles is still
+    listed until the cycle collector runs, which is exactly when it misleads
+    a walk; a test that re-imports a module on purpose collects the copy
+    itself. So the verdict is deterministic for a copy something still holds,
+    and best-effort for a copy held only by its own cycles: whether the
+    collector ran before the session ended decides it. An intermittent
+    "duplicate otto registry tables" failure therefore names a real polluter
+    (a test that re-imported the module and left the copy for the collector),
+    never a flaky guard.
+    """
+    from otto.registry import instances
+
+    keys = [
+        (table.defined_in, table.kind)
+        for table in instances()
+        if table.defined_in == "otto" or table.defined_in.startswith("otto.")
+    ]
+    counts = collections.Counter(keys)
+    return [f"{module}: {kind} (x{n})" for (module, kind), n in sorted(counts.items()) if n > 1]
+
+
+def _fail_on_duplicate_tables(session, exitstatus) -> None:  # type: ignore[no-untyped-def]
+    """Fail the session if two live otto tables share a key, in this process or any worker.
+
+    Once per process, at session end, so it costs one walk of the table list.
+    A worker hands its lines to the controller through ``workeroutput``, as
+    :func:`_fail_on_registrations_left` does, and the controller reports them.
+    """
+    lines = _duplicate_tables()
+    workeroutput = getattr(session.config, "workeroutput", None)
+    if workeroutput is not None:  # an xdist worker: the controller reports
+        workeroutput[_DUPLICATE_TABLES_KEY] = lines
+        return
+    lines += _WORKER_DUPLICATE_TABLES
+    if not lines:
+        return
+    reporter = session.config.pluginmanager.getplugin("terminalreporter")
+    if reporter is not None:
+        reporter.write_sep("=", "duplicate otto registry tables", red=True)
+        reporter.write_line(
+            "two live tables share one (module, kind); a test evicted the module from "
+            "sys.modules and imported it again while its first copy stayed alive: "
+            + "; ".join(lines)
+        )
     if exitstatus == 0:
         session.exitstatus = 1
 
@@ -1311,87 +1383,6 @@ def _reset_inventory_stale_warnings():
     cache = sys.modules.get("otto.inventory.cache")
     if cache is not None:
         cache.reset_stale_warnings()
-
-
-# The provider seams, as ``(module, attribute)``. Plain lists rather than
-# ``otto.registry.Registry`` singletons, which is exactly why ``_isolate_registries``
-# cannot see them: its discovery scans for ``Registry`` instances.
-_PROVIDER_REGISTRIES = (
-    ("otto.host.product", "_PRODUCT_PROVIDERS"),
-    ("otto.host.dev_tool", "_DEV_TOOL_PROVIDERS"),
-)
-
-
-def _provider_snapshot() -> "list[tuple[str, str, list | None]]":
-    """Copy each provider list, recording ``None`` when its module is not loaded.
-
-    ``None`` is not "empty" — it is "there was nothing to snapshot", which is
-    the case :func:`_restore_provider_snapshot` has to treat specially. Both
-    modules define their list as ``[]`` at import, so a module the TEST
-    imported has an import-time baseline of empty and nothing else.
-    """
-    out: "list[tuple[str, str, list | None]]" = []
-    for mod_name, attr in _PROVIDER_REGISTRIES:
-        mod = sys.modules.get(mod_name)
-        # `getattr` with no default: a rename of either global fails loudly
-        # here, at the snapshot READ, rather than silently minting a new
-        # attribute in the restore below (the `_restore_bootstrap_state` rule).
-        out.append((mod_name, attr, None if mod is None else list(getattr(mod, attr))))
-    return out
-
-
-def _restore_provider_snapshot(snapshot: "list[tuple[str, str, list | None]]") -> None:
-    """Put each provider list back to what *snapshot* recorded.
-
-    IN PLACE (``[:] =``), never a rebind: ``otto.bootstrap`` binds
-    ``_PRODUCT_PROVIDERS``/``_DEV_TOOL_PROVIDERS`` by ``from … import`` at call
-    time, so a rebound module attribute would leave that reader holding the
-    leaked list.
-    """
-    for mod_name, attr, saved in snapshot:
-        mod = sys.modules.get(mod_name)
-        if mod is None:
-            continue
-        getattr(mod, attr)[:] = [] if saved is None else saved
-
-
-@pytest.fixture(autouse=True)
-def _restore_provider_registries():
-    """Snapshot-restore the product and dev-tool PROVIDER lists around every test.
-
-    ``register_product_provider`` / ``register_dev_tool_provider`` append to two
-    module-global lists, and nothing ever unregisters. Every ``bootstrap()``
-    that imports a repo init module registering one leaves it there for the rest
-    of the process — and both lists are read at the single lab-ingest chokepoint
-    (``create_host_from_dict``), so a leaked provider hangs products or dev tools
-    on hosts in every later test that builds one. ``bootstrap`` also re-reads
-    them for its D2 refusal, so a leaked provider owned by a repo NAME a later
-    test happens to reuse fails that test's bootstrap over a registration it
-    never made.
-
-    ``_isolate_registries`` does not cover these: it discovers state by scanning
-    loaded ``otto.*`` modules for ``otto.registry.Registry`` instances, and these
-    are plain lists. Five test files carry their own local copy of this
-    snapshot/restore (``tests/unit/host/test_product_providers.py``,
-    ``test_dev_tool_providers.py``, ``test_factory.py``,
-    ``tests/unit/project/test_composed_lab.py``, ``tests/unit/bootstrap/
-    test_bootstrap.py``) — one of them says in so many words that the list is
-    "a plain list the root guard cannot see". That is the tell: the state is
-    process-global, so a per-file guard is scoped narrower than the hazard, and
-    the next file to register a provider inherits no protection at all. Root
-    conftest, per the #132/#133 rule that put ``_isolate_registries`` here.
-
-    Lazy ``sys.modules.get``, like ``_reset_tunnel_add_locks``: a test that never
-    imports the host package must not be made to. That laziness is also why the
-    snapshot distinguishes "not loaded" from "loaded and empty" — a test that
-    imports the module ITSELF and registers into it would otherwise leak
-    everything it added, which is precisely the hole that let the first-party
-    instructions escape ``_isolate_registries`` (see
-    ``tests/unit/config/test_completion_cache_unit.py``).
-    """
-    snapshot = _provider_snapshot()
-    yield
-    _restore_provider_snapshot(snapshot)
 
 
 @pytest.fixture(autouse=True)
@@ -2294,37 +2285,6 @@ def _clirunner_live_log_capture_guard():
     yield from _clirunner_guard_impl()
 
 
-def _loaded_registries() -> list[Registry]:
-    """Return every ``Registry`` reachable from a loaded ``otto.*`` module.
-
-    Discovery is dynamic (scans ``sys.modules``) rather than a hand-maintained
-    list, so a registry added in the future is isolated automatically without a
-    matching test-side edit. Instances are de-duplicated by ``id`` because a
-    single registry is often re-exported from several modules.
-
-    Every call re-scans, DELIBERATELY uncached. The scan measures 0.2 ms with
-    all of otto imported (121 otto modules of 488 total) — noise against any
-    test body. The memo this replaces was keyed on ``len(sys.modules)``,
-    which is identity-blind: a test that imports one module and evicts
-    another leaves the count unchanged, so a brand-new ``Registry`` was
-    silently never isolated. ``test_registry_isolation_e2e.py`` pins the
-    completeness this bought (proven red against the cached version first).
-    """
-    found: dict[int, Registry] = {}
-    for module in list(sys.modules.values()):
-        mod_name = getattr(module, "__name__", "")
-        if mod_name != "otto" and not mod_name.startswith("otto."):
-            continue
-        try:
-            members = vars(module)
-        except TypeError:  # pragma: no cover - namespace without __dict__
-            continue
-        for value in members.values():
-            if isinstance(value, Registry):
-                found[id(value)] = value
-    return list(found.values())
-
-
 @pytest.fixture(autouse=True)
 def _isolate_sys_path():
     """Snapshot ``sys.path`` before each test; restore it in place after.
@@ -2388,80 +2348,11 @@ def _drop_richs_cached_console():
     rich._console = None
 
 
-# The host-class SPEC table: the plain ``dict`` that lives beside
-# ``HOST_CLASSES``. ``register_host_class`` (otto/host/os_profile.py) writes
-# BOTH — the class into the ``Registry`` ``_isolate_registries`` can see, the
-# spec into this dict it cannot, because its discovery scans for ``Registry``
-# instances. Restoring only the registry leaves the two tables disagreeing, and
-# ``_nearest_registered_spec`` reads them TOGETHER
-# (``{HOST_CLASSES.get(n): n for n in _HOST_SPECS}``): a spec left
-# behind for a class that was dropped makes the very next
-# ``register_host_class`` ANYWHERE in the process die with
-# ``ValueError: Unknown host class '<leaked name>'``.
-_HOST_SPEC_TABLE = ("otto.host.os_profile", "_HOST_SPECS")
-
-
-def _host_spec_snapshot() -> "dict[str, object] | None":
-    """Copy the host-spec table, or ``None`` when ``otto.host.os_profile`` is unloaded.
-
-    ``None`` is "there was nothing to snapshot", not "empty" — the distinction
-    :func:`_restore_host_specs` has to treat specially, exactly as
-    :func:`_provider_snapshot` does. ``getattr`` with no default so a rename of
-    the global fails loudly here, at the snapshot READ, rather than silently
-    minting a new attribute in the restore.
-    """
-    mod_name, attr = _HOST_SPEC_TABLE
-    mod = sys.modules.get(mod_name)
-    return None if mod is None else dict(getattr(mod, attr))
-
-
-def _restore_host_specs(snapshot: "dict[str, object] | None") -> None:
-    """Put the host-spec table back, IN PLACE, agreeing with the restored ``HOST_CLASSES``.
-
-    IN PLACE (``clear()`` + ``update()``), never a rebind: ``_nearest_registered_spec``
-    and ``build_host_spec`` read the module global, and a rebound attribute
-    would leave every reader that bound it by ``from … import`` holding the
-    leaked dict.
-
-    Two cases, mirroring what :func:`_restore_registries` just did to
-    ``HOST_CLASSES``:
-
-    * the module was loaded when the test started — the snapshot is the whole
-      truth, so put exactly it back;
-    * it was NOT loaded then but is now (the test imported it) — there is no
-      pre-test copy to return to, and the registry restore has already reduced
-      ``HOST_CLASSES`` to its otto-origin (import-time) entries. Match that:
-      a spec whose class survived stays, everything else goes — COMPUTING the
-      ``set(_HOST_SPECS) == set(HOST_CLASSES.names())`` that
-      ``_nearest_registered_spec`` needs to hold.
-
-    The loaded case does not compute that equality, it INHERITS it: it restores
-    a snapshot which the previous teardown had already left agreeing with
-    ``HOST_CLASSES``, and ``_restore_registries`` has just put ``HOST_CLASSES``
-    back to the matching snapshot.
-
-    Call it AFTER the registry restore: it reads the ``HOST_CLASSES`` that
-    restore leaves behind.
-    """
-    mod_name, attr = _HOST_SPEC_TABLE
-    mod = sys.modules.get(mod_name)
-    if mod is None:
-        return
-    specs = getattr(mod, attr)
-    if snapshot is None:
-        registered = set(mod.HOST_CLASSES.names())
-        for name in [n for n in specs if n not in registered]:
-            del specs[name]
-        return
-    specs.clear()
-    specs.update(snapshot)
-
-
 @pytest.fixture(autouse=True)
 def _isolate_registries():
-    """Snapshot every global otto ``Registry`` before each test; restore after.
+    """Snapshot every engine table before each test; restore after.
 
-    The ``otto.registry.Registry`` singletons (``INSTRUCTIONS``,
+    The tables :func:`otto.registry.instances` lists (``INSTRUCTIONS``,
     ``LOADER_CLASSES``, ``FRAME_CLASSES``, ``CLI_COMMANDS``, …) live for the
     whole process. Tests that register entries into them — via ``@instruction``,
     ``register_binary_loader``, ``register_cli_command``, etc. — never clean up,
@@ -2472,17 +2363,14 @@ def _isolate_registries():
     only surfaces in the nightly repeat job — never in ``make nox`` /
     ``make coverage`` (both single-pass by default).
 
-    Snapshotting each registry's entries before the test and, on teardown,
-    dropping anything the test added and restoring the originals keeps every
-    registry byte-for-byte stable across tests and across repeat iterations of
-    the same test in one process. Built-in registrations (present at import)
-    survive because they are part of the snapshot.
-
-    ``HOST_CLASSES`` needs one thing more than the scan can give it: its
-    entries are half of a pair, the other half being the plain
-    ``otto.host.os_profile._HOST_SPECS`` dict (see :data:`_HOST_SPEC_TABLE`).
-    So this fixture snapshot-restores that dict too, right after the registry
-    restore.
+    Snapshotting each table's entries before the test and, on teardown,
+    restoring the snapshot exactly keeps every table byte-for-byte stable
+    across tests and across repeat iterations of the same test in one process.
+    Built-in registrations (present at import) survive because they are part of
+    the snapshot. Every engine table is covered — registries, backend
+    registries and subscriptions; views follow their sources by revision — and
+    each restore bumps the table's revision, so a derived cache keyed on it
+    rebuilds.
 
     This guard lives in the ROOT conftest, not the unit tree's, ON PURPOSE. The
     registries are process-global, so the hazard is too: ``tests_hostless`` runs
@@ -2504,114 +2392,83 @@ def _isolate_registries():
     session-scoped fixtures BEFORE function-scoped ones, so anything they
     register is already inside every per-test snapshot and survives the restore.
     """
-    snapshots = _snapshot_registries()
+    snapshots = _snapshot_tables()
     modules_before = frozenset(sys.modules)
-    host_specs = _host_spec_snapshot()
 
     yield
 
-    _restore_registries(snapshots, modules_before)
-    # After, not beside: the spec-table restore reads the ``HOST_CLASSES`` the
-    # call above leaves behind. Same fixture rather than a sibling autouse one
-    # so the order is stated here instead of inferred from collection order.
-    _restore_host_specs(host_specs)
+    _restore_tables(snapshots, modules_before)
 
 
-def _snapshot_registries() -> list[tuple[Registry, dict[str, tuple[object, str]]]]:
-    """Return every loaded registry paired with its ``name -> (raw_entry, origin)`` map.
+def _snapshot_tables() -> "list[tuple[object, object]]":
+    """Every live engine table but views (they follow their sources by revision).
 
-    Reads :meth:`Registry._raw_items` (test support, not part of the product
-    API) rather than ``reg.get(name)``: a built-in registered as a ``Ref``
-    must come back as that same ``Ref``, unresolved, so snapshotting a test
-    never imports a built-in's target as a side effect of running the test at
-    all.
+    Discovery is :func:`otto.registry.instances`, the engine's own list of every
+    table it built, so a table added later is isolated without a test-side edit,
+    and one created mid-test is never missed. Each table snapshots its stored
+    state as registered: a built-in registered by reference comes back as that
+    same ``Ref``, unresolved, so snapshotting never imports a built-in's target.
     """
-    return [
-        (reg, {name: (entry, origin) for name, entry, origin in reg._raw_items()})
-        for reg in _loaded_registries()
-    ]
+    from otto.registry import RegistryView, instances
+
+    return [(t, t._snapshot()) for t in instances() if not isinstance(t, RegistryView)]
 
 
-def _restore_registries(
-    snapshots: list[tuple[Registry, dict[str, tuple[object, str]]]],
-    modules_before: frozenset[str],
+def _evictable(origin: str, modules_before: frozenset[str]) -> bool:
+    """Whether a re-import can restore what *origin* registered: the test imported it."""
+    return (
+        bool(origin)
+        and origin not in modules_before
+        and not (origin == "otto" or origin.startswith("otto."))
+    )
+
+
+def _restore_tables(
+    snapshots: "list[tuple[object, object]]", modules_before: frozenset[str]
 ) -> None:
-    """Drop entries a test added, restore the snapshot, evict side-effect origins.
+    """Restore every snapshot, drop a new table's non-otto entries, evict side-effect origins.
 
     A test that imports an extension module listed in a repo's ``init`` (e.g.
     ``custom_hosts``, which calls ``register_command_frame`` at import) registers
-    into an isolated registry as an **import side effect**. Dropping the entry
-    on teardown is not enough: the origin module stays in ``sys.modules``, so a
-    later ``importlib.import_module`` of it is a no-op and never re-runs the
-    registration — leaving the module imported but its registry entry gone. A
-    downstream test that relies on re-import to re-register (e.g.
+    into a table as an **import side effect**. Restoring the table is not enough:
+    the origin module stays in ``sys.modules``, so a later
+    ``importlib.import_module`` of it is a no-op and never re-runs the
+    registration — leaving the module imported but its entry gone. A downstream
+    test that relies on re-import to re-register (e.g.
     ``Repo.import_init_modules`` mirroring bootstrap order) then fails with
     ``... is not a registered frame``. This surfaces only single-process
     (``-n0``); ``-n auto`` scatters the importer and the victim across workers.
 
-    So after restoring each registry, evict from ``sys.modules`` the origin
-    module of every entry the test added — but ONLY origins the test itself
-    imported (absent from *modules_before*), mirroring ``purge_tmp_imports``.
-    A module already loaded before the test (a pytest-collected test module
-    registering a locally-defined class, or a core ``otto`` module) must never
-    be evicted: it isn't a re-importable extension,
-    and dropping the running test file breaks ``inspect.getfile`` for every
-    later registration in it.
+    So the origin module of every entry the test added or replaced is evicted
+    from ``sys.modules`` — but ONLY origins the test itself imported (absent from
+    *modules_before*), mirroring ``purge_tmp_imports``. A module already loaded
+    before the test (a pytest-collected test module registering a locally
+    defined class, or a core ``otto`` module) must never be evicted: it isn't a
+    re-importable extension, and dropping the running test file breaks
+    ``inspect.getfile`` for every later registration in it.
 
-    A parked entry is whatever the snapshot recorded raw: a real object, or an
-    unresolved ``Ref``. Restored via :meth:`Registry._restore_raw` (test
-    support, not ``register(..., overwrite=True)``): a validator is not
-    guaranteed pure once it can depend on state a test changed, so a restore
-    must never be the trigger that runs one. ``_restore_raw`` writes the entry
-    and origin back directly — for a ``Ref`` this puts back the ``Ref`` itself,
-    unresolved, so restoring a reference-registered built-in never imports its
-    target either.
+    Each table's ``_restore`` reinstalls its snapshot exactly and runs no check:
+    a check is not guaranteed pure once it can depend on state a test changed,
+    so a restore must never be the trigger that runs one.
+
+    Tables that did not EXIST at snapshot time (built by an ``otto.*`` module the
+    test itself imported) have no snapshot. Their baseline cannot be recovered
+    by re-import, so the rule there is by ORIGIN: an entry otto's own module
+    registered as an import side effect IS the process's state now and stays;
+    anything else arrived from the test, and goes.
     """
-    evict_origins: set[str] = set()
+    from otto.registry import RegistryView, instances
 
-    def _drop_added(reg: Registry, name: str) -> None:
-        """Unregister *name*, evicting its origin when a re-import can restore it."""
-        origin = reg.origin(name)
-        if (
-            origin
-            and origin not in modules_before
-            and origin != "otto"
-            and not origin.startswith("otto.")
-        ):
-            evict_origins.add(origin)
-        reg.unregister(name)
-
-    for reg, parked in snapshots:
-        for name in list(reg.names()):
-            if name not in parked:
-                _drop_added(reg, name)
-        for name, (entry, origin) in parked.items():
-            reg._restore_raw(name, entry, origin)
-
-    # Registries that did not EXIST at snapshot time. The snapshot can only
-    # cover what was reachable when the test started, so a registry living in
-    # an ``otto.*`` module the test itself imported has no entry above — and
-    # iterating snapshots alone left everything the test registered there
-    # standing for the next test to trip over.
-    #
-    # Their baseline cannot be recovered by re-import (the module stays in
-    # ``sys.modules``, so a second import is a no-op), which is why the rule
-    # here is by ORIGIN rather than wholesale: an entry registered by otto's
-    # own module as an import side effect IS the process's state now, and
-    # dropping it would leave otto missing its own defaults for every later
-    # test — a worse failure than the leak. Anything else in a brand-new
-    # registry arrived from the test, and goes.
-    snapshotted = {id(reg) for reg, _ in snapshots}
-    for reg in _loaded_registries():
-        if id(reg) in snapshotted:
+    evict: set[str] = set()
+    taken = {id(t) for t, _ in snapshots}
+    for table, state in snapshots:
+        evict.update(o for o in table._origins_added_since(state) if _evictable(o, modules_before))
+        table._restore(state)
+    for table in instances():  # tables that did not exist at snapshot time
+        if id(table) in taken or isinstance(table, RegistryView):
             continue
-        for name in list(reg.names()):
-            origin = reg.origin(name)
-            if origin == "otto" or origin.startswith("otto."):
-                continue
-            _drop_added(reg, name)
-
-    for origin in evict_origins:
+        evict.update(o for o in table._drop_non_otto() if _evictable(o, modules_before))
+    for origin in evict:
         sys.modules.pop(origin, None)
 
 
@@ -2632,20 +2489,3 @@ def _reset_reservation_expiry_warnings():
     reset_expiry_warnings()
     yield
     reset_expiry_warnings()
-
-
-@pytest.fixture(autouse=True)
-def _reset_half_ported_warnings():
-    """Clear the half-ported-backend warning suppression set between tests.
-
-    ``otto.reservations`` announces an unfinished 0.10 port once per PROCESS,
-    keyed on the backend class name. Two tests that register a class of the
-    same name would otherwise silence each other, order-dependently. Lives in
-    the ROOT conftest per the process-global-state rule: the set belongs to
-    the module, not to any one test directory.
-    """
-    from otto.reservations.factory import reset_half_ported_warnings
-
-    reset_half_ported_warnings()
-    yield
-    reset_half_ported_warnings()

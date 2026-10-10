@@ -106,10 +106,10 @@ time with "has no 'reservations' attribute", and the conformance helper fails
 it too. Inheriting closes that gap: it buys you a `TypeError` naming any
 method you forgot the moment the class is instantiated, the cached
 `reservations` member every consumer reads, and a constructor that already
-accepts the three keyword arguments otto passes — `url` (when the setting is
-present), `repo_dir` (always) and `username` (always). Declare your own
-`[reservations.<name>]` settings as further keyword parameters and forward the
-otto-owned ones to `super().__init__`:
+keeps `url`, `repo_dir` and `username` — the values your factory hands it from
+otto's environment ([below](#selecting-it-in-settings)). Declare your own
+settings as further keyword parameters and forward the otto-owned ones to
+`super().__init__`:
 
 ```python
 from datetime import datetime
@@ -223,15 +223,39 @@ optional `list_usernames` completion capability:
 
 ## Selecting it in settings
 
-Register the backend under a bare name from an `init` module (one of the modules
-in `init = [...]`), then select it by that name:
+A reservation backend is a *configured* backend, registered with the one
+wrapper shape every configured seam shares ({ref}`configured-backends`): a
+config model that parses the backend's `[reservations.<name>]` sub-table, and
+a factory that builds the backend from it. Register it under a bare name from
+an `init` module (one of the modules in `init = [...]`), then select it by
+that name:
 
 ```python
 # my_team_backend.py  (listed in init = [...])
-from otto.reservations import register_reservation_backend
+from pydantic import ConfigDict
+
+from otto.models import OttoModel
+from otto.registry import Configured
+from otto.reservations import ReservationEnv, register_reservation_backend
 from my_company.jira_backend import MyTeamBackend
 
-register_reservation_backend("my-team-jira", MyTeamBackend)
+
+class MyTeamConfig(OttoModel):
+    model_config = ConfigDict(frozen=True)
+
+    api_key_env: str
+
+
+def my_team(c: Configured[MyTeamConfig, ReservationEnv]) -> MyTeamBackend:
+    return MyTeamBackend(
+        url=c.env.url,
+        repo_dir=c.env.repo_dir,
+        username=c.env.username,
+        api_key_env=c.config.api_key_env,
+    )
+
+
+register_reservation_backend("my-team-jira", config=MyTeamConfig, factory=my_team)
 ```
 
 ```toml
@@ -243,16 +267,29 @@ url = "https://jira.example.com"
 api_key_env = "JIRA_API_KEY"
 ```
 
-Otto constructs the backend as
-`MyTeamBackend(url="https://jira.example.com", repo_dir=<repo root>, username=<resolved identity>, api_key_env="JIRA_API_KEY")`
-— the `[reservations.<name>]` sub-table becomes keyword arguments, `url` is
-passed when present, `repo_dir` is always passed for resolving any
-relative paths, and `username` is always passed because `reservations` is a
-zero-argument member and has to know whose bookings to fetch. Selecting an
-unregistered name raises an error listing the registered backends. This is the
-same named-registry mechanism otto uses for host sources, term/transfer
-backends, and host classes; an `init` module always imports before the
-reservation check runs, so the name is registered in time.
+Otto parses the `[reservations.my-team-jira]` sub-table with `MyTeamConfig`,
+so an unknown key or a value of the wrong type fails when the table is read,
+naming the field, the backend and the settings file (never quoting the
+rejected value); what a config model must be is stated once, under
+{ref}`configured-backends`. The factory receives the parsed configuration as
+`c.config`, and `c.env`, a {class}`~otto.reservations.ReservationEnv`, carries
+the rest: `url` (the `[reservations]` table's `url`, or `None`), `repo_dir`
+(the root of the repo whose table is in effect, for anchoring a relative
+path-like setting), `username` (the resolved identity, because `reservations`
+is a zero-argument member and has to know whose bookings to fetch) and
+`origin` (the settings file, for messages). A factory that raises, or that
+returns something without a callable `fetch_reservations` and
+`backend_name`, fails with {class}`~otto.reservations.ReservationConstructionError`
+naming the stage, the backend, the settings file and the module that
+registered it; so does selecting an unregistered name, which lists the
+registered backends. An `init` module always imports before the reservation
+check runs, so the name is registered in time.
+
+Preparation is lazy, like construction. Under `-R` (`--skip-reservation-check`)
+otto neither parses the sub-table nor builds the backend, so neither a bad
+setting nor a scheduler that hangs can block the break-glass. A status report
+that does need the backend parses the table once and builds a fresh backend
+from that one parse each time it asks.
 See {doc}`Extension points <../../architecture/subsystems/extension-points>` for
 the registry machinery behind this and every other seam otto can be extended
 at.
@@ -392,13 +429,11 @@ the kwarg asserts *your* capability set rather than tightening the contract.
   alike. Normalize inside your backend, not in otto.
 - **`backend_name()` should be stable.** It shows up in diagnostics and skip
   warnings; changing it between versions breaks log-history searches.
-- **`url` is optional on both sides.** Accept `url: str | None = None` and use
-  it, or hardcode your endpoint and omit it — otto passes `url=` only when the
-  setting is present.
-- **Accept `repo_dir` and `username`.** Otto always passes both — `repo_dir` to
-  anchor any relative path-like settings your own backend accepts, the same
-  way custom lab backends do, and `username` as the identity `reservations`
-  queries for.
+- **`url` is optional on both sides.** `c.env.url` is `None` when the setting
+  is absent; use it, or hardcode your endpoint and ignore it.
+- **Pass `username` through.** Your factory hands `c.env.username` to the
+  backend: it is the identity `reservations` queries for. Anchor any relative
+  path-like setting to `c.env.repo_dir`, the same way custom lab backends do.
 - **Optionally implement `list_usernames()`** to power cached `--holder`
   completion (see [Username tab-completion](../../cli/reservation/identity.md#username-tab-completion)).
 - **Optionally implement `holders()`** if your scheduler can answer the
@@ -437,12 +472,11 @@ two-method `Reservation` one. It is a hard cutover: there is no shim and no
 deprecation period.
 
 **Port `who_reserved` to `holders` first.** It is the one removal that does
-not fail loudly. Every other change below stops the backend at startup with a
-message naming what to do; a backend that ports `fetch_reservations` and never
-notices this one starts clean and silently reports `held by: unknown` in
-refusals it used to answer. Otto warns once per process when it sees a backend
-defining `who_reserved` but not `holders`, but the warning is the safety net,
-not the plan.
+not fail loudly. A backend missing `fetch_reservations` or `backend_name`
+fails when otto builds it, naming the missing method; a backend that ports
+`fetch_reservations` and never notices this one starts clean and silently
+reports `held by: unknown` in refusals it used to answer, and otto does not
+warn about it.
 
 | 0.10 | 0.11 |
 |------|------|
@@ -487,9 +521,9 @@ The example CLI below does it the way otto's own commands do, in five steps:
 1. **Parse** the flags. `--holder` and `-R` / `--skip-reservation-check` are
    otto's own spellings; reuse them so your tool reads like otto.
 2. **Construct** the gate with
-   [`gate_from_settings`](../../api/reservations.rst). Under `-R` it builds no
-   backend at all, so a scheduler that hangs in its constructor cannot block
-   the break-glass; its identity and backend rules are documented with
+   [`gate_from_settings`](../../api/reservations.rst). Under `-R` it neither
+   prepares nor builds a backend, so a scheduler that hangs in its constructor
+   cannot block the break-glass; its identity and backend rules are documented with
    `gate_from_settings` and `build_backend` there.
 3. **Call** one library entry point: `gate.evaluate(lab)` to gate a run, or
    `gate.report(lab)` for a status report. Passing the `Lab` explicitly needs

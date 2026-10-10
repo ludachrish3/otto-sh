@@ -20,6 +20,7 @@ from otto.params import (
     verb_option_classes,
     verbs_for,
 )
+from otto.registry import DuplicateRegistration
 
 
 @options
@@ -68,7 +69,7 @@ def test_bad_verbs_raise_at_registration(verbs, match):
 
 def test_registering_one_class_twice_raises_even_through_its_string_form():
     register_options(Base, verbs=["run"])
-    with pytest.raises(OptionsRegistrationError, match="already registered"):
+    with pytest.raises(DuplicateRegistration, match="already registered"):
         register_options(f"{__name__}:Base", verbs=["test"])
 
 
@@ -281,7 +282,7 @@ def test_the_decorator_refuses_bad_verbs_and_a_second_registration():
     class Once:
         x: int = 0
 
-    with pytest.raises(OptionsRegistrationError, match="already registered"):
+    with pytest.raises(DuplicateRegistration, match="already registered"):
         register_options(Once, verbs=["test"])
 
 

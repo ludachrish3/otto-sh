@@ -1,0 +1,79 @@
+# Rule test for .ast-grep/rules/backend-no-name-dispatch.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: backend-no-name-dispatch
+valid:
+# Reading the name is not dispatching on it.
+- |
+  backend = cfg.backend
+- |
+  prepared = INVENTORY_BACKENDS.prepare(cfg.backend, raw, env, source=origin)
+# A docstring or a message that names a backend is not a comparison.
+- |
+  def names_list_doc():
+      """The built-ins: "json" in names_list_doc order, then "none"."""
+- |
+  raise ValueError('unknown backend; "json" == the default')
+# Another literal, and a membership test of the literal in a name.
+- |
+  if cfg.backend == "netbox-test":
+      ...
+- |
+  if "json" in names:
+      ...
+# A prepared fact, not the name.
+- |
+  files = [f for src in sources for f in src.facts.lab_files]
+invalid:
+# The twelve name comparisons the backend registries replaced, as they read
+# before (inventory, creds, lab sources, reservations, the completion
+# cache, `otto cache`, `otto init`).
+- |
+  if cfg.backend == "json":
+      ...
+- |
+  if compiled.backend == "json" or compiled.cache_ttl <= timedelta(0):
+      ...
+- |
+  if compiled.backend == "json":
+      ...
+- |
+  if spec.backend == "json":
+      ...
+- |
+  for src in sources:
+      if src.backend == "json":
+          ...
+- |
+  if backend_name == "none":
+      ...
+  elif backend_name == "json":
+      ...
+- |
+  if any(src.backend != "json" for src in getattr(repo, "lab_sources", [])):
+      ...
+- |
+  for source in sources:
+      if source.backend != "json":
+          ...
+- |
+  def lab_files(sources):
+      return [src.lab_files() for src in sources if src.backend == "json"]
+# The other spellings: the literal first, single quotes, membership in a
+# literal collection.
+- |
+  if "none" != backend:
+      ...
+- |
+  if backend == 'none':
+      ...
+- |
+  if cfg.backend in ("json", "yaml"):
+      ...
+- |
+  if cfg.backend not in ["none"]:
+      ...
+- |
+  if cfg.backend in {"json"}:
+      ...

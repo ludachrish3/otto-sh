@@ -18,7 +18,7 @@ connections are routed through the hop's SSH tunnel:
   listener through the tunnel (both PUT and GET directions).
 
 Every host builds its manager through the term registry
-(``build_term_backend(term).create(ctx)``). To replace the real transport with a
+(``build_term_backend(term, ctx)``). To replace the real transport with a
 test double, register a subclass under the term's name with
 ``register_term_backend(..., overwrite=True)`` — no monkeypatching of library
 functions needed.
@@ -35,7 +35,8 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from typing_extensions import override
 
-from ..registry import Registry, caller_module
+from ..errors import OttoError
+from ..registry import BackendRegistry, Ref, class_backend, registration_boundary
 from .login_proxy import Cred, LoginProxyError, default_login, resolve_chain
 from .options import ConsoleOptions, FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import TelnetClient
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     import aioftp
     from asyncssh import SFTPClient, SSHClientConnection
 
+    from ..registry import BackendEntry, Proposed
     from .console import ConsoleClient
     from .transport import HopTransport
 
@@ -90,7 +92,7 @@ class TermContext:
 
     The frozen public seam for custom term backends; carries only what the built-in already
     receives at its call site (no new coupling). Unix and embedded hosts both build through
-    ``build_term_backend(term).create(ctx)``. An embedded host leaves the ssh, sftp and ftp
+    ``build_term_backend(term, ctx)``. An embedded host leaves the ssh, sftp and ftp
     options ``None``, and forces ``login=False`` on its telnet and console options and
     ``single_client_console=True`` on telnet: an RTOS shell has no login step, and its one
     console serves one client.
@@ -518,8 +520,8 @@ class ConnectionManager:
         """Build a connection backend from a :class:`TermContext`.
 
         The uniform construction seam (WS#4): a host calls
-        ``build_term_backend(name).create(ctx)`` for built-in and custom
-        backends alike. The built-in's ``create`` runs today's exact
+        ``build_term_backend(name, ctx)``, which calls this, for built-in and
+        custom backends alike. The built-in's ``create`` runs today's exact
         construction — internals untouched, only the call site moves here.
         """
         return cls(
@@ -1184,11 +1186,16 @@ class _UserConnections:
 
 
 @dataclass(frozen=True)
-class TermBackend:
-    """A registered term backend: the manager class, the families it serves, whether it logs in."""
+class TermMetadata:
+    """What a term backend declares: the families it serves, whether it logs in, how it is reached.
 
-    cls: type[ConnectionManager]
+    Static: read with ``TERM_BACKENDS.peek(name).metadata`` without importing
+    the backend's class.
+    """
+
     host_families: frozenset[str]
+    """The non-empty set of host families this term serves (``unix``, ``embedded``)."""
+
     authenticates: bool
     """Whether this term performs its own login with a cred (spec 2026-09-13 cred-scope §2.1).
 
@@ -1204,24 +1211,57 @@ class TermBackend:
     """
 
 
-def _validate_term_backend(name: str, backend: TermBackend) -> None:
-    """Refuse a term backend whose declarations could never be honoured.
+class TermBackendError(OttoError):
+    """A term backend could not be built."""
 
-    ``TERM_BACKENDS``'s *validate* hook, so otto's built-ins and a plugin's
-    backend are held to the same declarations.
+
+class TermConstructionError(TermBackendError, ValueError):
+    """Building a term backend failed; the message names the stage, the backend and its origin.
+
+    The stages are lookup (the name is not registered), resolution (a
+    registered reference failed to import), construction (its ``create``
+    raised) and result (``create`` returned something that is not a
+    :class:`ConnectionManager`). The cause is chained.
     """
-    if not backend.host_families:
+
+
+def _describe_parse_error(exc: Exception) -> str:
+    """Describe a configuration that failed to parse, never quoting the rejected value.
+
+    A term backend takes no configuration, so the registry never parses one;
+    the registry requires the describer all the same.
+    """
+    from pydantic import ValidationError  # lazy: this module stays free of pydantic
+
+    from ..models.base import compact_validation_error
+
+    if isinstance(exc, ValidationError):
+        return compact_validation_error(exc)
+    return f"{type(exc).__name__} (its message is not shown: it may quote the rejected value)"
+
+
+def _check_term_result(name: str, obj: object) -> None:
+    """Refuse a built object that is not a :class:`ConnectionManager`."""
+    if not isinstance(obj, ConnectionManager):
+        raise TypeError(
+            f"term backend {name!r} built a {type(obj).__name__}, not a ConnectionManager"
+        )
+
+
+def _validate_term_metadata(name: str, metadata: TermMetadata) -> None:
+    """Refuse term declarations that could never be honoured."""
+    if not metadata.host_families:
         raise ValueError(
             f"register_term_backend({name!r}): host_families is empty; "
             f"a term backend must declare at least one host family "
             f"(e.g. frozenset({{'unix'}}))."
         )
-    if not isinstance(backend.authenticates, bool):
+    if not isinstance(metadata.authenticates, bool):
         raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see host_families above)
             f"register_term_backend({name!r}): authenticates must be a bool "
             f"(True when the term logs in with a cred, as ssh and telnet do)."
         )
-    if not isinstance(backend.dials_host, bool):
+    if not isinstance(metadata.dials_host, bool):
         raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see host_families above)
             f"register_term_backend({name!r}): dials_host must be a bool "
             f"(True when the term is reached by dialling the host's own address, "
@@ -1229,16 +1269,61 @@ def _validate_term_backend(name: str, backend: TermBackend) -> None:
         )
 
 
-TERM_BACKENDS: Registry[TermBackend] = Registry(
+def _check_term_entry(
+    name: str,
+    entry: "BackendEntry[TermContext, ConnectionManager, TermMetadata]",
+    proposed: "Proposed[BackendEntry[TermContext, ConnectionManager, TermMetadata]]",
+) -> None:
+    """``TERM_BACKENDS``' validate: a term is a class backend whose declarations hold.
+
+    It reads only the metadata, so a backend registered by reference is
+    checked without importing it.
+    """
+    del proposed
+    if not isinstance(entry.metadata, TermMetadata):
+        raise TypeError(
+            f"register_term_backend({name!r}): the entry's metadata is a "
+            f"{type(entry.metadata).__name__}, not a TermMetadata"
+        )
+    if entry.cls is None:
+        raise ValueError(
+            f"register_term_backend({name!r}): a term backend is a class "
+            "(class_backend()), not a configured factory"
+        )
+    _validate_term_metadata(name, entry.metadata)
+
+
+def _check_term_resolved(
+    name: str, entry: "BackendEntry[TermContext, ConnectionManager, TermMetadata]"
+) -> None:
+    """``TERM_BACKENDS``' resolved check: a term registered by reference names a manager class.
+
+    Runs when the reference is first imported, so a reference to anything
+    else is refused at resolution, before otto tries to build from it.
+    """
+    cls = entry.cls
+    if not (isinstance(cls, type) and issubclass(cls, ConnectionManager)):
+        raise TypeError(
+            f"term backend {name!r} resolves to {cls!r}, not a ConnectionManager subclass"
+        )
+
+
+TERM_BACKENDS: "BackendRegistry[TermContext, ConnectionManager, TermMetadata]" = BackendRegistry(
     "term backend",
     register_hint="otto.host.connections.register_term_backend()",
-    validate=_validate_term_backend,
+    error=TermConstructionError,
+    describe_parse_error=_describe_parse_error,
+    result=_check_term_result,
+    validate=_check_term_entry,
+    check_resolved=_check_term_resolved,
 )
+"""Every term backend, by the name a host's ``term`` selects."""
 
 
+@registration_boundary
 def register_term_backend(
     name: str,
-    cls: type[ConnectionManager],
+    cls: "type[ConnectionManager] | Ref",
     *,
     host_families: frozenset[str],
     authenticates: bool,
@@ -1249,15 +1334,17 @@ def register_term_backend(
 
     Call from an init module listed in ``.otto/settings.toml`` — the same
     pattern :func:`otto.host.command_frame.register_command_frame` follows.
-    Once registered, a host's ``term`` field can select it by name.
+    Once registered, a host's ``term`` field can select it by name. *cls* is
+    the class, or a ``Ref("package.module:Class")`` imported only when a host
+    first builds the term.
 
     *host_families* is the non-empty set of host families this term serves — a
     ``frozenset`` subset of ``{'unix', 'embedded'}``. Because ssh/telnet share
     one ``ConnectionManager`` class, the families are passed here rather than
-    read from a class attribute (the transfer registry reads
-    ``cls.host_families``). The host spec validator rejects a term applied to a
-    family it does not serve (e.g. ``ssh`` on an embedded host); an empty
-    *host_families* could never validate on any host, so it is rejected here.
+    read from a class attribute. The host spec validator rejects a term
+    applied to a family it does not serve (e.g. ``ssh`` on an embedded host);
+    an empty *host_families* could never validate on any host, so it is
+    rejected here.
 
     *authenticates* states whether this term logs in with a cred; it decides
     whether a cred may be scoped to this term (spec 2026-09-13 cred-scope
@@ -1272,51 +1359,56 @@ def register_term_backend(
     port the host was never going to answer on; a non-bool is refused, like
     *authenticates*.
 
-    *overwrite* replaces an existing registration under *name* deliberately
-    (e.g. a built-in); by default a duplicate name raises.
+    The declarations are checked here, before anything is imported. *overwrite*
+    replaces an existing registration under *name* deliberately (e.g. a
+    built-in); by default a duplicate name raises
+    :class:`~otto.registry.DuplicateRegistration`.
     """
     TERM_BACKENDS.register(
         name,
-        TermBackend(
+        class_backend(
             cls=cls,
-            host_families=host_families,
-            authenticates=authenticates,
-            dials_host=dials_host,
+            metadata=TermMetadata(
+                host_families=host_families,
+                authenticates=authenticates,
+                dials_host=dials_host,
+            ),
         ),
         overwrite=overwrite,
-        origin=caller_module(),
     )
 
 
-def build_term_backend(name: str) -> type[ConnectionManager]:
-    """Return the connection-backend class registered under *name*.
+def build_term_backend(name: str, ctx: TermContext) -> ConnectionManager:
+    """Build the connection backend registered under *name* for *ctx*.
 
     Raises:
-        ValueError: If *name* is not registered; the message lists registered
-            names and suggests near-misses.
+        TermConstructionError: If *name* is not registered (the message lists
+            registered names and suggests near-misses), its class fails to
+            import, its ``create`` raises, or ``create`` returns something
+            that is not a :class:`ConnectionManager`. The message names the
+            stage and the module that registered the backend; the cause is
+            chained.
     """
-    return TERM_BACKENDS.get(name).cls
+    return TERM_BACKENDS.build(TERM_BACKENDS.prepare(name, {}, ctx))
 
 
 def _register_builtin_term_backends() -> None:
     """Register otto's built-in term backends as values.
 
     Their class, :class:`ConnectionManager`, is defined in this module, so a
-    reference would defer no import. ``TERM_BACKENDS``'s validator checks their
+    reference would defer no import. ``TERM_BACKENDS``' validate checks their
     declarations here, at registration, exactly as it checks a plugin's.
     """
     manager = ConnectionManager
-    for name, backend in [
-        ("ssh", TermBackend(manager, frozenset({"unix"}), authenticates=True)),
-        ("telnet", TermBackend(manager, frozenset({"unix", "embedded"}), authenticates=True)),
+    for name, metadata in [
+        ("ssh", TermMetadata(frozenset({"unix"}), authenticates=True)),
+        ("telnet", TermMetadata(frozenset({"unix", "embedded"}), authenticates=True)),
         (
             "console",
-            TermBackend(
-                manager, frozenset({"unix", "embedded"}), authenticates=True, dials_host=False
-            ),
+            TermMetadata(frozenset({"unix", "embedded"}), authenticates=True, dials_host=False),
         ),
     ]:
-        TERM_BACKENDS.register(name, backend)
+        TERM_BACKENDS.register(name, class_backend(cls=manager, metadata=metadata))
 
 
 _register_builtin_term_backends()

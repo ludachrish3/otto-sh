@@ -268,12 +268,14 @@ def iter_exposed_verbs() -> Iterable[tuple[str, str, str, Callable[..., Any]]]:
     via :func:`~otto.cli.param_synth.build_cli_binding`.
     """
     from ..host.os_profile import HOST_CLASSES
+    from ..registry import resolved
 
     # First-wins per cli_name assumes a consistent attr_name for a given cli_name across
     # classes (true for inherited verbs; only divergent if two classes use the same
     # explicit name= for different attrs — avoid that).
     seen: set[str] = set()
-    for _name, cls in HOST_CLASSES.items():  # noqa: PERF102 — Registry has no .values(), only .items()
+    for _name, entry in HOST_CLASSES.items():  # noqa: PERF102 — Registry has no .values(), only .items()
+        cls = resolved(entry.cls)
         for cli_name, attr_name in collect_exposed_methods(cls).items():
             if cli_name in seen:
                 continue

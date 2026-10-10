@@ -8,12 +8,10 @@ it. Inheriting buys an implementer three things the Protocol cannot give:
 
 * A forgotten method fails at instantiation, with Python's own
   ``TypeError`` naming it — not at the first gated command.
-* The constructor otto's factory calls is spelled out once:
-  :func:`~otto.reservations.build_backend` always passes ``repo_dir=`` and
-  ``username=``, and passes ``url=`` when the setting is present, and every
-  ``[reservations.<name>]`` key arrives as a further keyword argument. A
-  subclass declares those keys as its own parameters and forwards the
-  otto-owned ones to ``super().__init__``.
+* The constructor keeps the three values a registered factory hands it
+  from :class:`~otto.reservations.ReservationEnv` (``url``, ``repo_dir``,
+  ``username``). A subclass declares its own settings as further keyword
+  parameters and forwards the otto-owned ones to ``super().__init__``.
 * The method docstrings sit on the class the implementer is reading.
 
 Optional capabilities stay structural. A backend signals one by implementing
@@ -54,12 +52,12 @@ class ReservationBackendBase(ABC):
         The ``url`` key of the ``[reservations]`` table, when set. Use it or
         ignore it — a backend may hardcode its endpoint instead.
     repo_dir : Path | None
-        The SUT repo root. Otto always passes it; anchor any relative
+        The SUT repo root (``ReservationEnv.repo_dir``); anchor any relative
         path-like setting of your own against it.
     username : str | None
         The identity otto resolved for this invocation (``--holder`` or the
-        login name). Otto always passes it; it is what :attr:`reservations`
-        queries for.
+        login name, ``ReservationEnv.username``); it is what
+        :attr:`reservations` queries for.
     """
 
     def __init__(
@@ -95,8 +93,8 @@ class ReservationBackendBase(ABC):
         """
         if self.username is None:
             raise ReservationBackendError(
-                "no username was resolved for this backend; otto passes username= "
-                "at construction, so a backend built by hand must supply it"
+                "no username was resolved for this backend; its factory passes "
+                "c.env.username at construction, so a backend built by hand must supply it"
             )
         return self.fetch_reservations(self.username)
 

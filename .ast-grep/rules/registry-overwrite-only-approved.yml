@@ -1,0 +1,32 @@
+id: registry-overwrite-only-approved
+language: python
+severity: error
+message: a literal `overwrite=True` in otto replaces whatever an earlier registration put under that name, silently. otto's own registrations need no overwrite; a wrapper passes its caller's `overwrite` through instead.
+note: >
+  `overwrite=True` is how a user replaces an entry deliberately: a repo's
+  init module registering its own class over a built-in name. Inside otto it
+  would mean one otto module silently replacing another's entry, or a
+  wrapper that always overwrites, so the engine can never report the
+  duplicate. No approved site remains, so the rule has no ignores: a wrapper
+  forwards its caller's flag (`overwrite=overwrite`), which is not a literal.
+
+  Seen: any call in src/otto that passes the keyword `overwrite` the literal
+  `True`, whatever is called (a `.register()`, a `register_*` wrapper, an
+  engine method), however the callee is imported. Not seen, and owned by
+  review: a flag computed elsewhere (`overwrite=always`,
+  `**{"overwrite": True}`).
+files:
+- src/otto/**/*.py
+rule:
+  kind: call
+  has:
+    field: arguments
+    has:
+      kind: keyword_argument
+      all:
+      - has:
+          field: name
+          regex: '^overwrite$'
+      - has:
+          field: value
+          kind: 'true'

@@ -132,11 +132,14 @@ def test_later_repo_overrides_earlier_with_warning(tmp_path: Path, caplog) -> No
     )
 
 
-def test_custom_backend_source_kwargs_inline(tmp_path: Path) -> None:
+def test_custom_backend_source_options_inline(tmp_path: Path) -> None:
+    """A custom backend's config model parses the entry's inline options; its factory builds."""
+    from otto.models.base import OttoModel
+
     class DictRepo:
-        def __init__(self, repo_dir, names=None):
+        def __init__(self, repo_dir, names):
             self.repo_dir = repo_dir
-            self._names = names or []
+            self._names = names
 
         def load_lab(self, name, preferences=None, inventory=None):
             from otto.config.lab import Lab
@@ -146,7 +149,14 @@ def test_custom_backend_source_kwargs_inline(tmp_path: Path) -> None:
         def list_labs(self):
             return list(self._names)
 
-    register_lab_repository("dict-wiring-test", DictRepo)
+    class DictConfig(OttoModel):
+        names: list[str]
+
+    register_lab_repository(
+        "dict-wiring-test",
+        config=DictConfig,
+        factory=lambda c: DictRepo(c.env.repo_dir, c.config.names),
+    )
     try:
         repo = _repo(
             tmp_path / "r1",
@@ -155,8 +165,8 @@ def test_custom_backend_source_kwargs_inline(tmp_path: Path) -> None:
             {},
         )
         repository = build_lab_sources([repo])
-        # The composite wraps it (R15); the CONSTRUCTED backend is still the
-        # registered class, with the entry's kwargs passed verbatim.
+        # The composite wraps it (R15); the CONSTRUCTED backend is what the
+        # registered factory built from the entry's parsed options.
         built = repository.sources[0].repository
         assert isinstance(built, DictRepo)
         assert built.repo_dir == repo.sut_dir
@@ -168,10 +178,10 @@ def test_custom_backend_source_kwargs_inline(tmp_path: Path) -> None:
 def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
     """The built-in name is resolved through the REGISTRY, not hardcoded.
 
-    A repo may replace ``"json"`` (``overwrite=True``) with a class honouring
-    the same ``search_paths=`` constructor contract; the composite must build
-    the replacement. Ported from the deleted build_lab_repository suite — the
-    bypass it guards against is just as reachable through this seam.
+    A repo may replace ``"json"`` (``overwrite=True``) with its own factory
+    over the same config model; the composite must build the replacement.
+    Ported from the deleted build_lab_repository suite — the bypass it guards
+    against is just as reachable through this seam.
     """
 
     class ReplacementJsonRepo:
@@ -190,14 +200,17 @@ def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
         {},
     )
-    register_lab_repository("json", ReplacementJsonRepo, overwrite=True)
-    try:
-        repository = build_lab_sources([repo])
-        built = repository.sources[0].repository  # the composite wraps it (R15)
-        assert isinstance(built, ReplacementJsonRepo)
-        assert built.search_paths == [repo.sut_dir / "lab"]
-    finally:
-        register_lab_repository("json", JsonFileLabRepository, overwrite=True)
+    entry = LAB_REPOSITORIES.peek("json")
+    register_lab_repository(
+        "json",
+        config=entry.config,
+        factory=lambda c: ReplacementJsonRepo(search_paths=list(c.config.paths)),
+        overwrite=True,
+    )
+    repository = build_lab_sources([repo])
+    built = repository.sources[0].repository  # the composite wraps it (R15)
+    assert isinstance(built, ReplacementJsonRepo)
+    assert built.search_paths == [repo.sut_dir / "lab"]
 
 
 def test_unknown_backend_raises(tmp_path: Path) -> None:

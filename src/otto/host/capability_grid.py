@@ -228,19 +228,18 @@ def shipped_host_families() -> list[HostFamily]:
     """
     from typing import cast
 
+    from ..registry import resolved
     from .docker_host import DockerContainerHost
     from .local_host import LocalHost
     from .os_profile import HOST_CLASSES
 
-    # HOST_CLASSES is a bare Registry[type] -- it can't carry the subclass
-    # relationship a generic parameter would need. register_host_class()
-    # enforces issubclass(cls, RemoteHost) (a BaseHost) before a name is ever
-    # written here, so every entry this loop reads back is one at runtime;
-    # the cast states that guarantee for the type checker.
+    # HOST_CLASSES' records type the class as a RemoteHost (a BaseHost);
+    # resolved() narrows away the Ref a built-in is registered as, and the
+    # cast widens to the BaseHost this row holds.
     families = [
         HostFamily(
             name=name,
-            cls=cast("type[BaseHost]", HOST_CLASSES.get(name)),
+            cls=cast("type[BaseHost]", resolved(HOST_CLASSES.get(name).cls)),
             selector=f"`os_type: {name}`",
         )
         for name in HOST_CLASSES.names()

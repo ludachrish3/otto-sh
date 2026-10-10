@@ -43,7 +43,7 @@ from ..host.remote_host import RemoteHost
 from ..host.toolchain import Toolchain, ToolchainTool
 from ..host.transfer import TRANSFER_BACKENDS
 from ..host.unix_host import UnixHost
-from ..link import IMPAIRERS
+from ..link import IMPAIRERS, build_impairer
 from ..logger.mode import LogMode
 from .base import OttoModel
 from .lab import resources_nonempty
@@ -236,7 +236,7 @@ def _validate_transfer_for_family(v: str, family: str, host_label: str) -> str:
     if v not in TRANSFER_BACKENDS:
         known = ", ".join(sorted(TRANSFER_BACKENDS.names()))
         raise ValueError(f"transfer {v!r} is not a registered transfer backend. Known: {known}")
-    families = TRANSFER_BACKENDS.get(v).host_families
+    families = TRANSFER_BACKENDS.peek(v).metadata.host_families
     if family not in families:
         fam = ", ".join(sorted(families))
         raise ValueError(f"transfer {v!r} is not valid on {host_label} (it serves: {fam}).")
@@ -248,7 +248,7 @@ def _validate_term_for_family(v: str, family: str, host_label: str) -> str:
     if v not in TERM_BACKENDS:
         known = ", ".join(sorted(TERM_BACKENDS.names()))
         raise ValueError(f"term {v!r} is not a registered term backend. Known: {known}")
-    families = TERM_BACKENDS.get(v).host_families
+    families = TERM_BACKENDS.peek(v).metadata.host_families
     if family not in families:
         fam = ", ".join(sorted(families))
         raise ValueError(f"term {v!r} is not valid on {host_label} (it serves: {fam}).")
@@ -277,7 +277,7 @@ def _validate_impairer_for_family(v: str, family: str, host_label: str) -> str:
     if v not in IMPAIRERS:
         known = ", ".join(sorted(IMPAIRERS.names()))
         raise ValueError(f"impairer {v!r} is not a registered impairer. Known: {known}")
-    families = IMPAIRERS.get(v).host_families
+    families = build_impairer(v).host_families
     if family not in families:
         fam = ", ".join(sorted(families))
         raise ValueError(f"impairer {v!r} is not valid on {host_label} (it serves: {fam}).")
@@ -675,8 +675,8 @@ class HostSpec(OttoModel):
                 f"landing_frame {self.landing_frame!r} requires session_setup: a landing "
                 f"dialect with nothing to transition out of it is a contradiction"
             )
-        landing_cls = FRAME_CLASSES.get(self.landing_frame)
-        if any(c.proxy is not None for c in self.creds) and not issubclass(landing_cls, BashFrame):
+        landing = build_command_frame(self.landing_frame)  # frames are stateless values
+        if any(c.proxy is not None for c in self.creds) and not isinstance(landing, BashFrame):
             raise ValueError(
                 f"landing_frame {self.landing_frame!r} with a proxied cred: login-proxy hops "
                 f"run in the landing shell and their identity probe is bash, so the landing "

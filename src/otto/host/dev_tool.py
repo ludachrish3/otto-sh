@@ -33,8 +33,15 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
-from ..declared import KindRegistry, declared_for_host
-from ..registry import Ref, caller_module, get_registering_repo, refuse_during_test_load
+from ..declared import (
+    KindBuilder,
+    KindEntry,
+    KindFactory,
+    _check_resolved_kind_entry,
+    _validate_kind_entry,
+    declared_for_host,
+)
+from ..registry import Ref, Registry, Subscription, registration_boundary
 from ..result import Result
 from .product import ProductPlan, defined_twice, unplanned
 
@@ -68,7 +75,7 @@ class DevTool(ABC):
 
     kind: str = "code"
     """The declared kind that built this tool (``"shell"``, ``"kmod"``, ...),
-    stamped by :meth:`~otto.declared.KindRegistry.build`; ``"code"`` for a tool a
+    stamped by :meth:`~otto.declared.KindBuilder.build`; ``"code"`` for a tool a
     provider constructed. Read by ``otto --list-tools``."""
 
     origin: str = "provider"
@@ -78,7 +85,7 @@ class DevTool(ABC):
 
     source_entry: "DeclaredEntry | None" = None
     """The ``[[dev_tools]]`` entry that built this tool, stamped by
-    :meth:`~otto.declared.KindRegistry.build`; ``None`` for a provider tool.
+    :meth:`~otto.declared.KindBuilder.build`; ``None`` for a provider tool.
     ``otto --list-tools`` uses it to tell which entries built somewhere."""
 
     @property
@@ -143,22 +150,26 @@ Registered from a ``.otto`` init module via :func:`register_dev_tool_provider`
 and run once per lab-ingested host. All tooling knowledge stays in repo code;
 lab data never names a dev tool."""
 
-_DEV_TOOL_PROVIDERS: list[tuple[DevToolProvider, str | None]] = []
-"""Registered providers paired with the repo that registered each one.
+DEV_TOOL_PROVIDERS: "Subscription[DevToolProvider]" = Subscription(
+    "dev tool provider", register_hint="otto.host.register_dev_tool_provider()"
+)
+"""The registered dev tool providers, in registration order, each with the repo that registered it.
 
-Separate from ``product._PRODUCT_PROVIDERS`` on purpose — each seam owns its
-registry, so a provider can never attach to the other seam's list."""
+Separate from ``product.PRODUCT_PROVIDERS`` on purpose — each seam owns its
+subscription, so a provider can never attach to the other seam's."""
 
 
 def registered_dev_tool_providers() -> list[tuple[DevToolProvider, str | None]]:
     """Return a snapshot of the registered dev tool providers, in registration order.
 
     The twin of :func:`otto.host.product.registered_product_providers`: each item
-    pairs the provider with the name of the repo that registered it.
+    pairs the provider with the name of the repo that registered it. A snapshot
+    list built from the subscription.
     """
-    return list(_DEV_TOOL_PROVIDERS)
+    return [(s.value, s.repo) for s in DEV_TOOL_PROVIDERS.items()]
 
 
+@registration_boundary
 def register_dev_tool_provider(provider: DevToolProvider) -> None:
     """Register a function that decides which dev tools a host carries.
 
@@ -178,33 +189,37 @@ def register_dev_tool_provider(provider: DevToolProvider) -> None:
     A returned instance must accept ``kind``, ``origin`` and ``owner``
     attribute assignment: ingest stamps all three on it.
     """
-    refuse_during_test_load(
-        "dev tool provider",
-        getattr(provider, "__name__", repr(provider)),
-        getattr(provider, "__module__", None) or "<unknown>",
-    )
-    _DEV_TOOL_PROVIDERS.append((provider, get_registering_repo()))
+    DEV_TOOL_PROVIDERS.subscribe(provider)
 
 
-DEV_TOOL_KINDS: KindRegistry["DevTool"] = KindRegistry(
+DEV_TOOL_KINDS: "Registry[KindEntry[DevTool]]" = Registry(
     "dev tool kind",
+    entry=KindEntry,
     register_hint="otto.host.dev_tool.register_dev_tool_kind()",
-    class_factory=Ref("otto.host.shell_kind:class_entry"),
-    class_resolver=Ref("otto.host.shell_kind:resolve_class"),
+    validate=_validate_kind_entry,
+    check_resolved=_check_resolved_kind_entry,
 )
 """Named factories for settings-declared dev tools (spec 2026-09-01 §5-§6).
 
 Separate from :data:`otto.host.product.PRODUCT_KINDS` on purpose — each
 seam owns its registry, the same two-list reasoning as the providers.
 
-The built-in kinds are registered below by :class:`~otto.registry.Ref`, each
-keeping its kind module as its origin, so no kind module is imported until a
-declared entry names it."""
+The built-in kinds are registered below by :class:`~otto.registry.Ref`, so no
+kind module is imported until a declared entry names it.
+:data:`DEV_TOOL_KIND_BUILDER` builds the declared entries from it."""
+
+DEV_TOOL_KIND_BUILDER: "KindBuilder[DevTool]" = KindBuilder(
+    DEV_TOOL_KINDS,
+    class_factory=Ref("otto.host.shell_kind:class_entry"),
+    class_resolver=Ref("otto.host.shell_kind:resolve_class"),
+)
+"""Builds the ``[[dev_tools]]`` entries a host matches, from :data:`DEV_TOOL_KINDS`."""
 
 
+@registration_boundary
 def register_dev_tool_kind(
     name: str,
-    factory: "Callable[[DeclaredEntry, Host], DevTool]",
+    factory: "KindFactory[DevTool] | Ref",
     *,
     overwrite: bool = False,
 ) -> None:
@@ -217,8 +232,16 @@ def register_dev_tool_kind(
     returns the :class:`DevTool` to attach; it should validate its params and
     raise ``ValueError`` naming the entry on a bad one — a misdeclared entry
     fails ingest loudly, exactly as a misconfigured provider does.
+
+    *factory* may be a :class:`~otto.registry.Ref` (``"module:function"``),
+    imported and checked when a declared entry first names the kind.
+
+    Raises
+    ------
+    TypeError
+        If *factory* is not callable.
     """
-    DEV_TOOL_KINDS.register(name, factory, overwrite=overwrite, origin=caller_module())
+    DEV_TOOL_KINDS.register(name, KindEntry(factory), overwrite=overwrite)
 
 
 def apply_declared_dev_tools(host: "Host") -> None:
@@ -230,18 +253,18 @@ def apply_declared_dev_tools(host: "Host") -> None:
     naming both. Entry collection and the §5
     ``[project]`` gate live in :func:`otto.declared.declared_for_host`;
     matching, first-match-wins and owner stamping in
-    :meth:`~otto.declared.KindRegistry.build`. A dev tool whose name the host
+    :meth:`~otto.declared.KindBuilder.build`. A dev tool whose name the host
     already carries is skipped, the provider loop's identical guard.
 
     The §5 gate itself is not separate per seam here: both declared loops
     share the one implementation in :func:`otto.declared.declared_for_host`.
     What stays separate is :data:`DEV_TOOL_KINDS` and its target list — a
-    declared entry built through this registry only ever lands on
+    declared entry built from this registry only ever lands on
     ``host.dev_tools``, never on ``host.products``, the same two-list
     reasoning as the provider registries.
     """
     seen = {t.name for t in host.dev_tools}
-    for tool in DEV_TOOL_KINDS.build(declared_for_host(host, "declared_dev_tools"), host):
+    for tool in DEV_TOOL_KIND_BUILDER.build(declared_for_host(host, "declared_dev_tools"), host):
         if tool.name in seen:
             logger.debug("declared dev tool: skipping duplicate %r on host %s", tool.name, host.id)
             continue
@@ -281,7 +304,7 @@ def apply_dev_tool_providers(host: "Host") -> None:
     from ..config.scope import repo_targets, scope_for_repo  # function-scope: import-light seam
 
     seen = {t.name for t in host.dev_tools}
-    for provider, provider_owner in _DEV_TOOL_PROVIDERS:
+    for provider, provider_owner in registered_dev_tool_providers():
         if host.source_lab and not repo_targets(
             scope_for_repo(provider_owner), host.source_lab, host.id
         ):
@@ -313,13 +336,13 @@ def apply_dev_tool_providers(host: "Host") -> None:
 
 
 def _register_builtin_kinds() -> None:
-    """Register otto's built-in kinds by reference, each with its kind module as origin."""
+    """Register otto's built-in kinds by reference; no kind module is imported here."""
     for kind, module, factory in [
         ("shell", "otto.host.shell_kind", "_shell_kind"),
         ("kmod", "otto.host.kmod_tool_kind", "_kmod_tool_kind"),
         ("kmodcov", "otto.host.kmod_tool_kind", "_kmodcov_tool_kind"),
     ]:
-        DEV_TOOL_KINDS.register(kind, Ref(f"{module}:{factory}"), origin=module)
+        DEV_TOOL_KINDS.register(kind, KindEntry(Ref(f"{module}:{factory}")))
 
 
 _register_builtin_kinds()

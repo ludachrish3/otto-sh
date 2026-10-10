@@ -25,3 +25,17 @@ class LabNotFoundError(LabRepositoryError):
     ``KeyError`` / ``FileNotFoundError`` — so callers can distinguish "unknown
     lab" from "backend is broken".
     """
+
+
+class LabSourceConstructionError(LabRepositoryError, ValueError):
+    """A ``[[lab.sources]]`` entry could not be prepared or built.
+
+    Raised for every stage of turning a declaration into a source: its
+    backend is not registered (lookup), its options do not parse (parse), the
+    backend's factory failed (construction), or what it built is not a lab
+    source (result). The message names the stage, the backend, the module
+    that registered it and the settings file that declared the source. A
+    ``ValueError`` as well, because each of these is a configuration mistake;
+    a backend's runtime failures while querying stay plain
+    :class:`LabRepositoryError`.
+    """

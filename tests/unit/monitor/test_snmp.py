@@ -293,6 +293,19 @@ class TestOidBundles:
         with pytest.raises(ValueError, match=r"otto-typo.*otto-core.*otto-fs.*otto-net"):
             expand_oid_bundles(["otto-typo"])
 
+    def test_expanding_a_bundle_again_keeps_its_descriptors(self, clean_registry):
+        expand_oid_bundles(["otto-net:1", "otto-fs:1"])
+        first = get_snmp_metric(net_oids(0)[0])
+        expand_oid_bundles(["otto-net:2", "otto-fs:1"])  # a second host names the bundles
+        assert get_snmp_metric(net_oids(0)[0]) is first
+        assert all(get_snmp_metric(oid) is not None for oid in net_oids(1))  # the new index
+
+    def test_expansion_keeps_a_descriptor_registered_for_an_indexed_oid(self, clean_registry):
+        mine = SnmpMetric(oid=net_oids(0)[0], label="uplink rx", chart="Uplink", kind="counter")
+        register_snmp_metric(mine)
+        expand_oid_bundles(["otto-net:1"])
+        assert get_snmp_metric(net_oids(0)[0]) == mine
+
     def test_expansion_registers_descriptors(self, clean_registry):
         expand_oid_bundles(["otto-net:1", "otto-fs:1"])
         rx_bytes = get_snmp_metric(net_oids(0)[0])

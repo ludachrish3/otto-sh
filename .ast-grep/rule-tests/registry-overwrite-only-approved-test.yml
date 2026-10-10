@@ -1,0 +1,35 @@
+# Rule test for .ast-grep/rules/registry-overwrite-only-approved.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: registry-overwrite-only-approved
+valid:
+# A wrapper forwards its caller's flag.
+- |
+  def register_metrics(metrics, *, overwrite=False):
+      for m in metrics:
+          register_snmp_metric(m, overwrite=overwrite)
+- |
+  register_snmp_metric(m, overwrite=overwrite)
+- |
+  HOST_PARSERS.register("x", e)
+- |
+  HOST_PARSERS.register("x", e, overwrite=False)
+# Prose that mentions the keyword is not a call.
+- |
+  def f():
+      """Pass ``overwrite=True`` to replace it deliberately."""
+invalid:
+- |
+  HOST_PARSERS.register("x", e, overwrite=True)
+- |
+  register_snmp_metric(m, overwrite=True)
+# Through an alias or a qualified name: the keyword is what is matched.
+- |
+  from otto.monitor import snmp as s
+
+  s.register_snmp_metric(m, overwrite=True)
+- |
+  import otto.monitor.parsers
+
+  otto.monitor.parsers.HOST_PARSERS.register_many(batch, overwrite=True)

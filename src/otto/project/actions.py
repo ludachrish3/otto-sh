@@ -33,19 +33,20 @@ orchestrator's to perform once (spec section 5):
 """
 
 import dataclasses
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from .. import layout
 from ..instructions import (
-    MARK_ATTR,
+    PROJECT_ACTIONS,
     PROJECT_INSTRUCTIONS,
+    ProjectActionsEntry,
+    ProjectInstructionBody,
     ProjectInstructionError,
-    ProjectInstructionMark,
+    _bodies_of,
     instruction,
-    register_project_instruction_body,
 )
 from ..params import OptionsSource, shared_field_values
-from ..registry import Registry, get_registering_repo
+from ..registry import get_registering_repo, registration_boundary
 from ..result import Result
 from ..utils import Status
 from .options import (
@@ -608,105 +609,60 @@ class ProjectActions:
         return True
 
 
-PROJECT_ACTIONS: "Registry[type[ProjectActions]]" = Registry(
-    "project actions",
-    register_hint="otto.register_project_actions()",
-    collision_hint=(
-        "A repo registers at most one ProjectActions; consolidate into a single subclass."
-    ),
-)
-"""Registered :class:`ProjectActions` subclasses, keyed by repo name."""
+FIRST_PARTY_BODIES: "tuple[ProjectInstructionBody, ...]" = _bodies_of(ProjectActions, None)
+"""Otto's own project-instruction bodies, one per marked method of :class:`ProjectActions`.
+
+A constant, not a registration. The instruction tables derive the six
+first-party instructions from it, first, and nothing registers it. Built from
+the class alone, reading no table, so the tables and this constant have no
+initialization order between them.
+
+:meta hide-value:
+"""
 
 
-def _already_registered(name: str, cls: "type[ProjectActions]") -> bool:
-    """Whether *cls* itself (not an ancestor) already owns *name*'s body.
-
-    Split out of :func:`register_project_instruction_bodies` for line length,
-    and to name the idempotence check on its own: a re-import of this module,
-    or a test whose isolation rolled :data:`~otto.instructions.PROJECT_INSTRUCTIONS`
-    back mid-run, must be able to call that function again without tripping
-    the walk-shape-is-fixed or foreign-options refusals it would otherwise hit
-    re-declaring the SAME class's own body.
-    """
-    if name not in PROJECT_INSTRUCTIONS:
-        return False
-    body = PROJECT_INSTRUCTIONS.get(name).body_for(cls)
-    return body is not None and body.owner_class is cls
-
-
-def register_project_instruction_bodies(cls: "type[ProjectActions]", repo: str | None) -> None:
-    """Register every ``@instruction``-marked method declared ON *cls* as *repo*'s body.
-
-    ``vars(cls)``, not ``dir()``: an inherited, undecorated method is the
-    parent's body already, and registering it again under the subclass would
-    let a repo that overrides nothing collide with the first-party rules.
-    Idempotent for the base class so a test that re-imports this module, or
-    one whose isolation rolled the table back, can call it again.
-
-    TWO MARKED METHODS ON ONE CLASS CLAIMING ONE NAME IS REFUSED, before
-    anything is registered. A class holds at most one body per name, so the
-    second registration would be dropped by the idempotence check above and a
-    typo'd ``@instruction("install")`` on a second method would simply never
-    run -- the failure mode the fixed walk shape exists to make impossible.
-    The scan is a separate pass so the refusal does not depend on ``vars()``
-    order, and so a duplicate is refused even when the first body is already
-    in the table from an earlier call.
-    """
-    marked: "list[tuple[str, ProjectInstructionMark]]" = []
-    claimed: dict[str, str] = {}
-    for attr, value in vars(cls).items():
-        mark = getattr(value, MARK_ATTR, None)
-        if mark is None:
-            continue
-        if mark.name in claimed:
-            raise ProjectInstructionError(
-                f"{cls.__name__} declares project instruction {mark.name!r} twice, on "
-                f"{claimed[mark.name]}() and {attr}() -- a class has at most one body per "
-                "name; rename one of them, or drop the duplicate decorator"
-            )
-        claimed[mark.name] = attr
-        marked.append((attr, mark))
-    for attr, mark in marked:
-        if _already_registered(mark.name, cls):
-            continue
-        register_project_instruction_body(cls, attr, mark, repo=repo)
-
-
-register_project_instruction_bodies(ProjectActions, None)
-
-
-def register_project_actions(cls: "type[ProjectActions]") -> "type[ProjectActions]":
+@registration_boundary
+def register_project_actions(
+    cls: "type[ProjectActions]", *, overwrite: bool = False
+) -> "type[ProjectActions]":
     """Register *cls* as the calling repo's actions; usable as a decorator.
 
     Call from an init module listed in ``.otto/settings.toml`` ``[init]`` --
     that import is what attributes the class to its repo, via the marker
-    ``bootstrap()`` sets around it. A second registration from the SAME repo
-    fails loud; different repos each registering their own class is the
-    intended composition, not a collision.
+    ``bootstrap()`` sets around it. A repo registers one actions class:
+    registering again from the SAME repo raises
+    :class:`~otto.registry.DuplicateRegistration` unless *overwrite* is true,
+    and the replacement's bodies replace the old ones whole. Different repos
+    each registering their own class is the intended composition, not a
+    collision.
 
-    Also registers *cls*'s marked methods (see :func:`register_project_instruction_bodies`)
-    as this repo's project-instruction bodies -- a repo that overrides
+    *cls*'s ``@instruction``-marked methods (those declared on *cls* itself)
+    become this repo's project-instruction bodies, in the same
+    :class:`~otto.instructions.ProjectActionsEntry` -- a repo that overrides
     ``install`` or declares a new project instruction of its own gets both from
-    one decorator. The table's own rules apply here: a walk shape is fixed by
-    whichever repo declared the name first, and an override of a first-party
+    one decorator. The table's own rules apply: a walk shape is fixed by
+    whichever repo declares the name first, and an override of a first-party
     instruction must carry an options class that inherits the first-party one
-    -- either raises :exc:`~otto.instructions.ProjectInstructionError`.
+    -- either raises :exc:`~otto.instructions.ProjectInstructionError`, and
+    nothing is registered.
 
     Returns *cls* unchanged so it can be used as a decorator.
 
     Raises:
-        ValueError: If called outside a repo's init import (nothing to
-            attribute the class to), or if this repo already registered one.
+        otto.registry.RegistrationRefused: If called outside a repo's init
+            import (nothing to attribute the class to); a ``ValueError``.
+        otto.registry.DuplicateRegistration: If this repo already registered
+            actions and *overwrite* is false.
+        otto.instructions.ProjectInstructionError: If the bodies break a
+            table rule, or two methods of *cls* claim one name.
     """
-    repo_name = get_registering_repo()
-    if repo_name is None:
-        raise ValueError(
-            "register_project_actions() must be called from a repo init module "
-            "(listed in .otto/settings.toml [init]) — that import is what "
-            "attributes the class to its repo."
-        )
-    PROJECT_ACTIONS.register(repo_name, cls, origin=cls.__module__)
-    register_project_instruction_bodies(cls, repo_name)
+    repo = get_registering_repo()
+    # otto's own class carries otto's bodies (FIRST_PARTY_BODIES); a repo that
+    # registers it unchanged declares none of its own.
+    bodies = () if cls is ProjectActions else _bodies_of(cls, repo)
+    entry = ProjectActionsEntry(cls, bodies)
+    # Outside an init import the key is the class name, which the refusal names.
+    PROJECT_ACTIONS.register(repo if repo is not None else cls.__name__, entry, overwrite=overwrite)
     return cls
 
 
@@ -722,5 +678,6 @@ def actions_for(repo: "Repo", ctx: "OttoContext") -> ProjectActions:
     drives, including every walk a SUBCLASS otto has never seen drives, is
     bound by construction rather than by an argument each of them remembers.
     """
-    cls = PROJECT_ACTIONS.get(repo.name) if repo.name in PROJECT_ACTIONS else ProjectActions
+    entry = PROJECT_ACTIONS.find(repo.name)
+    cls = ProjectActions if entry is None else cast("type[ProjectActions]", entry.cls)
     return cls(repo=repo, ctx=ctx.for_repo(repo.name))

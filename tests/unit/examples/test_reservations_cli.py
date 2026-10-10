@@ -6,6 +6,7 @@ from otto.config.lab import Lab
 from otto.examples.reservations import ExampleReservationBackend
 from otto.examples.reservations_cli import app, check_report, run_gate, translate
 from otto.reservations import (
+    NoneReservationConfig,
     Reservation,
     ReservationBackendBase,
     ReservationBackendError,
@@ -13,7 +14,6 @@ from otto.reservations import (
     register_reservation_backend,
     resolve_username,
 )
-from otto.reservations.registry import RESERVATION_BACKENDS
 
 runner = CliRunner()
 
@@ -105,10 +105,11 @@ def test_check_names_the_missing_row_and_exits_1(capsys):
 
 
 def test_a_backend_that_cannot_be_built_exits_1_through_the_cli_and_names_the_break_glass():
-    register_reservation_backend("example-unbuildable", _UnbuildableBackend)
-    try:
-        result = runner.invoke(app, ["--backend", "example-unbuildable", "--resource", "r", "gate"])
-    finally:
-        RESERVATION_BACKENDS.unregister("example-unbuildable")
+    register_reservation_backend(
+        "example-unbuildable",
+        config=NoneReservationConfig,
+        factory=lambda c: _UnbuildableBackend(username=c.env.username),
+    )
+    result = runner.invoke(app, ["--backend", "example-unbuildable", "--resource", "r", "gate"])
     assert result.exit_code == 1
     assert "-R" in result.output

@@ -32,7 +32,7 @@ def test_transfer_completer_surfaces_custom_unix_backend():
     class XmodemTransfer(NcFileTransfer):
         host_families = frozenset({"unix"})
 
-    xfer_mod.TRANSFER_BACKENDS.register("xmodem", XmodemTransfer)
+    xfer_mod.register_transfer_backend("xmodem", XmodemTransfer)
     try:
         assert "xmodem" in _transfer_completer(_ctx(), "")
     finally:

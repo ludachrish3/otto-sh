@@ -33,7 +33,9 @@ and the reference can link them. The public names are on :doc:`/api/instructions
 
 .. autodata:: otto.instructions.PROJECT_INSTRUCTIONS
 
-.. autofunction:: otto.instructions.register_project_instruction_body
+.. autodata:: otto.instructions.STANDALONE_INSTRUCTIONS
+
+.. autoclass:: otto.instructions.ProjectActionsEntry
 
 .. autodata:: otto.instructions.P
 

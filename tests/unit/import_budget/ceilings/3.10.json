@@ -21,7 +21,7 @@
         "otto:declared.cpython-310.pyc": 1,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 67,
+        "otto:host": 63,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:labs": 13,
@@ -62,9 +62,9 @@
         "workspace": 12
       },
       "by_process": {
-        "python": 2160
+        "python": 2156
       },
-      "file_ops": 2160,
+      "file_ops": 2156,
       "workspace": 12
     },
     "completion_repo_handover": {
@@ -234,7 +234,7 @@
         "otto:env": 13,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 215,
+        "otto:host": 199,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:inventory": 33,
@@ -252,7 +252,7 @@
         "otto:project": 29,
         "otto:registry": 2,
         "otto:registry.cpython-310.pyc": 1,
-        "otto:reservations": 25,
+        "otto:reservations": 21,
         "otto:result": 2,
         "otto:result.cpython-310.pyc": 1,
         "otto:utils": 2,
@@ -281,10 +281,10 @@
       },
       "by_process": {
         "bash": 50,
-        "python": 2563,
+        "python": 2543,
         "stty": 30
       },
-      "file_ops": 2643,
+      "file_ops": 2623,
       "workspace": 37
     },
     "dispatch_repo_warm": {
@@ -313,7 +313,7 @@
         "otto:env": 13,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 215,
+        "otto:host": 199,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:inventory": 33,
@@ -331,7 +331,7 @@
         "otto:project": 29,
         "otto:registry": 2,
         "otto:registry.cpython-310.pyc": 1,
-        "otto:reservations": 25,
+        "otto:reservations": 21,
         "otto:result": 2,
         "otto:result.cpython-310.pyc": 1,
         "otto:utils": 2,
@@ -359,9 +359,9 @@
         "workspace": 37
       },
       "by_process": {
-        "python": 2560
+        "python": 2540
       },
-      "file_ops": 2560,
+      "file_ops": 2540,
       "workspace": 37
     },
     "docker": {
@@ -470,7 +470,7 @@
         "otto:declared.cpython-310.pyc": 1,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 199,
+        "otto:host": 171,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:inventory": 33,
@@ -519,9 +519,9 @@
         "workspace": 52
       },
       "by_process": {
-        "python": 3306
+        "python": 3278
       },
-      "file_ops": 3306,
+      "file_ops": 3278,
       "workspace": 52
     },
     "help_repo_warm": {
@@ -660,7 +660,7 @@
         "otto:env": 13,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 215,
+        "otto:host": 199,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:inventory": 33,
@@ -706,10 +706,10 @@
         "workspace": 37
       },
       "by_process": {
-        "python": 2587,
+        "python": 2571,
         "sh": 7
       },
-      "file_ops": 2594,
+      "file_ops": 2578,
       "workspace": 37
     },
     "host_local_get": {
@@ -738,7 +738,7 @@
         "otto:env": 13,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 215,
+        "otto:host": 199,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:inventory": 33,
@@ -784,9 +784,9 @@
         "workspace": 55
       },
       "by_process": {
-        "python": 2606
+        "python": 2590
       },
-      "file_ops": 2606,
+      "file_ops": 2590,
       "workspace": 55
     },
     "host_local_put": {
@@ -815,7 +815,7 @@
         "otto:env": 13,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 215,
+        "otto:host": 199,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:inventory": 33,
@@ -861,9 +861,9 @@
         "workspace": 56
       },
       "by_process": {
-        "python": 2607
+        "python": 2591
       },
-      "file_ops": 2607,
+      "file_ops": 2591,
       "workspace": 56
     },
     "host_ssh_exec": {
@@ -892,7 +892,7 @@
         "otto:env": 13,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 215,
+        "otto:host": 199,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:inventory": 33,
@@ -946,9 +946,9 @@
         "ld": 642,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3377
+        "python": 3361
       },
-      "file_ops": 4455,
+      "file_ops": 4439,
       "workspace": 59
     },
     "host_ssh_login": {
@@ -977,7 +977,7 @@
         "otto:env": 13,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 215,
+        "otto:host": 199,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:inventory": 33,
@@ -1031,9 +1031,9 @@
         "ld": 642,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3377
+        "python": 3361
       },
-      "file_ops": 4455,
+      "file_ops": 4439,
       "workspace": 59
     },
     "import_otto": {
@@ -1105,7 +1105,7 @@
       "by_bucket": {
         "fd": 57,
         "other": 206,
-        "otto:*": 12,
+        "otto:*": 11,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-310-aarch64-linux-gnu.so": 1,
@@ -1121,9 +1121,7 @@
         "otto:params.cpython-310.pyc": 1,
         "otto:registry": 2,
         "otto:registry.cpython-310.pyc": 1,
-        "otto:reservations": 33,
-        "otto:utils": 2,
-        "otto:utils.cpython-310.pyc": 1,
+        "otto:reservations": 29,
         "otto:version": 2,
         "otto:version.cpython-310.pyc": 1,
         "site:*": 27,
@@ -1139,9 +1137,9 @@
         "stdlib": 537
       },
       "by_process": {
-        "python": 1237
+        "python": 1229
       },
-      "file_ops": 1237,
+      "file_ops": 1229,
       "workspace": 0
     },
     "run": {
@@ -1357,7 +1355,7 @@
         "otto:env": 13,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 223,
+        "otto:host": 207,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:inventory": 33,
@@ -1517,9 +1515,9 @@
         "workspace": 1156
       },
       "by_process": {
-        "python": 7068
+        "python": 7052
       },
-      "file_ops": 7068,
+      "file_ops": 7052,
       "workspace": 1156
     },
     "version_repo": {

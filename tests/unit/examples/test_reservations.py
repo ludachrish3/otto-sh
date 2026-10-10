@@ -1,12 +1,16 @@
 """Behavior + conformance for the ExampleReservationBackend reference backend."""
 
-from otto.examples.reservations import ExampleReservationBackend
+from otto.examples.reservations import (
+    ExampleReservationBackend,
+    ExampleReservationConfig,
+    example_reservations,
+)
 from otto.reservations import (
     SupportsResourceHolders,
     SupportsUsernameCompletion,
+    build_backend,
     register_reservation_backend,
 )
-from otto.reservations.registry import RESERVATION_BACKENDS
 from otto.testing import assert_reservation_backend_conforms
 
 
@@ -57,8 +61,7 @@ def test_custom_dataset_overrides_demo():
     assert [h.user for h in backend.holders("x")] == ["carol"]
 
 
-def test_accepts_url_for_factory_uniformity():
-    # build_backend may call cls(url=url, **kwargs).
+def test_accepts_url():
     backend = ExampleReservationBackend(url="https://example")
     assert backend.backend_name() == "example"
 
@@ -71,9 +74,19 @@ def test_sample_conforms_with_round_trip_and_capability():
     )
 
 
-def test_registrable_by_name():
-    register_reservation_backend("example-reservations-test", ExampleReservationBackend)
-    try:
-        assert RESERVATION_BACKENDS.get("example-reservations-test") is ExampleReservationBackend
-    finally:
-        RESERVATION_BACKENDS.unregister("example-reservations-test")
+def test_registrable_by_name_and_built_from_its_sub_table(tmp_path):
+    register_reservation_backend(
+        "example-reservations-test", config=ExampleReservationConfig, factory=example_reservations
+    )
+    backend = build_backend(
+        {
+            "backend": "example-reservations-test",
+            "url": "https://sched",
+            "example-reservations-test": {"reservations": {"carol": ["rig"]}},
+        },
+        tmp_path,
+        username="carol",
+    )
+    assert isinstance(backend, ExampleReservationBackend)
+    assert (backend.url, backend.repo_dir, backend.username) == ("https://sched", tmp_path, "carol")
+    assert [r.resource for r in backend.reservations] == ["rig"]

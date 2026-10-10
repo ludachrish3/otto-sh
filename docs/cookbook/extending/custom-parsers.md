@@ -83,6 +83,20 @@ registration always wins outright for that host, and a host matched by two
 different patterns raises at resolution time rather than picking a silent,
 import-order-dependent winner.
 
+Each host id and each pattern takes one registration. Registering the same
+one again raises {class}`~otto.registry.DuplicateRegistration`, naming both
+registering modules, unless the second call passes `overwrite=True`, which
+replaces the whole parser dict:
+
+```python
+register_host_parsers("router1", DEFAULT_PARSERS, overwrite=True)
+```
+
+A pattern is identified by its flags as well as its source, so
+`re.compile(r"box-.*")` and `re.compile(r"box-.*", re.IGNORECASE)` are two
+separate registrations. The dict is copied when it is registered, so changing
+it afterwards does not change what the host uses.
+
 ### Project-level parsers
 
 Register parsers that apply to every monitored host from an init module
@@ -97,7 +111,15 @@ register_parsers([SocketParser()])
 
 A parser whose `command` matches a built-in overrides it; new commands
 extend the set.  Per-host registrations (`register_host_parsers`) still take
-total precedence for their host.  Registering the same command twice raises.
+total precedence for their host.  `register_parsers` accepts any iterable,
+a generator included.
+
+A command that is already registered raises
+{class}`~otto.registry.DuplicateRegistration` unless the call passes
+`overwrite=True`. One call registers its parsers as a single batch, under the
+registries' [duplicate rule](../../architecture/subsystems/registries.md#the-engine):
+a command repeated within the call raises, and a refused call registers none
+of its parsers.
 
 ## Per-parser collection intervals
 
@@ -179,11 +201,18 @@ after `chart` has a default, so a private OID only needs the first three:
 'metrics'
 ```
 
-`register_snmp_metric` always overwrites, so the same call renames a
-built-in descriptor too — including the auto-generated per-index labels
-from [Per-interface and per-filesystem OIDs](../../cli/monitor/metrics.md#per-interface-and-per-filesystem-oids)
-(`rx if0`, `fs1 used`, …): register a new `SnmpMetric` for that exact OID
-with a more meaningful `label` (e.g. `rx wan0`) and it replaces the default.
+Each OID has one descriptor. Registering a descriptor for an OID that
+already has one, including a built-in such as `sysUpTime`, raises
+{class}`~otto.registry.DuplicateRegistration` unless the call passes
+`overwrite=True`, which replaces it.
+
+Renaming one of the auto-generated per-index labels from
+[Per-interface and per-filesystem OIDs](../../cli/monitor/metrics.md#per-interface-and-per-filesystem-oids)
+(`rx if0`, `fs1 used`, …) needs no `overwrite=True`: register a new
+`SnmpMetric` for that exact OID with a more meaningful `label` (e.g.
+`rx wan0`) from your init module. Those descriptors are registered only when
+the monitor expands a bundle, after your init module has run, and a bundle
+registers only the OIDs that have no descriptor yet, so yours stays.
 
 ## Custom parsers from a test
 

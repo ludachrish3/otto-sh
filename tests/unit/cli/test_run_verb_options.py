@@ -18,7 +18,6 @@ from otto.cli.run import instruction
 from otto.context import OttoContext
 from otto.params import OptionsRegistrationError, register_options
 from tests._fixtures.paths import TESTS_ROOT
-from tests.unit.cli.test_project_instruction_commands import _publish_the_six
 
 
 @options
@@ -34,12 +33,6 @@ class InstallOptions(RepoOptions):
 @options
 class RivalOptions:
     debug: str = "x"
-
-
-@pytest.fixture
-def project_install_fixture():
-    """Otto's project instructions, ``install`` among them, published."""
-    _publish_the_six()
 
 
 @pytest.fixture
@@ -104,12 +97,12 @@ def test_own_options_inheriting_a_registered_base_share_one_flag(run_cli):
     seen = {}
 
     @instruction(options=InstallOptions)
-    async def install(opts: InstallOptions, repo: RepoOptions) -> None:
+    async def provision(opts: InstallOptions, repo: RepoOptions) -> None:
         seen.update(own=(opts.lab_env, opts.debug), repo=repo.lab_env)
 
-    help_text = run_cli(["run", "install", "--help"]).output
+    help_text = run_cli(["run", "provision", "--help"]).output
     assert help_text.count("--lab-env") == 1
-    result = run_cli(["run", "install", "--lab-env", "prod", "--debug"])
+    result = run_cli(["run", "provision", "--lab-env", "prod", "--debug"])
     assert result.exit_code == 0, result.output
     assert seen == {"own": ("prod", True), "repo": "prod"}
 
@@ -191,12 +184,12 @@ def test_validation_exits_2_before_the_body(run_cli):
     assert "n must be >= 1" in result.output, "exit 2 for the VALIDATION, not an unknown flag"
 
 
-def test_project_instructions_gain_run_flags_too(run_cli, project_install_fixture):
+def test_project_instructions_gain_run_flags_too(run_cli):
     register_options(RepoOptions, verbs=["run"])
     assert "--lab-env" in run_cli(["run", "install", "--help"]).output
 
 
-def test_a_project_instruction_binds_the_run_flags(run_cli, project_install_fixture, monkeypatch):
+def test_a_project_instruction_binds_the_run_flags(run_cli, monkeypatch):
     """The published leaf binds the verb before the orchestrator runs any body."""
     from otto.context import get_context
     from otto.project import orchestrator
@@ -228,8 +221,6 @@ def test_registering_and_publishing_resolve_no_run_class():
 
     @instruction()
     async def later() -> None: ...
-
-    _publish_the_six()
 
     for name in ["later", "install"]:
         with pytest.raises(OptionsRegistrationError) as excinfo:
@@ -494,9 +485,9 @@ class TestDryRunBuildsAndShowsOptions:
         register_options(RepoOptions, verbs=["run"])
 
         @instruction(options=InstallOptions)
-        async def install(opts: InstallOptions, repo: RepoOptions) -> None: ...
+        async def provision(opts: InstallOptions, repo: RepoOptions) -> None: ...
 
-        dry = run_cli(["run", "install", "--lab-env", "prod", "--debug"], dry_run=True)
+        dry = run_cli(["run", "provision", "--lab-env", "prod", "--debug"], dry_run=True)
         assert dry.exit_code == 0, dry.output
         out = flat(dry.output)
         assert "InstallOptions: lab_env='prod', debug=True" in out

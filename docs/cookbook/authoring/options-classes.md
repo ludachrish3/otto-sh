@@ -118,7 +118,11 @@ at startup, before otto builds any command's flags:
   options. An unknown verb, an empty list or a verb named twice raises
   {class}`~otto.params.OptionsRegistrationError`.
 - **One registration per class.** A class that serves both verbs names both
-  in one registration; registering it a second time raises.
+  in one registration. Registering it a second time, by either form, raises
+  {class}`~otto.registry.DuplicateRegistration`; a deliberate change of its
+  verbs re-registers it with `overwrite=True`
+  (`register_options(Cls, verbs=["run", "test"], overwrite=True)`, or
+  `@otto.options(verbs=[...], overwrite=True)`), which replaces the verb list.
 
 ### The lazy form: `register_options`
 

@@ -474,7 +474,7 @@ def test_plugin_subclasses_a_lazily_exported_builtin_host():
     from otto.host.unix_host import UnixHost as Real
 
     assert UnixHost is Real
-    assert HOST_CLASSES.get("unix") is Real
+    assert HOST_CLASSES.get("unix").cls is Real
 
     class Mine(UnixHost):
         pass

@@ -55,13 +55,14 @@ from otto.coverage.errors import (
 )
 from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.tickets import TicketConfigError
-from otto.creds.errors import CredsError
+from otto.creds.errors import CredsConstructionError, CredsError
 from otto.docker.observe import DockerVerbError
 from otto.docker.resolve import UseCaseResolutionError
 from otto.env import EnvBuildError, EnvExistsError
 from otto.env.backends import BackendUnavailableError
 from otto.errors import EnsureStateError, FieldError, OttoError
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
+from otto.host.connections import TermBackendError, TermConstructionError
 from otto.host.errors import (
     ConsoleError,
     CoverageToolMissingError,
@@ -74,13 +75,15 @@ from otto.host.errors import (
 )
 from otto.host.login_proxy import LoginProxyError
 from otto.host.loop_owner import HostLoopError
+from otto.host.power import PowerConstructionError, PowerControlError
 from otto.host.recursive_transfer import ListingError
 from otto.host.transfer.nc import NcPortSharedError
+from otto.host.transfer.registry import TransferBackendError, TransferConstructionError
 from otto.host.transport import HopTransportTornDownError
 from otto.init.errors import InitInputError
 from otto.instructions import ProjectInstructionError
-from otto.inventory import InventoryError, InventoryKeyError
-from otto.labs.errors import LabNotFoundError, LabRepositoryError
+from otto.inventory import InventoryConstructionError, InventoryError, InventoryKeyError
+from otto.labs.errors import LabNotFoundError, LabRepositoryError, LabSourceConstructionError
 from otto.lifecycle import SyncPhaseInterrupt
 from otto.link.manage import (
     LinkCommandFailedError,
@@ -103,8 +106,12 @@ from otto.params import (
     OptionsValidationError,
 )
 from otto.project.orchestrator import InactiveRequiredDependencyError
-from otto.registry import RegistrationRefused
-from otto.reservations.check import MissingReservationError, ReservationBackendError
+from otto.registry import DuplicateRegistration, IncompleteRegistration, RegistrationRefused
+from otto.reservations.check import (
+    MissingReservationError,
+    ReservationBackendError,
+    ReservationConstructionError,
+)
 from otto.result import CommandNotRunError
 from otto.session import (
     DependencyRefusedError,
@@ -169,6 +176,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (OverrideConfigError, ValueError),
     (TicketConfigError, ValueError),
     (CredsError, Exception),
+    (CredsConstructionError, ValueError),
     (UseCaseResolutionError, ValueError),
     (DockerVerbError, ValueError),
     (ParseMismatch, ValueError),
@@ -190,12 +198,21 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (NcPortSharedError, ConnectionError),
     (LabRepositoryError, Exception),
     (LabNotFoundError, Exception),
+    (LabSourceConstructionError, ValueError),
+    (TermBackendError, Exception),
+    (TermConstructionError, ValueError),
+    (TransferBackendError, Exception),
+    (TransferConstructionError, ValueError),
     (InventoryError, Exception),
     (InventoryKeyError, Exception),
+    (InventoryConstructionError, ValueError),
+    (PowerControlError, Exception),
+    (PowerConstructionError, ValueError),
     (ArchiveLockedError, RuntimeError),
     (UnsupportedDBError, RuntimeError),
     (EventValidationError, ValueError),
     (ReservationBackendError, Exception),
+    (ReservationConstructionError, ValueError),
     (MissingReservationError, Exception),
     (CommandNotRunError, RuntimeError),
     (NoTestsMatchedError, ValueError),
@@ -210,6 +227,8 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (CheckHostUnreachableError, RuntimeError),
     (CheckCommandFailedError, RuntimeError),
     (RegistrationRefused, ValueError),
+    (DuplicateRegistration, ValueError),
+    (IncompleteRegistration, ValueError),
 ]
 
 
@@ -265,6 +284,11 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         OptionsCollisionError,
         LabRepositoryError,
         LabNotFoundError,
+        # The term and transfer backends' shared bases: a backend that could
+        # not be built is otto's own concept; each construction error beneath
+        # keeps ValueError, the root the registry's lookup always raised.
+        TermBackendError,
+        TransferBackendError,
         # "the inventory backend could not answer" and "it does not hold that
         # key" sit beside the lab-repository pair above for the same reason:
         # a data SOURCE otto only reads is otto's own concept. KeyError was
@@ -279,6 +303,10 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         CredsError,
         ReservationBackendError,
         MissingReservationError,
+        # A host's power control that could not be set up or could not act:
+        # a lab's power controller is otto's own concept, like the backends
+        # above; the construction error beneath keeps ValueError.
+        PowerControlError,
     }
 )
 

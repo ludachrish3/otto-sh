@@ -1,8 +1,9 @@
-"""``InstructionEntry.registered_by`` and the ``otto run`` dispatch gate (spec §5).
+"""An instruction's owning repo and the ``otto run`` dispatch gate (spec §5).
 
-An instruction records the repo whose init modules registered it, and dispatch
-refuses one whose owner is inactive for this invocation. Three things this
-module is deliberate about, each of them a defect this branch already ate once:
+An instruction's owner is the repo whose init modules registered it
+(``INSTRUCTIONS.repo(name)``), and dispatch refuses one whose owner is inactive
+for this invocation. Three things this module is deliberate about, each of
+them a defect this branch already ate once:
 
 * **The refusal is a RENDERED SENTENCE, not a return value.** Every assertion
   about it reads captured output through the real :func:`~otto.cli.invoke.fail`
@@ -19,22 +20,10 @@ module is deliberate about, each of them a defect this branch already ate once:
   (a real ``host``-parented chain), never inherited.
 
 Registry isolation is the ROOT conftest's ``_isolate_registries``, which
-snapshots every ``otto.registry.Registry`` around every test.
-``test_a_registration_here_does_not_leak`` pins that reliance — for the
-direction it covers. It covers ONE: a registration made here cannot leak OUT,
-because the snapshot is taken at this test's setup and restored at its
-teardown. Whatever was already in the registry AT setup is inside that
-snapshot and stays — so a first-party ``install`` registered earlier on this
-xdist worker (by whatever ran ``bootstrap()`` or imported
-``otto.project.actions`` outside a per-test snapshot — issue #283 names
-an earlier test's bootstrap; the exact path was not observed) leaks IN, and a
-bare ``INSTRUCTIONS.register("install", ...)`` here collides on it
-(ordering-dependent, hence flaky). The test that needs a
-first-party name therefore OWNS it first — ``_own_first_party`` drops the
-inherited entry before installing this module's, exactly the way
-``tests/unit/cli/test_project_instruction_commands.py`` rolls its own
-``_clear_first_party`` — and the fixture's teardown restore puts the inherited
-one back.
+snapshots every writable ``otto.registry.Registry`` around every test;
+``test_a_registration_here_does_not_leak`` pins that reliance. Otto's
+first-party names (``install`` and its siblings) are derived from a constant,
+so every test sees them with no owner and none has to install one.
 """
 
 import io
@@ -51,7 +40,7 @@ from otto.cli.invoke import refuse_inactive_instruction
 from otto.cli.registry import CommandSpec
 from otto.config.lab import Lab
 from otto.context import OttoContext
-from otto.instructions import INSTRUCTIONS, InstructionEntry
+from otto.instructions import INSTRUCTIONS, STANDALONE_INSTRUCTIONS, InstructionEntry
 from otto.registry import registering_repo
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.bootstrapstub import bootstrap_stub
@@ -92,27 +81,12 @@ def _wide_console(monkeypatch: pytest.MonkeyPatch) -> None:
 async def _noop() -> None: ...
 
 
-def _install_entry(name: str, registered_by: "str | None") -> None:
-    """Register *name* owned by *registered_by* (``None`` = first-party)."""
-    INSTRUCTIONS.register(
-        name,
-        InstructionEntry(name=name, handler=_noop, module="m", registered_by=registered_by),
-        origin="m",
-    )
-
-
-def _own_first_party(name: str) -> None:
-    """Install first-party *name* as THIS module's entry, whatever this process already holds.
-
-    The leak-IN case the module docstring describes: an earlier test on this
-    worker may have left the real ``otto.project.actions`` registration
-    of *name* inside our isolation snapshot, and registering over it raises.
-    Dropping it first is safe because ``_isolate_registries`` restores the
-    snapshot — inherited entry included — at teardown.
-    """
-    if name in INSTRUCTIONS:
-        INSTRUCTIONS.unregister(name)
-    _install_entry(name, None)
+def _install_entry(name: str, owner: str) -> None:
+    """Register standalone *name* from *owner*'s init import, so *owner* owns it."""
+    with registering_repo(owner):
+        STANDALONE_INSTRUCTIONS.register(
+            name, InstructionEntry(name=name, handler=_noop, module="m")
+        )
 
 
 _NARROW_WIDTH = 80
@@ -227,8 +201,8 @@ def _dispatch_ctx(instruction_name: str) -> Any:
     return chain("otto", "run", instruction_name)
 
 
-class TestRegisteredBy:
-    """The field, and who fills it in."""
+class TestOwner:
+    """Who owns an instruction, and where that is read from."""
 
     def test_decorator_records_the_registering_repo(self) -> None:
         from otto.cli.run import instruction
@@ -238,7 +212,7 @@ class TestRegisteredBy:
             @instruction()
             async def probe_owner() -> None: ...
 
-        assert INSTRUCTIONS.get("probe-owner").registered_by == "repo9"
+        assert INSTRUCTIONS.repo("probe-owner") == "repo9"
 
     def test_first_party_registration_records_none(self) -> None:
         from otto.cli.run import instruction
@@ -246,17 +220,16 @@ class TestRegisteredBy:
         @instruction()
         async def probe_first_party() -> None: ...
 
-        assert INSTRUCTIONS.get("probe-first-party").registered_by is None
+        assert INSTRUCTIONS.repo("probe-first-party") is None
 
-    def test_a_hand_built_entry_defaults_to_none(self) -> None:
-        """The field is DEFAULTED, so every existing construction still builds.
+    def test_a_hand_built_entry_is_owned_by_the_repo_that_registers_it(self) -> None:
+        """Ownership is the registration's, not a field a hand-built entry can omit."""
+        _install_entry("hand", "repo3")
+        assert INSTRUCTIONS.repo("hand") == "repo3"
 
-        A repo that hand-registers an ``InstructionEntry`` therefore gets
-        first-party treatment. Conservative on purpose: nothing new is ever
-        refused by omission.
-        """
-        entry = InstructionEntry(name="hand", handler=_noop, module="m")
-        assert entry.registered_by is None
+    def test_a_project_instruction_has_no_owner(self) -> None:
+        """Otto's six derive with no owner: a body per repo, not one owning repo."""
+        assert INSTRUCTIONS.repo("install") is None
 
     def test_a_registration_here_does_not_leak(self) -> None:
         """The root conftest's ``_isolate_registries`` is what cleans up after these.
@@ -304,36 +277,8 @@ class TestRefusal:
         refuse_inactive_instruction(_dispatch_ctx("flash-b"))  # must not raise
 
     def test_first_party_is_never_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _own_first_party("install")
         self._wire_context(monkeypatch, exclude=("otto",))
         refuse_inactive_instruction(_dispatch_ctx("install"))  # must not raise
-
-    def test_owning_a_first_party_name_survives_an_inherited_registration(self) -> None:
-        """Issue #283, injected rather than waited for: the real first-party
-        ``install`` is already registered when the test starts (as it is on any
-        worker that imported ``otto.project.actions`` earlier), and owning
-        the name must still succeed — and must not be a silent no-op that
-        leaves the INHERITED entry (owner ``otto.project.actions``, not
-        this module) as the one under test.
-
-        The simulated inherited entry is installed over whatever this worker
-        already holds — the real one may be present (that is the condition
-        under test), and registering over it would raise here for the very
-        reason the fix exists."""
-        if "install" in INSTRUCTIONS:
-            INSTRUCTIONS.unregister("install")
-        INSTRUCTIONS.register(
-            "install",
-            InstructionEntry(
-                name="install",
-                handler=_noop,
-                module="otto.project.actions",
-                registered_by=None,
-            ),
-            origin="otto.project.actions",
-        )
-        _own_first_party("install")
-        assert INSTRUCTIONS.get("install").module == "m"
 
     def test_lab_excluded_owner_names_both_fixes(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

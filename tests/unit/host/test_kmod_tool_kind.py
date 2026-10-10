@@ -11,6 +11,7 @@ from otto.declared import DeclaredEntry
 from otto.host import kmod_tool_kind  # noqa: F401 — import registers the kinds
 from otto.host.dev_tool import DEV_TOOL_KINDS
 from otto.host.kmod_tool_kind import KmodTool
+from otto.registry import resolved
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.paths import TESTS_ROOT
@@ -47,7 +48,7 @@ class _Host(SimpleNamespace):
 
 
 def _build(host=None, kind="kmod", **params):
-    return DEV_TOOL_KINDS.get(kind)(_entry(kind=kind, **params), host or _Host())
+    return resolved(DEV_TOOL_KINDS.get(kind).factory)(_entry(kind=kind, **params), host or _Host())
 
 
 def test_kmod_is_registered_for_dev_tools():
@@ -308,7 +309,7 @@ def test_a_module_coverage_product_with_no_kmodcov_tool_is_refused_naming_all_th
         match={},
         params={"artifact": "build/demo.ko", "coverage": "module"},
     )
-    host.products = [PRODUCT_KINDS.get("kmod")(entry, host)]
+    host.products = [resolved(PRODUCT_KINDS.get("kmod").factory)(entry, host)]
     with pytest.raises(ValueError, match="needs otto_kmodcov") as ei:
         check_kmodcov_bindings(host)
     message = str(ei.value)

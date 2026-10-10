@@ -143,7 +143,7 @@ def test_info_with_a_broken_inventory_promises_no_write(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     out = result.output
     assert "inventory: BROKEN" in out
-    assert "requires a 'path'" in out
+    assert "parse failed: path: Field required" in out
     expected = (
         "completion names: missing — no entry yet; nothing is written while the inventory is broken"
     )

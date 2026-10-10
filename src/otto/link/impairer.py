@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import ClassVar, Literal
 
-from ..registry import Ref, Registry, caller_module
+from ..registry import ClassEntry, Ref, Registry, registration_boundary, resolved
 from .params import ImpairmentParams, Selector
 
 FIRST_SELECTOR_BAND = 4
@@ -118,8 +118,15 @@ class LinkImpairer:
         raise NotImplementedError
 
 
-def _validate_impairer(name: str, cls: type[LinkImpairer]) -> None:
-    """Refuse an impairer declaring no host family: it could never validate against any host."""
+def _check_impairer_class(name: str, cls: object) -> None:
+    """Refuse anything but a :class:`LinkImpairer` subclass declaring a host family.
+
+    One with no host family could never validate against any host. One check,
+    two call sites: ``validate`` runs it on a class registered eagerly,
+    ``check_resolved`` on the class a ``Ref`` names, once imported.
+    """
+    if not (isinstance(cls, type) and issubclass(cls, LinkImpairer)):
+        raise TypeError(f"register_impairer({name!r}): {cls!r} is not a LinkImpairer subclass")
     if not cls.host_families:
         raise ValueError(
             f"register_impairer({name!r}): cls.host_families is empty; an impairer "
@@ -127,23 +134,45 @@ def _validate_impairer(name: str, cls: type[LinkImpairer]) -> None:
         )
 
 
-IMPAIRERS: Registry[type[LinkImpairer]] = Registry(
-    "impairer", register_hint="otto.link.register_impairer()", validate=_validate_impairer
+def _validate_impairer_entry(
+    name: str, entry: "ClassEntry[LinkImpairer]", _proposed: object
+) -> None:
+    if not isinstance(entry.cls, Ref):
+        _check_impairer_class(name, entry.cls)
+
+
+IMPAIRERS: "Registry[ClassEntry[LinkImpairer]]" = Registry(
+    "impairer",
+    entry=ClassEntry,
+    register_hint="otto.link.register_impairer()",
+    validate=_validate_impairer_entry,
+    check_resolved=lambda name, entry: _check_impairer_class(name, resolved(entry.cls)),
 )
-# The built-in, by reference; its origin stays the module that defines it.
-IMPAIRERS.register("netem", Ref("otto.link.netem:NetEmImpairer"), origin="otto.link.netem")
+"""The impairer classes lab data can name, keyed by impairer name."""
+IMPAIRERS.register("netem", ClassEntry(Ref("otto.link.netem:NetEmImpairer")))
 
 
-def register_impairer(name: str, cls: type[LinkImpairer], *, overwrite: bool = False) -> None:
+@registration_boundary
+def register_impairer(
+    name: str, cls: "type[LinkImpairer] | Ref", *, overwrite: bool = False
+) -> None:
     """Make a custom impairer available to lab data under *name*.
 
     Call from an init module listed in ``.otto/settings.toml``. The impairer
     must declare a non-empty :attr:`LinkImpairer.host_families`; otherwise it
-    could never validate against any host and is rejected here.
+    could never validate against any host and is rejected here. *cls* may be
+    a :class:`~otto.registry.Ref` (``"module:Class"``), imported and checked
+    at its first use.
+
+    Raises:
+        TypeError: If *cls* is not a :class:`LinkImpairer` subclass.
+        ValueError: If ``cls.host_families`` is empty.
+        otto.registry.DuplicateRegistration: If *name* is taken and *overwrite*
+            is false.
     """
-    IMPAIRERS.register(name, cls, overwrite=overwrite, origin=caller_module())
+    IMPAIRERS.register(name, ClassEntry(cls), overwrite=overwrite)
 
 
 def build_impairer(name: str) -> type[LinkImpairer]:
     """Return the impairer class registered under *name* (rich unknown-name error)."""
-    return IMPAIRERS.get(name)
+    return resolved(IMPAIRERS.get(name).cls)

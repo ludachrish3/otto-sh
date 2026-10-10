@@ -15,7 +15,9 @@ from otto.cli.registry import (
     register_cli_command,
     resolve_spec_command,
 )
+from otto.registry import DuplicateRegistration
 from tests._fixtures.bootstrapstub import bootstrap_stub
+from tests._fixtures.registrant import from_module
 
 
 @pytest.fixture(autouse=True)
@@ -216,14 +218,13 @@ def test_prepare_command_target_refuses_a_verb_it_cannot_bind():
 
 
 def test_collision_is_loud_and_names_both_origins():
-    register_cli_command("clash", typer.Typer(name="clash"))
-    with pytest.raises(ValueError, match="already registered") as ei:
-        register_cli_command("clash", typer.Typer(name="clash"))
-    msg = str(ei.value)
-    # CLI commands have no overwrite escape hatch — the collision hint must not
-    # point at the (nonexistent) overwrite= knob.
-    assert "CLI command names cannot be overwritten; pick a unique name." in msg
-    assert "overwrite=True" not in msg
+    from_module("acme.cli", register_cli_command, "clash", typer.Typer(name="clash"))
+    with pytest.raises(DuplicateRegistration) as ei:
+        from_module("acme.other", register_cli_command, "clash", typer.Typer(name="clash"))
+    assert str(ei.value) == (
+        "CLI command 'clash' is already registered by 'acme.cli'; second registration "
+        "from 'acme.other'. Pass overwrite=True to replace it deliberately."
+    )
 
 
 def test_cli_command_decorator_registers_and_runs(monkeypatch):
@@ -257,7 +258,7 @@ def test_spec_defaults():
     assert spec.lab_free is False
     assert spec.output_dir is True
     assert spec.gate is True
-    assert spec.origin  # auto-captured
+    assert CLI_COMMANDS.origin("d") == __name__
 
 
 def test_command_spec_is_frozen():

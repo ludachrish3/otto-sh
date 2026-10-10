@@ -20,7 +20,6 @@ import re
 
 import pytest
 
-from otto.host.transfer import TRANSFER_BACKENDS
 from otto.host.transfer import registry as registry_mod
 from otto.testing import assert_transfer_backend_conforms
 from otto.utils import Status
@@ -42,22 +41,19 @@ def _example_source() -> str:
 
 
 @pytest.fixture
-def example_class(monkeypatch):
+def example_class():
     """Execute the page's fence and hand back the class it defines.
 
-    ``register_transfer_backend`` stays the real function, pointed at a
-    scratch registry: the example's registration call is part of what the
-    page teaches and must run, without leaking an ``xmodem`` name into the
-    process-wide registry every other test reads.
+    The example's registration call is part of what the page teaches, so it
+    runs for real, against the live table and its own checks; the root
+    isolation fixture removes the ``xmodem`` name again after the test.
     """
-    scratch = type(TRANSFER_BACKENDS)(
-        kind="transfer backend",
-        register_hint="register_transfer_backend(name, cls)",
-    )
-    monkeypatch.setattr(registry_mod, "TRANSFER_BACKENDS", scratch)
+    table = registry_mod.TRANSFER_BACKENDS
+    assert "xmodem" not in table
     namespace: dict = {}
     exec(compile(_example_source(), str(_PAGE), "exec"), namespace)  # noqa: S102
-    assert scratch.names() == ["xmodem"], "the example's registration call did not run"
+    assert "xmodem" in table, "the example's registration call did not run"
+    assert table.peek("xmodem").cls is namespace["XmodemTransfer"]
     return namespace["XmodemTransfer"]
 
 

@@ -29,6 +29,14 @@ and the reference can link them. The public names are on :doc:`/api/monitor/pars
 
 .. autoclass:: otto.monitor.parsers.ProcCountParser
 
+.. autoclass:: otto.monitor.parsers.HostParsersEntry
+
+.. autoclass:: otto.monitor.parsers.PatternParsersEntry
+
+.. autoclass:: otto.monitor.parsers.ProjectParserEntry
+
+.. autofunction:: otto.monitor.parsers.pattern_key
+
 .. autodata:: otto.monitor.parsers.HOST_PARSERS
 
 .. autodata:: otto.monitor.parsers.HOST_PATTERN_PARSERS

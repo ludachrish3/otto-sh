@@ -602,7 +602,7 @@ def test_a_referencing_host_is_not_double_reported_when_the_declaration_itself_i
     )
     report = check_repo(tmp_path)
     assert not report.ok
-    assert "requires a 'path' string" in _text(report)
+    assert "parse failed: path: Field required" in _text(report)
     assert "no inventory is configured" not in _text(report)
 
 
@@ -861,15 +861,29 @@ def _settings(root: Path, body: str) -> None:
     make_sut_repo(root, name="acme", version="1.0.0", extra=body)
 
 
-def test_a_json_source_without_paths_fails_settings_and_blocks_lab(tmp_path: Path) -> None:
+def test_a_json_source_without_paths_fails_the_lab_area(tmp_path: Path) -> None:
+    """A source's options are its backend's to parse, at preparation: the lab area reports them."""
     _settings(tmp_path, '[[lab.sources]]\nbackend = "json"\n')
     # Detected even though no lab file exists: a declaration that does not
-    # compile counts as present, so nothing is ever scaffolded beside it.
+    # prepare counts as present, so nothing is ever scaffolded beside it.
     assert "lab" in detect_areas(tmp_path)
     report = check_repo(tmp_path)
-    assert report.verdict("settings").state == "failed"
-    assert report.verdict("lab") == AreaVerdict("lab", "blocked", detail="settings did not compile")
+    assert report.verdict("settings").state == "ok"
+    lab = report.verdict("lab")
+    assert lab.state == "failed"
+    assert "parse failed" in lab.problems[0]
+    assert "paths" in lab.problems[0]
     assert not report.ok
+
+
+def test_a_source_whose_backend_registers_in_an_init_module_is_checked_after_init(
+    tmp_path: Path,
+) -> None:
+    """``otto init`` runs no init module, so such a source is deferred, never failed."""
+    _settings(tmp_path, '[[lab.sources]]\nbackend = "cmdb"\nserver = "db"\n')
+    report = check_repo(tmp_path)
+    assert report.verdict("settings").state == "ok"
+    assert "acme/cmdb#1 (backend 'cmdb'): checked after init" in report.verdict("lab").detail
 
 
 @pytest.mark.parametrize("line", ['libs = "pylib"\n', 'tests = "tests"\n'], ids=["libs", "tests"])
@@ -933,6 +947,25 @@ def test_a_typod_os_profile_default_fails_settings_and_registers_nothing(tmp_pat
     report = check_repo(tmp_path)
     assert "unknown default field" in "\n".join(report.verdict("settings").problems)
     assert sorted(OS_PROFILES.names()) == before
+
+
+def test_a_table_over_a_class_whose_module_is_missing_fails_settings(tmp_path: Path) -> None:
+    """A class registered by reference whose module is gone is a settings problem, not a raise."""
+    from otto.host.os_profile import register_host_class
+    from otto.registry import Ref
+
+    register_host_class(
+        "plugin-host",
+        Ref("plugin_hosts_missing:PluginHost"),
+        spec=Ref("plugin_hosts_missing:PluginSpec"),
+    )
+    _settings(tmp_path, '[os_profiles.alpha]\nbase = "plugin-host"\n')
+    settings = check_repo(tmp_path).verdict("settings")
+    assert settings.state == "failed"
+    problems = "\n".join(settings.problems)
+    assert "[os_profiles.alpha] in repo 'acme'" in problems
+    assert f"base 'plugin-host' (host class registered by {__name__})" in problems
+    assert "resolution failed: ModuleNotFoundError" in problems
 
 
 def test_unparsable_settings_fail_once_and_block_lab_and_instructions(tmp_path: Path) -> None:
@@ -1045,21 +1078,31 @@ def test_check_repo_never_prints(tmp_path: Path, capsys) -> None:
 
 
 @pytest.mark.parametrize(
-    "line",
+    ("line", "area", "named"),
     [
-        'libs = ["~nosuchuser_xyz/lib"]\n',
-        'tests = ["~nosuchuser_xyz/tests"]\n',
-        '[[lab.sources]]\nbackend = "json"\npaths = ["~nosuchuser_xyz/lab"]\n',
+        ('libs = ["~nosuchuser_xyz/lib"]\n', "settings", "~nosuchuser_xyz"),
+        ('tests = ["~nosuchuser_xyz/tests"]\n', "settings", "~nosuchuser_xyz"),
+        (
+            '[[lab.sources]]\nbackend = "json"\npaths = ["~nosuchuser_xyz/lab"]\n',
+            "lab",
+            "paths: Value error, cannot expand its leading '~'",
+        ),
     ],
 )
-def test_a_path_under_an_unknown_users_home_fails_settings_and_never_raises(
-    tmp_path: Path, line: str
+def test_a_path_under_an_unknown_users_home_fails_its_area_and_never_raises(
+    tmp_path: Path, line: str, area: str, named: str
 ) -> None:
-    """``~nosuchuser`` cannot expand: the settings area reports it; no reader raises."""
+    """``~nosuchuser`` cannot expand: the area that parses it reports it; no reader raises.
+
+    A json source's ``paths`` are parsed when the source is prepared, so the
+    lab area reports them, naming the field and the rule but never the value
+    (a backend config model never echoes one); ``libs`` and ``tests`` are
+    settings, whose message quotes the path.
+    """
     _settings(tmp_path, line)
     report = check_repo(tmp_path)
-    assert report.verdict("settings").state == "failed"
-    assert "~nosuchuser_xyz" in _text(report)
+    assert report.verdict(area).state == "failed"
+    assert named in _text(report)
     detect_areas(tmp_path)
     scaffold_candidates(tmp_path, all_areas=True)
 

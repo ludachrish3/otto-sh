@@ -124,10 +124,10 @@ def test_axes_for_a_guest_whose_frame_lives_out_of_tree() -> None:
 
 
 def test_axes_for_recovers_when_registry_isolation_has_dropped_the_frame(monkeypatch) -> None:
-    """Reproduce `_restore_registries`' teardown inline, so this does not
+    """Reproduce `_restore_tables`' teardown inline, so this does not
     depend on which test pytest-randomly happened to run first.
 
-    `_restore_registries` (tests/conftest.py:1766-1837, called from
+    `_restore_tables` (tests/conftest.py:1766-1837, called from
     `_isolate_registries`'s teardown at tests/conftest.py:1711) drops a
     test-added registry entry and evicts `reg.origin(name)` from
     `sys.modules`. For `zephyr-inline` that origin is `custom_hosts` -- the

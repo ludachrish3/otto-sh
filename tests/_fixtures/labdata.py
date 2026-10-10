@@ -18,8 +18,9 @@ from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.options import ConsoleOptions
 from otto.host.unix_host import UnixHost
-from otto.labs.sources import CompiledLabSource
+from otto.labs.sources import PendingLabSource
 from otto.models.lab import HOISTED_HOST_KEYS
+from otto.registry import FrozenMap
 
 _LAB_DATA_DIR = Path(__file__).resolve().parent / "lab_data"
 
@@ -274,8 +275,8 @@ def make_console_host(ne: str, **kwargs: Any) -> UnixHost:
 
 def json_lab_sources(
     sut_dir: Path, paths: list[Path], *, name: str = "fake"
-) -> list[CompiledLabSource]:
-    """The compiled ``[[lab.sources]]`` list a Repo STAND-IN must carry.
+) -> list[PendingLabSource]:
+    """The ``[[lab.sources]]`` list a Repo STAND-IN must carry.
 
     Repo stand-ins (``SimpleNamespace``/``MagicMock``) that only set the old
     ``labs`` list model a ``Repo`` that no longer exists: ``build_lab_sources``
@@ -286,7 +287,11 @@ def json_lab_sources(
     whose only host source is json files under *paths*.
     """
     return [
-        CompiledLabSource(
-            label=f"{name}/json#1", backend="json", repo_dir=sut_dir, paths=list(paths)
+        PendingLabSource(
+            backend="json",
+            label=f"{name}/json#1",
+            raw=FrozenMap.freeze_json({"paths": [str(p) for p in paths]}),
+            origin=str(sut_dir / ".otto" / "settings.toml"),
+            repo_dir=sut_dir,
         )
     ]

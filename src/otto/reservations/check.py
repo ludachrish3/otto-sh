@@ -331,6 +331,17 @@ class ReservationBackendError(OttoError):
     """
 
 
+class ReservationConstructionError(ReservationBackendError, ValueError):
+    """A ``[reservations]`` backend could not be looked up, parsed or built.
+
+    The message names the backend, the module that registered it, the
+    settings file and the stage that failed (lookup, parse, construction or
+    result). A :class:`ReservationBackendError`, so the gate's callers refuse
+    it fail-closed like any other backend failure; a :class:`ValueError`,
+    because it is a configuration error.
+    """
+
+
 def active_reservations(backend: "ReservationBackend") -> "list[Reservation]":
     """Return *backend*'s cached active rows.
 

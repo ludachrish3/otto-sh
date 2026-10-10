@@ -3,11 +3,9 @@
 NO LOCAL REGISTRY-ISOLATION FIXTURE HERE, deliberately. ``PROJECT_ACTIONS`` is
 an ``otto.registry.Registry``, and the root conftest's autouse
 ``_isolate_registries`` discovers every ``Registry`` reachable from a loaded
-``otto.*`` module dynamically — this one included, from the import above. The
-provider seams (``_PRODUCT_PROVIDERS``/``_DEV_TOOL_PROVIDERS``) carry their own
-``_isolate_provider_registry`` fixtures only because they are plain lists that
-the root guard cannot see. Pinned by ``test_registration_survives_a_repeat_run``
-below, which registers the same repo name a second time in the same process.
+``otto.*`` module dynamically — this one included, from the import above.
+Pinned by ``test_registration_survives_a_repeat_run`` below, which registers
+the same repo name a second time in the same process.
 """
 
 import pytest
@@ -366,9 +364,7 @@ async def test_cleanup_hands_a_repo_override_an_instance_of_its_own_class():
 
     from otto import options
     from otto.cli.run import instruction
-    from otto.project import actions as mod
 
-    mod.register_project_instruction_bodies(ProjectActions, None)
     seen = []
 
     @options
@@ -416,9 +412,7 @@ async def test_cleanup_refuses_an_uninstall_override_with_a_required_field():
     from otto import options
     from otto.cli.run import instruction
     from otto.instructions import ProjectInstructionError
-    from otto.project import actions as mod
 
-    mod.register_project_instruction_bodies(ProjectActions, None)
     ran = []
 
     @options(kw_only=True)
@@ -793,9 +787,7 @@ async def test_is_uninstalled_hands_a_repo_override_an_instance_of_its_own_class
 
     from otto import options
     from otto.cli.run import instruction
-    from otto.project import actions as mod
 
-    mod.register_project_instruction_bodies(ProjectActions, None)
     seen = []
 
     @options
@@ -831,9 +823,7 @@ async def test_is_uninstalled_refuses_a_status_override_with_a_required_field():
     from otto import options
     from otto.cli.run import instruction
     from otto.instructions import ProjectInstructionError
-    from otto.project import actions as mod
 
-    mod.register_project_instruction_bodies(ProjectActions, None)
     ran = []
 
     @options(kw_only=True)
@@ -944,8 +934,8 @@ def test_two_repos_each_registering_is_the_intended_composition():
         register_project_actions(Mine)
     with registering_repo("other"):
         register_project_actions(Theirs)
-    assert PROJECT_ACTIONS.get("acme") is Mine
-    assert PROJECT_ACTIONS.get("other") is Theirs
+    assert PROJECT_ACTIONS.get("acme").cls is Mine
+    assert PROJECT_ACTIONS.get("other").cls is Theirs
 
 
 def test_register_project_actions_returns_the_class_so_it_decorates():
@@ -963,7 +953,7 @@ def test_registration_survives_a_repeat_run():
     # test above would make THIS registration the loud duplicate.
     with registering_repo("acme"):
         register_project_actions(ProjectActions)
-    assert PROJECT_ACTIONS.get("acme") is ProjectActions
+    assert PROJECT_ACTIONS.get("acme").cls is ProjectActions
 
 
 def test_actions_for_prefers_registered_class_else_default():
@@ -1065,14 +1055,11 @@ def test_project_status_defaults_to_an_empty_per_repo_map():
 
 
 class TestBodyRegistration:
-    """Importing the module registers otto's six; registering a subclass adds its bodies."""
+    """Otto's six are a constant the tables derive from; registering a subclass adds its bodies."""
 
     def test_the_base_class_registered_all_six(self) -> None:
         from otto.instructions import PROJECT_INSTRUCTIONS
-        from otto.project import actions as mod
 
-        # isolation may have rolled the table back
-        mod.register_project_instruction_bodies(ProjectActions, None)
         names = {"install", "uninstall", "cleanup", "get-logs", "install-tools", "status"}
         assert names <= set(PROJECT_INSTRUCTIONS.names())
         for name in names:
@@ -1080,15 +1067,12 @@ class TestBodyRegistration:
             assert body is not None
             assert body.repo is None
 
-    def test_import_time_call_is_what_actually_registers_the_six(self) -> None:
-        """Pins the MODULE-LEVEL ``register_project_instruction_bodies(...)`` call.
+    def test_a_fresh_process_derives_the_six_from_the_constant(self) -> None:
+        """Pins ``FIRST_PARTY_BODIES``: importing the module is all the six need.
 
-        Every other test in this class calls ``register_project_instruction_bodies``
-        itself before asserting, which would still pass with that module-level
-        line deleted. A fresh subprocess import exercises the line the way
-        production does -- nothing else in this process has already registered
-        otto's six -- so a subprocess that never calls the function directly is
-        the one witness that the import alone did the registering.
+        A fresh subprocess import is how production meets the tables -- nothing
+        else in this process has touched them -- so it is the one witness that
+        the constant alone yields otto's six, with no registration call.
 
         A subprocess rather than ``importlib.reload``: reloading this module
         in-process rebinds its ``ProjectActions`` to a NEW class object that
@@ -1129,10 +1113,7 @@ class TestBodyRegistration:
         from otto.cli.run import instruction
         from otto.instructions import PROJECT_INSTRUCTIONS
         from otto.project import InstallOptions
-        from otto.project import actions as mod
         from otto.registry import registering_repo
-
-        mod.register_project_instruction_bodies(ProjectActions, None)
 
         @options
         class WidgetInstall(InstallOptions):
@@ -1169,10 +1150,7 @@ class TestBodyRegistration:
         from otto import options
         from otto.cli.run import instruction
         from otto.instructions import ProjectInstructionError
-        from otto.project import actions as mod
         from otto.registry import registering_repo
-
-        mod.register_project_instruction_bodies(ProjectActions, None)
 
         @options
         class Foreign:
@@ -1206,10 +1184,7 @@ class TestBodyRegistration:
         from otto import options
         from otto.cli.run import instruction
         from otto.instructions import ProjectInstructionError
-        from otto.project import actions as mod
         from otto.registry import registering_repo
-
-        mod.register_project_instruction_bodies(ProjectActions, None)
 
         @options
         class DeployOpts:
@@ -1244,10 +1219,7 @@ class TestBodyRegistration:
         from otto import options
         from otto.cli.run import instruction
         from otto.instructions import PROJECT_INSTRUCTIONS, ProjectInstructionError
-        from otto.project import actions as mod
         from otto.registry import registering_repo
-
-        mod.register_project_instruction_bodies(ProjectActions, None)
 
         @options
         class DeployOpts:

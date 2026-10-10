@@ -159,9 +159,14 @@ Spec `docs/superpowers/specs/2026-10-06-registry-catalog-design.md` §8 and §9.
   two teaching sentences (`inventory-backends.md:103`, `creds-backends.md:99`) are rewritten to
   say an unregistered name raises when otto builds the store; no replacement is taught. The
   footer lists all three.
-- [ ] **After P1**, each its own marked commit (spec 3a §9): commit 4 (strict engine, legacy list,
+- ✅ **After P1**, each its own marked commit (spec 3a §9): commit 4 (strict engine, legacy list,
   conformance and discovery suites, isolation through `instances()`), commits 5.1–5.13 (one per
   seam group), commit 6 (allowances and `origin=` deleted, `@final`, ast-grep rules on).
+  Landed (by subject): commit 4 `feat(registry)!: one strict engine behind every registry`;
+  5.1–5.13 from `feat(host)!: class seams, login proxies, session setups and kinds store records`
+  to `feat(docker): compose adapters are records owned by their repo`; commit 6
+  `refactor(registry)!: one strict engine with no legacy allowances, and the registry rules on`,
+  this line's own commit.
 
 ## Spec 3b's P1 work (host construction)
 

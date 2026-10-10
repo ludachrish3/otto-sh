@@ -116,7 +116,7 @@ def test_a_broken_inventory_declaration_is_the_inventory_line_not_a_drop(tmp_pat
     assert cc.collect_host_drops([first, second]) == []
     described = cc.describe_inventory([first, second])
     assert described.blocker == "is broken"
-    assert "requires a 'path'" in described.text
+    assert "parse failed: path: Field required" in described.text
 
 
 def test_a_malformed_lab_file_is_dropped_by_name(tmp_path, monkeypatch):
@@ -163,7 +163,7 @@ def test_an_enumeration_that_raises_is_dropped_for_the_repo(tmp_path, monkeypatc
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     repo = _repo(tmp_path, {}, hosts=[])
 
-    def _explodes(_repos):
+    def _explodes(_repos, *, profiles):
         raise RuntimeError("backend on fire")
 
     monkeypatch.setattr("otto.labs.sources.build_lab_sources", _explodes)
@@ -269,7 +269,7 @@ def test_describe_inventory_names_each_case(tmp_path, monkeypatch):
     broken = _repo(tmp_path, {"backend": "json"}, hosts=[], name="broken")
     described = cc.describe_inventory([broken])
     assert described.text.startswith("BROKEN")
-    assert "requires a 'path'" in described.text
+    assert "parse failed: path: Field required" in described.text
     assert "no host completes" in described.text
     assert described.blocker == "is broken"
 

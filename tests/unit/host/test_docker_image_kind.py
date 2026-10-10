@@ -11,6 +11,7 @@ from otto.declared import DeclaredEntry
 from otto.host import docker_image_kind  # noqa: F401 — import registers the kind
 from otto.host import product as product_mod
 from otto.host.docker_image_kind import DockerImageProduct, _loaded_reference
+from otto.registry import resolved
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
 
@@ -77,7 +78,9 @@ class _DockerHost(SimpleNamespace):
 
 
 def _build(host=None, **params) -> DockerImageProduct:
-    return product_mod.PRODUCT_KINDS.get("docker_image")(_entry(**params), host or _DockerHost())
+    return resolved(product_mod.PRODUCT_KINDS.get("docker_image").factory)(
+        _entry(**params), host or _DockerHost()
+    )
 
 
 # ── builder ──────────────────────────────────────────────────────────────────
@@ -170,7 +173,7 @@ def test_requires_an_image_param():
         params={},
     )
     with pytest.raises(ValueError, match=r"requires an 'image' param"):
-        product_mod.PRODUCT_KINDS.get("docker_image")(entry, _DockerHost())
+        resolved(product_mod.PRODUCT_KINDS.get("docker_image").factory)(entry, _DockerHost())
 
 
 def test_loaded_reference_returns_none_for_unrecognized_output():
@@ -601,7 +604,9 @@ async def test_tarball_put_and_load_name_one_absolute_path_on_a_host_with_no_def
 
 def test_docker_image_kind_refuses_the_retired_dest_dir_key():
     with pytest.raises(ValueError, match=r"(?s)'app'.*'dest_dir'.*'stage_dir'"):
-        product_mod.PRODUCT_KINDS.get("docker_image")(_entry(dest_dir="/tmp"), _DockerHost())
+        resolved(product_mod.PRODUCT_KINDS.get("docker_image").factory)(
+            _entry(dest_dir="/tmp"), _DockerHost()
+        )
 
 
 def test_docker_image_kind_refuses_a_relative_stage_dir():

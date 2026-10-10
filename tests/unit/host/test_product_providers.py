@@ -4,18 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from otto.host import product as product_mod
 from otto.host.element import Element
 from otto.host.product import apply_product_providers, register_product_provider
-
-
-@pytest.fixture(autouse=True)
-def _isolate_provider_registry():
-    saved = list(product_mod._PRODUCT_PROVIDERS)
-    try:
-        yield
-    finally:
-        product_mod._PRODUCT_PROVIDERS[:] = saved
 
 
 def _prod(name):

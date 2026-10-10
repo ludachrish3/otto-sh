@@ -1,0 +1,33 @@
+id: no-registry-subclass
+language: python
+severity: error
+message: the registry engine's types are final. Build a table with `Registry(..., entry=...)` (or `BackendRegistry`, `Subscription`, `RegistryView`) and put the seam's own rules in its record type and its `validate`/`check_resolved` hooks.
+note: >
+  `Registry`, `BackendRegistry`, `Subscription` and `RegistryView` are
+  `@final` (ty refuses a subclass, and `Registry` also refuses one when
+  constructed): every seam gets the same rules because no seam can override
+  them. A seam's own behaviour lives in its record type and its hooks, and a
+  builder that only reads a table (`KindBuilder`) holds one instead of
+  subclassing it.
+
+  Seen: a class whose base is spelled `Registry`, `BackendRegistry`,
+  `Subscription` or `RegistryView`, bare or subscripted, or reached through a
+  module (`registry.Registry`, `otto.registry.Registry[...]`). An alias
+  (`from otto.registry import Registry as R`) or a relative module import
+  (`from .. import registry as r`) is the job of the AST binding scan in
+  tests/unit/registry/test_registry_binding_scan.py, which resolves every
+  import of otto.registry. otto.registry, which defines the types, is
+  ignored.
+files:
+- src/otto/**/*.py
+ignores:
+- src/otto/registry.py
+utils:
+  engine-type:
+    regex: '^((\w+\.)*(Registry|BackendRegistry|Subscription|RegistryView))(\[[\s\S]*\])?$'
+rule:
+  kind: class_definition
+  has:
+    field: superclasses
+    has:
+      matches: engine-type

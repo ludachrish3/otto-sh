@@ -7,7 +7,11 @@ and the reference can link them. The public names are on :doc:`/api/host/dev_too
 
 .. currentmodule:: otto.host.dev_tool
 
+.. autodata:: otto.host.dev_tool.DEV_TOOL_PROVIDERS
+
 .. autodata:: otto.host.dev_tool.DEV_TOOL_KINDS
+
+.. autodata:: otto.host.dev_tool.DEV_TOOL_KIND_BUILDER
 
 .. autofunction:: otto.host.dev_tool.apply_declared_dev_tools
 

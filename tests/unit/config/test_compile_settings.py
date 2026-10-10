@@ -4,7 +4,6 @@ import os
 import subprocess
 import sys
 import textwrap
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -15,40 +14,27 @@ from otto.host.os_profile import OS_PROFILES
 from tests._fixtures.sutrepo import make_sut_repo
 
 
-@pytest.fixture
-def restore_profiles() -> Iterator[None]:
-    """Snapshot/restore the global os-profile registry; ``Repo`` registers data profiles."""
-    from otto.host import os_profile
-
-    saved = dict(os_profile.OS_PROFILES._entries)
-    saved_origins = dict(os_profile.OS_PROFILES._origins)
-    try:
-        yield
-    finally:
-        os_profile.OS_PROFILES._entries.clear()
-        os_profile.OS_PROFILES._entries.update(saved)
-        os_profile.OS_PROFILES._origins.clear()
-        os_profile.OS_PROFILES._origins.update(saved_origins)
-
-
 def _write(root: Path, body: str) -> Path:
     make_sut_repo(root, name="acme", version="1.0.0", extra=textwrap.dedent(body))
     return root / ".otto" / "settings.toml"
 
 
-def test_a_json_lab_source_without_paths_fails(tmp_path: Path) -> None:
-    path = _write(tmp_path, '[[lab.sources]]\nbackend = "json"\n')
-    problems = validate_settings(tmp_path)
-    assert len(problems) == 1
-    assert problems[0].startswith(f"{path}: ")
-    assert "paths" in problems[0]
+def test_a_json_lab_source_without_paths_passes_the_settings_compile(tmp_path: Path) -> None:
+    """Only a source's envelope is a settings matter; its options are checked at preparation."""
+    _write(tmp_path, '[[lab.sources]]\nbackend = "json"\n')
+    assert validate_settings(tmp_path) == []
 
 
-def test_a_typo_in_an_os_profile_default_fails_naming_the_section(tmp_path: Path) -> None:
+def test_a_typo_in_an_os_profile_default_is_checked_after_init(tmp_path: Path) -> None:
+    """The settings compile checks a table's shape; what it means is checked after init."""
+    from otto.host.os_profile import check_data_profiles
+
     _write(tmp_path, '[os_profiles.acme-os]\nbase = "unix"\nosTyp = "unix"\n')
-    (problem,) = validate_settings(tmp_path)
-    assert "[os_profiles.acme-os]: " in problem
-    assert "unknown default field" in problem
+    assert validate_settings(tmp_path) == []
+    with pytest.raises(
+        ValueError, match=r"\[os_profiles\.acme-os\] in repo .*unknown default field"
+    ):
+        check_data_profiles([Repo(sut_dir=tmp_path)])
 
 
 def test_validating_registers_no_os_profile(tmp_path: Path) -> None:
@@ -102,7 +88,7 @@ def test_valid_settings_have_no_problems(tmp_path: Path) -> None:
 
 
 def test_compile_settings_matches_what_the_loader_assigns(
-    tmp_path: Path, restore_profiles: None
+    tmp_path: Path,
 ) -> None:
     """The differential: every CompiledSettings field equals the Repo attribute of the same name."""
     _write(

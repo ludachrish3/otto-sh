@@ -1290,8 +1290,6 @@ class _RecordingPowerController(PowerController):
     READ, and "the preview did not ask" is half of that arm's property.
     """
 
-    type_name = "recording"
-
     def __init__(self, state: "PowerState | None" = None) -> None:
         self.calls: list[str] = []
         self.state = state

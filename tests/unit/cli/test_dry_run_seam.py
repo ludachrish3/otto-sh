@@ -28,6 +28,14 @@ from tests.conftest import active_context
 runner = DispatchRunner()
 
 
+def _entry(cls: type) -> object:
+    """A host-class record for a test double the CLI reads, never registered."""
+    from otto.host.os_profile import HostClassEntry
+    from otto.models.host import UnixHostSpec
+
+    return HostClassEntry(cls, UnixHostSpec)  # type: ignore[arg-type] — a double, not a RemoteHost
+
+
 def flat(text: str) -> str:
     """Collapse rich's wrapping/padding so a line can be matched as one string."""
     return " ".join(text.split())
@@ -441,7 +449,9 @@ def _host_app(monkeypatch: pytest.MonkeyPatch, host: SpyHost) -> typer.Typer:
             return known[host_id]
         raise KeyError(f"No host {host_id!r} in lab 'test'. Available: {sorted(known)}")
 
-    monkeypatch.setattr(op, "HOST_CLASSES", {"spy": SpyHost})
+    # Not a RemoteHost, so not registrable: the table is replaced by a
+    # mapping of the one record the CLI reads.
+    monkeypatch.setattr(op, "HOST_CLASSES", {"spy": _entry(SpyHost)})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda _hid: SpyHost)
     monkeypatch.setattr("otto.config.fleet.get_host", fake_get_host)
     # `_resolve_host`'s "Available hosts" listing reads the active context's
@@ -1083,7 +1093,7 @@ class TestProbeDialsAndNeverCommands:
                 return None
 
         monkeypatch.setattr("otto.host.connections.TelnetClient", _FakeTelnet)
-        monkeypatch.setattr(op, "HOST_CLASSES", {"unix": UnixHost})
+        op.register_host_class("unix", UnixHost, overwrite=True)
         monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda _hid: UnixHost)
 
         def _app(term: "str | None") -> typer.Typer:
@@ -1140,7 +1150,7 @@ class TestProbeDialsAndNeverCommands:
         lab = _lab_with(host)
         opened, ran = _spy_transport_and_commands(monkeypatch)
 
-        monkeypatch.setattr(op, "HOST_CLASSES", {"unix": UnixHost})
+        op.register_host_class("unix", UnixHost, overwrite=True)
         monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda _hid: UnixHost)
 
         def _app(probe: bool) -> typer.Typer:

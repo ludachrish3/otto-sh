@@ -203,8 +203,9 @@ def _check_providing_repos_declare_scope(
     and pass every repo. (The declared-entry half is already final after
     phase 1, but is judged here too, in the same pass, for one refusal path.)
 
-    Both provider registries are read because they are separate lists (a
-    provider can only ever land in one of them). Providers with no owner —
+    Both provider subscriptions are read, ``PRODUCT_PROVIDERS`` and
+    ``DEV_TOOL_PROVIDERS``, because they are separate (a provider can only ever
+    land in one of them). Providers with no owner —
     registered outside any repo's init import, which in practice means test
     code calling the register function directly — are skipped: there is no
     repo to name and no ``settings.toml`` to point at. So is an owner naming a
@@ -221,8 +222,8 @@ def _check_providing_repos_declare_scope(
         ProjectScopeError: On the first offending repo, sorted by name so a
             fleet with two of them always reports the same one.
     """
-    from .host.dev_tool import _DEV_TOOL_PROVIDERS
-    from .host.product import _PRODUCT_PROVIDERS
+    from .host.dev_tool import registered_dev_tool_providers
+    from .host.product import registered_product_providers
 
     # Structural guarantee, made explicit rather than assumed: `owner` is only
     # ever stamped from the `registering_repo` marker bootstrap sets around an
@@ -232,7 +233,9 @@ def _check_providing_repos_declare_scope(
     # instead of a fact about a different function far away.
     ordered_names = {repo.name for repo in ordered_repos}
     provider_owners = {
-        owner for _, owner in [*_PRODUCT_PROVIDERS, *_DEV_TOOL_PROVIDERS] if owner
+        owner
+        for _, owner in [*registered_product_providers(), *registered_dev_tool_providers()]
+        if owner
     } & ordered_names
     declared_owners = {
         repo.name for repo in ordered_repos if repo.declared_products or repo.declared_dev_tools
@@ -248,6 +251,39 @@ def _check_providing_repos_declare_scope(
             raise ProjectScopeError(repo.sut_dir, _NO_LAB_PATTERNS.format(name=name))
         if not scope.host_patterns:
             raise ProjectScopeError(repo.sut_dir, _NO_HOST_PATTERNS.format(name=name))
+
+
+def _contain_data_profile_errors(repos: "list[Repo]", errors: list[BootstrapError]) -> None:
+    """Check each loaded repo's ``[os_profiles]`` tables; contain a bad one as that repo's error.
+
+    *repos* are the repos in the dependency order, whose ``init`` modules
+    ran. A dependency-skipped repo is not passed: what its tables mean
+    depends on host classes its own ``init`` would have registered, so a
+    verdict here would blame it for a cause that is not its own and turn its
+    skip into a load error. The settings parse at discovery still checked
+    its tables' shape.
+
+    A bad table is contained exactly as a failed ``init`` module is, because
+    that is what it is: a load error found after the repo's init modules ran (the
+    check needs the host classes they register). It is recorded as a framed
+    :class:`BootstrapError` naming the repo and the table, attributed to the
+    repo by ``sut_dir``, and the repo stays in ``ordered_repos``: its init
+    ran, so the provider-scope check still judges what it registered, and its
+    dependents behave as they do when a dependency's init fails. Other repos
+    and commands proceed; a run the repo is part of fails loudly, and one it
+    is not part of demotes the error to a warning.
+    """
+    if not any(repo.os_profiles for repo in repos):
+        # Nothing to check: the module that checks stays unimported.
+        return
+    from .config.repo import TOML_SETTINGS_PATH
+    from .host.os_profile import check_data_profiles
+
+    for repo in repos:
+        try:
+            check_data_profiles([repo])
+        except ValueError as e:  # noqa: PERF203 — containment seam: one repo's bad table
+            errors.append(BootstrapError(repo.sut_dir, str(TOML_SETTINGS_PATH), e))
 
 
 def discover() -> DiscoveryResult:
@@ -305,22 +341,17 @@ def bootstrap() -> BootstrapResult:
     resolution = resolve_dependencies(repos)
     errors.extend(resolution.errors)
     # otto's six project instructions (install/uninstall/cleanup/get-logs/
-    # install-tools/status) are DECLARED before any repo's init runs: importing
-    # `otto.project.actions` fills PROJECT_INSTRUCTIONS, which fixes each
-    # name's walk shape and is what the decorator's collision guard reads when
-    # a repo tries to claim one of those names. Their COMMANDS are published
-    # after the loop instead (see below), because the merged flag set is only
-    # known once every repo has declared its own bodies.
+    # install-tools/status) are a constant in `otto.project.actions`
+    # (FIRST_PARTY_BODIES), which the instruction tables read when they check
+    # a registration or derive a view. Imported here, before any repo's init
+    # runs, so that import never happens inside a registry check; the tables
+    # derive the six whenever it lands. The merged flags are checked after the
+    # loop instead (see below), because they are only known once every repo
+    # has declared its own bodies.
     #
     # Not contained like the per-repo imports below: this is otto's own module,
     # so a failure here is a bug in otto, not a repo's, and framing it as one
     # repo's containable error would hide it.
-    #
-    # The decorator's collision guard keys on the registering-repo marker, so
-    # for a repo using `@instruction` this ordering is belt-and-braces: the
-    # guard fires whichever import ran first. A repo init module that reads
-    # INSTRUCTIONS still sees no project-instruction commands at init time --
-    # they do not exist yet -- but PROJECT_INSTRUCTIONS already names them all.
     _in_progress = BootstrapResult(
         env=env,
         repos=repos,
@@ -340,16 +371,20 @@ def bootstrap() -> BootstrapResult:
                         if not is_containable(e):
                             raise
                         errors.append(BootstrapError(repo.sut_dir, mod, e))
-        # Every repo has spoken: publish one merged `otto run` command per
-        # project instruction. Not contained -- a cross-repo options collision
-        # is a declared conflict the user must resolve, not one repo's breakage.
+        # Every repo has spoken: check each project instruction's merged
+        # options. Not contained -- a cross-repo options collision is a
+        # declared conflict the user must resolve, not one repo's breakage.
         #
         # By NAME, like the declaration import above, and for the same reason:
         # otto.bootstrap does not declare a dependency on otto.project (see
         # tach.toml), which is what keeps the project layer's edge up into
         # otto.cli from closing a loop through bootstrap as well. The attribute
         # is read off the module at call time, so a caller may substitute it.
-        importlib.import_module("otto.project.commands").publish_project_instructions()
+        importlib.import_module("otto.project.commands").check_project_instruction_options()
+        # Every loaded repo's host classes are registered now, so its
+        # [os_profiles] tables can be checked: a table may name a class an init
+        # module registers. A skipped repo's init never ran, so it is not judged.
+        _contain_data_profile_errors(resolution.ordered, errors)
         # Only now are the provider registries populated, so only now can D2 ask
         # what each repo registered. It raises rather than joining `errors`: the
         # contained failures above are "one repo's file is broken, the rest still

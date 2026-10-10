@@ -1402,8 +1402,9 @@ def _progress_promises_section() -> "list[str]":
 
     THE CLASS ATTRIBUTE AND NOT ``effective_progress_granularity()``, and the
     prose below says so rather than leaving a reader to assume otherwise.
-    ``build_transfer_backend(name)`` returns the CLASS; the instance method
-    needs a built backend, which needs a host's option tables, which a page
+    The registry's metadata states the CLASS's declaration (and the registry
+    refuses a class that disagrees with it); the instance method needs a built
+    backend, which needs a host's option tables, which a page
     rendered at documentation-build time has none of. The DEFAULT promise is
     therefore the only thing this page can honestly publish -- and the one
     backend a configuration moves (``scp``, whose stride is the ``block_size``
@@ -1414,7 +1415,7 @@ def _progress_promises_section() -> "list[str]":
     ``sys.path``: every other import here is stdlib, ``scripts`` or ``tests``,
     and this is the only line in the file that reaches into the product.
     """
-    from otto.host.transfer import TRANSFER_BACKENDS, build_transfer_backend
+    from otto.host.transfer import TRANSFER_BACKENDS
 
     def cell(arm: "int | None") -> str:
         return "one event at completion" if arm is None else f"{arm:,} bytes"
@@ -1451,7 +1452,7 @@ def _progress_promises_section() -> "list[str]":
         "|---|---|---|---|",
     ]
     for name in sorted(TRANSFER_BACKENDS.names()):
-        granularity = build_transfer_backend(name).progress_granularity
+        granularity = TRANSFER_BACKENDS.peek(name).metadata.progress_granularity
         lines.append(
             f"| `{name}` | {cell(granularity.put)} | {cell(granularity.get)} | {granularity.note} |"
         )
@@ -1763,14 +1764,14 @@ def _transfer_cell(capabilities: "HostCapabilities") -> str:
     families that select no registered backend by name — see the field
     docstrings on ``HostCapabilities``.
     """
-    from otto.host.transfer import TRANSFER_BACKENDS, build_transfer_backend
+    from otto.host.transfer import TRANSFER_BACKENDS
 
     if not capabilities.transfer_family:
         return capabilities.transfer
     names = [
         name
         for name in sorted(TRANSFER_BACKENDS.names())
-        if capabilities.transfer_family in build_transfer_backend(name).host_families
+        if capabilities.transfer_family in TRANSFER_BACKENDS.peek(name).metadata.host_families
     ]
     return _join(_code(names))
 

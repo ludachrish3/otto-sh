@@ -90,14 +90,18 @@ Lab loading is behind a protocol so hosts don't have to come from JSON files:
 `LabRepository` (in {mod}`otto.labs.protocol`) is the host-source
 contract, the built-in `json` backend reads `lab.json` files from the paths a
 source declares, and alternatives (a database, an inventory service)
-register a name via {func}`otto.labs.register_lab_repository`.
+register a name, a config model and a factory via
+{func}`otto.labs.register_lab_repository`.
 {func}`otto.testing.assert_lab_repository_conforms` verifies a custom backend
 against the contract, and `otto.examples.lab_repository` is a copyable
 reference implementation. See {doc}`../../configuration/host-sources`.
 
-A process reads *every* source every repo declares:
-{func}`otto.labs.build_lab_sources` constructs each `[[lab.sources]]` entry
-and wraps them — always, even a single one — in a `CompositeLabRepository`
+A process reads *every* source every repo declares. Settings parse keeps
+each `[[lab.sources]]` entry as an envelope (`backend`, `name`, the raw
+options); after every repo's `init` modules have run, otto prepares each one
+through the backend registry (its config model parses the options, once per
+parse of the repo) and {func}`otto.labs.build_lab_sources` builds each
+prepared source with its factory and wraps them — always, even a single one — in a `CompositeLabRepository`
 that consults them in order and lets a later source override an earlier one
 wholesale per record (an element, or a `labs` table entry), with a warning
 naming both. The composite satisfies the same protocol, so nothing downstream

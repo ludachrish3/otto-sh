@@ -164,10 +164,11 @@ so there is no value to pass and none to fall back on. Otto refuses it by name
 or override `cleanup` / `is_uninstalled` as well and call your own body from
 there.
 
-An override supplies `options=` and a body; it does **not** restate the walk
-shape. Those six keywords are fixed by the *first* declaration of a name — for
-the six, by otto, before any repo is imported — and a repo restating one fails
-at init naming the keyword:
+An override supplies `options=` and a body; it does **not** need to restate the
+walk shape. Those six keywords are fixed by the *first* declaration of a name —
+for the six, by otto, before any repo is imported. A repo that restates one
+with the same value is accepted; a repo that restates one with a **different**
+value fails at init, naming the keyword:
 
 | Keyword | What it fixes |
 | ------- | ------------- |
@@ -179,7 +180,15 @@ at init naming the keyword:
 | `dry_run_preview` | `True` makes `otto -n run <name>` print the plan of what the instruction would do before the dry-run block ({ref}`the lab-level verbs <dry-run-lab-verbs>`). Honoured only for `install`, `uninstall` and `install-tools`, otto's own; declaring it on any other name is refused at init. |
 
 A repo declaring a name otto has never heard of *is* the first declaration, so
-it sets all six, and a second repo declaring the same name inherits them. See
+it sets all six, and a second repo declaring the same name inherits them.
+
+**One actions class per repo.** `register_project_actions` keys the class by
+the repo whose init import registers it, and refuses a call made anywhere
+else. Registering a second class for the same repo is refused unless the call
+passes `overwrite=True`, which replaces the class and every body it declared:
+a name the new class no longer declares loses that repo's body, and when that
+repo was the name's first declarer, the walk shape comes from the next
+declarer instead. See
 [Project instructions](../../cookbook/authoring/writing-instructions.md#project-instructions)
 for the declaration in full.
 

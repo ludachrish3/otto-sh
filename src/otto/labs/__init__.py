@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from .composite import LabSource as LabSource
     from .errors import LabNotFoundError as LabNotFoundError
     from .errors import LabRepositoryError as LabRepositoryError
+    from .errors import LabSourceConstructionError as LabSourceConstructionError
     from .json_repository import JsonFileLabRepository as JsonFileLabRepository
     from .protocol import HostSummary as HostSummary
     from .protocol import LabRepository as LabRepository
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
     from .protocol import logins_of_creds as logins_of_creds
     from .protocol import logins_of_host_data as logins_of_host_data
     from .registry import register_lab_repository as register_lab_repository
+    from .sources import LabSourceEnv as LabSourceEnv
     from .sources import build_lab_sources as build_lab_sources
     from .summaries import host_summaries as host_summaries
     from .summaries import list_host_ids as list_host_ids
@@ -33,6 +35,8 @@ _LAZY_ATTRS: dict[str, str] = {
     "LabSource": "otto.labs.composite",
     "LabNotFoundError": "otto.labs.errors",
     "LabRepositoryError": "otto.labs.errors",
+    "LabSourceConstructionError": "otto.labs.errors",
+    "LabSourceEnv": "otto.labs.sources",
     "JsonFileLabRepository": "otto.labs.json_repository",
     "HostSummary": "otto.labs.protocol",
     "LabRepository": "otto.labs.protocol",
@@ -69,6 +73,8 @@ __all__ = [
     "LabRepository",
     "LabRepositoryError",
     "LabSource",
+    "LabSourceConstructionError",
+    "LabSourceEnv",
     "LoginSummary",
     "SupportsHostSummaries",
     "build_lab_sources",

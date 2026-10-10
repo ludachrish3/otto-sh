@@ -22,10 +22,10 @@ def transfer_backend_of(host: BaseHost, cell: Cell, *, refusal_tail: str) -> Bas
     Reached through the private attribute both host families happen to agree
     on (:class:`~otto.host.local_host.LocalHost` and
     :class:`~otto.host.unix_host.UnixHost` each name it ``_file_transfer``),
-    because there is no public one: the registry lookup
-    ``build_transfer_backend`` would answer for ``sftp`` and ``scp`` but raises
-    for the ``local`` cell, whose transfer name deliberately records the
-    ABSENCE of a registered backend rather than naming one.
+    because there is no public one: the registry (``build_transfer_backend``)
+    would build one for ``sftp`` and ``scp`` but refuses the ``local`` cell,
+    whose transfer name deliberately records the ABSENCE of a registered
+    backend rather than naming one.
 
     Deliberately not ``getattr(host, "_file_transfer", None)`` with a lenient
     default. A host this cannot read is a cell whose contract has never been

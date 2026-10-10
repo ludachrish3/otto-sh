@@ -12,6 +12,7 @@ from otto.declared import DeclaredEntry
 from otto.host import kmod_kind  # noqa: F401 — import registers the kind
 from otto.host import product as product_mod
 from otto.host.kmod_kind import KMODCOV_SYSFS_ROOT, KmodProduct
+from otto.registry import resolved
 from otto.result import CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
 
@@ -66,7 +67,9 @@ class _KmodHost(SimpleNamespace):
 
 
 def _build(host=None, **params) -> KmodProduct:
-    return product_mod.PRODUCT_KINDS.get("kmod")(_entry(**params), host or _KmodHost())
+    return resolved(product_mod.PRODUCT_KINDS.get("kmod").factory)(
+        _entry(**params), host or _KmodHost()
+    )
 
 
 def _attach_kmodcov(host, tmp_path: Path, *, version=None):
@@ -86,7 +89,7 @@ def _attach_kmodcov(host, tmp_path: Path, *, version=None):
         match={},
         params={"artifact": str(ko)},
     )
-    tool = DEV_TOOL_KINDS.get("kmodcov")(entry, host)
+    tool = resolved(DEV_TOOL_KINDS.get("kmodcov").factory)(entry, host)
     host.dev_tools.append(tool)
     return tool
 
@@ -148,7 +151,9 @@ def test_kmod_is_registered_in_both_seams_with_its_own_factory_each():
 
     assert "kmod" in product_mod.PRODUCT_KINDS
     assert "kmod" in DEV_TOOL_KINDS
-    assert product_mod.PRODUCT_KINDS.get("kmod") is not DEV_TOOL_KINDS.get("kmod")
+    assert resolved(product_mod.PRODUCT_KINDS.get("kmod").factory) is not resolved(
+        DEV_TOOL_KINDS.get("kmod").factory
+    )
 
 
 def test_kmod_defaults_module_name_to_the_stem_with_underscores():
@@ -213,7 +218,7 @@ def test_kmod_refuses_a_host_without_the_module_verbs():
     host = SimpleNamespace(id="board1", products=[])
     match = r"'demo': kind 'kmod' matched host board1, which has no load/unload/lsmod"
     with pytest.raises(ValueError, match=match):
-        product_mod.PRODUCT_KINDS.get("kmod")(_entry(), host)
+        resolved(product_mod.PRODUCT_KINDS.get("kmod").factory)(_entry(), host)
 
 
 # ── verbs ────────────────────────────────────────────────────────────────────

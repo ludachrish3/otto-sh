@@ -320,6 +320,7 @@ class _OttoGroup(TyperGroup):
 
     _stub_cache: dict[str, Any]
     _real_cache: dict[str, Any]
+    _cache_revision: int
 
     @override
     def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
@@ -362,10 +363,19 @@ class _OttoGroup(TyperGroup):
         """
         return cmd_name == self._dispatch_target(ctx)
 
+    def _caches(self) -> "tuple[dict[str, Any], dict[str, Any]]":
+        """Return the stub and real command caches, dropped whenever CLI_COMMANDS changed."""
+        from .registry import CLI_COMMANDS
+
+        if getattr(self, "_cache_revision", None) != CLI_COMMANDS.revision:
+            self._stub_cache = {}
+            self._real_cache = {}
+            self._cache_revision = CLI_COMMANDS.revision
+        return self._stub_cache, self._real_cache
+
     def _stub(self, spec: "CommandSpec") -> Any:
         """Return (building + caching once) a lightweight help-only stub for *spec*."""
-        cache = getattr(self, "_stub_cache", None) or {}
-        self._stub_cache = cache
+        cache, _ = self._caches()
         if spec.name not in cache:
             tmp = typer.Typer(name=spec.name, help=_stub_help(spec.name, spec.help))
             # get_group (not get_command): an empty stub Typer has zero
@@ -377,8 +387,7 @@ class _OttoGroup(TyperGroup):
 
     def _real(self, spec: "CommandSpec") -> Any:
         """Return (importing + caching once) the real resolved command for *spec*."""
-        cache = getattr(self, "_real_cache", None) or {}
-        self._real_cache = cache
+        _, cache = self._caches()
         if spec.name not in cache:
             from ..bootstrap import get_completion_names
             from .registry import resolve_spec_command
@@ -460,8 +469,7 @@ class _OttoGroup(TyperGroup):
         children = entry.get("commands") or []
         options = entry.get("options") or []
         if children or options:
-            cache = getattr(self, "_stub_cache", None) or {}
-            self._stub_cache = cache
+            cache, _ = self._caches()
             if cmd_name not in cache:
                 from ..config.completion_stubs import build_stub_command, build_stub_group
 
@@ -1111,7 +1119,9 @@ def entry(cache_stale: bool = False) -> None:
             # pydantic validation errors are ValueErrors): nothing user-specific
             # can load, so there is no degraded help worth rendering — fail
             # loud but CLEAN (one line, no traceback). Per-repo config-data
-            # errors never reach here; discover() contains those.
+            # errors never reach here: discover() contains a settings file
+            # that will not parse, and bootstrap() records a bad [os_profiles]
+            # table as that repo's load error, as it does a failed init module.
             #
             # BootstrapError joins them for the ONE variety bootstrap raises
             # instead of containing: ``ProjectScopeError``, a repo that

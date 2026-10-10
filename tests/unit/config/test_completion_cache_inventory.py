@@ -13,8 +13,10 @@ import logging
 from pathlib import Path
 
 import otto.config.completion_cache as cc
+from otto.host.os_profile import ProfileContext
 from otto.inventory import register_inventory_backend
 from otto.inventory.registry import INVENTORY_BACKENDS
+from otto.models.base import OttoModel
 from otto.models.inventory import InventoryRecord
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
@@ -150,7 +152,7 @@ def test_a_broken_declaration_hashes_its_error_and_the_fix_moves_the_digest(tmp_
 class _Uncacheable:
     """A backend that cannot report freshness — §11's networked-CMDB case."""
 
-    def __init__(self, **kwargs):
+    def __init__(self):
         self.label = "uncacheable:test"
         self.supplies = frozenset({"ip"})
 
@@ -171,9 +173,13 @@ class _Exploding(_Uncacheable):
         raise RuntimeError("nb.example.com timed out after 5.0s")
 
 
+class _NoConfig(OttoModel, frozen=True):
+    pass
+
+
 @contextlib.contextmanager
 def _registered(name: str, cls: type):
-    register_inventory_backend(name, cls)
+    register_inventory_backend(name, config=_NoConfig, factory=lambda c: cls())
     try:
         yield {"backend": name}
     finally:
@@ -290,11 +296,19 @@ def test_a_referenced_host_completes_only_with_the_inventory(tmp_path, monkeypat
 
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
     resolved = cc.resolve_process_inventory([with_inventory])
-    summaries = {s.id: s for s in cc.repo_host_summaries(with_inventory, resolved)}
+    summaries = {
+        s.id: s
+        for s in cc.repo_host_summaries(with_inventory, resolved, profiles=ProfileContext.empty())
+    }
     assert summaries["dut"].ip == "10.0.0.1"
 
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
-    assert cc.repo_host_summaries(without, cc.resolve_process_inventory([without])) == []
+    assert (
+        cc.repo_host_summaries(
+            without, cc.resolve_process_inventory([without]), profiles=ProfileContext.empty()
+        )
+        == []
+    )
 
 
 def test_a_host_referencing_another_repos_inventory_completes(tmp_path, monkeypatch):
@@ -318,7 +332,12 @@ def test_a_host_referencing_another_repos_inventory_completes(tmp_path, monkeypa
     # resolution a collector makes over the whole workspace.
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
     resolved = cc.resolve_process_inventory([declaring, referencing])
-    summaries = {s.id: s for s in cc.repo_host_summaries(referencing, resolved)}
+    summaries = {
+        s.id: s
+        for s in cc.repo_host_summaries(
+            referencing, resolved, profiles=ProfileContext.from_repos([declaring, referencing])
+        )
+    }
     assert summaries["dut"].ip == "10.0.0.1"
 
 
@@ -346,4 +365,4 @@ def test_a_broken_declaration_empties_every_repo_and_warns_once(tmp_path, monkey
     assert ids == sorted(builtin_host_ids()), ids
     said = [r.message for r in caplog.records if "could not be resolved" in r.message]
     assert len(said) == 1, caplog.text
-    assert "requires a 'path'" in said[0]
+    assert "parse failed: path: Field required" in said[0]

@@ -164,22 +164,17 @@ class TestAshFrame:
     def test_ash_is_distinguishable_from_bash(self):
         """Two names for one behaviour still have to be two names.
 
-        `register_command_frame("ash", BashFrame)` is already refused — its
-        own `cls.type_name != type_name` check raises before the module can
-        even finish importing (see `AshFrame`'s docstring). What that check
-        does not reach is the raw registry underneath it:
-        `FRAME_CLASSES.register("ash", BashFrame, overwrite=True)` skips the
-        check entirely and — measured directly — DOES leave the
-        payload-equality assertions above
+        Registering ``BashFrame`` itself under ``ash`` is refused on both
+        paths, the wrapper and the raw `FRAME_CLASSES.register("ash",
+        ClassEntry(BashFrame), overwrite=True)`, by the one type_name check
+        (see `AshFrame`'s docstring). What remains is a refactor that folds
+        ash back into bash: the payload-equality assertions above
         (`test_ash_inherits_bashs_marker_scheme_rather_than_restating_it`)
-        satisfied, reporting `bash` in diagnostics for a host that runs ash
-        with no seam to fill. It does NOT fool everything: the same bypass
-        also reddens `test_ash_is_registered_and_buildable_by_name`'s
-        `isinstance` check and this test's own `type(...) is AshFrame`
-        assertion below, both of which construct through the registry
-        rather than compare rendered strings. That gap — a
-        behavioural-equality check the bypass defeats, sitting right next
-        to an identity check it cannot — is exactly what this test closes.
+        stay satisfied by design, since ash renders bash's strings. This
+        test's identity assertions, and
+        `test_ash_is_registered_and_buildable_by_name`'s `isinstance`, are
+        what catch it: they construct through the registry and check the
+        class that comes back.
         """
         assert AshFrame is not BashFrame
         assert issubclass(AshFrame, BashFrame)

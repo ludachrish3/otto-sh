@@ -41,7 +41,6 @@ from otto.host.transfer import (
     TRANSFER_BACKENDS,
     ProgressGranularity,
     aggregate_transfer,
-    build_transfer_backend,
 )
 from otto.result import CommandResult, Result, Results
 from otto.utils import Status
@@ -5300,7 +5299,7 @@ def test_the_page_renders_every_backends_progress_promise_from_the_registry(comm
     and publishing it unexplained would undo that refusal on the page.
 
     THE CLASS DECLARATION, deliberately, and the page says so in prose beside the
-    table. ``build_transfer_backend`` returns the class; ``effective_progress_
+    table. The registry resolves to the class; ``effective_progress_
     granularity()`` needs an instance, which needs a host's options, which a page
     rendered at documentation-build time does not have. So the published number is
     the DEFAULT promise, and the one backend whose configuration replaces it (``scp``,
@@ -5326,7 +5325,7 @@ def test_the_page_renders_every_backends_progress_promise_from_the_registry(comm
         f"page {sorted(rows)} vs registry {sorted(TRANSFER_BACKENDS.names())}"
     )
     for name in sorted(TRANSFER_BACKENDS.names()):
-        granularity = build_transfer_backend(name).progress_granularity
+        granularity = TRANSFER_BACKENDS.get(name).cls.progress_granularity
         expected = [
             "one event at completion" if arm is None else f"{arm:,} bytes"
             for arm in (granularity.put, granularity.get)

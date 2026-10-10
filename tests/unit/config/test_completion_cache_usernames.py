@@ -21,13 +21,9 @@ def test_usernames_round_trip(tmp_path, monkeypatch):
 
 
 def test_collect_usernames_from_capable_backend(tmp_path):
-    from otto.reservations import register_reservation_backend
-    from otto.reservations.registry import RESERVATION_BACKENDS
+    from otto.reservations import NoneReservationConfig, register_reservation_backend
 
     class UCBackend:
-        def __init__(self, **kwargs):
-            pass
-
         def fetch_reservations(self, username, start=None, end=None):
             return []
 
@@ -37,12 +33,11 @@ def test_collect_usernames_from_capable_backend(tmp_path):
         def list_usernames(self):
             return ["bob", "alice"]
 
-    register_reservation_backend("uc-test", UCBackend)
-    try:
-        repo = fake_repo(sut_dir=tmp_path, settings={"reservations": {"backend": "uc-test"}})
-        assert cc.collect_reservation_usernames([repo]) == ["alice", "bob"]
-    finally:
-        RESERVATION_BACKENDS.unregister("uc-test")
+    register_reservation_backend(
+        "uc-test", config=NoneReservationConfig, factory=lambda c: UCBackend()
+    )
+    repo = fake_repo(sut_dir=tmp_path, settings={"reservations": {"backend": "uc-test"}})
+    assert cc.collect_reservation_usernames([repo]) == ["alice", "bob"]
 
 
 def test_collect_usernames_empty_when_capability_absent(tmp_path):

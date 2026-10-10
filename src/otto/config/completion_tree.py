@@ -206,13 +206,15 @@ def _host_class_views(
     root: TyperGroup, root_ctx: "Context", unregistered: list[str]
 ) -> dict[str, Any]:
     from ..host.os_profile import HOST_CLASSES
+    from ..registry import resolved
 
     host = _child(root, root_ctx, "host")
     if host is None or not isinstance(host, _ScopedGroup):
         return {}
     host_ctx = _context(host, "host", root_ctx)
     views: dict[str, Any] = {}
-    for class_name, cls in HOST_CLASSES.items():  # builtins + every register_host_class()
+    for class_name, entry in HOST_CLASSES.items():  # builtins + every register_host_class()
+        cls = resolved(entry.cls)
         verbs: dict[str, Any] = {}
         for verb in host.scoped_names(host_ctx, cls):
             cmd = host.scoped_command(host_ctx, cls, verb)
@@ -276,14 +278,15 @@ def inventory_block(repos: "list[Repo]") -> dict[str, Any]:
 def build_shim_payload(repos: "list[Repo]", app: Any | None = None) -> dict[str, Any]:
     """Everything the shim needs to validate and answer, from the bootstrapped app (spec §3).
 
-    ``keys`` are the ``names`` section's key paths as stat triples; ``tables``
+    ``keys`` are the ``names`` section's key paths as stat triples, its lab
+    key paths included (computed here, after init); ``tables``
     are the repos whose per-file test tables a test-name TAB reads (their
     ``sut_dir``, the key each table is stored under), in order. The tables
     themselves are not read here: only a pytest collection writes them.
     """
     import typer
 
-    from .cache_sections import section_by_name
+    from .cache_sections import section_by_name, writer_key_paths
     from .completion_cache import _cache_ttl_seconds
 
     if app is None:
@@ -292,10 +295,9 @@ def build_shim_payload(repos: "list[Repo]", app: Any | None = None) -> dict[str,
         app = root_app
     tree = serialize_tree(typer.main.get_command(app)).tree
     names = section_by_name("names")
-    assert names.key_paths is not None  # noqa: S101 — narrows: `names` is keyed by paths
     return {
         "ttl_seconds": _cache_ttl_seconds(repos),
-        "keys": [stat_triple(p) for p in sorted(set(names.key_paths(repos)))],
+        "keys": [stat_triple(p) for p in sorted(set(writer_key_paths(names, repos)))],
         "tables": [str(repo.sut_dir) for repo in repos],
         "inventory": inventory_block(repos),
         "tree": tree,

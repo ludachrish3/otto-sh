@@ -37,6 +37,7 @@ from otto.host.host import BaseHost
 from otto.utils import cli_exposed
 from tests._fixtures.cli_registry import builtin_command_names
 from tests._fixtures.host_classes import host_classes_in_the_tree
+from tests._fixtures.registrant import from_module
 
 _RST_MARKUP = re.compile(
     r"``"  # double-backtick literal
@@ -79,15 +80,6 @@ def _walk(cmd: Any, path: str) -> Iterator[tuple[str, str, str]]:
                 yield from _walk(sub, f"{path} {name}")
 
 
-def _publish_shipped_instructions() -> None:
-    """Make the instructions otto ships visible to ``otto run``, as bootstrap does."""
-    from otto.project.actions import ProjectActions, register_project_instruction_bodies
-    from otto.project.commands import publish_project_instructions
-
-    register_project_instruction_bodies(ProjectActions, None)  # idempotent
-    publish_project_instructions()
-
-
 _KNOWN_VERBS = {
     "BaseHost": {"exec", "shutdown", "power"},
     "UnixHost": {"exec", "shutdown", "mkdir", "glob", "read-file", "load", "unload"},
@@ -109,7 +101,6 @@ def _host_verb_prefix(cls: type) -> str:
 
 
 def _walk_built_in_commands() -> list[tuple[str, str, str]]:
-    _publish_shipped_instructions()
     found: list[tuple[str, str, str]] = []
     # The root screen: its own description and options, plus the one-line
     # entry each group shows in the command list (the registry's help).
@@ -177,11 +168,8 @@ def test_walk_flags_a_planted_built_in_with_rst_help():
     def planted() -> None:
         """Do a thing with the ``--lab`` flag."""
 
-    register_cli_command(
-        "zz-planted",
-        planted,
-        origin="otto.cli.builtin_commands",
-    )
+    # Registered from a frame that IS otto's built-in module, as a built-in is.
+    from_module("otto.cli.builtin_commands", register_cli_command, "zz-planted", planted)
     try:
         assert "zz-planted" in builtin_command_names()
         offenders = _offenders(_walk_built_in_commands())

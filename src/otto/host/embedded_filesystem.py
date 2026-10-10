@@ -38,7 +38,7 @@ Built-in variants
 from abc import ABC
 from typing import ClassVar
 
-from ..registry import Ref, Registry, caller_module
+from ..registry import ClassEntry, Ref, Registry, registration_boundary, resolved
 
 __all__ = ["EmbeddedFileSystem", "register_filesystem"]
 
@@ -175,11 +175,17 @@ class LittleFsFileSystem(EmbeddedFileSystem):
     mount = "/lfs"
 
 
-def _validate_filesystem(type_name: str, cls: type[EmbeddedFileSystem]) -> None:
-    """Refuse a filesystem whose ``type_name`` disagrees with the name it is registered under.
+def _check_filesystem_class(type_name: str, cls: object) -> None:
+    """Refuse anything but an :class:`EmbeddedFileSystem` subclass whose ``type_name`` is its name.
 
-    The registry key and the class constant should agree; a mismatch is a likely bug.
+    The registry key and the class constant should agree; a mismatch is a
+    likely bug. One check, two call sites: ``validate`` runs it on a class
+    registered eagerly, ``check_resolved`` on the class a ``Ref`` names.
     """
+    if not (isinstance(cls, type) and issubclass(cls, EmbeddedFileSystem)):
+        raise TypeError(
+            f"register_filesystem({type_name!r}): {cls!r} is not an EmbeddedFileSystem subclass"
+        )
     if cls.type_name != type_name:
         raise ValueError(
             f"register_filesystem: type_name {type_name!r} doesn't match "
@@ -187,15 +193,26 @@ def _validate_filesystem(type_name: str, cls: type[EmbeddedFileSystem]) -> None:
         )
 
 
-FILESYSTEM_CLASSES: Registry[type[EmbeddedFileSystem]] = Registry(
+def _validate_filesystem_entry(
+    type_name: str, entry: "ClassEntry[EmbeddedFileSystem]", _proposed: object
+) -> None:
+    if not isinstance(entry.cls, Ref):
+        _check_filesystem_class(type_name, entry.cls)
+
+
+FILESYSTEM_CLASSES: "Registry[ClassEntry[EmbeddedFileSystem]]" = Registry(
     "embedded filesystem type",
+    entry=ClassEntry,
     register_hint="otto.host.embedded_filesystem.register_filesystem()",
-    validate=_validate_filesystem,
+    validate=_validate_filesystem_entry,
+    check_resolved=lambda name, entry: _check_filesystem_class(name, resolved(entry.cls)),
 )
+"""The embedded filesystem classes lab data can name, keyed by type name."""
 
 
+@registration_boundary
 def register_filesystem(
-    type_name: str, cls: type[EmbeddedFileSystem], *, overwrite: bool = False
+    type_name: str, cls: "type[EmbeddedFileSystem] | Ref", *, overwrite: bool = False
 ) -> None:
     """Make a custom :class:`EmbeddedFileSystem` subclass available to lab data.
 
@@ -205,16 +222,21 @@ def register_filesystem(
     *type_name* in the ``filesystem`` field, and
     :func:`otto.host.factory.create_host_from_dict` will instantiate it.
 
+    *cls* may be a :class:`~otto.registry.Ref` (``"module:Class"``), imported
+    and checked when lab data first builds the filesystem.
+
     *overwrite* replaces an existing registration under *type_name*
     deliberately (e.g. a built-in); by default a duplicate name raises.
 
     Raises
     ------
+    TypeError
+        If *cls* is not an :class:`EmbeddedFileSystem` subclass.
     ValueError
-        If *type_name* doesn't match ``cls.type_name`` (a likely-bug
-        mismatch — the registry key and the class constant should agree).
+        If *type_name* doesn't match ``cls.type_name`` (a likely-bug mismatch —
+        the registry key and the class constant should agree).
     """
-    FILESYSTEM_CLASSES.register(type_name, cls, overwrite=overwrite, origin=caller_module())
+    FILESYSTEM_CLASSES.register(type_name, ClassEntry(cls), overwrite=overwrite)
 
 
 def build_filesystem(type_name: str) -> EmbeddedFileSystem:
@@ -230,7 +252,7 @@ def build_filesystem(type_name: str) -> EmbeddedFileSystem:
         registered types so a typo (``'fatram'`` vs ``'fat-ram'``) is
         diagnosable from the message alone.
     """
-    return FILESYSTEM_CLASSES.get(type_name)()
+    return resolved(FILESYSTEM_CLASSES.get(type_name).cls)()
 
 
 def _register_builtin_filesystems() -> None:
@@ -239,7 +261,7 @@ def _register_builtin_filesystems() -> None:
         ("fat-ram", "otto.host.embedded_filesystem:FatRamFileSystem"),
         ("littlefs", "otto.host.embedded_filesystem:LittleFsFileSystem"),
     ]:
-        FILESYSTEM_CLASSES.register(name, Ref(target))
+        FILESYSTEM_CLASSES.register(name, ClassEntry(Ref(target)))
 
 
 _register_builtin_filesystems()

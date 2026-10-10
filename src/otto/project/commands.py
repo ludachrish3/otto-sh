@@ -1,23 +1,19 @@
-"""Publishing project instructions as ``otto run`` commands, one merged command per name.
+"""Project instructions as ``otto run`` commands: one merged command per name.
 
-Runs AFTER every repo's init (bootstrap phase 2), because only then is the
-flag set known: ``otto run install`` shows the union of every registered
-body's options and every class registered for the ``run`` verb, deduplicated
-by declaring class, and each body is handed its own class at dispatch
-(:func:`otto.project.orchestrator.run_project_instruction`). The publish
-registers a data entry; ``otto.cli.run`` builds the command when ``otto run``
-resolves it.
+``otto.instructions.INSTRUCTIONS`` derives one command per project instruction
+from the declared bodies; ``otto.cli.run`` builds it when ``otto run`` resolves
+it. Its flags are the union of every body's options and every class
+registered for the ``run`` verb, deduplicated by declaring class, and each
+body is handed its own class at dispatch
+(:func:`otto.project.orchestrator.run_project_instruction`).
+:func:`check_project_instruction_options` checks the bodies' options once
+every repo's init has run (bootstrap), so a clash is a startup error.
 """
 
 import inspect
 from typing import TYPE_CHECKING
 
-from ..instructions import (
-    INSTRUCTIONS,
-    PROJECT_INSTRUCTIONS,
-    InstructionEntry,
-    ProjectInstruction,
-)
+from ..instructions import PROJECT_INSTRUCTIONS, ProjectInstruction
 
 if TYPE_CHECKING:
     from ..params import OptionsOrigin
@@ -42,41 +38,20 @@ def merged_option_params(entry: ProjectInstruction) -> list[inspect.Parameter]:
     return merge_option_params(body_origins(entry), what=f"project instruction {entry.spec.name!r}")
 
 
-def publish_project_instructions() -> None:
-    """Register one ``otto run`` command per project instruction into ``INSTRUCTIONS``.
+def check_project_instruction_options() -> None:
+    """Merge every project instruction's body options, refusing a clash.
 
-    ``registered_by`` is None for every one of them, first-party or repo-added:
-    the dispatch gate refuses an instruction whose OWNER is inactive, but a
-    project instruction has a body per repo and the walk's own applicability
-    filter skips each inactive one. ``module`` is the first declarer's, which
-    is what ``--list-instructions`` attributes panels by.
+    Run once every repo has spoken (bootstrap, after the init loop): a repo's
+    override is what ADDS flags to a merged command, so only then is the flag
+    set known. Reads the tables and writes nothing, so running it again is
+    harmless. The command itself -- whose flags add the ``run`` verb's
+    classes -- is built when ``otto run`` resolves it, the only path that
+    should pay for resolving those classes.
 
-    A name this module published before is re-published; any OTHER prior
-    entry is left for the registry to refuse -- that is the backstop for a
-    repo that hand-built an ``InstructionEntry`` under a project instruction's
-    name, exactly as the pre-import of the six used to be.
-
-    THE REPUBLISH KEY IS THE REGISTRY'S OWN ATTRIBUTION, not the entry's
-    ``module``: a repo that declares a project instruction in ``widget.init``
-    AND hand-registers an entry under the same name from that same module
-    would otherwise match on ``module`` and be overwritten silently -- the one
-    case the backstop exists for.
+    Raises:
+        otto.params.OptionsCollisionError: Two bodies' options classes declare
+            the same field from different classes; the message names both
+            repos.
     """
-    for name, entry in PROJECT_INSTRUCTIONS.items():
-        # The bodies' own clash is a startup error, found here. The command
-        # itself -- whose flags add the `run` verb's classes -- is built when
-        # `otto run` resolves it, the only path that should pay for resolving
-        # those classes.
-        merged_option_params(entry)
-        republish = name in INSTRUCTIONS and INSTRUCTIONS.origin(name) == __name__
-        INSTRUCTIONS.register(
-            name,
-            InstructionEntry(
-                name=name,
-                module=entry.spec.module,
-                project=entry,
-                registered_by=None,
-            ),
-            overwrite=republish,
-            origin=__name__,
-        )
+    for name in PROJECT_INSTRUCTIONS.names():
+        merged_option_params(PROJECT_INSTRUCTIONS.get(name))

@@ -25,7 +25,7 @@ on that side.
 | Type checking | `ty` (pinned exactly; the version is the `ty` entry in `pyproject.toml`'s dev group and `uv.lock`) | `tsc --noEmit` via `scripts/typecheck_web.sh` (vendored Untitled UI diagnostics filtered) |
 | Unused code / deps | ruff (`F401`, `ARG`, …) | `knip` — unused files, exports, dependencies |
 | Module layering | `tach` against `tach.toml` | — none today |
-| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — twenty-four Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
+| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — thirty-one Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
 | Import cost | `scripts/import_budget.py` — per-surface, per-interpreter file-operation ceilings (whole process tree, strace-counted) and target ratios to `otto --version`; import bans in `ast-grep` and `tests/unit/test_import_contracts.py` name the edge | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest`, run under `build_web_no_warnings.sh`: any stderr output fails (see *Built-bundle gates*) |
 | Coverage floor | `coverage.py` / `pytest-cov` — combined line+branch totals (`.coveragerc` sets `branch = true`): 95.5 for the full local run, 94.75 for the hostless CI slice (both pinned as codified minimums by `tests/unit/test_coverage_floors.py`, which also pins the branch setting) | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
@@ -67,7 +67,7 @@ because a targeted test run would never select it.
 
 ### The ast-grep rules
 
-`.ast-grep/rules/` holds twenty-eight rules — twenty-seven at `severity: error`,
+`.ast-grep/rules/` holds thirty-five rules — thirty-four at `severity: error`,
 plus one deliberate `severity: warning` review prompt
 (`no-awaited-close-in-finally`, below). The scan roots
 are `src/otto web/src tests` — tests/ joined in the test-infra remediation
@@ -80,6 +80,8 @@ fixture SUT repos (`tests/repo1..repo3`, `repo_broken`, `repo_e2e`) and
 | Rule | Scope |
 | --- | --- |
 | `asyncio-subprocess-through-loop-api` | `src/otto/**` — the rule's `message:` says why |
+| `backend-construction-through-entry` | the orchestration modules that load labs, inventory, creds, reservations and power and build hosts' connections — a built-in backend's constructor is called only inside its registered factory (a function with a parameter annotated `Configured[...]`), so a backend registered over the built-in's name is what gets built; bounded, and the replacement differential is the real guard; see {doc}`subsystems/registries` and [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/backend-construction-through-entry.yml) |
+| `backend-no-name-dispatch` | the modules that dispatched on a configured backend's name, and the five configured seams' registry modules — no `==`, `!=` or `in` against `"json"` or `"none"`: a replacement registered under the name is not the built-in; see [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/backend-no-name-dispatch.yml) |
 | `builtin-registers-by-reference` | `src/otto/**/*.py` — a registration that runs at import must hand the registry a `Ref`, unless the file defines the registry; see {doc}`subsystems/registries` and [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/builtin-registers-by-reference.yml) |
 | `cli-command-no-module-scope-heavy-import` | `src/otto/cli/**` minus `remote_completion.py` — an import ban; see [Import bans](../contributing.md#import-bans) |
 | `coverage-git-through-gitio` | `src/otto/coverage/**`, `src/otto/cli/cov.py` |
@@ -87,22 +89,27 @@ fixture SUT repos (`tests/repo1..repo3`, `repo_broken`, `repo_e2e`) and
 | `lazy-getattr-no-write-back` | `src/otto/**/__init__.py` that assign a `_LAZY_*` table — the resolver writes nothing back into the module, so the drift guard `tests/unit/test_lazy_packages.py` (which also requires `__getattr__`, `__dir__` and a literal-list `__all__`) sees every name through the table; see [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/lazy-getattr-no-write-back.yml) |
 | `lazy-package-init-stays-lazy` | every `src/otto/**/__init__.py`, lazy table or not — an import ban; see [Import bans](../contributing.md#import-bans) |
 | `models-no-module-scope-config-import` | `src/otto/models/**` |
+| `no-adhoc-registry` | `src/otto/**/*.py` minus `otto/registry.py` — a registration-shaped function (`register_*`, `add_*`, `subscribe*`, `*_provider`, or one the module applies as a decorator) never writes a plain UPPER_CASE dict, list or set; entries go in an engine table; see {doc}`subsystems/registries` |
 | `no-awaited-close-in-finally` | `src/otto/**` — the one `severity: warning` rule, BY DESIGN never promoted: a `.close()` in a `finally` is either cleanup (wrap it in `teardown_step`) or the operation's own completion (leave it and say so at the site), and only a reviewer can tell which; the landing triage wrapped eight sites and recorded one legitimate (`RemoteHost.close`'s transport chain, whose loud-failure contract the close-chain sweep pins — it carries the rule's one `ast-grep-ignore`) |
 | `no-awaited-exec-in-finally` | `src/otto/**` — a bare `finally:` awaiting a remote command replaces the body's real exception with transport noise (the docker staging `rm -rf` pair was the motivating shape); "bare" is literal: an await under any `with` inside the finally is exempt, because the sanctioned fix IS `teardown_step`'s with-wrapper |
 | `no-bare-digit-textcontent-ts` / `no-bare-digit-textcontent-tsx` | `web/src/**/*.test.ts` / `web/src/**/*.test.tsx` — `expect($A).toContain("<entirely 1-2 digits>")` is unconditionally true against text that also embeds a timestamp, version, or line number (17 sites at adoption, every one satisfiable by incidental digits in the same node — the page-meta's `generated_at`, a line number, or a percentage); assert the labelled fragment ("4 contexts") or an exact `toBe` on the addressed cell. Split in two because a `tsx` rule never sees `.ts` files; the receiver is ANY expression because offenders bind `textContent` to a variable first |
 | `no-bare-runtimeerror-in-libraries` | `src/otto/link/**`, `src/otto/tunnel/**`, `src/otto/docker/**`, `src/otto/host/transfer/**` — four packages signalled unreachable-host, command-failed and structural-refusal through one stdlib type, so no consumer could tell them apart; 37 sites converted to `otto.host.errors`' pair, package domain classes, or `ValueError` in the wave that landed the rule |
 | `no-bare-status-return` | `src/otto/**` |
 | `no-branching-on-import-state` | `src/otto/**/*.py` — no read of `sys.modules` (`in`, `.get`, a read subscript, a view method, iteration) decides behaviour; writes that install or evict a module pass; see [Never branch on import state](../contributing.md#never-branch-on-import-state) and [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/no-branching-on-import-state.yml) |
+| `no-cli-import-outside-cli` | `src/otto/**` minus `src/otto/cli/**`, `src/otto/__init__.py`, `src/otto/_shim.py`, `src/otto/config/completion_cache.py` and `src/otto/config/completion_tree.py` — an import ban: the CLI projects the libraries, and no library reaches up into it; see [Import bans](../contributing.md#import-bans) |
 | `no-handrolled-deadline-poll` | `src/otto/**` + `tests/**` minus fixture repos — poll-until-deadline grew 21 copies in three incompatible shapes with divergent expiry behavior; `otto.utils.wait_for` / `wait_for_async` is the one spelling, and expiry always raises (silent expiry is the defect class); `src/otto/host/shell_liveness.py` is ignored as the sanctioned fused probe-response primitive |
+| `no-hidden-cli-options` | `src/otto/**` — no `hidden=`: a removed option or command is deleted, never hidden from `--help` |
 | `no-parents-arithmetic-in-tests` | `tests/**` minus fixture repos — `Path(__file__).parents[N]` encodes the file's own depth, so moving the file silently re-anchors every path built from it; import `TESTS_ROOT`/`PROJECT_ROOT` from `tests/_fixtures/paths.py` (the one sanctioned derivation point) |
 | `no-plan-coordinates` | `src/otto/**` |
 | `no-plan-coordinates-ts` / `no-plan-coordinates-tsx` | `web/src/**` |
 | `no-raw-started-poll` | `src/otto/**` + `tests/**` minus fixture repos — polling a started flag without a task-death guard turns a startup failure into an infinite hang; `MonitorServer.wait_started()` is the readiness API (its event is set on success AND failure, re-raising the recorded cause), and the wave retired every `noqa: ASYNC110` whose justification was "no event source available" |
+| `no-registry-subclass` | `src/otto/**` minus `otto/registry.py` — no class subclasses `Registry`, `BackendRegistry`, `Subscription` or `RegistryView`, bare, subscripted or module-qualified; an aliased import is the AST binding scan's (`tests/unit/registry/test_registry_binding_scan.py`) |
 | `no-retry-marker-in-otto-tests` | `tests/**` minus fixture repos — the first tests-scoped rule; fully armed (its one ratchet ignore died with the hop-transfer flake fix) |
 | `no-tick-count-in-a-wall-clock-window` | `tests/**` minus fixture repos — the rule's `message:` says why |
 | `no-tuple-return` | `src/otto/**` |
 | `otto-subprocess-env-through-helper` | `tests/**` minus fixture repos — a local `COVERAGE_PROCESS_START` dict is a fork of the subprocess env dance, and every fork that ever existed dropped the `-p no:tach` #193 scar key first; `tests/e2e/_otto_subprocess.py` is the one home |
 | `pydantic-models-through-ottomodel` | `src/otto/**/*.py` — a model subclasses `OttoModel`, never pydantic's `BaseModel`/`RootModel` directly, and no `TypeAdapter`, `create_model` or `.model_rebuild()` runs at import, so no `BaseModel` schema builds before first use (pydantic dataclasses are not covered); see [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/pydantic-models-through-ottomodel.yml) |
+| `registry-overwrite-only-approved` | `src/otto/**/*.py` — no literal `overwrite=True`: otto's own registrations never replace an entry, and a wrapper forwards its caller's flag |
 | `typer-exit-outside-cli` | `src/otto/**` (CLI exempt) |
 | `typer-exit-raises-must-assert-code` | `tests/**` minus fixture repos — a bare `pytest.raises(typer.Exit)` passes on the default exit code 0 ("failed successfully"); the rule forces binding the excinfo, and the bound form's exit-code assert is what actually pins refusal |
 

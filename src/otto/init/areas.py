@@ -14,7 +14,7 @@ import json
 from collections.abc import Callable
 from importlib.machinery import ModuleSpec
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .config import InitConfig
 from .settings_file import declared_init, settings_data, settings_path, settings_paths
@@ -35,18 +35,58 @@ from .templates import (
 )
 from .write_policy import FileWrite, write_file
 
+if TYPE_CHECKING:
+    from ..labs.sources import LabSourceState
+
+
+def _lab_states(root: Path) -> "list[LabSourceState] | None":
+    """Return this repo's lab sources, each prepared against the backends registered now.
+
+    ``None`` when there is no readable ``settings.toml``. Settings that parse
+    but declare no ``[lab]`` table declare no source. ``otto init`` runs no
+    init module, so a source whose backend an init module registers is
+    unknown here (deferred); the built-in ``json`` backend is always known.
+
+    Raises:
+        ValueError: The ``[lab]`` envelope does not validate, two sources
+            share a label, or a known source's options do not prepare
+            (:class:`~otto.labs.errors.LabSourceConstructionError`).
+    """
+    from ..host.os_profile import ProfileContext
+    from ..labs.sources import compile_lab_sources, prepare_lab_sources
+    from ..models.settings import LabConfigSpec
+
+    data = settings_data(root)
+    if data is None:
+        return None
+    lab = data.get("lab")
+    if lab is None:
+        return []
+    # pydantic's ValidationError IS a ValueError, so a caller's one arm covers
+    # the envelope check, the label check and a source's preparation.
+    pending = compile_lab_sources(
+        LabConfigSpec.model_validate(lab),
+        repo_name=str(data.get("name") or root.name),
+        sut_dir=root,
+    )
+    # No data profiles: these states are asked which files they read, and no
+    # source is built from them, so no host resolves an os_type here.
+    return prepare_lab_sources(pending, profiles=ProfileContext.empty())
+
 
 def lab_file_groups(root: Path) -> list[list[Path]]:
-    """Every lab file this repo's json ``[[lab.sources]]`` entries name, ONE LIST PER SOURCE.
+    """Every lab file this repo's file-backed ``[[lab.sources]]`` entries name, ONE LIST PER SOURCE.
 
     THE single reader of a repo's host-data declaration inside ``otto init``:
     detection and validation both go through it (via :func:`lab_files`), so
     the doctor can never disagree with the runtime — or with itself — about
-    which files hold this repo's hosts. Compiles the entries with the SAME
+    which files hold this repo's hosts. Checks the entries with the SAME
     :func:`otto.labs.sources.compile_lab_sources` ``Repo.parse_settings``
-    uses, then asks each json source for its files (a directory entry
-    contributes its ``lab.json``; a ``.json`` entry IS the file; a glob
-    contributes every match).
+    uses, prepares each one whose backend is registered, then asks each
+    file-backed source for its files (a directory entry contributes its
+    ``lab.json``; a ``.json`` entry IS the file; a glob contributes every
+    match). A source whose backend is not registered yet is left to
+    :func:`deferred_lab_sources`.
 
     The grouping is load-bearing for the duplicate rules, which are per SOURCE:
     two files of ONE source declaring the same lab is a typo, the same
@@ -57,28 +97,31 @@ def lab_file_groups(root: Path) -> list[list[Path]]:
     Falls back to the conventional ``lab_data/lab.json`` only when there is no
     readable ``settings.toml`` at all — init must work on a repo it has not
     scaffolded yet. Settings that parse but declare no ``[lab]`` table declare
-    no host data, so they yield no files. A ``[lab]`` table that does not
-    compile raises the compile ``ValueError``: the doctor reports it once,
-    under settings, and reads the lab area as blocked.
+    no host data, so they yield no files. A ``[lab]`` table whose sources do
+    not check or prepare raises that ``ValueError``: the doctor reports it
+    once, under the lab area.
     """
     from ..labs.json_repository import LAB_FILENAME
-    from ..labs.sources import compile_lab_sources
-    from ..models.settings import LabConfigSpec
 
-    data = settings_data(root)
-    if data is None:
+    states = _lab_states(root)
+    if states is None:
         return [[root / "lab_data" / LAB_FILENAME]]
-    lab = data.get("lab")
-    if lab is None:
-        return []
-    # pydantic's ValidationError IS a ValueError, so a caller's one arm covers
-    # both the envelope check and compile_lab_sources' own shape errors.
-    sources = compile_lab_sources(
-        LabConfigSpec.model_validate(lab),
-        repo_name=str(data.get("name") or root.name),
-        sut_dir=root,
-    )
-    return [src.lab_files() for src in sources if src.backend == "json"]
+    return [state.lab_files() for state in states if state.is_known() and state.is_file_backed()]
+
+
+def deferred_lab_sources(root: Path) -> list[str]:
+    """Describe every source whose backend is not registered before init, in order.
+
+    ``otto init`` runs no init module, so such a source cannot be checked
+    here; otto checks it when it prepares the source, after init. Raises
+    what :func:`lab_file_groups` raises.
+    """
+    states = _lab_states(root) or []
+    return [
+        f"{state.pending.label} (backend {state.pending.backend!r})"
+        for state in states
+        if not state.is_known()
+    ]
 
 
 def lab_files(root: Path) -> list[Path]:
@@ -87,7 +130,7 @@ def lab_files(root: Path) -> list[Path]:
     The "does this repo have host data, and where" view, for detection and for
     any caller that does not care which source a file came from. See
     :func:`lab_file_groups` for the per-source view the duplicate rules need,
-    and for the ``ValueError`` both raise when the lab sources do not compile.
+    and for the ``ValueError`` both raise when the lab sources do not prepare.
     """
     return [lab_file for group in lab_file_groups(root) for lab_file in group]
 

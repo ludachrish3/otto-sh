@@ -268,7 +268,7 @@ class TestNothingThatWorksIsTouched:
         """
         profile = get_os_profile("busybox")
         assert profile is not None
-        assert "sftp" in profile.defaults["valid_transfers"], (
+        assert "sftp" in profile.fields.defaults["valid_transfers"], (
             "the `busybox` profile no longer offers `sftp`. This file's premise is that "
             "such a host is SERVED, not refused; a profile that removed the option would "
             "be refusing it one layer up"

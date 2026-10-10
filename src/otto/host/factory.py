@@ -10,11 +10,14 @@ from .dev_tool import apply_declared_dev_tools, apply_dev_tool_providers
 from .element import Element
 from .inventory_ref import InventoryRef
 from .os_profile import (
+    OsProfile,
+    ProfileContext,
     build_host_class,
     build_host_spec,
-    build_os_profile,
+    constructing_with,
     get_os_profile,
     registered_profile_names,
+    resolve_os_profile,
 )
 from .product import apply_declared_products, apply_product_providers, stamp_cov_dir
 from .remote_host import RemoteHost, make_host_id
@@ -52,7 +55,7 @@ OPTIONS_KEYS: frozenset[str] = frozenset(
 def _merge_host_dict(
     host_data: dict[str, Any],
     option_defaults: dict[str, dict[str, Any]] | None,
-    profile: Any,
+    profile: OsProfile,
     spec_cls: "type[HostSpec]",
 ) -> dict[str, Any]:
     """Precedence-merge profile defaults, host fields, and product option defaults into one dict.
@@ -61,12 +64,13 @@ def _merge_host_dict(
     profile default < host field < product ``[host_preferences]`` value. Only
     option keys the target spec declares are merged.
     """
-    merged: dict[str, Any] = {**profile.defaults, **host_data}
+    defaults = profile.fields.defaults.thaw_json()
+    merged: dict[str, Any] = {**defaults, **host_data}
 
     option_defaults = option_defaults or {}
     opt_keys = OPTIONS_KEYS & set(spec_cls.model_fields)
     for key in opt_keys:
-        p = profile.defaults.get(key)
+        p = defaults.get(key)
         h = host_data.get(key)
         d = option_defaults.get(key)
         table: dict[str, Any] = {
@@ -79,6 +83,11 @@ def _merge_host_dict(
         else:
             merged.pop(key, None)
     return merged
+
+
+def _data(profiles: ProfileContext | None) -> ProfileContext:
+    """Return the repo data a resolution sees: *profiles*, or none."""
+    return profiles if profiles is not None else ProfileContext.empty()
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +137,9 @@ def reject_unresolved_reference(host_data: dict[str, Any]) -> None:
         )
 
 
-def host_identity(host_data: dict[str, Any], element: Element) -> HostIdentity:
+def host_identity(
+    host_data: dict[str, Any], element: Element, *, profiles: ProfileContext | None = None
+) -> HostIdentity:
     """Resolve a raw host dict's identity WITHOUT building the host.
 
     Applies the same ``os_profile`` merge and the same pydantic validation
@@ -142,6 +153,7 @@ def host_identity(host_data: dict[str, Any], element: Element) -> HostIdentity:
 
     *element* is the host's element, the same object
     :func:`create_host_from_dict` takes — its name is the id's first part.
+    *profiles* is the repo data the ``os_type`` resolves through, as there.
 
     Raises the same errors as :func:`validate_host_dict` (``ValueError``,
     including ``pydantic.ValidationError``) — callers enumerating a whole
@@ -149,7 +161,7 @@ def host_identity(host_data: dict[str, Any], element: Element) -> HostIdentity:
     """
     reject_unresolved_reference(host_data)
     selector = host_data.get("os_type", "unix")
-    profile = build_os_profile(selector)
+    profile = resolve_os_profile(selector, data=_data(profiles))
     spec_cls = build_host_spec(profile.base)
     merged = _merge_host_dict(host_data, None, profile, spec_cls)
     merged["os_type"] = selector
@@ -171,6 +183,7 @@ def create_host_from_dict(
     *,
     element: Element,
     inventory_ref: InventoryRef | None = None,
+    profiles: ProfileContext | None = None,
 ) -> RemoteHost:
     """Create the appropriate :class:`~otto.host.remote_host.RemoteHost` subclass from a host dict.
 
@@ -197,10 +210,18 @@ def create_host_from_dict(
     ``inventory_ref`` is the provenance of an entry the loader resolved from an
     inventory record — a LOADER argument like ``element``; the host spec's own
     ``inventory`` field is the key and never reaches the factory.
+
+    ``profiles`` is the repo data profiles of the selected repos
+    (:class:`~otto.host.os_profile.ProfileContext`); ``os_type`` resolves
+    through the code profiles, then them, then the host classes and built-ins
+    (:func:`~otto.host.os_profile.resolve_os_profile`). Omitted, no repo data
+    is seen. The host keeps the fields of the profile it was built from, so
+    its console prompts come from that profile, across a connection rebuild
+    and a copy too.
     """
     reject_unresolved_reference(host_data)
     selector = host_data.get("os_type", "unix")
-    profile = build_os_profile(selector)
+    profile = resolve_os_profile(selector, data=_data(profiles))
     cls = build_host_class(profile.base)
     spec_cls = build_host_spec(profile.base)
 
@@ -211,14 +232,15 @@ def create_host_from_dict(
         # raw-dict rendering of it — they diverge under profile-defaulted
         # identity fields (see host_identity). Costs one extra validation
         # pass, and only when preferences exist.
-        host_id = host_identity(host_data, element).id
+        host_id = host_identity(host_data, element, profiles=profiles).id
         flat_prefs = select_preferences(preferences, host_id)
         option_defaults = select_option_defaults(preferences, host_id)
 
     merged = _merge_host_dict(host_data, option_defaults, profile, spec_cls)
     merged["os_type"] = selector
     spec = spec_cls.model_validate(merged)
-    host = spec.to_host(cls, element=element, preferences=flat_prefs)
+    with constructing_with(selector, profile.fields):
+        host = spec.to_host(cls, element=element, preferences=flat_prefs)
     # Before the providers, not after: provider selection is allowed to depend
     # on which lab the host came from, and a stamp applied afterwards would be
     # invisible to exactly the code that needs it.
@@ -304,10 +326,13 @@ def check_stage_collisions(host: "RemoteHost | Any") -> None:
         seen[key] = f"{seam} {item.name!r}"
 
 
-def validate_host_dict(host_data: dict[str, Any]) -> None:
+def validate_host_dict(
+    host_data: dict[str, Any], *, profiles: ProfileContext | None = None
+) -> None:
     """Validate a host dict without constructing the host.
 
-    ``os_type`` must name a registered profile; the profile's base spec
+    ``os_type`` must name a profile some layer resolves (repo data only through
+    *profiles*, as in :func:`create_host_from_dict`); the profile's base spec
     validates the merged dict (``extra='forbid'``, required fields, typed
     coercion, family-specific field validators for ``command_frame`` /
     ``filesystem`` / ``transfer`` / ``docker_capable``).
@@ -321,9 +346,9 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
     """
     reject_unresolved_reference(host_data)
     selector = host_data.get("os_type", "unix")
-    profile = get_os_profile(selector)
+    profile = get_os_profile(selector, data=profiles)
     if profile is None:
-        known = ", ".join(registered_profile_names())
+        known = ", ".join(registered_profile_names(data=profiles))
         raise ValueError(
             f"Field 'os_type' {selector!r} is not a registered profile. "
             f"Registered profiles: {known}"

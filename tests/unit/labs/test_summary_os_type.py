@@ -5,6 +5,7 @@ from pathlib import Path
 from otto.config import completion_cache as cc
 from otto.config.repo import Repo
 from otto.host.element import Element
+from otto.host.os_profile import ProfileContext
 from otto.labs import HostSummary
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
@@ -20,7 +21,12 @@ def _repo(tmp_path: Path, hosts: list[dict]) -> Repo:
 
 
 def _summaries(repo) -> dict[str, HostSummary]:
-    return {s.id: s for s in cc.repo_host_summaries(repo, cc.resolve_process_inventory([repo]))}
+    return {
+        s.id: s
+        for s in cc.repo_host_summaries(
+            repo, cc.resolve_process_inventory([repo]), profiles=ProfileContext.empty()
+        )
+    }
 
 
 def test_json_backend_records_the_declared_os_type(tmp_path):

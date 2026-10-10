@@ -67,7 +67,7 @@ max_filename_len = 32
 # than spelling the loader commands itself, and the collector dumps it through
 # the same name.
 #
-# Two entries share one NAME on purpose. KindRegistry.build takes the first
+# Two entries share one NAME on purpose. KindBuilder.build takes the first
 # entry per name whose `match` admits the host, so each board gets its own
 # version-matched artifact while everything downstream — the run tree's
 # `cov/<host>/cov_ext/` segment, the capture's `product` field, the dump

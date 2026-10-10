@@ -11,8 +11,9 @@ if TYPE_CHECKING:
 def check_instruction_active(name: str, owner: "str | None", ctx: "OttoContext") -> None:
     """Refuse instruction *name* when its owning repo is inactive in *ctx*.
 
-    *owner* is the instruction's ``registered_by``. ``None`` (first-party, or
-    registered by hand) is never refused. The verdict is
+    *owner* is ``INSTRUCTIONS.repo(name)``, the repo whose init import
+    registered the instruction. ``None`` (otto's own, a project instruction,
+    or one registered outside any repo's init import) is never refused. The verdict is
     :func:`otto.config.scope.active`'s, so it needs the lab's scope verdicts:
     call this after the context is installed.
     """

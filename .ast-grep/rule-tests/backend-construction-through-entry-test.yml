@@ -1,0 +1,70 @@
+# Rule test for .ast-grep/rules/backend-construction-through-entry.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry. ast-grep test does not apply the rule's `files:`
+# scope, so every snippet here is judged as if it sat in an orchestration
+# module.
+id: backend-construction-through-entry
+valid:
+# The registered factory: the one place the constructor belongs (the
+# json_backend.py shape, and power.py's own factory).
+- |
+  def _json_inventory(c: "Configured[JsonInventoryConfig, InventoryEnv]") -> JsonInventory:
+      return JsonInventory(path=c.config.path, supplies=c.config.supplies)
+- |
+  def _command_power(c: Configured[CommandPowerConfig, PowerEnv]) -> CommandPowerController:
+      return CommandPowerController(c.config)
+# Building through the registry.
+- |
+  def build_inventory(prepared):
+      return INVENTORY_BACKENDS.build(prepared)
+# A config model, a type check and a class reference are not construction.
+- |
+  config = JsonInventoryConfig(path=p)
+- |
+  if isinstance(store, JsonCredsStore):
+      ...
+- |
+  backend = class_backend(cls=Ref("otto.host.connections:ConnectionManager"), metadata=m)
+invalid:
+- |
+  inventory = JsonInventory(path=p)
+- |
+  def load(cfg):
+      return JsonFileLabRepository(paths=cfg.paths)
+- |
+  store = JsonCredsStore(path)
+- |
+  backend = NullReservationBackend()
+- |
+  backend = JsonReservationBackend(path=p, username=u)
+- |
+  inventory = NetBoxInventory(url=u, token=t)
+- |
+  controller = CommandPowerController(config)
+# A parameter that only mentions Configured inside another type is not a
+# factory: a registration wrapper taking a factory callable, and an
+# orchestration loop over prepared states.
+- |
+  def register_thing(name, factory: "Callable[[Configured[X, Y]], Z]"):
+      return JsonFileLabRepository(paths=[name])
+- |
+  def build_from_states(states: "list[Configured[A, B]]"):
+      return [JsonFileLabRepository(paths=s.config.paths) for s in states]
+# A factory-shaped helper that takes no Configured is still a direct call.
+- |
+  def _power(config: CommandPowerConfig) -> CommandPowerController:
+      return CommandPowerController(config)
+# Term backends, constructed or created directly, bare or qualified.
+- |
+  conn = ConnectionManager(host, options)
+- |
+  conn = ConnectionManager.create(ctx)
+- |
+  from otto.host import connections
+
+  conn = connections.ConnectionManager.create(ctx)
+- |
+  from otto import inventory
+
+  store = inventory.JsonInventory(path=p)

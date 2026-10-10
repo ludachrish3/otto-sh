@@ -100,14 +100,12 @@ literally named `${sut_dir}`.
 Drop the prefix: `"${sut_dir}/tests"` becomes `"tests"`, and
 `"${sut_dir}/../shared"` becomes `"../shared"`.
 
-Values otto hands to a backend without interpreting them (a custom
-backend's kwargs in a `[[lab.sources]]` entry, `[reservations.<backend>]`,
-`ssh_options`) must now be absolute.  Custom lab and reservation backends
-both receive `repo_dir` and can anchor their own paths.
-
-One exception worth knowing: `[reservations.json] path` is read by otto
-itself, not passed through, so a relative value there still resolves
-against the repo root — see {doc}`../cli/reservation/index`.
+Values otto hands on without interpreting them (`ssh_options`) must now be
+absolute.  A custom lab-source or reservation backend's options are parsed by
+its own config model, which receives the repo root
+(`LabSourceEnv.repo_dir`, `ReservationEnv.repo_dir`) and can anchor a relative
+path there, as the built-in `[reservations.json] path` does — see
+{doc}`../cli/reservation/index`.
 
 ### Field reference
 
@@ -123,7 +121,9 @@ version
   from.  Each entry names a registered `backend` (`"json"` ships with otto), an
   optional `name` labelling it in warnings and errors, and that backend's own
   keys inline — for `json` that is `paths`, a non-empty list of directories
-  (searched for `lab.json`), `.json` files, or globs.  Every declared source is
+  (searched for `lab.json`), `.json` files, or globs.  Settings parse checks
+  only `backend` and `name`; the backend's keys are checked when otto prepares
+  the source, after `init`.  Every declared source is
   read, in order, and a later one overrides an earlier one one element (or one
   `labs` table entry) at a time.  A repo may declare none; the `[lab]` table
   holds nothing but `sources`.  See {doc}`host-sources` for the full treatment.
@@ -189,9 +189,10 @@ init
   sub-table must contain a `base` key naming a registered host class
   (e.g. `"unix"`, `"zephyr"`, or a class registered by an `init` module)
   and may contain any default field values to bundle with that profile.
-  Profiles are registered into the global OS-profile registry so lab-data
-  entries can select them by `os_type` name.  See {doc}`os-profiles` for
-  the full treatment.
+  A table is not a registration: otto reads it for the repos it runs with,
+  so lab-data entries can select it by `os_type` name, and checks its
+  `base` and defaults after `init`, naming the repo.  See {doc}`os-profiles`
+  for the full treatment.
 
 \[coverage\]
 : Optional table configuring gcov collection. Where counters live on a host
@@ -307,6 +308,15 @@ with everything else there, and a relative path inside it anchors to that
 directory (`~/.otto`) rather than to any repo.  A repo-only table pasted into
 it is an error naming the key — this file is not a second `settings.toml`.
 
+Each table's keys other than `backend` (and `cache_ttl` for `[inventory]`)
+belong to the selected backend, which parses them when the table is read.  A
+key the backend does not know, or a value of the wrong type, fails at that
+parse stage, naming the field, the backend and the settings file — `urll =`
+under a NetBox `[inventory]` stops there, not later when otto first fetches.
+A value of the right type that the backend refuses when it is built (NetBox's
+`ip_source` or `timeout`, say) fails at the construction stage, named the
+same way.
+
 A project's own `[inventory]` or `[creds]` table overrides the matching one,
 which is the seam for a repo that has moved to a different inventory or store
 ahead of the rest.  See {doc}`inventory`.
@@ -329,8 +339,10 @@ occurs:
    Test files are not imported here, only inside a pytest session (see
    `tests` above).
 
-4. **Lab loading** -- Otto builds the host source via `build_lab_sources`,
-   concatenating every repo's `[[lab.sources]]` entries in `OTTO_SUT_DIRS`
+4. **Lab loading** -- After every repo's `init` modules have run, otto
+   prepares each repo's `[[lab.sources]]` entries through their registered
+   backends (parsing each backend's own keys), builds the host source via
+   `build_lab_sources`, concatenating the entries in `OTTO_SUT_DIRS`
    order, and loads the lab(s) named by `--lab` or `OTTO_LAB`. Every declared
    source is live: a later one overrides an earlier one wholesale per record
    (an element, or a `labs` table entry), with a warning naming both.

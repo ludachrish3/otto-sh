@@ -7,13 +7,18 @@ construction does no I/O, so a lab with no referenced entry never opens it.
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
 from ..models.base import compact_validation_error
 from ..models.host import CredSpec
 from .errors import CredsError
+
+if TYPE_CHECKING:
+    from ..registry import Configured
+    from .config import JsonCredsConfig
+    from .registry import CredsEnv
 
 
 def _validated(source: str, key: str, idx: int, entry: Any) -> CredSpec:
@@ -87,3 +92,12 @@ class JsonCredsStore:
     def stat_paths(self) -> "list[Path] | None":
         """Return the one file this store's fingerprint is derived from."""
         return [self.path]
+
+
+def _json_creds(c: "Configured[JsonCredsConfig, CredsEnv]") -> JsonCredsStore:
+    """Build the built-in json store from its parsed configuration.
+
+    ``Path.resolve()`` runs here, on the way into the store, so its
+    ``fingerprint()`` names the resolved file.
+    """
+    return JsonCredsStore(path=c.config.path.resolve())

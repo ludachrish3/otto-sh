@@ -6,7 +6,7 @@ import pytest
 
 from otto.declared import DeclaredEntry
 from otto.host import docker_image_kind  # noqa: F401 — import registers the kind
-from otto.host.product import LOGIN_HOME_PLACEHOLDER, PRODUCT_KINDS
+from otto.host.product import LOGIN_HOME_PLACEHOLDER, PRODUCT_KIND_BUILDER
 
 DOCKER_PROBE = "command -v docker"
 
@@ -21,7 +21,7 @@ def _image(host, image, **params):
         match={},
         params={"image": image, **params},
     )
-    return PRODUCT_KINDS.build([entry], host)[0]
+    return PRODUCT_KIND_BUILDER.build([entry], host)[0]
 
 
 def _actions(lines, reads):

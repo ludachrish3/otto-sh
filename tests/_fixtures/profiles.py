@@ -137,7 +137,7 @@ def _ensure_custom_frames() -> None:
     do, and this returns immediately. Measured: the root conftest's
     ``_isolate_registries`` fixture (autouse, ``tests/conftest.py:1711``)
     snapshots ``FRAME_CLASSES`` per test and, on teardown, its
-    ``_restore_registries`` helper (``tests/conftest.py:1766-1837``) evicts
+    ``_restore_tables`` helper (``tests/conftest.py:1766-1837``) evicts
     the *registering* module (``custom_hosts``, the origin
     ``register_command_frame`` records) from ``sys.modules`` -- but not the
     already-imported ``custom_hosts.zephyr_inline`` submodule, which stays

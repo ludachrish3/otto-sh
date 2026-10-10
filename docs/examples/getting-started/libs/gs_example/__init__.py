@@ -45,12 +45,12 @@ if ZephyrInlineRetcodeFrame.type_name not in FRAME_CLASSES.names():
 # doc: begin register-backend
 from otto.reservations import RESERVATION_BACKENDS, register_reservation_backend
 
-from .reservations import TeamFileBackend
+from .reservations import TeamFileConfig, team_file
 
 # Idempotent for the same reason as the frame above: a second registration
 # under one name is refused.
 if "team-file" not in RESERVATION_BACKENDS.names():
-    register_reservation_backend("team-file", TeamFileBackend)
+    register_reservation_backend("team-file", config=TeamFileConfig, factory=team_file)
 # doc: end register-backend
 
 # doc: begin register-parsers

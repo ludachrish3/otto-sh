@@ -278,7 +278,7 @@ def test_the_worked_examples_agent_is_a_declared_class_entry() -> None:
     assert probe.cls is None
     assert "gs_example.dev_tools" not in repo.init
     _import_gs_example()
-    from otto.host.product import PRODUCT_KINDS
+    from otto.host.product import PRODUCT_KIND_BUILDER
 
     host = type(
         "H",
@@ -291,7 +291,7 @@ def test_the_worked_examples_agent_is_a_declared_class_entry() -> None:
             "cached_login_home": None,
         },
     )()
-    (built,) = PRODUCT_KINDS.build([agent], host)
+    (built,) = PRODUCT_KIND_BUILDER.build([agent], host)
     assert isinstance(built, DeclaredProduct)
     assert type(built).__name__ == "AgentBinary"
     assert built.plan(host).unchecked == ["install: AgentBinary.install (code; no plan)"]
@@ -306,7 +306,6 @@ def test_the_versions_fragment_is_a_working_provider() -> None:
     from otto.host import product as product_mod
 
     _import_gs_example()
-    saved = list(product_mod._PRODUCT_PROVIDERS)
     try:
         import importlib
 
@@ -328,9 +327,10 @@ def test_the_versions_fragment_is_a_working_provider() -> None:
         assert [p.name for p in built] == ["agent-1.2", "agent-1.3"]
         assert all(str(p.artifact).endswith("-field") for p in built)
         assert all(p.artifact.is_absolute() for p in built)
-        assert any(fn is versions.agents_for for fn, _owner in product_mod._PRODUCT_PROVIDERS)
+        assert any(
+            fn is versions.agents_for for fn, _owner in product_mod.registered_product_providers()
+        )
     finally:
-        product_mod._PRODUCT_PROVIDERS[:] = saved
         sys.modules.pop("gs_example.versions", None)
 
 
@@ -342,7 +342,7 @@ def test_the_versions_fragment_is_a_working_provider() -> None:
 def test_the_agent_install_passes_the_elements_role(element_metadata, role) -> None:
     import asyncio
 
-    from otto.host.product import PRODUCT_KINDS
+    from otto.host.product import PRODUCT_KIND_BUILDER
     from otto.result import CommandResult, Results
     from otto.utils import Status
 
@@ -367,7 +367,7 @@ def test_the_agent_install_passes_the_elements_role(element_metadata, role) -> N
 
     FakeHost.element = element
     host = FakeHost()
-    (agent,) = PRODUCT_KINDS.build([entry], host)
+    (agent,) = PRODUCT_KIND_BUILDER.build([entry], host)
     result = asyncio.run(agent.install(host))
     assert result.is_ok
     expected = (

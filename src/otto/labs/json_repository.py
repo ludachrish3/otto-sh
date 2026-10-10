@@ -6,15 +6,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import ValidationError
+from pydantic import ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
 from ..host.factory import (
     create_host_from_dict,
     host_identity,
     validate_host_dict,
 )
+from ..host.os_profile import ProfileContext
 from ..host.remote_host import describe_identity
+from ..models.base import OttoModel
 from ..models.lab import ElementSpec, LabEntrySpec
+from ..utils import anchor_path
 from .errors import (
     LabNotFoundError,
     LabRepositoryError,
@@ -31,6 +34,8 @@ if TYPE_CHECKING:
     from ..config.lab import Lab
     from ..host.element import Element
     from ..inventory import Inventory
+    from ..registry import Configured
+    from .sources import LabSourceEnv
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +308,7 @@ class JsonFileLabRepository:
     — the same element slug, or the same lab declared twice — is a typo, not an
     override, and fails naming both files. The search paths are
     supplied once at construction — this is the built-in ``"json"`` backend,
-    and :func:`otto.labs.build_lab_sources` feeds it the ``paths`` of the
+    and its factory feeds it the anchored ``paths`` of the
     ``[[lab.sources]]`` entry that selected it.
 
     :meth:`load_lab` returns THIS source's contribution to a lab: the members
@@ -313,15 +318,25 @@ class JsonFileLabRepository:
     across sources.
     """
 
-    def __init__(self, search_paths: list[Path] | None = None) -> None:
+    def __init__(
+        self,
+        search_paths: list[Path] | None = None,
+        *,
+        profiles: ProfileContext | None = None,
+    ) -> None:
         """Configure the paths this repository draws lab data from.
 
         Each entry of *search_paths* is a directory (searched for a
         ``lab.json``), a path ending in ``.json`` (read directly as the lab
         file), or a glob (expanded to the ``.json`` files it matches).
         Entries that do not resolve to an existing file are skipped.
+
+        *profiles* are the repo data profiles the hosts' ``os_type`` resolves
+        through (the source's :attr:`~otto.labs.sources.LabSourceEnv.profiles`);
+        omitted, none.
         """
         self.search_paths: list[Path] = list(search_paths or [])
+        self.profiles: ProfileContext = profiles if profiles is not None else ProfileContext.empty()
 
     def load_lab(
         self,
@@ -390,7 +405,7 @@ class JsonFileLabRepository:
         for element, path in members:
             runtime = element.to_element()
             for idx, host_data in enumerate(element.hosts):
-                _add_host(lab, host_data, runtime, idx, path, preferences, inventory)
+                _add_host(lab, host_data, runtime, idx, path, preferences, inventory, self.profiles)
 
         from ..link.derive import addressing_from_dict, resolve_declared_links
 
@@ -422,7 +437,9 @@ class JsonFileLabRepository:
                 # hold) is skipped here exactly like any other unresolvable
                 # record, rather than failing this lab's load.
                 host_id, host_addressing = addressing_from_dict(
-                    resolve_host_entry(h, inventory, runtime).host_data, runtime
+                    resolve_host_entry(h, inventory, runtime).host_data,
+                    runtime,
+                    profiles=self.profiles,
                 )
             except Exception as e:  # noqa: BLE001 — per-item resilience, see guard above
                 # Log the reason: this now also fires for a WELL-FORMED record
@@ -522,7 +539,7 @@ class JsonFileLabRepository:
                 for index, entry in enumerate(element.hosts):
                     try:
                         host_data = resolve_host_entry(entry, inventory, runtime).host_data
-                        identity = host_identity(host_data, runtime)
+                        identity = host_identity(host_data, runtime, profiles=self.profiles)
                     except (ValueError, TypeError, InventoryError) as e:
                         # Skipped, never raised — but SAID: this is the one
                         # place a referenced entry silently fell out of
@@ -623,7 +640,7 @@ class JsonFileLabRepository:
         """Find all lab files across the configured search paths.
 
         Delegates the entry-to-files rule to :func:`expand_lab_paths` — the
-        same helper ``CompiledLabSource.lab_files()`` reads, so the backend and
+        same helper ``LabSourceState.lab_files()`` reads, so the backend and
         the config side can never disagree about which files a source holds.
 
         Raises
@@ -668,6 +685,57 @@ class JsonFileLabRepository:
         return parse_lab_sections(data, str(lab_file))
 
 
+@dataclass(frozen=True)
+class LabSourceFacts:
+    """What otto learns about a source from its parsed configuration."""
+
+    file_inputs: tuple[Path, ...]
+    """The anchored directory, .json-file and glob entries a json source reads."""
+
+
+class JsonLabSourceConfig(OttoModel):
+    """A ``backend = "json"`` source's options: the ``paths`` it reads lab files from.
+
+    Each entry is a directory (its ``lab.json`` is read), a ``.json`` file, or
+    a glob over ``.json`` files. A relative entry is anchored to the repo
+    root, and ``~`` is expanded.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    paths: tuple[Path, ...] = Field(min_length=1)
+    """The directories, ``.json`` files and globs the source reads, anchored to the repo."""
+
+    @field_validator("paths", mode="before")
+    @classmethod
+    def _no_empty_entry(cls, value: object) -> object:
+        """Refuse an empty string, which would otherwise read as the repo root."""
+        if isinstance(value, (list, tuple)) and any(entry == "" for entry in value):
+            raise ValueError("an entry is empty; name a directory, a .json file or a glob")
+        return value
+
+    @field_validator("paths", mode="after")
+    @classmethod
+    def _anchor(cls, value: tuple[Path, ...], info: ValidationInfo) -> tuple[Path, ...]:
+        """Anchor every relative entry to the repo the source is declared in."""
+        env = (info.context or {}).get("env")
+        if env is None:
+            raise ValueError(
+                "a json lab source is validated with its LabSourceEnv in the validation "
+                'context (context={"env": env}); otto passes it when it prepares the source'
+            )
+        return tuple(anchor_path(p, env.repo_dir, quote=False) for p in value)
+
+    def prepared_facts(self) -> LabSourceFacts:
+        """Return the entries this source reads; otto fingerprints their files for the cache."""
+        return LabSourceFacts(file_inputs=self.paths)
+
+
+def _json_lab_source(c: "Configured[JsonLabSourceConfig, LabSourceEnv]") -> JsonFileLabRepository:
+    """Build the built-in json source from its parsed configuration."""
+    return JsonFileLabRepository(search_paths=list(c.config.paths), profiles=c.env.profiles)
+
+
 def _add_host(
     lab: "Lab",
     host_data: dict[str, Any],
@@ -676,6 +744,7 @@ def _add_host(
     path: Path,
     preferences: dict[str, dict[str, Any]] | None,
     inventory: "Inventory | None",
+    profiles: ProfileContext,
 ) -> None:
     """Build one host entry of *element* and add it to *lab*.
 
@@ -701,13 +770,14 @@ def _add_host(
 
     try:
         entry = resolve_host_entry(host_data, inventory, element)
-        validate_host_dict(entry.host_data)
+        validate_host_dict(entry.host_data, profiles=profiles)
         host = create_host_from_dict(
             entry.host_data,
             preferences=preferences,
             lab_name=lab.name,
             element=element,
             inventory_ref=entry.ref,
+            profiles=profiles,
         )
     except ValidationError as e:
         # A resolved host dict can carry a referenced host's STORE creds

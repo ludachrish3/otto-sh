@@ -12,17 +12,6 @@ from otto.host.product import register_product_provider
 _ENTRY = {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}
 
 
-@pytest.fixture(autouse=True)
-def _isolate_provider_registry():
-    from otto.host import product as product_mod
-
-    saved = list(product_mod._PRODUCT_PROVIDERS)
-    try:
-        yield
-    finally:
-        product_mod._PRODUCT_PROVIDERS[:] = saved
-
-
 def test_ref_is_unhashable():
     """Pins the docstring's claim: ``extra`` is a dict, so hashing raises."""
     with pytest.raises(TypeError):

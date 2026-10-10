@@ -24,7 +24,7 @@ def builtin_command_names() -> list[str]:
     names = [
         name
         for name in CLI_COMMANDS.names()
-        if CLI_COMMANDS.get(name).origin == "otto.cli.builtin_commands"
+        if CLI_COMMANDS.origin(name) == "otto.cli.builtin_commands"
     ]
     # A floor, not the exact count: this is the one place both the in-process
     # unit tree and the subprocess e2e tree derive their group set from, so a

@@ -18,10 +18,12 @@ def test_returns_a_copy_not_the_live_registry():
     assert "bogus" not in registered_host_specs()  # registry unaffected
 
 
-def test_builtins_only_excludes_custom_registrations(monkeypatch):
+def test_builtins_only_excludes_custom_registrations():
     # A custom-registered type shows up by default but is filtered out by
     # builtins_only (which restricts to the in-tree unix/embedded/zephyr).
-    monkeypatch.setitem(op._HOST_SPECS, "acme", UnixHostSpec)
+    from otto.host.unix_host import UnixHost
+
+    op.register_host_class("acme", UnixHost, spec=UnixHostSpec)
     assert "acme" in registered_host_specs()
     assert "acme" not in registered_host_specs(builtins_only=True)
     assert set(registered_host_specs(builtins_only=True)) == {"unix", "embedded", "zephyr"}

@@ -46,6 +46,7 @@ from otto.host.binary_loader import BinaryLoader
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.embedded_kind import EmbeddedProduct
 from otto.host.product import PRODUCT_KINDS
+from otto.registry import resolved
 from otto.utils import Status
 
 logger = logging.getLogger(__name__)
@@ -453,7 +454,7 @@ class TestEmbeddedCounterReset:
         """
         for host in self._hosts:
             product = _product_of(host)
-            missing = PRODUCT_KINDS.get("embedded")(
+            missing = resolved(PRODUCT_KINDS.get("embedded").factory)(
                 _entry_like(product, reset_fn="no_such_fn"), host
             )
             call = _loader_of(host).call_command(product.name, "no_such_fn")
@@ -478,7 +479,7 @@ class TestEmbeddedCounterReset:
         """
         for host in self._hosts:
             product = _product_of(host)
-            absent = PRODUCT_KINDS.get("embedded")(
+            absent = resolved(PRODUCT_KINDS.get("embedded").factory)(
                 _entry_like(product, name=f"{product.name}_absent"), host
             )
             call = _loader_of(host).call_command(absent.name, absent.reset_fn)

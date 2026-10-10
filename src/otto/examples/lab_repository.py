@@ -6,14 +6,17 @@ via :func:`otto.host.factory.create_host_from_dict`. It needs no files or
 network, so it runs inside doctests and the conformance suite, and SUT authors
 can copy it as a starting point.
 
-Register it from an ``init`` module and select it by name::
+Register it from an ``init`` module, with the model that parses a source's
+options and the factory that builds the source from them, and select it by
+name::
 
     from otto.labs import register_lab_repository
-    from otto.examples.lab_repository import ExampleLabRepository
+    from otto.examples.lab_repository import ExampleLabSourceConfig, example_lab_source
 
-    register_lab_repository("example", ExampleLabRepository)
+    register_lab_repository("example", config=ExampleLabSourceConfig, factory=example_lab_source)
 
-then in ``.otto/settings.toml``::
+then in ``.otto/settings.toml`` (every key but ``backend`` and ``name`` is an
+option the config model parses; this sample's are both optional)::
 
     [[lab.sources]]
     backend = "example"
@@ -35,18 +38,23 @@ Direct usage:
 ['router1', 'router2']
 """
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from pydantic import ConfigDict
 
 from ..host import Element, create_host_from_dict, host_identity
 from ..inventory import InventoryError, resolve_host_entry
 from ..lab import Lab
 from ..labs import HostSummary, LabNotFoundError, logins_of_host_data
+from ..models import OttoModel
 
 if TYPE_CHECKING:
+    from ..host import ProfileContext
     from ..inventory import Inventory
+    from ..labs import LabSourceEnv
+    from ..registry import Configured
 
-__all__ = ["ExampleLabRepository"]
+__all__ = ["ExampleLabRepository", "ExampleLabSourceConfig", "example_lab_source"]
 
 # A tiny built-in dataset so the sample works out of the box (doctests +
 # conformance). Each value is a list of ELEMENT dicts, each carrying the host
@@ -105,10 +113,6 @@ class ExampleLabRepository:
 
     Parameters
     ----------
-    repo_dir : Path | None
-        Accepted for factory/registry uniformity — :func:`otto.labs.build_lab_sources`
-        constructs a custom backend as ``cls(repo_dir=..., **kwargs)``. This
-        in-memory sample has no files to resolve, so it is ignored.
     labs : dict[str, list[dict]] | None
         Optional mapping of lab name to element dicts (``name``, optional
         ``id``/``metadata``/``resources``, and the ``hosts`` list). Defaults to
@@ -119,15 +123,21 @@ class ExampleLabRepository:
         declare. This sample uses no other; a backend whose hosts or elements
         are separately reservable stamps those on the hosts it builds.
         Defaults to the demo dataset's own table.
+    profiles : ProfileContext | None
+        The repo data profiles a host's ``os_type`` may name — what the
+        factory hands a source as ``env.profiles``. Every call that resolves
+        an ``os_type`` passes them on (``profiles=``), so a host may select an
+        ``[os_profiles]`` table any selected repo declares. Defaults to none.
     """
 
     def __init__(
         self,
         *,
-        repo_dir: Path | None = None,  # noqa: ARG002 — required by registry-seam constructor signature (build_lab_sources passes repo_dir= to all backends)
         labs: dict[str, list[dict[str, Any]]] | None = None,
         resources: dict[str, set[str]] | None = None,
+        profiles: "ProfileContext | None" = None,
     ) -> None:
+        self._profiles = profiles
         self._labs: dict[str, list[dict[str, Any]]] = (
             {k: list(v) for k, v in _DEMO_LABS.items()} if labs is None else labs
         )
@@ -172,6 +182,7 @@ class ExampleLabRepository:
                     lab_name=name,
                     element=element,
                     inventory_ref=resolved.ref,
+                    profiles=self._profiles,
                 )
                 lab.add_host(host)
         # Declared, never derived: the lab carries its own set (spec §8.1), and
@@ -220,7 +231,7 @@ class ExampleLabRepository:
                 for host_data in hosts:
                     try:
                         resolved = resolve_host_entry(host_data, inventory, element).host_data
-                        identity = host_identity(resolved, element)
+                        identity = host_identity(resolved, element, profiles=self._profiles)
                     except (ValueError, TypeError, KeyError, InventoryError):
                         continue
                     existing = by_id.get(identity.id)
@@ -237,3 +248,39 @@ class ExampleLabRepository:
                         logins=logins_of_host_data(resolved),
                     )
         return sorted(by_id.values(), key=lambda s: s.id)
+
+
+class ExampleLabSourceConfig(OttoModel):
+    """The options a ``backend = "example"`` source takes: the sample's own two.
+
+    Otto parses a source's options with this model when it prepares the
+    source, after init, and refuses an unknown key (``OttoModel`` forbids
+    extras). Frozen, and deep-copyable as every lab-source config model must
+    be: otto hands the factory a fresh copy at each build.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    labs: dict[str, list[dict[str, Any]]] | None = None
+    """Lab name to element dicts; ``None`` keeps the built-in demo dataset."""
+
+    resources: dict[str, list[str]] | None = None
+    """Lab name to the resources that lab reserves; ``None`` keeps the demo table."""
+
+
+def example_lab_source(
+    c: "Configured[ExampleLabSourceConfig, LabSourceEnv]",
+) -> ExampleLabRepository:
+    """Build an :class:`ExampleLabRepository` from a source's parsed options.
+
+    ``c.env`` carries the declaring repo's root (``repo_dir``), the source's
+    ``label`` and its ``origin``, which this in-memory sample needs none of
+    (it reads no file), and the selected repos' data ``profiles``, which it
+    keeps: a host's ``os_type`` may name an ``[os_profiles]`` table.
+    """
+    resources = c.config.resources
+    return ExampleLabRepository(
+        labs=c.config.labs,
+        resources=None if resources is None else {k: set(v) for k, v in resources.items()},
+        profiles=c.env.profiles,
+    )

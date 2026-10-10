@@ -16,7 +16,6 @@ def test_entry_holds_a_handler_and_its_options_class():
     assert entry.handler is _handler
     assert entry.project is None
     assert entry.help is None
-    assert entry.registered_by is None
 
 
 def test_entry_requires_exactly_one_of_handler_and_project():

@@ -9,6 +9,7 @@ from otto.declared import DeclaredEntry
 from otto.host import product as product_mod
 from otto.host.binary_loader import LlextHexLoader
 from otto.host.embedded_kind import EmbeddedProduct
+from otto.registry import resolved
 from otto.result import CommandResult, Result
 from otto.utils import Status
 
@@ -73,7 +74,7 @@ def _host():
 
 
 def _build(host, **params) -> EmbeddedProduct:
-    return product_mod.PRODUCT_KINDS.get("embedded")(_entry(**params), host)
+    return resolved(product_mod.PRODUCT_KINDS.get("embedded").factory)(_entry(**params), host)
 
 
 def test_kind_is_registered_for_products_only():
@@ -91,14 +92,14 @@ def test_factory_refuses_a_host_without_a_loader():
 def test_the_old_kind_name_is_refused_naming_the_new_one():
     """``kind = "llext"`` is not silently accepted: the message names the rename.
 
-    Through the real ingest path (:meth:`KindRegistry.build`), the same way
+    Through the real ingest path (:meth:`KindBuilder.build`), the same way
     the retired ``file``/``shell`` rename is proven in
     ``test_build_refuses_the_retired_file_kind_naming_shell`` — the retired
     name is refused before a factory is even looked up.
     """
     entry = _entry(kind="llext", artifact="x.llext")
     with pytest.raises(ValueError, match=r"'cov_ext': kind 'llext' is now 'embedded'"):
-        product_mod.PRODUCT_KINDS.build([entry], _host())
+        product_mod.PRODUCT_KIND_BUILDER.build([entry], _host())
 
 
 @pytest.mark.asyncio
@@ -184,7 +185,7 @@ def test_empty_dump_fn_is_refused_rather_than_silently_defaulted():
 def test_instrumented_scans_the_embedded_object(tmp_path):
     art = tmp_path / "cov_ext.llext"
     art.write_bytes(b"\x7fELF\0/home/x/cov_ext.c.gcda\0")
-    p = product_mod.PRODUCT_KINDS.get("embedded")(
+    p = resolved(product_mod.PRODUCT_KINDS.get("embedded").factory)(
         DeclaredEntry(
             name="cov_ext",
             kind="embedded",

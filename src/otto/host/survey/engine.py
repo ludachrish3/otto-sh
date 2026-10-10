@@ -15,7 +15,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from ...logger.mode import LogMode
-from ..connections import TERM_BACKENDS, TermBackend
+from ..connections import TERM_BACKENDS, TermMetadata
 from ..login_proxy import cred_for, cred_identity
 from ..transfer.registry import TRANSFER_BACKENDS
 from ..transfer.sftp import open_sftp_or_attribute
@@ -155,7 +155,7 @@ async def _run_only(host: "BaseHost", cmd: str, *, sudo: bool = False) -> "Comma
     return (await host.run(cmd, sudo=sudo, timeout=INVENTORY_TIMEOUT_S, log=LogMode.NEVER)).only
 
 
-def dialling_terms() -> dict[str, TermBackend]:
+def dialling_terms() -> dict[str, TermMetadata]:
     """Return registered term backends reached by dialling the HOST's own address.
 
     A console term is addressed at its console SERVER, not the host, so it has
@@ -164,7 +164,7 @@ def dialling_terms() -> dict[str, TermBackend]:
     never manufactures a phantom candidate, dial or login attempt against the
     host.
     """
-    return {n: b for n, b in TERM_BACKENDS.items() if b.dials_host}
+    return {n: e.metadata for n, e in TERM_BACKENDS.raw_items() if e.metadata.dials_host}
 
 
 def _family_candidates(
@@ -178,8 +178,8 @@ def _family_candidates(
             cands.append(Candidate(name, "term", declared(name, "term"), declared=True))
         else:
             other.append(name)
-    for name, cls in TRANSFER_BACKENDS.items():
-        if family in cls.host_families:
+    for name, entry in TRANSFER_BACKENDS.raw_items():
+        if family in entry.metadata.host_families:
             cands.append(Candidate(name, "transfer", declared(name, "transfer"), declared=True))
         else:
             other.append(name)
@@ -1055,7 +1055,7 @@ def _local_not_applicable(survey: Survey) -> Survey:
     and not-applicable in the same report.
     """
     answered = {v.protocol for v in survey.verdicts}
-    names = set(dialling_terms()) | {n for n, _ in TRANSFER_BACKENDS.items()}
+    names = set(dialling_terms()) | set(TRANSFER_BACKENDS.names())
     survey.not_applicable = sorted(names - answered)
     return survey
 
@@ -1117,8 +1117,8 @@ def _survey_docker(_host_cls: type) -> Survey:
                     detail=_DOCKER_REASON,
                 )
             )
-    for name, cls in TRANSFER_BACKENDS.items():
-        if "unix" in cls.host_families:
+    for name, entry in TRANSFER_BACKENDS.raw_items():
+        if "unix" in entry.metadata.host_families:
             verdicts.append(
                 ProtocolVerdict(
                     protocol=name,
@@ -1161,7 +1161,7 @@ async def run_survey(
     survey = Survey(user=user)
     reason = f"no survey for {type(host).__name__}"
     named: list[tuple[str, Kind]] = [(n, "term") for n in dialling_terms()]
-    named.extend((n, "transfer") for n, _ in TRANSFER_BACKENDS.items())
+    named.extend((n, "transfer") for n in TRANSFER_BACKENDS.names())
     for name, kind in named:
         survey.verdicts.append(
             ProtocolVerdict(

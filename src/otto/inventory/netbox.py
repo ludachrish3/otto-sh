@@ -15,17 +15,15 @@ fetch so no other verb pays for it, and NOTHING — not the token, not a socket
 NetBox at all.
 
 An argument error is a plain ``ValueError`` (otto's house style for a rejected
-argument), which is what
-:func:`~otto.inventory.config.construct_inventory` wraps into an
-:class:`~otto.inventory.errors.InventoryError` naming the settings file and
-the backend. Everything that can only fail later — a missing token, an
+argument), which the registry's construction stage reports as an
+:class:`~otto.inventory.errors.InventoryConstructionError` naming the
+settings file and the backend. Everything that can only fail later — a missing token, an
 unreachable host, a device NetBox describes in a way no record accepts — is
 an :class:`~otto.inventory.errors.InventoryError` naming the URL.
 """
 
 import os
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
@@ -34,6 +32,11 @@ from ..models.inventory import FILLABLE_INVENTORY_FIELDS, INVENTORY_KEY_FIELDS, 
 from ..tls import DEFAULT_TIMEOUT_SECONDS, _checked_timeout, os_trust_session
 from .errors import InventoryError, InventoryKeyError
 from .protocol import check_supplies
+
+if TYPE_CHECKING:
+    from ..registry import Configured
+    from .config import NetBoxInventoryConfig
+    from .registry import InventoryEnv
 
 NATIVE_SUPPLIES: frozenset[str] = frozenset(
     {"ip", "site", "rack", "shelf", "board", "os_name", "is_virtual"}
@@ -61,14 +64,6 @@ class NetBoxInventory:
 
     Parameters
     ----------
-    repo_dir : Path | None
-        The declaring repo's root, passed by
-        :func:`~otto.inventory.config.construct_inventory` under the registry's
-        uniform constructor contract. Deliberately unused: this backend
-        interprets no path, so nothing here depends on which repo declared the
-        table (``CompiledInventory.same_as`` ignores ``anchor_dir``, and a
-        backend that anchored a path to it would make two repos with identical
-        ``[inventory]`` tables silently share the first one's directory).
     url : str
         Base URL of the NetBox instance, e.g. ``https://netbox.example.com``.
     token_env : str
@@ -114,7 +109,6 @@ class NetBoxInventory:
 
     def __init__(
         self,
-        repo_dir: "Path | None" = None,  # noqa: ARG002 — the registry's uniform constructor contract
         *,
         url: str,
         token_env: str = "NETBOX_TOKEN",  # noqa: S107 — the NAME of the variable, not a token
@@ -374,3 +368,8 @@ class NetBoxInventory:
     def fingerprint(self) -> "str | None":
         """``None`` — not cacheable on its own; the snapshot cache supplies one (spec §9.5)."""
         return None
+
+
+def _netbox_inventory(c: "Configured[NetBoxInventoryConfig, InventoryEnv]") -> NetBoxInventory:
+    """Build the built-in NetBox inventory from its parsed configuration."""
+    return NetBoxInventory(**c.config.model_dump())

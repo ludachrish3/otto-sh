@@ -1438,6 +1438,11 @@ typecheck: typecheck-python typecheck-ts ## (Quality) Type-check ALL code (Pytho
 typecheck-python: ## (Quality) Run ty type checker
 	@$(SAY) "ty check"
 	@uv run ty check
+# The registry engine's typing fixtures: pyproject excludes tests from ty, so
+# they are named file by file. A positive must check clean; a negative carries a
+# rule-specific ignore on the line that must fail, and an unused ignore is an
+# error, so a negative that stops failing turns this red.
+	@uv run ty check tests/unit/registry/typing_fixtures/*.py --error unused-ignore-comment
 
 # Routed through scripts/typecheck_web.sh rather than `npm run typecheck`
 # because tsconfig cannot scope rules by directory: `exclude` only drops a

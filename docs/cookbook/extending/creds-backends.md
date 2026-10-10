@@ -4,7 +4,7 @@ Otto reads credentials through a **creds store**: a small class that answers
 "which logins does the machine with this inventory key accept?" with the same
 `creds` entries a lab file spells. One ships with otto, the `json` file
 ({ref}`credentials-layered`); anything else — a vault, a secrets manager, a
-team database — is a class you register from your own repo.
+team database — is a store you register from your own repo.
 
 This page is the contract. The user-facing side — the `[creds]` table, the
 three-layer merge, what the doctor checks — lives in
@@ -45,7 +45,7 @@ from otto.models import CredSpec
 
 
 class MyVaultStore:
-    def __init__(self, repo_dir=None, *, url, mount="lab"):
+    def __init__(self, *, url, mount="lab"):
         self.url = url.rstrip("/")
         self.mount = mount
         self.label = f"vault:{self.url}/{mount}"
@@ -65,14 +65,33 @@ class MyVaultStore:
 
 ## Selecting it in settings
 
-Register the store under a bare name from an `init` module, then select it:
+A creds store is a *configured* backend, registered with the one wrapper
+shape every configured seam shares ({ref}`configured-backends`): a config
+model that parses the `[creds]` table, and a factory that builds the store
+from it. Register it under a bare name from an `init` module, then select it:
 
 ```python
 # my_creds.py  (listed in init = [...])
-from otto.creds import register_creds_backend
+from pydantic import ConfigDict
+
+from otto.creds import CredsEnv, register_creds_backend
+from otto.models import OttoModel
+from otto.registry import Configured
 from my_company.vault import MyVaultStore
 
-register_creds_backend("vault", MyVaultStore)
+
+class MyVaultConfig(OttoModel):
+    model_config = ConfigDict(frozen=True)
+
+    url: str
+    mount: str = "lab"
+
+
+def my_vault(c: Configured[MyVaultConfig, CredsEnv]) -> MyVaultStore:
+    return MyVaultStore(url=c.config.url, mount=c.config.mount)
+
+
+register_creds_backend("vault", config=MyVaultConfig, factory=my_vault)
 ```
 
 ```toml
@@ -82,18 +101,26 @@ url = "https://vault.example"
 mount = "lab"
 ```
 
-Otto constructs it as `MyVaultStore(repo_dir=<declaring directory>,
-url="https://vault.example", mount="lab")` — every key in the table except
-`backend` becomes a keyword argument, and `repo_dir` is the directory the
-declaration came from (the repository root for a project table, `~/.otto`
-for the user file).
+Otto parses every key in the table except `backend` with `MyVaultConfig`,
+so an unknown key or a bad value fails when the table is read, naming the
+field, the backend and the settings file (never quoting the rejected value);
+what a config model must be is stated once, under {ref}`configured-backends`.
+The factory receives the parsed configuration as
+`c.config`, and `c.env`, a {class}`~otto.creds.CredsEnv`, carries
+`anchor_dir`, the directory the declaration came from (the repository root
+for a project table, `~/.otto` for the user file), and `origin`, the
+settings file. Two repos whose tables parse to the same configuration name
+the same store.
 
 For an HTTPS vault signed by an internal CA, build the client with
 {func}`otto.tls.os_trust_session` — see {doc}`https-clients`.
 
-Reject a kwarg you do not understand with a `TypeError`
-or `ValueError`: otto wraps it into an error naming the settings file and the
-backend.
+A factory that raises, or that returns something without the protocol's
+members, fails with {class}`~otto.creds.CredsConstructionError` naming the
+settings file, the backend and the module that registered it. Through
+{func}`~otto.inventory.build_inventory`, the caller gets an
+{class}`~otto.inventory.InventoryConstructionError` instead, with the
+`CredsConstructionError` as its `__cause__`.
 
 {func}`~otto.creds.register_creds_backend` refuses a duplicate name unless
 you pass `overwrite=True`. A name nobody registered raises when otto builds the store, and the

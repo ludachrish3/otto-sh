@@ -4,7 +4,8 @@ import pytest
 
 from otto.config.lab import Lab
 from otto.context import OttoContext, try_get_context
-from otto.instructions import INSTRUCTIONS, InstructionEntry, run_instruction
+from otto.instructions import STANDALONE_INSTRUCTIONS, InstructionEntry, run_instruction
+from otto.registry import registering_repo
 from otto.session import InstructionInactiveError
 from tests._fixtures.bootstrap_seam import seed_scope_verdicts
 
@@ -29,11 +30,10 @@ def ran() -> "list[str]":
         calls.append("blink")
         return "blinked"
 
-    INSTRUCTIONS.register(
-        "blink",
-        InstructionEntry(name="blink", handler=blink, module="m", registered_by="acme"),
-        origin="m",
-    )
+    with registering_repo("acme"):
+        STANDALONE_INSTRUCTIONS.register(
+            "blink", InstructionEntry(name="blink", handler=blink, module="m")
+        )
     return calls
 
 

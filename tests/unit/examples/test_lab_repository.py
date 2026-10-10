@@ -3,10 +3,16 @@
 import pytest
 
 from otto.config.lab import Lab
-from otto.examples.lab_repository import ExampleLabRepository
+from otto.examples.lab_repository import (
+    ExampleLabRepository,
+    ExampleLabSourceConfig,
+    example_lab_source,
+)
+from otto.host.os_profile import ProfileContext
 from otto.host.remote_host import RemoteHost
-from otto.labs import LabNotFoundError, register_lab_repository
+from otto.labs import LabNotFoundError, LabSourceEnv, register_lab_repository
 from otto.labs.registry import LAB_REPOSITORIES
+from otto.registry import Configured
 from otto.testing import assert_lab_repository_conforms
 
 
@@ -84,20 +90,35 @@ def test_an_elements_own_data_reaches_every_host_it_groups():
     assert {s.id for s in repo.list_host_summaries()} == {"chassis-cpu", "chassis-io"}
 
 
-def test_accepts_repo_dir_for_registry_compatibility(tmp_path):
-    # build_lab_sources constructs a custom backend as cls(repo_dir=..., **kwargs)
-    repo = ExampleLabRepository(repo_dir=tmp_path)
-    assert repo.list_labs() == ["east", "west"]
+def test_the_factory_builds_from_a_sources_parsed_options(tmp_path):
+    """What a ``[[lab.sources]]`` entry's options become: the config model's fields."""
+    env = LabSourceEnv(tmp_path, "r/example", "settings.toml", ProfileContext.empty())
+    raw = {"labs": {"only": [{"name": "node", "hosts": [{"ip": "10.9.9.9"}]}]}, "resources": {}}
+    config = ExampleLabSourceConfig.model_validate(raw, context={"env": env})
+    repo = example_lab_source(Configured(config, env))
+    assert repo.list_labs() == ["only"]
+    assert repo.load_lab("only").resources == set()
+
+
+def test_the_config_model_refuses_an_unknown_option():
+    with pytest.raises(ValueError, match="bogus"):
+        ExampleLabSourceConfig.model_validate({"bogus": 1})
 
 
 def test_sample_conforms():
     assert_lab_repository_conforms(ExampleLabRepository(), expected_labs=["east", "west"])
 
 
-def test_registrable_by_name():
-    register_lab_repository("example-host-source-test", ExampleLabRepository)
+def test_registrable_by_name(tmp_path):
+    register_lab_repository(
+        "example-host-source-test", config=ExampleLabSourceConfig, factory=example_lab_source
+    )
     try:
-        assert LAB_REPOSITORIES.get("example-host-source-test") is ExampleLabRepository
+        env = LabSourceEnv(tmp_path, "r/example", "settings.toml", ProfileContext.empty())
+        prepared = LAB_REPOSITORIES.prepare("example-host-source-test", {}, env)
+        built = LAB_REPOSITORIES.build(prepared)
+        assert isinstance(built, ExampleLabRepository)
+        assert built.list_labs() == ["east", "west"]
     finally:
         LAB_REPOSITORIES.unregister("example-host-source-test")
 

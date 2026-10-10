@@ -9,7 +9,7 @@ from otto.host import ZephyrHost, embedded_kind  # noqa: F401 — import registe
 from otto.host.binary_loader import LlextHexLoader
 from otto.host.element import Element
 from otto.host.embedded_kind import EmbeddedProduct
-from otto.host.product import PRODUCT_KINDS
+from otto.host.product import PRODUCT_KIND_BUILDER
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
 from otto.utils import Status
@@ -27,7 +27,7 @@ def _ext(host, tmp_path, name="fw", **params):
         match={},
         params={"artifact": "fw.llext", **params},
     )
-    return PRODUCT_KINDS.build([entry], host)[0]
+    return PRODUCT_KIND_BUILDER.build([entry], host)[0]
 
 
 @pytest.mark.asyncio

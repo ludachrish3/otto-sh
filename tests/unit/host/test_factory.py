@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from otto.host import os_profile
 from otto.host.command_frame import ZephyrFrame
 from otto.host.element import Element
 from otto.host.embedded_filesystem import FatRamFileSystem
@@ -17,20 +16,6 @@ from otto.host.options import SnmpOptions
 from otto.host.os_profile import register_os_profile
 from otto.host.toolchain import Toolchain
 from otto.host.unix_host import UnixHost
-
-
-@pytest.fixture
-def restore_profiles():
-    """Snapshot/restore the global os-profile registry around a test."""
-    saved = dict(os_profile.OS_PROFILES._entries)
-    saved_origins = dict(os_profile.OS_PROFILES._origins)
-    try:
-        yield
-    finally:
-        os_profile.OS_PROFILES._entries.clear()
-        os_profile.OS_PROFILES._entries.update(saved)
-        os_profile.OS_PROFILES._origins.clear()
-        os_profile.OS_PROFILES._origins.update(saved_origins)
 
 
 class TestCreateHostFromDict:
@@ -450,7 +435,7 @@ class TestOsTypeDispatch:
 class TestOsProfileDispatch:
     """Tests for custom ``os_type`` profiles in ``create_host_from_dict``."""
 
-    def test_unix_profile_applies_defaults(self, restore_profiles):
+    def test_unix_profile_applies_defaults(self):
         register_os_profile(
             "custom-nix", base="unix", defaults={"os_name": "CustomNix", "term": "telnet"}
         )
@@ -466,7 +451,7 @@ class TestOsProfileDispatch:
         assert host.os_name == "CustomNix"
         assert host.term == "telnet"
 
-    def test_host_field_overrides_profile_default(self, restore_profiles):
+    def test_host_field_overrides_profile_default(self):
         register_os_profile("custom-nix", base="unix", defaults={"os_name": "CustomNix"})
         host = create_host_from_dict(
             {
@@ -479,7 +464,7 @@ class TestOsProfileDispatch:
         )
         assert host.os_name == "HostWins"
 
-    def test_stored_ostype_is_selector_not_base_family(self, restore_profiles):
+    def test_stored_ostype_is_selector_not_base_family(self):
         register_os_profile("custom-nix", base="unix")
         host = create_host_from_dict(
             {
@@ -493,7 +478,7 @@ class TestOsProfileDispatch:
         # trips are lossless and a future reader knows which profile was used.
         assert host.os_type == "custom-nix"
 
-    def test_options_three_layer_precedence(self, restore_profiles):
+    def test_options_three_layer_precedence(self):
         """Per-key precedence: product (preferences) > host > profile for
         ``*_options`` tables. This is the Task-2 value-flip: product wins over
         host, host wins over profile.
@@ -521,7 +506,7 @@ class TestOsProfileDispatch:
         assert host.ssh_options.connect_timeout == 99.0  # product (preferences) wins
         assert host.ssh_options.keepalive_interval == 42.0  # preferences fills the gap
 
-    def test_embedded_profile_coerces_frame_and_filesystem_strings(self, restore_profiles):
+    def test_embedded_profile_coerces_frame_and_filesystem_strings(self):
         register_os_profile(
             "zephyr-fat",
             base="embedded",
@@ -548,7 +533,7 @@ class TestOsProfileDispatch:
         assert isinstance(host.command_frame, ZephyrFrame)
         assert isinstance(host.filesystem, FatRamFileSystem)
 
-    def test_embedded_profile_with_docker_capable_host_rejected(self, restore_profiles):
+    def test_embedded_profile_with_docker_capable_host_rejected(self):
         register_os_profile("zephyr-fat", base="embedded", defaults={"os_name": "Zephyr"})
         with pytest.raises(ValueError, match="docker_capable") as exc_info:
             create_host_from_dict(
@@ -936,16 +921,6 @@ def test_create_host_from_dict_applies_preference_to_embedded_host():
 
 
 class TestProductProviders:
-    @pytest.fixture(autouse=True)
-    def _isolate_provider_registry(self):
-        from otto.host import product as product_mod
-
-        saved = list(product_mod._PRODUCT_PROVIDERS)
-        try:
-            yield
-        finally:
-            product_mod._PRODUCT_PROVIDERS[:] = saved
-
     def test_provider_products_attached_at_ingest(self):
         from types import SimpleNamespace
 
@@ -979,16 +954,6 @@ class TestProductProviders:
 
 
 class TestDevToolProviders:
-    @pytest.fixture(autouse=True)
-    def _isolate_provider_registry(self):
-        from otto.host import dev_tool as dev_tool_mod
-
-        saved = list(dev_tool_mod._DEV_TOOL_PROVIDERS)
-        try:
-            yield
-        finally:
-            dev_tool_mod._DEV_TOOL_PROVIDERS[:] = saved
-
     def test_provider_dev_tools_attached_at_ingest(self):
         # Kills: omitting apply_dev_tool_providers from the ingest chokepoint.
         # The unit tests call apply directly, so they stay green while every

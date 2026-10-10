@@ -299,6 +299,9 @@ _INTERNAL_ALIASES = {
     # otto.init.areas: scaffolder.py's docstrings say :data:`AREA_NAMES` bare,
     # relative to their own module, where only areas.py defines it.
     "AREA_NAMES": "otto.init.areas.AREA_NAMES",
+    # otto.labs.registry: register_lab_repository's signature names the
+    # configuration TypeVar it imports from otto.registry, bare.
+    "C": "otto.registry.C",
     # otto.init's package docstring names its two entry points bare, relative
     # to the package; the pages document them under their defining modules.
     "check_repo": "otto.init.doctor.check_repo",

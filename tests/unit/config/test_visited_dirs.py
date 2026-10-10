@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 from otto.config import completion_cache as _cc
-from otto.config.cache_sections import section_by_name, section_digest
+from otto.config.cache_sections import section_by_name, section_digest, writer_key_paths
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -79,7 +79,7 @@ def test_walkers_report_visited_directories(tmp_path):
     four distinct code paths, none of them redundant with another.
     """
     repo = _repo(tmp_path)
-    names = set(section_by_name("names").key_paths([repo]))
+    names = set(writer_key_paths(section_by_name("names"), [repo]))
     assert {
         repo.sut_dir / "lab",  # bare directory entry
         repo.sut_dir / "solo",  # `.json` entry's parent
@@ -105,7 +105,7 @@ def test_a_new_lab_file_in_a_globbed_directory_moves_the_names_digest(tmp_path):
     # having changed — backdating guarantees the write must move it.
     t = time.time_ns() - 2_000_000_000
     os.utime(repo.sut_dir / "extra", ns=(t, t))
-    keys = sorted(set(section_by_name("names").key_paths([repo])))
+    keys = sorted(set(writer_key_paths(section_by_name("names"), [repo])))
     before = [_hash_path(p) for p in keys]
     write_lab_json(repo.sut_dir / "extra" / "more.json", [], declare_labs=False)
     after = [_hash_path(p) for p in keys]

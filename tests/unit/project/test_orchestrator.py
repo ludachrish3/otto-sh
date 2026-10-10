@@ -15,10 +15,10 @@ actually sees. The repos come off the context it returns (``ctx.repos`` and
 No registry-isolation fixture here, deliberately: the tests register recording
 ``ProjectActions`` subclasses, and the root conftest's autouse
 ``_isolate_registries`` reaches ``PROJECT_ACTIONS`` dynamically (the same
-reasoning as ``test_actions.py``). They register into it directly rather than
-through ``register_project_actions`` — the attribution seam is
-``test_actions.py``'s subject, and a test that wires two labs in a row needs
-``overwrite=``.
+reasoning as ``test_actions.py``). They register through
+:func:`_register_actions`, which enters the repo's init-import marker (the
+table refuses a registration outside one) and passes ``overwrite=True``, since
+a test that wires two labs in a row registers a repo's actions twice.
 """
 
 import io
@@ -58,7 +58,6 @@ from otto.link import (
 from otto.logger.formatters import RichFormatter
 from otto.models.dependencies import normalize_name
 from otto.project import (
-    PROJECT_ACTIONS,
     Cleanliness,
     CleanlinessKind,
     CleanupOptions,
@@ -69,8 +68,10 @@ from otto.project import (
     ProjectActions,
     UninstallOptions,
     orchestrator,
+    register_project_actions,
 )
 from otto.project.orchestrator import InactiveRequiredDependencyError
+from otto.registry import registering_repo
 from otto.result import CommandNotRunError, Result
 from otto.tunnel import (
     DiscoveredTunnel,
@@ -133,6 +134,12 @@ class _FakeHost:
 
     async def toolchain_tools_absent(self):
         return self._record("toolchain_tools_absent", self.toolchain_absent)
+
+
+def _register_actions(repo: str, cls: "type[ProjectActions]") -> None:
+    """Register *cls* as *repo*'s actions, as that repo's init import would."""
+    with registering_repo(repo):
+        register_project_actions(cls, overwrite=True)
 
 
 def _fake_lab(links=()):
@@ -364,7 +371,7 @@ def _wire(  # noqa: PLR0913 — one independently-optional knob per axis of the 
     events, flags, questions = [], [], []
     cls = _recording_actions(events, flags, questions, **actions_kwargs)
     for name in repos:
-        PROJECT_ACTIONS.register(name, cls, overwrite=True, origin="test")
+        _register_actions(name, cls)
     fleet = [_FakeHost(f"h{i}", events) for i in range(hosts)]
     ctx = _FakeCtx(
         fleet,
@@ -1091,7 +1098,7 @@ def _wire_status(monkeypatch, repos):
     products = []
     for name, (state, flags) in repos.items():
         if state is not None:
-            PROJECT_ACTIONS.register(name, _state_actions(state), overwrite=True, origin="test")
+            _register_actions(name, _state_actions(state))
         products += [_FakeItem(name, installed=flag) for flag in flags]
     ctx = _FakeCtx([_FakeHost("h0", [], products=products)])
     _wire_lab(monkeypatch, list(repos), ctx)
@@ -1516,7 +1523,7 @@ async def test_cleanliness_marks_a_repo_whose_own_probe_failed(monkeypatch):
         async def is_clean(self):
             raise CommandNotRunError("test -e /opt/acme", "h0")
 
-    PROJECT_ACTIONS.register("app", _Raising, overwrite=True, origin="test")
+    _register_actions("app", _Raising)
     _wire_lab(monkeypatch, ["app"], _FakeCtx([_FakeHost("h0", [])]))
     _wire_infra(monkeypatch, [])
 
@@ -3101,7 +3108,7 @@ class TestPerRepoOptions:
 
         def wire(**classes):
             for label, cls in classes.items():
-                PROJECT_ACTIONS.register(label.lower(), cls, overwrite=True, origin="test")
+                _register_actions(label.lower(), cls)
             ctx = _FakeCtx([])
             _wire_lab(monkeypatch, ["a", "b"], ctx)
             return ctx
@@ -3121,11 +3128,9 @@ class TestPerRepoOptions:
         from otto import options
         from otto.cli.run import instruction
         from otto.project import ProjectActions, register_project_actions
-        from otto.project import actions as mod
         from otto.project.orchestrator import run_project_instruction
         from otto.registry import registering_repo
 
-        mod.register_project_instruction_bodies(ProjectActions, None)
         seen: "dict[str, object]" = {}
 
         @options

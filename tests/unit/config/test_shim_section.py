@@ -5,7 +5,7 @@ from pathlib import Path
 
 from otto import bootstrap
 from otto.config import completion_cache as cc
-from otto.config.cache_sections import SECTIONS, section_by_name
+from otto.config.cache_sections import SECTIONS, section_by_name, writer_key_paths
 from otto.config.completion_tree import build_shim_payload, inventory_block, stat_triple
 from tests._fixtures.generated_repo import generate_repo
 
@@ -30,8 +30,8 @@ def test_payload_keys_mirror_the_names_key_set(tmp_path, monkeypatch):
     _, repos = _repos(tmp_path, monkeypatch)
     payload = build_shim_payload(repos)
     names = section_by_name("names")
-    assert names.key_paths is not None
-    assert payload["keys"] == [stat_triple(p) for p in sorted(set(names.key_paths(repos)))]
+    keys = writer_key_paths(names, repos)
+    assert payload["keys"] == [stat_triple(p) for p in sorted(set(keys))]
     assert payload["tables"] == [str(repo.sut_dir) for repo in repos]
     assert payload["ttl_seconds"] == cc._cache_ttl_seconds(repos)
     assert "tests_digest" not in payload
@@ -63,7 +63,7 @@ def test_write_cache_stores_the_shim_section_when_given(tmp_path, monkeypatch):
     _, repos = _repos(tmp_path, monkeypatch)
     cc.write_cache(repos, [], [], shim=build_shim_payload(repos))
     data = json.loads(cc._cache_path().read_text())
-    assert data["schema"] == cc.SCHEMA_VERSION == 26
+    assert data["schema"] == cc.SCHEMA_VERSION == 27
     assert set(data["sections"]) == {"names", "shim"}
     assert data["sections"]["shim"]["tainted"] is False
     assert cc.cache_rebuild_is_worthwhile(repos) is False

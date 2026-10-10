@@ -4,16 +4,16 @@ import dataclasses
 
 import pytest
 
-from otto.instructions import INSTRUCTIONS, instruction
+from otto.instructions import INSTRUCTIONS, STANDALONE_INSTRUCTIONS, instruction
 from otto.registry import registering_repo
 
 
 @pytest.fixture(autouse=True)
 def _clean_registry():
-    names = set(INSTRUCTIONS.names())
+    names = set(STANDALONE_INSTRUCTIONS.names())
     yield
-    for name in set(INSTRUCTIONS.names()) - names:
-        INSTRUCTIONS.unregister(name)
+    for name in set(STANDALONE_INSTRUCTIONS.names()) - names:
+        STANDALONE_INSTRUCTIONS.unregister(name)
 
 
 @dataclasses.dataclass

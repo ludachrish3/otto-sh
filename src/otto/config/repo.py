@@ -26,8 +26,7 @@ if TYPE_CHECKING:
     from rich.text import Text
 
     from ..declared import DeclaredEntry
-    from ..host.os_profile import OsProfile
-    from ..labs.sources import CompiledLabSource
+    from ..labs.sources import PendingLabSource
     from ..models.dependencies import ParsedDependency
     from ..models.settings import OsProfileSpec
     from ..registry import RegistrationRefused
@@ -243,7 +242,7 @@ class CompiledSettings:
 
     name: str
     version: Version
-    lab_sources: list["CompiledLabSource"]
+    lab_sources: list["PendingLabSource"]
     project_scope: ProjectScopeConfig | None
     libs: list[Path]
     tests: list[Path]
@@ -259,16 +258,6 @@ class CompiledSettings:
     declared_dev_tools: list["DeclaredEntry"]
 
 
-def _check_os_profile_section(name: str, prof: "OsProfileSpec") -> None:
-    """Check one ``[os_profiles.<name>]`` table, naming the table in a refusal."""
-    from ..host.os_profile import check_os_profile
-
-    try:
-        check_os_profile(name, prof.base, prof.defaults)
-    except ValueError as e:
-        raise ValueError(f"[os_profiles.{name}]: {e}") from e
-
-
 def compile_settings(data: dict[str, Any], sut_dir: Path) -> CompiledSettings:
     """Validate and compile one parsed ``.otto/settings.toml`` exactly as the loader does.
 
@@ -279,9 +268,13 @@ def compile_settings(data: dict[str, Any], sut_dir: Path) -> CompiledSettings:
 
     Raises:
         pydantic_core.ValidationError: the document does not match ``SettingsModel``.
-        ValueError: a later compile step refused it — a lab source, a
-            dependency entry, or an OS profile (its message starts with the
-            ``[os_profiles.<name>]`` table).
+        ValueError: a later compile step refused it — duplicate lab-source
+            labels or a dependency entry. A lab source's own options are not
+            parsed here: that happens when the source is prepared, after init
+            (:func:`otto.labs.sources.prepared_lab_sources`). Nor is what an
+            ``[os_profiles]`` table means: its shape is checked here, and its
+            base and defaults after init
+            (:func:`otto.host.os_profile.check_data_profiles`).
     """
     # ``otto.models``'s package __init__ boots otto.host first to avoid an
     # import cycle (os_profile's eager registration <-> models.host); see the
@@ -298,8 +291,6 @@ def compile_settings(data: dict[str, Any], sut_dir: Path) -> CompiledSettings:
     declared_dependencies = [
         parse_dependency_entry(e, required=True) for e in model.dependencies.required
     ] + [parse_dependency_entry(e, required=False) for e in model.dependencies.optional]
-    for name, prof in model.os_profiles.items():
-        _check_os_profile_section(name, prof)
     return CompiledSettings(
         name=model.name,
         version=Version(model.version),
@@ -420,15 +411,16 @@ class Repo:
     version: Version = field(init=False)
     """Product version"""
 
-    lab_sources: list["CompiledLabSource"] = field(default_factory=list, init=False)
-    """Compiled ``[[lab.sources]]`` declarations, in declaration order.
+    lab_sources: list["PendingLabSource"] = field(default_factory=list, init=False)
+    """The ``[[lab.sources]]`` declarations, in declaration order, as settings parsing leaves them.
 
-    Built by :func:`otto.labs.sources.compile_lab_sources` at parse, so a
-    malformed declaration is a settings error rather than a backend that fails
-    to construct much later. The single input to the process-wide
-    ``build_lab_sources`` construction seam; also read directly by the
-    completion cache (fingerprint + raw link scan) via
-    :meth:`~otto.labs.sources.CompiledLabSource.lab_files`."""
+    Built by :func:`otto.labs.sources.compile_lab_sources` at parse, which
+    checks only each entry's envelope (its backend name and a unique label).
+    A source's own options are parsed when it is prepared, after every repo's
+    init modules have run (:func:`otto.labs.sources.prepared_lab_sources`),
+    because its backend may be registered by any of them. The single input to
+    the process-wide ``build_lab_sources`` construction seam and to the
+    completion cache writer's lab key paths."""
 
     project_scope: ProjectScopeConfig | None = field(default=None, init=False)
     """Compiled ``[project]`` declaration — the labs and hosts this repo targets.
@@ -483,14 +475,17 @@ class Repo:
     selections (forwarded to the resolver) and option-value defaults (applied
     per-key, product-wins)."""
 
-    os_profiles: dict[str, "OsProfile"] = field(
+    os_profiles: dict[str, "OsProfileSpec"] = field(
         default_factory=dict,
         init=False,
     )
-    """Named OS profiles declared by this repo's ``[os_profiles]`` settings,
-    keyed by profile name. Each is also registered into the global os-profile
-    registry at parse time so lab-data entries can select it by name in the
-    ``os_type`` field. See :func:`otto.host.os_profile.register_os_profile`."""
+    """This repo's ``[os_profiles]`` tables as parsed, keyed by profile name.
+
+    Data, never registered: a :class:`~otto.host.os_profile.ProfileContext`
+    built from the selected repos carries them to every reader that resolves
+    an ``os_type``, and :func:`~otto.host.os_profile.check_data_profiles`
+    checks them once every init module has run. See
+    :doc:`/configuration/os-profiles`."""
 
     logging_levels: dict[str, str] = field(default_factory=dict[str, str], init=False)
     """This repo's ``[logging.levels]`` table: logger name → the minimum level
@@ -678,30 +673,12 @@ class Repo:
         self.declared_dependencies = compiled.declared_dependencies
         self.host_preferences = compiled.host_preferences
         self.logging_levels = compiled.logging_levels
-        self.os_profiles = self._register_os_profiles(compiled.os_profiles)
+        self.os_profiles = compiled.os_profiles
         self.docker_settings = compiled.docker_settings
         self.monitor_settings = compiled.monitor_settings
         self.env_backend = compiled.env_backend
         self.declared_products = compiled.declared_products
         self.declared_dev_tools = compiled.declared_dev_tools
-
-    def _register_os_profiles(
-        self,
-        profiles: dict[str, "OsProfileSpec"],
-    ) -> dict[str, "OsProfile"]:
-        """Register each validated os-profile into the global registry; return built profiles.
-
-        Runs at settings-parse time,
-        before init modules import, so a code registration can override a data
-        table of the same name (last writer wins).
-        """
-        from ..host.os_profile import build_os_profile, register_os_profile
-
-        result: dict[str, OsProfile] = {}
-        for name, prof in profiles.items():
-            register_os_profile(name, prof.base, prof.defaults)
-            result[name] = build_os_profile(name)
-        return result
 
     @property
     def reservation_settings(self) -> dict[str, Any]:
@@ -719,8 +696,8 @@ class Repo:
         Spec 2026-08-28 host-inventory §8. Empty when the section is absent.
         Literal parsed TOML, exactly like ``reservation_settings``: a plain
         dict, so this module never has to import :mod:`otto.inventory` (which
-        would invert the layering). Anchoring and backend-kwarg validation
-        happen in :func:`otto.inventory.config.compile_inventory`.
+        would invert the layering). The backend's configuration model parses
+        and anchors the backend's keys in :func:`otto.inventory.config.compile_inventory`.
         """
         return self.settings.get("inventory", {}) or {}
 
@@ -730,8 +707,8 @@ class Repo:
 
         Spec 2026-09-06 creds-store §4.2. Empty when absent; literal parsed
         TOML like ``inventory_settings``, so this module never imports
-        :mod:`otto.creds`. Anchoring and kwarg validation happen in
-        :func:`otto.creds.config.compile_creds`.
+        :mod:`otto.creds`. The store's configuration model parses and anchors
+        its keys in :func:`otto.creds.config.compile_creds`.
         """
         return self.settings.get("creds", {}) or {}
 

@@ -1,21 +1,20 @@
-"""Published project-instruction commands: the merge, the dispatch, the panel.
+"""Project-instruction commands: the derivation, the merge, the dispatch, the panel.
 
-``otto run install`` and its five siblings are no longer hand-written wrappers.
-:func:`otto.project.commands.publish_project_instructions` publishes ONE command
-per name in :data:`~otto.instructions.PROJECT_INSTRUCTIONS`, whose flags are the
-union of every registered body's options class, and whose body forwards to
+``otto run install`` and its five siblings are not hand-written wrappers.
+:data:`~otto.instructions.INSTRUCTIONS` derives ONE command per name in
+:data:`~otto.instructions.PROJECT_INSTRUCTIONS`, whose flags are the union of
+every declared body's options class, and whose body forwards to
 :func:`otto.project.orchestrator.run_project_instruction`. This file covers the
-publish (what lands in ``INSTRUCTIONS``), the merge (whose flags land on the
+derivation (what ``INSTRUCTIONS`` holds), the merge (whose flags land on the
 command, and what a cross-repo field collision does), the dispatch (every flag
 reaching the orchestrator as an options instance), ``status``' rendering and its
 three exit codes, and the ``otto defaults`` panel.
 
-PUBLISHING IS A CALL, NOT AN IMPORT, which is the whole point of this task: the
-flag set is only known once every repo's init has spoken, so bootstrap publishes
-AFTER the repo loop. The root conftest's ``_isolate_registries`` rolls every
-registry back after each test, so tests that need the six present go through the
-``registered`` fixture, which re-declares otto's bodies and publishes them --
-in any order, whatever ran in this process before.
+Otto's six come from a constant (``FIRST_PARTY_BODIES``), so they are present
+in every process; the ``registered`` fixture only says a test relies on them.
+The flag set is only known once every repo's init has spoken, so bootstrap
+checks the merged options (``check_project_instruction_options``) AFTER the
+repo loop.
 
 THE ORCHESTRATOR IS PATCHED AT ``orchestrator.<name>``, never at
 ``otto.project.<name>``: :data:`otto.project.orchestrator._ENTRIES` resolves the
@@ -46,6 +45,9 @@ from otto.instructions import (
     FIRST_PARTY_INSTRUCTIONS,
     INSTRUCTIONS,
     PROJECT_INSTRUCTIONS,
+    STANDALONE_INSTRUCTIONS,
+    InstructionEntry,
+    ProjectInstructionError,
     run_instruction,
 )
 from otto.params import OptionsCollisionError
@@ -67,8 +69,8 @@ from otto.project import (
     register_project_actions,
 )
 from otto.project.commands import (
+    check_project_instruction_options,
     merged_option_params,
-    publish_project_instructions,
 )
 from otto.registry import registering_repo
 from otto.result import Result
@@ -94,26 +96,10 @@ dispatch = DispatchRunner()
 async def _noop() -> None: ...
 
 
-def _clear_first_party() -> None:
-    """Drop whatever first-party entries this process already holds."""
-    for name in FIRST_PARTY_INSTRUCTIONS:
-        if name in INSTRUCTIONS:
-            INSTRUCTIONS.unregister(name)
-
-
-def _publish_the_six():
-    """Re-declare otto's own bodies and publish every project instruction."""
-    from otto.project import actions as mod
-
-    _clear_first_party()
-    mod.register_project_instruction_bodies(ProjectActions, None)
-    publish_project_instructions()
-
-
 @pytest.fixture
 def registered():
-    """The six, published, whatever ran in this process before."""
-    _publish_the_six()
+    """The six, derived from otto's constant: present whatever ran before."""
+    assert set(SIX) <= set(INSTRUCTIONS.names())
 
 
 def _render(renderable) -> str:
@@ -165,20 +151,20 @@ class _Recorder:
 # ── Registration ─────────────────────────────────────────────────────────────
 
 
-def test_publishing_registers_all_six(registered):
+def test_the_six_are_derived(registered):
     for name in SIX:
         assert name in INSTRUCTIONS, name
         entry = INSTRUCTIONS.get(name)
         assert entry.module == ACTIONS_MODULE
-        # First-party whoever declared the body: the dispatch gate refuses an
+        # No owning repo whoever declared a body: the dispatch gate refuses an
         # instruction whose OWNER is inactive, and a project instruction has a
         # body per repo rather than one owner.
-        assert entry.registered_by is None
+        assert INSTRUCTIONS.repo(name) is None
     assert frozenset(SIX) == FIRST_PARTY_INSTRUCTIONS
 
 
 def test_the_registered_set_is_exactly_the_declared_set(registered):
-    """No drift between the frozenset the guard reads and what actually publishes.
+    """No drift between the frozenset the guard reads and what the tables derive.
 
     The guard refuses a repo instruction by NAME, from
     ``FIRST_PARTY_INSTRUCTIONS`` — a name in that set with no instruction
@@ -204,12 +190,10 @@ def test_repo_defining_a_first_party_name_fails_loud_with_migration_message():
 
 
 def test_the_refusal_beats_the_registry_and_leaves_ottos_entry_intact(registered):
-    """The guard fires BEFORE ``INSTRUCTIONS.register``, with otto's own entry present.
+    """The table's guard names ProjectActions, and otto's own entry stays.
 
-    Two failures hide here if it fires after: the repo's sub-app would already
-    be in the registry (the duplicate check would raise the generic
-    "already registered" error, which says nothing about ProjectActions), and
-    a first registration ORDER where the repo goes first would win outright.
+    The generic "already registered" error would say nothing about where the
+    override belongs.
     """
     with registering_repo("acme"), pytest.raises(ValueError, match="project instruction"):
 
@@ -217,13 +201,6 @@ def test_the_refusal_beats_the_registry_and_leaves_ottos_entry_intact(registered
         async def cleanup() -> None: ...
 
     assert INSTRUCTIONS.get("cleanup").module == ACTIONS_MODULE
-
-
-def test_otto_itself_may_register_first_party_names():
-    # The guard keys on the registering-repo marker, NOT on the name alone —
-    # otherwise otto's own publish trips it (order-independence).
-    _publish_the_six()  # no registering-repo marker is set: must not raise
-    assert set(SIX) <= set(INSTRUCTIONS.names())
 
 
 def test_repo_instruction_with_novel_name_is_unaffected():
@@ -238,16 +215,14 @@ def test_repo_instruction_with_novel_name_is_unaffected():
 # ── Bootstrap wiring ─────────────────────────────────────────────────────────
 
 
-def test_bootstrap_declares_before_any_repo_init_and_publishes_after(tmp_path, monkeypatch):
-    """Phase 2 imports the BODIES first and publishes the COMMANDS last.
+def test_bootstrap_imports_the_bodies_before_any_repo_init_and_checks_after(tmp_path, monkeypatch):
+    """Phase 2 imports otto's BODIES first and checks the merged OPTIONS last.
 
     The two halves are ordered against opposite ends of the repo loop and both
-    orderings are load-bearing. ``otto.project.actions`` must be imported
-    first, so the decorator's guard knows the project-instruction names before
-    a repo can claim one and so the walk shapes are fixed; the publish must
-    come last, because a repo's override is what ADDS flags to the merged
-    command and a publish taken before the loop would ship the union of
-    nothing.
+    orderings are load-bearing. ``otto.project.actions`` is imported first, so
+    no registry check ever runs that import; the options check comes last,
+    because a repo's override is what ADDS flags to the merged command and a
+    check taken before the loop would check the union of nothing.
 
     Observed as the CALL, not as ``sys.modules`` afterwards: the module is
     imported once per process, so an "is it imported" assertion passes on the
@@ -265,8 +240,8 @@ def test_bootstrap_declares_before_any_repo_init_and_publishes_after(tmp_path, m
         seen.append(name)
         return real_import(name, *args, **kwargs)
 
-    def _publish_spy() -> None:
-        seen.append("<publish>")
+    def _check_spy() -> None:
+        seen.append("<check>")
 
     repo = make_sut_repo(
         tmp_path / "acme",
@@ -276,7 +251,7 @@ def test_bootstrap_declares_before_any_repo_init_and_publishes_after(tmp_path, m
     )
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
     monkeypatch.setattr(bs.importlib, "import_module", _spy)
-    monkeypatch.setattr("otto.project.commands.publish_project_instructions", _publish_spy)
+    monkeypatch.setattr("otto.project.commands.check_project_instruction_options", _check_spy)
     bs._reset()
     try:
         result = bs.bootstrap()
@@ -286,7 +261,7 @@ def test_bootstrap_declares_before_any_repo_init_and_publishes_after(tmp_path, m
     assert result.errors == []
     assert ACTIONS_MODULE in seen
     assert seen.index(ACTIONS_MODULE) < seen.index("acme_init")
-    assert seen.index("acme_init") < seen.index("<publish>")
+    assert seen.index("acme_init") < seen.index("<check>")
 
 
 def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(
@@ -1077,11 +1052,18 @@ def test_first_party_panel_lists_the_six(registered):
         assert name in text, name
 
 
-def test_no_panel_when_otto_registered_nothing():
+class _NoInstructions:
+    """A stand-in for a table with nothing in it (otto's six always derive)."""
+
+    def items(self) -> list:
+        return []
+
+
+def test_no_panel_when_otto_registered_nothing(monkeypatch):
     """An empty panel is worse than none: it advertises a section with no content."""
     from otto.cli.run import first_party_instructions_panel
 
-    _clear_first_party()
+    monkeypatch.setattr("otto.cli.run.INSTRUCTIONS", _NoInstructions())
 
     assert first_party_instructions_panel() is None
 
@@ -1166,7 +1148,7 @@ class TestMergedFlags:
                 async def install(self, opts: WidgetInstall):
                     return await super().install(opts)
 
-        publish_project_instructions()
+        check_project_instruction_options()
         out = runner.invoke(run_app, ["install", "--help"]).output
 
         assert "--ensure" in out
@@ -1205,7 +1187,7 @@ class TestMergedFlags:
                 async def install(self, opts: BInstall):
                     return await super().install(opts)
 
-        publish_project_instructions()
+        check_project_instruction_options()
         out = runner.invoke(run_app, ["install", "--help"]).output
 
         assert out.count("--lab-env") == 1, out
@@ -1245,7 +1227,7 @@ class TestMergedFlags:
                     return await super().install(opts)
 
         with pytest.raises(OptionsCollisionError) as excinfo:
-            publish_project_instructions()
+            check_project_instruction_options()
 
         message = str(excinfo.value)
         assert "'install'" in message
@@ -1255,7 +1237,7 @@ class TestMergedFlags:
         assert "share one base class" in message
 
     def test_a_repo_added_instruction_is_published_under_its_module(self, registered) -> None:
-        """A name otto never declared is published too, attributed to ITS declarer.
+        """A name otto never declared is derived too, attributed to ITS declarer.
 
         ``module`` is what ``--list-instructions`` attributes panels by, so a
         repo's own project instruction has to carry the repo's module or it
@@ -1270,10 +1252,8 @@ class TestMergedFlags:
                     """Deploy this repo's firmware."""
                     return Result(Status.Success, value=opts.target)
 
-        publish_project_instructions()
-
         entry = INSTRUCTIONS.get("deploy")
-        assert entry.registered_by is None
+        assert INSTRUCTIONS.repo("deploy") is None
         assert entry.module == Widget.__module__
         assert "--target" in runner.invoke(run_app, ["deploy", "--help"]).output
 
@@ -1310,14 +1290,12 @@ class TestMergedFlags:
         assert "every repo" in install
         assert "exit 0" in status
 
-    def test_a_hand_built_repo_added_entry_is_refused_at_publish(self, registered) -> None:
-        """The backstop holds for a REPO's own name, where the modules match.
+    def test_a_hand_built_entry_under_a_repo_s_project_name_is_refused(self, registered) -> None:
+        """The table refuses a standalone entry under a repo's own project instruction.
 
         A repo declares ``deploy`` on its actions class and hand-registers an
-        ``InstructionEntry`` under the same name from the same init module.
-        Keying the republish on the entry's ``module`` would read that as "mine,
-        overwrite it" and silently take the name; the registry's own attribution
-        (``origin``) does not, so the second registration is refused.
+        ``InstructionEntry`` under the same name: the one table check refuses
+        it at registration, whatever module either came from.
         """
         with registering_repo("widget"):
 
@@ -1328,56 +1306,32 @@ class TestMergedFlags:
                     """Deploy this repo's firmware."""
                     return Result(Status.Success, value=opts.target)
 
-        from otto.instructions import InstructionEntry
+        entry = InstructionEntry(name="deploy", module=Widget.__module__, handler=_noop)
+        with pytest.raises(ProjectInstructionError, match="rename one of them"):
+            STANDALONE_INSTRUCTIONS.register("deploy", entry)
+        assert INSTRUCTIONS.get("deploy").project is not None
 
-        INSTRUCTIONS.register(
-            "deploy",
-            InstructionEntry(
-                name="deploy",
-                module=Widget.__module__,
-                handler=_noop,
-                registered_by="widget",
-            ),
-            origin=Widget.__module__,
-        )
-
-        with pytest.raises(ValueError, match="already registered"):
-            publish_project_instructions()
-
-    def test_publishing_twice_republishes_its_own_entries(self, registered) -> None:
-        """The republish path still works -- the backstop must not refuse otto's own.
-
-        ``registered`` has already published once, so this second call is the
-        one a re-entrant bootstrap (or a test) makes; it must overwrite rather
-        than collide, and the entry it leaves must still be a usable command.
-        """
-        publish_project_instructions()  # must not raise
+    def test_checking_twice_is_harmless(self, registered) -> None:
+        """The post-loop check reads the tables and writes nothing: a second call passes."""
+        check_project_instruction_options()
+        check_project_instruction_options()
 
         entry = INSTRUCTIONS.get("install")
         assert entry.module == ACTIONS_MODULE
         assert "--ensure" in runner.invoke(run_app, ["install", "--help"]).output
 
-    def test_a_hand_built_first_party_entry_is_refused_at_publish(self, registered) -> None:
-        """The registry-order backstop: a repo cannot pre-empt a published name.
+    def test_a_hand_built_first_party_entry_is_refused(self, registered) -> None:
+        """A standalone entry under one of otto's names is refused at registration.
 
-        Only an entry THIS module published is overwritten. Anything else is
-        left for ``INSTRUCTIONS.register`` to refuse, which is what stops a repo
-        that hand-built an ``InstructionEntry`` under a project instruction's
-        name from shadowing it — the route the decorator's guard never sees.
+        From a repo's init import it is the guard's ProjectActions advice; from
+        anywhere else, the table's clash. Either way otto's command stays.
         """
-        from otto.instructions import InstructionEntry
-
-        INSTRUCTIONS.unregister("install")
-        INSTRUCTIONS.register(
-            "install",
-            InstructionEntry(
-                name="install", module="repo.init", handler=_noop, registered_by="repo"
-            ),
-            origin="repo.init",
-        )
-
-        with pytest.raises(ValueError, match="already registered"):
-            publish_project_instructions()
+        entry = InstructionEntry(name="install", module="repo.init", handler=_noop)
+        with registering_repo("repo"), pytest.raises(ValueError, match="ProjectActions"):
+            STANDALONE_INSTRUCTIONS.register("install", entry)
+        with pytest.raises(ProjectInstructionError, match="rename one of them"):
+            STANDALONE_INSTRUCTIONS.register("install", entry)
+        assert INSTRUCTIONS.get("install").module == ACTIONS_MODULE
 
 
 # ── Task 4b fix round 1, item A.3: a dry run validates the REAL published leaf ──
@@ -1393,9 +1347,9 @@ class TestDryRunOnAPublishedProjectInstruction:
     at the generic seam before the leaf's own ``bind_verb_options`` call ever
     ran. A bad value for a verb-registered class (the shape of the reported
     bug: ``otto -n run install --minimum 0``) exited 0 under `-n` and 2 for
-    real. This class drives the SHIPPED ``install`` command through
-    ``publish_project_instructions`` (the ``registered`` fixture), so it is
-    the leaf a real invocation resolves.
+    real. This class drives the SHIPPED ``install`` command, derived from
+    otto's own bodies (the ``registered`` fixture), so it is the leaf a real
+    invocation resolves.
     """
 
     def test_a_bad_verb_option_fails_the_dry_run_exactly_like_a_real_run(self, registered) -> None:
@@ -1507,7 +1461,6 @@ class TestProjectInstructionOwnOptionValidation:
     def test_a_bad_own_option_exits_2_on_a_real_run(self, monkeypatch, registered) -> None:
         self._register_guarded_install()
         self._wire_one_repo(monkeypatch)
-        publish_project_instructions()
 
         result = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
         assert result.exit_code == 2, result.output
@@ -1518,7 +1471,6 @@ class TestProjectInstructionOwnOptionValidation:
 
         self._register_guarded_install()
         self._wire_one_repo(monkeypatch)
-        publish_project_instructions()
 
         with active_context(dry_run=True):
             result = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
@@ -1549,7 +1501,6 @@ def _wire_widget_lab(monkeypatch, seen: list, names=("widget", "dormant")) -> No
                 seen.append(try_get_context())
                 return Result(Status.Success)
 
-    publish_project_instructions()
     repos = [fake_repo(n, project_scope=None, sut_dir=f"/tmp/{n}") for n in names]
     patch_bootstrap(monkeypatch, repos)
 

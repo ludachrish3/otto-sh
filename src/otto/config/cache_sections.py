@@ -6,7 +6,8 @@ A *section* is a registration — ``(name, key_paths or derived_from, collect)``
 cache file stores each section under its own name with its own digest::
 
     {"schema": N, "sections": {"<name>": {"fingerprint", "generated_at",
-                                          "tainted", "payload"}, ...}}
+                                          "tainted", "payload",
+                                          "ttl_seconds", "lab_key_paths"}, ...}}
 
 Still ONE file and one open per read — the network-filesystem optimum,
 preserved deliberately. Reserved ``__*__`` namespaces (the per-file test
@@ -56,10 +57,13 @@ import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from . import completion_cache as _cc
 from .repo import Repo
+
+if TYPE_CHECKING:
+    from ..host.os_profile import ProfileContext
 
 SHIM_SECTION = "shim"
 """Storage name of the `shim` section. Defined here, not in :mod:`.completion_tree` (which
@@ -69,33 +73,93 @@ whole CLI tree); a module-scope import the other way round would drag `completio
 everything IT imports — onto every TAB, not just a cache write."""
 
 
-def _names_key_paths(repos: list[Repo]) -> list[Path]:
-    """Every path whose edit can change a REGISTERED name.
+def _names_static_key_paths(repos: list[Repo]) -> list[Path]:
+    """Every settings and init path whose edit can change a REGISTERED name.
 
-    Registration executes init modules only, steered by ``settings.toml``;
-    the hosts/labs payloads additionally read the lab files. Test files
-    deliberately do NOT key this section: they cannot register, and skipping
-    them is the point — this key set stays small. Nor do the pytest configs:
-    they decide which files are tests, and nothing in this payload reads a
-    test file.
-
-    Every directory the enumeration entered is a key path too — its mtime
-    moves when a file appears, is removed or is renamed there, which is how a
-    NEW lab file is seen by a reader that never re-runs the glob (the
-    completion shim). Those directories are appended, sorted, after the
-    files.
+    Registration executes init modules only, steered by ``settings.toml``.
+    Test files deliberately do NOT key this section: they cannot register,
+    and skipping them is the point — this key set stays small. Nor do the
+    pytest configs: they decide which files are tests, and nothing in this
+    payload reads a test file. The lab files the hosts/labs payloads read are
+    the section's lab key paths (:func:`lab_key_paths`), stored with the
+    entry by the writer.
     """
     paths: list[Path] = []
-    visited: set[Path] = set()
     for repo in repos:
         paths.append(repo.sut_dir / ".otto" / "settings.toml")
         paths.extend(_cc.resolved_init_paths(repo))
-        # Direct attribute access throughout: this is the digest path, and a
-        # malformed repo double missing a pinned attribute must fail by name,
-        # not hash "nothing declared".
-        for src in repo.lab_sources:
-            paths.extend(src.lab_files(visited=visited))
+    return paths
+
+
+def lab_key_paths(repos: list[Repo]) -> list[Path]:
+    """Every lab file the repos' prepared sources read, then every directory they were found in.
+
+    For the cache WRITER only, after init: it prepares the sources
+    (:func:`~otto.labs.sources.prepared_lab_sources`) and expands their
+    entries, and the writer stores the result beside the entry so a warm
+    reader never does either. A source whose backend is not registered, or
+    that is not file-backed, contributes nothing (its TTL class covers it);
+    so does a repo whose sources fail to prepare, which no cache write may
+    crash over.
+
+    Every directory the enumeration entered is a key path too — its mtime
+    moves when a file appears, is removed or is renamed there, which is how a
+    NEW lab file is seen by a reader that never re-runs the glob. Those
+    directories are appended, sorted, after the files.
+    """
+    from ..host.os_profile import ProfileContext
+    from ..labs.errors import LabRepositoryError
+    from ..labs.sources import prepared_lab_sources
+
+    paths: list[Path] = []
+    visited: set[Path] = set()
+    profiles = ProfileContext.from_repos(repos)
+    for repo in repos:
+        try:
+            states = prepared_lab_sources(repo, profiles=profiles)
+        except LabRepositoryError:
+            continue
+        for state in states:
+            if state.is_known():
+                paths.extend(state.lab_files(visited=visited))
     return [*paths, *sorted(visited)]
+
+
+def describe_lab_sources(repo: Repo, *, profiles: "ProfileContext") -> list[tuple[str, str]]:
+    """``(source label, what it reads)`` for each of *repo*'s lab sources, for ``otto cache info``.
+
+    Read before any init module runs, so a backend an init module registers
+    is not registered yet: such a source is "unprepared", because whether it
+    reads files cannot be told. A source that is not file-backed says so, and
+    so does a repo whose sources do not prepare. *profiles* are the data
+    profiles of every repo the caller holds, so the preparation is the one
+    the cache writer shares.
+    """
+    from ..labs.errors import LabRepositoryError
+    from ..labs.sources import prepared_lab_sources
+
+    try:
+        states = prepared_lab_sources(repo, profiles=profiles)
+    except LabRepositoryError as e:
+        return [(source.label, f"cannot prepare — {e}") for source in repo.lab_sources]
+    lines: list[tuple[str, str]] = []
+    for state in states:
+        source = state.pending
+        if not state.is_known():
+            files = f"unprepared — backend {source.backend!r} is not registered before init"
+        elif not state.is_file_backed():
+            files = f"not file-backed ({source.backend})"
+        else:
+            files = ", ".join(str(p) for p in state.lab_files()) or "no lab file found"
+        lines.append((source.label, files))
+    return lines
+
+
+def writer_key_paths(section: "Section", repos: list[Repo]) -> list[Path]:
+    """Every key path of *section* as the writer computes it: its own, then its lab key paths."""
+    assert section.key_paths is not None  # noqa: S101 — a derived section has no key paths
+    own = section.key_paths(repos)
+    return [*own, *lab_key_paths(repos)] if section.lab_keyed else own
 
 
 def _collect_names(repos: list[Repo]) -> dict[str, Any]:
@@ -153,8 +217,14 @@ class Section:
     """Build this section's payload from live state (slow path only)."""
 
     key_paths: Callable[[list[Repo]], list[Path]] | None = None
-    """Every path whose edit must move this section's digest. Order and
-    duplicates are irrelevant — :func:`section_digest` sorts and dedups."""
+    """Every path whose edit must move this section's digest, besides its lab
+    key paths. Order and duplicates are irrelevant — :func:`section_digest`
+    sorts and dedups."""
+
+    lab_keyed: bool = False
+    """Whether the lab files also key this section. The writer computes them
+    (:func:`lab_key_paths`) and stores them with the entry; a reader takes
+    them from the stored entry, so it never prepares a source or globs."""
 
     derived_from: list[str] = field(default_factory=list)
     """Sections whose digests this one's is composed from, in a fixed order."""
@@ -165,10 +235,14 @@ class Section:
             raise ValueError(
                 f"section {self.name!r} must declare exactly one of key_paths / derived_from"
             )
+        if self.lab_keyed and self.key_paths is None:
+            raise ValueError(f"section {self.name!r}: a derived section cannot be lab-keyed")
 
 
 SECTIONS: list[Section] = [
-    Section(name="names", key_paths=_names_key_paths, collect=_collect_names),
+    Section(
+        name="names", key_paths=_names_static_key_paths, lab_keyed=True, collect=_collect_names
+    ),
     Section(name=SHIM_SECTION, derived_from=["names"], collect=_collect_shim),
 ]
 
@@ -200,7 +274,7 @@ def _shared_tail(repos: list[Repo]) -> list[str]:
 
 
 def section_digest(section: Section, repos: list[Repo]) -> str:
-    """Stat-based sha256 over *section*'s key paths (plus the shared tail).
+    """Stat-based sha256 over *section*'s key paths (plus the shared tail), as the writer sees them.
 
     A thin wrapper over :func:`section_digests` for a single section — a
     derived section has no key paths of its own to stat, so both shapes go
@@ -209,14 +283,32 @@ def section_digest(section: Section, repos: list[Repo]) -> str:
     return section_digests(repos, [section])[section.name]
 
 
-def _digest(section: Section, repos: list[Repo], tail: list[str]) -> str:
-    """:func:`section_digest` with the shared tail precomputed by the caller."""
+class _StoredKeysMissingError(LookupError):
+    """A stored entry carries no usable lab key paths, so it cannot be judged."""
+
+
+def stored_lab_key_paths(entry: object) -> "list[Path] | None":
+    """Return the lab key paths a stored entry carries, or ``None`` if it has none usable."""
+    paths = entry.get("lab_key_paths") if isinstance(entry, dict) else None
+    if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+        return None
+    return [Path(p) for p in paths]
+
+
+def stored_ttl_seconds(entry: object) -> "int | None":
+    """Return the TTL class a stored entry carries, or ``None`` if it has none usable."""
+    ttl = entry.get("ttl_seconds") if isinstance(entry, dict) else None
+    return ttl if isinstance(ttl, int) and not isinstance(ttl, bool) else None
+
+
+def _digest(section: Section, repos: list[Repo], tail: list[str], lab: list[Path]) -> str:
+    """:func:`section_digest` with the shared tail and the lab key paths supplied by the caller."""
     assert section.key_paths is not None  # noqa: S101 — type narrows: a derived section never reaches here
     h = hashlib.sha256()
     # Via the module attribute, not a from-import: tests count digest work by
     # monkeypatching ``completion_cache.hash_file``, and a bound name here
     # would let this module hash behind the counter's back.
-    for path in sorted(set(section.key_paths(repos))):
+    for path in sorted(set(section.key_paths(repos)) | set(lab)):
         _cc.hash_file(h, path)
     for line in tail:
         h.update(f"{line}\n".encode())
@@ -228,6 +320,7 @@ def section_digests(
     sections: list[Section],
     *,
     known: "dict[str, str] | None" = None,
+    stored: "dict[str, Any] | None" = None,
 ) -> dict[str, str]:
     """Return the digest per named section, computing the shared tail once.
 
@@ -245,6 +338,13 @@ def section_digests(
     :func:`completion_cache.write_sections
     <otto.config.completion_cache.write_sections>` consumes it).
 
+    A lab-keyed section's lab key paths come from *stored* (the stored
+    entries, by section name) when it is given — what a reader passes, so it
+    never prepares a source or globs — and are computed
+    (:func:`lab_key_paths`) when it is not. A stored entry without usable lab
+    key paths raises ``_StoredKeysMissingError``, which a reader takes as a
+    miss.
+
     A derived section's digest is ``sha256`` over ``<child>:<digest>`` lines,
     computing (or reusing) the children through the same memo, so asking for
     ``shim`` alone still works and a child is never hashed twice.
@@ -252,6 +352,20 @@ def section_digests(
     out: dict[str, str] = {}
     memo: dict[str, str] = {} if known is None else dict(known)
     tail: list[str] | None = None
+    computed_lab: list[Path] | None = None
+
+    def lab_of(section: Section) -> list[Path]:
+        nonlocal computed_lab
+        if not section.lab_keyed:
+            return []
+        if stored is not None:
+            paths = stored_lab_key_paths(stored.get(section.name))
+            if paths is None:
+                raise _StoredKeysMissingError(section.name)
+            return paths
+        if computed_lab is None:
+            computed_lab = lab_key_paths(repos)
+        return computed_lab
 
     def digest_of(section: Section) -> str:
         nonlocal tail
@@ -265,13 +379,20 @@ def section_digests(
         else:
             if tail is None:
                 tail = _shared_tail(repos)
-            value = _digest(section, repos, tail)
+            value = _digest(section, repos, tail, lab_of(section))
         memo[section.name] = value
         return value
 
     for section in sections:
         out[section.name] = digest_of(section)
     return out
+
+
+def needs_lab_keys(section: Section) -> bool:
+    """Whether *section*'s digest depends on lab key paths, its own or a child's."""
+    if section.lab_keyed:
+        return True
+    return any(needs_lab_keys(section_by_name(child)) for child in section.derived_from)
 
 
 def read_section(repos: list[Repo], name: str) -> "dict[str, Any] | None":

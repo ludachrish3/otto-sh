@@ -23,6 +23,14 @@ from otto.utils import Arg, Opt, Status, cli_exposed
 from tests._fixtures.dispatch import DispatchRunner
 
 
+def _entry(cls: type) -> object:
+    """A host-class record for a test double the CLI reads, never registered."""
+    from otto.host.os_profile import HostClassEntry
+    from otto.models.host import UnixHostSpec
+
+    return HostClassEntry(cls, UnixHostSpec)  # type: ignore[arg-type] — a double, not a RemoteHost
+
+
 def test_cli_exposed_sets_markers_with_dashed_default_name():
     @cli_exposed
     async def soft_reboot(self): ...
@@ -122,7 +130,9 @@ def test_make_method_command_failure_result_exits_nonzero(monkeypatch):
 
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    # Not a RemoteHost, so not registrable: the table is replaced by a
+    # mapping of the one record the CLI reads.
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _entry(_Host)})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
     app = typer.Typer(name="host", cls=HostGroup)
     host = _Host()
@@ -267,7 +277,7 @@ class _FakeEmbedded:
 def _make_app(monkeypatch, hosts: dict[str, type]):
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "HOST_CLASSES", {c.__name__: c for c in set(hosts.values())})
+    monkeypatch.setattr(op, "HOST_CLASSES", {c.__name__: _entry(c) for c in set(hosts.values())})
     monkeypatch.setattr(
         "otto.cli.expose.host_class_for_id",
         hosts.get,
@@ -401,7 +411,9 @@ def test_logout_renders_its_returned_outcome_once(monkeypatch):
 
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    # Not a RemoteHost, so not registrable: the table is replaced by a
+    # mapping of the one record the CLI reads.
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _entry(_Host)})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
     app = typer.Typer(name="host", cls=HostGroup)
     host = _Host()
@@ -450,7 +462,9 @@ def test_login_user_flag_dispatches_end_to_end(monkeypatch):
 
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    # Not a RemoteHost, so not registrable: the table is replaced by a
+    # mapping of the one record the CLI reads.
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _entry(_Host)})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
     app = typer.Typer(name="host", cls=HostGroup)
     host = _Host()
@@ -629,7 +643,9 @@ def test_end_to_end_dispatch_through_host_group(monkeypatch):
 
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "HOST_CLASSES", {"unix": _FakeUnixLocal})
+    # Not a RemoteHost, so not registrable: the table is replaced by a
+    # mapping of the one record the CLI reads.
+    monkeypatch.setattr(op, "HOST_CLASSES", {"unix": _entry(_FakeUnixLocal)})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _FakeUnixLocal)
 
     app = typer.Typer(name="host", cls=HostGroup)
@@ -813,7 +829,9 @@ def test_ls_path_stays_positional_and_power_state_positional(monkeypatch):
 
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _H})
+    # Not a RemoteHost, so not registrable: the table is replaced by a
+    # mapping of the one record the CLI reads.
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _entry(_H)})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _H)
     app = typer.Typer(name="host", cls=HostGroup)
     host = _H()
@@ -1045,7 +1063,9 @@ def test_opt_name_rename_dispatches_end_to_end(monkeypatch):
 
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    # Not a RemoteHost, so not registrable: the table is replaced by a
+    # mapping of the one record the CLI reads.
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _entry(_Host)})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
     app = typer.Typer(name="host", cls=HostGroup)
     host = _Host()
@@ -1120,7 +1140,9 @@ def test_cli_bad_octal_mode_exits_nonzero_with_the_parse_message(monkeypatch):
 
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    # Not a RemoteHost, so not registrable: the table is replaced by a
+    # mapping of the one record the CLI reads.
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _entry(_Host)})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
     app = typer.Typer(name="host", cls=HostGroup)
     host = _Host()
@@ -1180,7 +1202,9 @@ def test_run_accepts_infinite_timeout(monkeypatch):
 
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    # Not a RemoteHost, so not registrable: the table is replaced by a
+    # mapping of the one record the CLI reads.
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _entry(_Host)})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
     app = typer.Typer(name="host", cls=HostGroup)
     host = _Host()

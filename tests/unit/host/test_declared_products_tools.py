@@ -13,19 +13,8 @@ from otto.declared import DeclaredEntry
 from otto.host import dev_tool as dev_tool_mod
 from otto.host import product as product_mod
 from otto.host.element import Element
+from otto.registry import resolved
 from tests._fixtures.fake_repo import fake_repo
-
-
-@pytest.fixture(autouse=True)
-def _isolate_provider_registries():
-    saved_p = list(product_mod._PRODUCT_PROVIDERS)
-    saved_t = list(dev_tool_mod._DEV_TOOL_PROVIDERS)
-    try:
-        yield
-    finally:
-        product_mod._PRODUCT_PROVIDERS[:] = saved_p
-        dev_tool_mod._DEV_TOOL_PROVIDERS[:] = saved_t
-
 
 SEAMS = [
     pytest.param(
@@ -91,8 +80,8 @@ def seam(request, monkeypatch):
     s = request.param
     # Through the public wrapper, not s.kinds.register(...) directly — a
     # wrapper that registered into the WRONG seam's registry must be caught
-    # here. Dropped by _isolate_provider_registries regardless (KindRegistry
-    # isolation is a suite-wide autouse fixture elsewhere).
+    # here. Dropped by the suite-wide registry isolation fixture regardless
+    # (tests/conftest.py restores every table around every test).
     s.register_kind("toy", _toy)
     s.declared = []
     s.seam_attr_calls = []
@@ -156,7 +145,7 @@ def test_a_declared_name_also_returned_by_a_provider_is_refused_at_the_chokepoin
 
 def test_two_declared_entries_same_name_first_in_order_wins(seam):
     # Cross-repo ordering is load-bearing: declared_for_host concatenates
-    # repos in a fixed order, and KindRegistry.build's first-match-wins must
+    # repos in a fixed order, and KindBuilder.build's first-match-wins must
     # respect that order, not e.g. registration/kind order or last-wins.
     first = _entry("fw", seam.seam)
     second = DeclaredEntry(
@@ -213,14 +202,14 @@ def test_shell_kind_is_registered_in_both_seams(registry):
 
 
 def test_shell_kind_anchors_the_artifact_and_names_the_entry():
-    built = product_mod.PRODUCT_KINDS.get("shell")(_shell_entry(), _host())
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(_shell_entry(), _host())
     assert built.artifact == Path("/repo/build/fw.bin")  # base_dir-anchored
     assert built.name == "fw"
     assert built.stage_dir == Path()
 
 
 def test_shell_kind_absolute_artifact_passes_through():
-    built = product_mod.PRODUCT_KINDS.get("shell")(
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
         _shell_entry(artifact="/abs/fw.bin", stage_dir="/opt/fw"), _host()
     )
     assert built.artifact == Path("/abs/fw.bin")
@@ -238,12 +227,14 @@ def test_shell_kind_absolute_artifact_passes_through():
 def test_shell_kind_rejects_bad_params_naming_entry_and_seam(params, fragment):
     entry = _entry("fw", "products", kind="shell", **params)
     with pytest.raises(ValueError, match=rf"(?s)\[\[products\]\].*'fw'.*{fragment}"):
-        product_mod.PRODUCT_KINDS.get("shell")(entry, _host())
+        resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(entry, _host())
 
 
 @pytest.mark.asyncio
 async def test_shell_kind_stage_puts_the_artifact():
-    built = product_mod.PRODUCT_KINDS.get("shell")(_shell_entry(stage_dir="/opt"), _host())
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
+        _shell_entry(stage_dir="/opt"), _host()
+    )
     host = _RunHost()
     result = await built.stage(host)
     assert result.status is Status.Success
@@ -252,7 +243,7 @@ async def test_shell_kind_stage_puts_the_artifact():
 
 @pytest.mark.asyncio
 async def test_shell_kind_command_defaults_are_honest():
-    built = product_mod.PRODUCT_KINDS.get("shell")(_shell_entry(), _host())
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(_shell_entry(), _host())
     host = _RunHost()
     assert (await built.install(host)).status is Status.Success  # no-op success
     assert (await built.uninstall(host)).status is Status.Success  # no-op success
@@ -262,7 +253,7 @@ async def test_shell_kind_command_defaults_are_honest():
 
 @pytest.mark.asyncio
 async def test_shell_kind_commands_run_on_the_host():
-    built = product_mod.PRODUCT_KINDS.get("shell")(
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
         _shell_entry(
             install="opkg install fw", uninstall="opkg remove fw", check="test -f /opt/fw"
         ),
@@ -411,7 +402,7 @@ def _scope_for_factory(labs):
 
 
 def test_shell_kind_reads_cov_dir_and_debug_globs():
-    built = product_mod.PRODUCT_KINDS.get("shell")(
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
         _shell_entry(cov_dir="/var/cov/fw", debug_log_globs=["/var/log/fw/*.log"]), _host()
     )
     assert built.cov_dir == "/var/cov/fw"
@@ -419,7 +410,7 @@ def test_shell_kind_reads_cov_dir_and_debug_globs():
 
 
 def test_shell_kind_substitutes_cov_dir_and_name_in_commands():
-    built = product_mod.PRODUCT_KINDS.get("shell")(
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
         _shell_entry(
             cov_dir="/var/cov/fw",
             install="GCOV_PREFIX={cov_dir} ./{name} &",
@@ -434,7 +425,7 @@ def test_shell_kind_substitutes_cov_dir_and_name_in_commands():
 
 
 def test_shell_kind_substitutes_the_default_cov_dir_when_unset():
-    built = product_mod.PRODUCT_KINDS.get("shell")(
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
         _shell_entry(install="GCOV_PREFIX={cov_dir} ./fw"), _host()
     )
     assert built.install_cmd == "GCOV_PREFIX=/tmp/fw ./fw"
@@ -445,11 +436,11 @@ def test_shell_kind_unknown_placeholder_names_entry_valid_names_and_escape():
     with pytest.raises(
         ValueError, match=r"(?s)\[\[products\]\].*'fw'.*install.*cov_dir.*name.*\{\{"
     ):
-        product_mod.PRODUCT_KINDS.get("shell")(entry, _host())
+        resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(entry, _host())
 
 
 def test_shell_kind_escaped_braces_are_literal():
-    built = product_mod.PRODUCT_KINDS.get("shell")(
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
         _shell_entry(install="awk '{{print $1}}' {cov_dir}"), _host()
     )
     assert built.install_cmd == "awk '{print $1}' /tmp/fw"
@@ -467,7 +458,7 @@ def test_shell_kind_rejects_conversions_specs_attrs_and_positional_fields(placeh
     with pytest.raises(
         ValueError, match=r"(?s)\[\[products\]\].*'fw'.*install.*cov_dir.*name.*\{\{"
     ):
-        product_mod.PRODUCT_KINDS.get("shell")(entry, _host())
+        resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(entry, _host())
 
 
 @pytest.mark.parametrize("key", ["uninstall", "check"])
@@ -476,7 +467,7 @@ def test_shell_kind_unknown_placeholder_error_names_uninstall_and_check_too(key)
     with pytest.raises(
         ValueError, match=rf"(?s)\[\[products\]\].*'fw'.*{key}.*cov_dir.*name.*\{{\{{"
     ):
-        product_mod.PRODUCT_KINDS.get("shell")(entry, _host())
+        resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(entry, _host())
 
 
 @pytest.mark.parametrize("command", ["echo {", "sed 's/}//'"])
@@ -490,24 +481,24 @@ def test_shell_kind_unbalanced_brace_gets_the_named_error_not_a_bare_stdlib_one(
     with pytest.raises(
         ValueError, match=r"(?s)\[\[products\]\].*'fw'.*install.*cov_dir.*name.*\{\{"
     ):
-        product_mod.PRODUCT_KINDS.get("shell")(entry, _host())
+        resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(entry, _host())
 
 
 def test_shell_kind_dev_tools_get_no_substitution_and_no_coverage_params():
     tool = _entry("probe", "dev_tools", kind="shell", artifact="p.sh", install="awk '{print $1}'")
-    built = dev_tool_mod.DEV_TOOL_KINDS.get("shell")(tool, _host())
+    built = resolved(dev_tool_mod.DEV_TOOL_KINDS.get("shell").factory)(tool, _host())
     assert built.install_cmd == "awk '{print $1}'"  # untouched
     for key in ("cov_dir", "debug_log_globs", "instrumented"):
         bad = _entry("probe", "dev_tools", kind="shell", artifact="p.sh", **{key: "x"})
         with pytest.raises(
             ValueError, match=rf"(?s)\[\[dev_tools\]\].*'probe'.*{key}.*no coverage"
         ):
-            dev_tool_mod.DEV_TOOL_KINDS.get("shell")(bad, _host())
+            resolved(dev_tool_mod.DEV_TOOL_KINDS.get("shell").factory)(bad, _host())
 
 
 @pytest.mark.parametrize(("value", "expected"), [(True, True), (False, False)])
 def test_shell_kind_instrumented_param_overrides_the_scan(tmp_path, value, expected):
-    built = product_mod.PRODUCT_KINDS.get("shell")(
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
         _shell_entry(artifact=str(tmp_path / "absent.tar"), instrumented=value), _host()
     )
     assert built.instrumented() is expected
@@ -519,7 +510,7 @@ def test_shell_kind_instrumented_false_overrides_a_positive_scan(tmp_path):
     # artifact happens to carry a stray ``.gcda`` marker must still say False.
     art = tmp_path / "fw.bin"
     art.write_bytes(b"\0.gcda\0")
-    built = product_mod.PRODUCT_KINDS.get("shell")(
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
         _shell_entry(artifact=str(art), instrumented=False), _host()
     )
     assert built.instrumented() is False
@@ -528,7 +519,7 @@ def test_shell_kind_instrumented_false_overrides_a_positive_scan(tmp_path):
 def test_shell_kind_instrumented_true_overrides_a_negative_scan(tmp_path):
     art = tmp_path / "fw.bin"
     art.write_bytes(b"clean build, no markers here")
-    built = product_mod.PRODUCT_KINDS.get("shell")(
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
         _shell_entry(artifact=str(art), instrumented=True), _host()
     )
     assert built.instrumented() is True
@@ -537,7 +528,9 @@ def test_shell_kind_instrumented_true_overrides_a_negative_scan(tmp_path):
 def test_shell_kind_without_instrumented_param_scans(tmp_path):
     art = tmp_path / "fw.bin"
     art.write_bytes(b"\0.gcda\0")
-    built = product_mod.PRODUCT_KINDS.get("shell")(_shell_entry(artifact=str(art)), _host())
+    built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(
+        _shell_entry(artifact=str(art)), _host()
+    )
     assert built.instrumented() is True
 
 
@@ -552,7 +545,7 @@ def test_shell_kind_without_instrumented_param_scans(tmp_path):
 def test_shell_kind_rejects_bad_coverage_param_types(params, fragment):
     entry = _entry("fw", "products", kind="shell", **params)
     with pytest.raises(ValueError, match=rf"(?s)\[\[products\]\].*'fw'.*{fragment}"):
-        product_mod.PRODUCT_KINDS.get("shell")(entry, _host())
+        resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(entry, _host())
 
 
 def test_shell_kind_rejects_an_empty_cov_dir():
@@ -561,7 +554,7 @@ def test_shell_kind_rejects_an_empty_cov_dir():
     # {cov_dir} substitution falls back to /tmp/<name> — silently mismatched.
     entry = _entry("fw", "products", kind="shell", artifact="a", cov_dir="")
     with pytest.raises(ValueError, match=r"(?s)\[\[products\]\].*'fw'.*cov_dir"):
-        product_mod.PRODUCT_KINDS.get("shell")(entry, _host())
+        resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(entry, _host())
 
 
 def test_shell_kind_unknown_param_message_lists_the_new_names():
@@ -574,7 +567,7 @@ def test_shell_kind_unknown_param_message_lists_the_new_names():
             r"cov_dir, debug_log_globs, instrumented"
         ),
     ):
-        product_mod.PRODUCT_KINDS.get("shell")(entry, _host())
+        resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(entry, _host())
 
 
 # ── the retired `dest_dir` spelling (issue #368) ─────────────────────────────
@@ -590,4 +583,4 @@ def test_shell_kind_refuses_the_retired_dest_dir_key_naming_stage_dir(seam):
     """
     entry = _entry("fw", seam, kind="shell", artifact="a", dest_dir="/opt/fw")
     with pytest.raises(ValueError, match=r"(?s)'fw'.*'dest_dir'.*'stage_dir'"):
-        product_mod.PRODUCT_KINDS.get("shell")(entry, _host())
+        resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(entry, _host())
