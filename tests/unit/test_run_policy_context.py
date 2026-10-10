@@ -1,6 +1,7 @@
 """The run's policy, variant and peer-host resolver, read through the leaf (spec 2 §3.1-§3.4)."""
 
 import ast
+import contextlib
 import contextvars
 import logging
 from pathlib import Path
@@ -15,6 +16,7 @@ from otto.invocation import RunPolicy, installed_policy, installed_resolver
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.labdata import make_host
 from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.run_state import cleared_run_state, installed_run_state
 
 
 def test_with_no_policy_the_readers_see_the_defaults_and_suppression_is_a_no_op():
@@ -346,6 +348,41 @@ async def test_a_failed_open_context_setup_restores_the_outer_policy(monkeypatch
         async with context.open_context(lab=Lab(name="rig"), variant="field"):
             pass
     assert installed_policy() is before
+
+
+def _which_are(now: list, then: list) -> list[bool]:
+    """For each of the context, the policy and the resolver: is it the same object as then?"""
+    return [a is b for a, b in zip(now, then, strict=True)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body_raises", [False, True], ids=["returns", "raises"])
+@pytest.mark.parametrize("outer", [False, True], ids=["no-context", "caller-context"])
+async def test_open_context_restores_the_context_policy_and_resolver_it_found(outer, body_raises):
+    """Every exit puts back all three: the context, the run policy and the resolver.
+
+    Compared by identity with what was installed before, so a reset that put
+    back only the context (the harness's per-test restore would hide the rest
+    from the next test) fails here.
+    """
+    with cleared_run_state():
+        binding = set_context(OttoContext(lab=Lab(name="outer"))) if outer else None
+        try:
+            before = installed_run_state()
+            with contextlib.suppress(_BodyError):
+                async with context.open_context(lab=Lab(name="rig"), variant="field"):
+                    assert _which_are(installed_run_state(), before) == [False, False, False]
+                    if body_raises:
+                        raise _BodyError
+            after = installed_run_state()
+        finally:
+            if binding is not None:
+                reset_context(binding)
+    assert _which_are(after, before) == [True, True, True], (before, after)
+
+
+class _BodyError(Exception):
+    pass
 
 
 def test_declared_reads_the_variant_through_the_leaf_and_never_imports_the_context():

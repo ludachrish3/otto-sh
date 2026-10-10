@@ -29,7 +29,7 @@ from types import SimpleNamespace
 import pytest
 from typing_extensions import Self
 
-from otto.context import _active, try_get_context
+from otto.context import try_get_context
 from otto.host.command_frame import FRAME_CLASSES
 from otto.host.element import Element
 from otto.host.embedded_filesystem import build_filesystem
@@ -52,6 +52,7 @@ from tests._fixtures.profiles import (
     axes_for,
     axis_space,
 )
+from tests._fixtures.run_state import cleared_run_state
 from tests._fixtures.support_matrix import discover_contracts
 from tests.conformance import _bed, _console_safety, _lab_context
 from tests.conformance import _vocabulary as _vocabulary_module
@@ -761,16 +762,6 @@ async def _always_answers(self) -> CommandResult:
     return _answer(Status.Success, "Connection successful")
 
 
-@contextlib.contextmanager
-def _no_otto_context():
-    """Run the block with the OttoContext ContextVar forced to ``None``."""
-    token = _active.set(None)
-    try:
-        yield
-    finally:
-        _active.reset(token)
-
-
 def _entry(element: str, *, hop: "str | None" = None, board: "str | None" = None) -> dict:
     """A BUILDABLE lab entry of this test's own making, based on a real one.
 
@@ -880,10 +871,13 @@ async def test_a_hopped_cell_with_no_context_cannot_resolve_its_hop_at_all(monke
     session ran (``make coverage`` puts the whole repo in one process, and
     the root conftest's ``_reset_otto_context`` restores rather than clears).
     A test that inherited ``None`` would assert nothing on the run where a
-    context WAS installed, and would not say so.
+    context WAS installed, and would not say so. And the context alone is not
+    enough to take away: the hop resolves through the installed resolver, so
+    :func:`~tests._fixtures.run_state.cleared_run_state` clears the policy
+    and the resolver too.
     """
     dialled = _dial_recorder(monkeypatch)
-    with _no_otto_context():
+    with cleared_run_state():
         host = build_bed_host(Cell(*HOPPED_BUSYBOX_CELL))
         with pytest.raises(RuntimeError, match="cannot resolve hop 'test1'") as excinfo:
             await host._build_hop_transport().get_tunnel()

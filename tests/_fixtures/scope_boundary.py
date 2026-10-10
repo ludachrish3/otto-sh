@@ -25,6 +25,12 @@ async def held_for_scope(label: str) -> AsyncIterator[None]:
     is the loop's last, so it closes every host the fixture's own teardown
     left registered, within the run policy's teardown deadline. *label* names
     the loop in that sweep's log line, e.g. ``"test_docker_build.py's loop"``.
+
+    The exemption covers the whole scope, not just the fixture's hosts: inside
+    a module that uses it, a test that leaks its own host on the module loop is
+    no longer flagged at that test's teardown, and the release at module end
+    closes it quietly, with only a debug log line. That is the semantics
+    ``otto test``'s plugin gives every runner loop.
     """
     from otto import invocation
 

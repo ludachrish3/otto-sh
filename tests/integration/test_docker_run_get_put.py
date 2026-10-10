@@ -64,7 +64,11 @@ async def stack(test3_lease, sut_dirs_env_module):
 
     The parent and the container host outlive the test that connected them,
     so the fixture holds the module loop's cleanup boundary for its scope
-    (``held_for_scope``); its release closes the container host."""
+    (``held_for_scope``). Its release closes whatever the teardown did not.
+    Normally that is nothing: ``compose_down`` already closed and unregistered
+    the container host, and ``parent.close()`` follows. Only when the setup
+    or ``compose_down`` raises does the release close leftovers, and then it
+    closes the parent too, since the raise skips ``parent.close()``."""
     async with held_for_scope("test_docker_run_get_put.py's loop"):
         parent = UnixHost(
             ip="10.10.200.13",

@@ -25,6 +25,7 @@ from otto.suite.run import (
 )
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, patch_bootstrap
 from tests._fixtures.gitrepo import TmpGitRepo
+from tests._fixtures.run_state import cleared_run_state, installed_run_state
 from tests._fixtures.sut_repos import DOUBLE_TEST_NAME as _ALPHA
 from tests._fixtures.sut_repos import collected, pytest_main_returning
 from tests._fixtures.sut_repos import repo_double as _stub_repo
@@ -1098,24 +1099,18 @@ def test_run_tests_installs_minimal_context_when_none_active(sut_repo, tmp_path)
     otto's own get_context()-backed fixtures work, and restore the prior
     (no-context) state afterwards.
     """
-    from otto.context import _active, try_get_context
-
     sut_repo(files={"tests/test_ctx_probe_a.py": _PROBE})
     out = tmp_path / "out"
     out.mkdir()
-    token = _active.set(None)  # hermetic: guarantee the no-context precondition
-    try:
-        assert try_get_context() is None
+    with cleared_run_state():  # hermetic: guarantee the no-context precondition
         result = run_tests(["test_marker"], output_dir=out)
         assert result.passed, f"exit_code={result.exit_code}"
         assert (out / "junit.xml").exists()
         # The per-test dir was created under output_dir via the run's
         # ArtifactLayout (module_dir = <output_dir>/<module stem>).
         assert (out / "test_ctx_probe_a" / "test_marker" / "marker.txt").exists()
-        # The temporary context never leaks out of run_tests.
-        assert try_get_context() is None
-    finally:
-        _active.reset(token)
+        # The temporary context, its policy and its resolver never leak out.
+        assert installed_run_state() == [None, None, None]
 
 
 def test_run_tests_sets_and_restores_output_dir_on_active_context(sut_repo, tmp_path):
@@ -1165,7 +1160,7 @@ def test_run_tests_leaves_active_context_output_dir_untouched(sut_repo, tmp_path
 
 def test_run_tests_installs_and_restores_minimal_context(tmp_path, monkeypatch):
     """The installed context is the LIBRARY_LAB_NAME sentinel lab, pointed at the output dir."""
-    from otto.context import LIBRARY_LAB_NAME, _active, try_get_context
+    from otto.context import LIBRARY_LAB_NAME, try_get_context
 
     _use_repo(monkeypatch, _stub_repo(tmp_path))
     captured: dict = {}
@@ -1179,18 +1174,14 @@ def test_run_tests_installs_and_restores_minimal_context(tmp_path, monkeypatch):
 
     monkeypatch.setattr("pytest.main", fake_main)
 
-    token = _active.set(None)  # hermetic: guarantee the no-context precondition
-    try:
-        assert try_get_context() is None
+    with cleared_run_state():  # hermetic: guarantee the no-context precondition
         result = run_tests([_ALPHA], output_dir=tmp_path)
         assert result.passed, f"exit_code={result.exit_code}"
         # A context WAS installed for the duration of the session...
         assert captured["lab_name"] == LIBRARY_LAB_NAME
         assert captured["output_dir"] == tmp_path
-        # ...and torn down afterwards.
-        assert try_get_context() is None
-    finally:
-        _active.reset(token)
+        # ...and torn down afterwards, with its policy and its resolver.
+        assert installed_run_state() == [None, None, None]
 
 
 @pytest.mark.parametrize("session_raises", [False, True], ids=["returns", "raises"])
@@ -1264,20 +1255,14 @@ def _raising_session(monkeypatch) -> None:
 
 
 def test_run_tests_restores_no_context_state_on_exception(tmp_path, monkeypatch):
-    """No-active-context branch: an exception mid-session still resets the
-    contextvar, leaving no active OttoContext behind."""
-    from otto.context import _active, try_get_context
-
+    """No-active-context branch: an exception mid-session still resets what
+    the session installed, leaving no context, policy or resolver behind."""
     _use_repo(monkeypatch, _stub_repo(tmp_path))
     _raising_session(monkeypatch)
-    token = _active.set(None)  # hermetic: guarantee the no-context precondition
-    try:
-        assert try_get_context() is None
+    with cleared_run_state():  # hermetic: guarantee the no-context precondition
         with pytest.raises(RuntimeError, match="boom"):
             run_tests([_ALPHA], output_dir=tmp_path)
-        assert try_get_context() is None
-    finally:
-        _active.reset(token)
+        assert installed_run_state() == [None, None, None]
 
 
 def test_run_tests_restores_prior_output_dir_on_exception(tmp_path, monkeypatch):

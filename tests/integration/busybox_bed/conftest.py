@@ -84,7 +84,11 @@ def pytest_collection_modifyitems(config, items):
 @pytest.fixture(autouse=True, scope="module")
 def _load_lab():
     """Install test1 so hop resolution finds test1, restoring the run state at
-    module end (per tests/integration/host/conftest.py's discipline)."""
+    module end (per tests/integration/host/conftest.py's discipline).
+
+    The restore is belt and braces: the root conftest's
+    ``_reset_otto_context_per_module`` also restores the same three
+    ContextVars at module end."""
     with preserved_run_state():
         set_context(OttoContext(lab=_busybox_bed_lab()))
         yield

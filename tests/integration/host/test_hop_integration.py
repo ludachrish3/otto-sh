@@ -117,7 +117,8 @@ def _load_lab():
     Restores the run state the install set (the context, its policy and its
     resolver) so the module's lab doesn't leak past the module (the
     function-scoped _reset_otto_context preserves it *within* each test rather
-    than forcing None).
+    than forcing None). That restore is belt and braces: the root conftest's
+    ``_reset_otto_context_per_module`` also restores all three at module end.
     """
     lab = Lab(name="hops_test")
     for ne in ("test1", "test2", "test3"):

@@ -80,11 +80,9 @@ def _install_integration_lab() -> None:
     Adding ``test1`` / ``test2`` / ``test3`` too keeps the lab usable by
     any cross-OS / mixed-hop test that ends up in this directory.
 
-    Factored out of :func:`_load_lab` so the session-start bed probe
-    (:func:`_probe_backend`) — which runs in ``pytest_runtest_setup``, before
-    any module-scoped fixture — can populate the same lab before building
-    hosts. ``set_context`` is idempotent for the same lab, so the later
-    ``_load_lab`` call simply re-installs the context.
+    :func:`_load_lab` is its only caller. The conformance venue installs the
+    same lab through its own copy (``tests/conformance/_lab_context.py``),
+    whose docstring says why it does not share this one.
     """
     lab = Lab(name="integration_host")
     for ne in ("test1", "test2", "test3", "test4"):
@@ -116,8 +114,14 @@ def _load_lab():
     test the worker runs next — e.g. a ``tests/unit/test_context.py`` case
     asserting a pristine ``try_get_context() is None``. The function-scoped
     ``_reset_otto_context`` in the root conftest cannot undo this: it snapshots
-    the *already-installed* module context, so the module-scoped install needs
-    its own restore.
+    the *already-installed* module context.
+
+    This restore is now belt and braces: the root conftest's
+    ``_reset_otto_context_per_module`` restores the same three ContextVars at
+    every module's end, this one included. Either alone undoes the install;
+    this one stays so the module undoes its own install without relying on
+    the root conftest, and the root one stays to catch a module fixture that
+    does not.
     """
     with preserved_run_state():
         _install_integration_lab()
