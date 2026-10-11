@@ -136,3 +136,88 @@ def test_the_real_tach_toml_renders() -> None:
     page = rmg.render()
     assert f"{len(rmg.load_graph().modules)} modules" in page
     assert "`otto.errors`" in page
+
+
+LAYERED = """
+layers_explicit_depends_on = true
+layers = ["top", "bottom"]
+
+[[modules]]
+path = "high"
+layer = "top"
+depends_on = ["low"]
+
+[[modules]]
+path = "low"
+layer = "bottom"
+depends_on = []
+
+[[modules]]
+path = "peer"
+layer = "bottom"
+depends_on = ["low"]
+
+[[modules]]
+path = "free"
+depends_on = ["high"]
+"""
+
+
+def test_a_module_without_depends_on_is_refused(tmp_path) -> None:
+    # tach reads a missing list as "may import anything"; drawing it as a leaf would lie.
+    with pytest.raises(ValueError, match="'b' has no depends_on"):
+        _graph(tmp_path, '[[modules]]\npath = "a"\ndepends_on = ["b"]\n\n[[modules]]\npath = "b"\n')
+
+
+def test_a_module_without_a_path_is_refused(tmp_path) -> None:
+    with pytest.raises(ValueError, match="entry 2 has no path"):
+        _graph(tmp_path, '[[modules]]\npath = "a"\ndepends_on = []\n\n[[modules]]\ndepends_on = []')
+
+
+def test_a_module_in_an_undefined_layer_is_refused(tmp_path) -> None:
+    # tach refuses an undefined layer name as a configuration error; so does the reader.
+    body = LAYERED.replace('path = "free"\n', 'path = "free"\nlayer = "middle"\n')
+    with pytest.raises(ValueError, match=r"tach\.toml: module 'free' is in layer 'middle'"):
+        _graph(tmp_path, body)
+
+
+def test_the_layers_and_the_switch_are_read(tmp_path) -> None:
+    graph = _graph(tmp_path, LAYERED)
+    assert graph.layers == ["top", "bottom"]
+    assert graph.layer_of == {"high": "top", "low": "bottom", "peer": "bottom"}
+    assert graph.explicit_layer_dependencies
+
+
+def test_only_an_edge_into_a_higher_layer_is_upward(tmp_path) -> None:
+    graph = _graph(tmp_path, LAYERED)
+    assert graph.is_upward("low", "high")
+    assert not graph.is_upward("high", "low")
+    assert not graph.is_upward("peer", "low"), "two modules of one layer may import each other"
+    assert not graph.is_upward("low", "peer"), "two modules of one layer may import each other"
+    assert not graph.is_upward("free", "high"), "a module with no layer is exempt"
+    assert not graph.is_upward("low", "free"), "a module with no layer is exempt"
+
+
+def test_a_config_without_layers_has_none(tmp_path) -> None:
+    graph = _graph(tmp_path, CYCLE)
+    assert graph.layers == []
+    assert graph.layer_of == {}
+    assert not graph.explicit_layer_dependencies
+
+
+def test_module_of_names_the_module_a_file_defines() -> None:
+    assert rmg.module_of("otto/config/lab.py") == "otto.config.lab"
+    assert rmg.module_of("otto/lab/__init__.py") == "otto.lab"
+    assert rmg.module_of("otto/__init__.py") == "otto"
+
+
+def test_declared_owner_is_the_longest_declared_prefix() -> None:
+    declared = ["otto.config", "otto.config.lab", "otto.utils"]
+    assert rmg.declared_owner("otto.config.lab.x", declared) == "otto.config.lab"
+    # The longer prefix listed first as well, so neither a first-match nor a last-match passes.
+    longer_first = ["otto.config.lab", "otto.config"]
+    assert rmg.declared_owner("otto.config.lab.x", longer_first) == "otto.config.lab"
+    assert rmg.declared_owner("otto.config.settings", declared) == "otto.config"
+    assert rmg.declared_owner("otto.utils", declared) == "otto.utils"
+    assert rmg.declared_owner("otto.utilsx", declared) is None, "a prefix must end at a dot"
+    assert rmg.declared_owner("otto.declared", declared) is None

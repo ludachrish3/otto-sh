@@ -24,7 +24,7 @@ on that side.
 | Formatting | `ruff format --check` | Biome — the *same* command (rules + format + **assists**) |
 | Type checking | `ty` (pinned exactly; the version is the `ty` entry in `pyproject.toml`'s dev group and `uv.lock`) | `tsc --noEmit` via `scripts/typecheck_web.sh` (vendored Untitled UI diagnostics filtered) |
 | Unused code / deps | ruff (`F401`, `ARG`, …) | `knip` — unused files, exports, dependencies |
-| Module layering | `tach` against `tach.toml` | — none today |
+| Module layering | `tach` against `tach.toml` (role layers, every dependency declared) + the import-string audit | — none today |
 | Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — thirty-one Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
 | Import cost | `scripts/import_budget.py` — per-surface, per-interpreter file-operation ceilings (whole process tree, strace-counted) and target ratios to `otto --version`; import bans in `ast-grep` and `tests/unit/test_import_contracts.py` name the edge | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest`, run under `build_web_no_warnings.sh`: any stderr output fails (see *Built-bundle gates*) |
@@ -65,9 +65,42 @@ two of its members. An entry left behind after a cut fails too, so the cut
 is recorded and the edge cannot come back unseen. `make lint-arch` runs it,
 because a targeted test run would never select it.
 
+`tach.toml` also declares otto's role layers, from `foundation` at the
+bottom to `entry` at the top, and sets `layers_explicit_depends_on = true`.
+A module may import its own layer and the ones below it, and only through an
+edge its `depends_on` lists: without the switch, tach lets any import into a
+lower layer through undeclared. Every module spells its `depends_on`, `[]` for
+one that imports no other, because tach reads a missing list as "may import
+anything"; the module graph reader refuses an entry without one, so the docs
+build and the ratchet fail on it. A module inside the import cycle has no
+layer yet, which exempts it; it takes its layer in the commit that frees it,
+and `tests/unit/test_tach_layers.py` fails on a module outside the cycle that
+has none. The same test pins the files no tach module owns yet (tach sees no
+import of theirs), and that list only shrinks: a pinned copy of it as it landed
+fails any entry added past it. The switch's meaning is tach's, and the `tach`
+floor floats, so `scripts/tach_layer_canary.py`, a `lint-arch` and
+`nox -s lint` leg, runs the installed tach on a throwaway project and fails if
+an undeclared downward import stops being refused.
+
+tach reads `import` statements only, and otto also imports by string: a
+package facade's lazy table, a registry's `Ref("pkg.module:attr")`, a CLI
+command's `register_cli_command` loader, and `importlib.import_module`.
+`tests/unit/test_dynamic_import_audit.py` parses `src/otto` for every such
+string, and refuses a spelling it cannot read (an aliased import, `Ref` passed
+as a value, a write to a lazy table outside its literal). One whose target lies
+outside its own tach module is an edge tach cannot see, and each is listed with
+its class. A string edge may not point up the layers, and string and static
+edges together may not close a cycle the static graph does not already have.
+The few transitional exceptions are listed with the change that removes them,
+and that list only shrinks: a pinned copy of it as it landed fails a row added,
+or an expiry pushed later, until a spec amendment approves it. A target
+computed at run time cannot be read, so each site that computes one is listed
+with its class, and a new site fails until someone reads it.
+
 ### The ast-grep rules
 
-`.ast-grep/rules/` holds thirty-five rules — thirty-four at `severity: error`,
+`.ast-grep/rules/` holds thirty-five rules (thirty-one Python, four
+TypeScript) — thirty-four at `severity: error`,
 plus one deliberate `severity: warning` review prompt
 (`no-awaited-close-in-finally`, below). The scan roots
 are `src/otto web/src tests` — tests/ joined in the test-infra remediation

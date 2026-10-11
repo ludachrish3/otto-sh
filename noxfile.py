@@ -634,18 +634,22 @@ def lint(session: nox.Session) -> None:
     rules in .ast-grep/rules/ and `ast-grep test` checks those rules against
     the pinned snippets in .ast-grep/rule-tests/ (a rule that stops matching
     its own motivating example is a silent gate loss).
-    `make lint-arch`'s third leg, `check-breaking`
-    (scripts/check_breaking_marks.py), is deliberately NOT run here — it
-    needs a resolved commit range, which this session has no opinion about;
-    CI's lint-python job runs it as its own step, after this session, with
-    the range computed from the workflow's push/pull_request event. Its
-    fourth leg, the lazy-export import rules (two parse-only pytest files),
-    is not repeated here either: they are ordinary unit tests, so the
-    `tests_hostless` session already runs them on every interpreter.
+    The tach layer canary runs the installed tach on a throwaway project and
+    fails if tach.toml's layer switch stops meaning what tach.toml assumes; it
+    needs tach, so it rides here and in lint-arch, not in a pytest lane.
+    `make lint-arch`'s `check-breaking` leg (scripts/check_breaking_marks.py)
+    is deliberately NOT run here — it needs a resolved commit range, which
+    this session has no opinion about; CI's lint-python job runs it as its
+    own step, after this session, with the range computed from the
+    workflow's push/pull_request event. Its parse-only pytest legs — the
+    import-cycle ratchet, the layer test, the import-string audit and the
+    lazy-export import rules — are not repeated here either: they are
+    ordinary unit tests, so the `tests_hostless` session already runs them.
     """
     session.run("ruff", "check", ".")
     session.run("ruff", "format", "--check", ".")
     session.run("tach", "check", "--exact")
+    session.run("python", "scripts/tach_layer_canary.py")
     session.run("ast-grep", "scan", "src/otto", "web/src", "tests")
     session.run("ast-grep", "test", "--skip-snapshot-tests")
 

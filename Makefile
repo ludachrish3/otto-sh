@@ -1379,17 +1379,21 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 # edge on its own and cannot see a loop; tests/unit/test_import_cycle_ratchet.py
 # pins which modules are in an import cycle and which edges run inside one,
 # shrink-only (#522), until forbid_circular_dependencies can be turned on.
-lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts) + the import-cycle ratchet + ast-grep (pattern rules) + the lazy-export import rules + check-breaking (public-API golden marking)
+# The layer test and the import-string audit ride with it: tach cannot see a
+# module left unlayered, a file no module owns, or an import made by string.
+lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts and layers) + the tach layer canary + the import-cycle ratchet + the layer and import-string audits + ast-grep (pattern rules) + the lazy-export import rules + check-breaking (public-API golden marking)
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
 	@uv run --group lint tach check --exact
+	@$(SAY) "tach: the installed tach still enforces the layer switch"
+	@uv run --group lint python scripts/tach_layer_canary.py
 	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
 	@uv run --group lint ast-grep scan src/otto web/src tests
 	@$(SAY) "ast-grep: rule tests (.ast-grep/rule-tests/)"
 	@uv run --group lint ast-grep test --skip-snapshot-tests
 	@$(SAY) "import rules: lazy exports patched where defined, read at call time, moved names spelled once"
 	@uv run pytest tests/unit/test_patch_targets.py tests/unit/test_no_import_time_lazy_exports.py tests/unit/test_moved_name_spellings.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
-	@$(SAY) "import cycle: no module joins it, no edge inside it is added (shrink-only)"
-	@uv run pytest tests/unit/test_import_cycle_ratchet.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
+	@$(SAY) "import cycle, layers and import strings: shrink-only ratchet, layer coverage, string audit"
+	@uv run pytest tests/unit/test_import_cycle_ratchet.py tests/unit/test_tach_layers.py tests/unit/test_dynamic_import_audit.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
 
 # `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
 # `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports

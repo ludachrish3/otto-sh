@@ -17,7 +17,7 @@ git-ignored, so the only copy in the tree is ``tach.toml`` itself.
 
 import argparse
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import tomli
@@ -34,6 +34,22 @@ class ModuleGraph:
     """The declared dependency graph: each module and the modules it may import."""
 
     depends_on: "dict[str, list[str]]"
+    layers: "list[str]" = field(default_factory=list)
+    """tach's ``layers``, highest first, as ``tach.toml`` lists them."""
+    layer_of: "dict[str, str]" = field(default_factory=dict)
+    """Each module that declares a ``layer``, mapped to it; a module with none is exempt."""
+    explicit_layer_dependencies: bool = False
+    """``layers_explicit_depends_on``: whether a downward import must be declared too."""
+
+    def is_upward(self, module: str, dep: str) -> bool:
+        """Whether *module* depending on *dep* points up the layers.
+
+        A module with no layer is exempt, as tach exempts it, so an edge from
+        or to one is never upward. Two modules of one layer may import each other.
+        """
+        if module not in self.layer_of or dep not in self.layer_of:
+            return False
+        return self.layers.index(self.layer_of[module]) > self.layers.index(self.layer_of[dep])
 
     @property
     def modules(self) -> "list[str]":
@@ -55,16 +71,72 @@ def load_graph(path: Path = TACH_TOML) -> ModuleGraph:
     A dependency is spelled either as a bare module path or as a table with a
     ``path`` key; both name the same edge. A dependency on a module that has no
     entry of its own still becomes a node, so no declared edge is dropped.
+
+    Every entry must spell its ``depends_on``, ``[]`` for a module that imports
+    no other. tach reads a missing list as "may import anything", so drawing it
+    as no edges would draw a contract the code is not held to.
+
+    Raises
+    ------
+    ValueError
+        If an entry has no ``path`` or no ``depends_on``, or names a ``layer``
+        that ``layers`` does not list.
     """
     doc = tomli.loads(path.read_text(encoding="utf-8"))
+    layers = list(doc.get("layers", []))
     graph: dict[str, list[str]] = {}
-    for entry in doc.get("modules", []):
-        deps = [dep if isinstance(dep, str) else dep["path"] for dep in entry.get("depends_on", [])]
+    layer_of: dict[str, str] = {}
+    for number, entry in enumerate(doc.get("modules", []), start=1):
+        if "path" not in entry:
+            msg = f"{path.name}: [[modules]] entry {number} has no path; name its module."
+            raise ValueError(msg)
+        if "depends_on" not in entry:
+            msg = (
+                f"{path.name}: module {entry['path']!r} has no depends_on. tach reads a "
+                "missing list as 'may import anything'; spell it, [] for a module that "
+                "imports no other."
+            )
+            raise ValueError(msg)
+        if "layer" in entry and entry["layer"] not in layers:
+            msg = (
+                f"{path.name}: module {entry['path']!r} is in layer {entry['layer']!r}, "
+                f"which layers does not list ({layers}); tach refuses an undefined layer."
+            )
+            raise ValueError(msg)
+        deps = [dep if isinstance(dep, str) else dep["path"] for dep in entry["depends_on"]]
         graph[entry["path"]] = sorted(set(deps) - {entry["path"]})
+        if "layer" in entry:
+            layer_of[entry["path"]] = entry["layer"]
     for deps in list(graph.values()):
         for dep in deps:
             graph.setdefault(dep, [])
-    return ModuleGraph(graph)
+    return ModuleGraph(
+        graph,
+        layers=layers,
+        layer_of=layer_of,
+        explicit_layer_dependencies=bool(doc.get("layers_explicit_depends_on", False)),
+    )
+
+
+def module_of(path: str) -> str:
+    """Return the dotted module a file under ``src/`` defines.
+
+    *path* is relative to ``src/``: ``otto/config/lab.py`` is ``otto.config.lab``,
+    and a trailing ``__init__`` is dropped, so ``otto/lab/__init__.py`` is ``otto.lab``.
+    """
+    parts = path.removesuffix(".py").split("/")
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def declared_owner(module: str, declared: "list[str]") -> "str | None":
+    """Return the declared tach module that owns *module*, or ``None`` when none does.
+
+    A declared module owns itself and everything under it; the longest match wins.
+    """
+    owners = [m for m in declared if module == m or module.startswith(m + ".")]
+    return max(owners, key=len) if owners else None
 
 
 def cycles(graph: ModuleGraph) -> "list[list[str]]":

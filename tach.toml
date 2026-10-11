@@ -27,9 +27,38 @@
 # scope. Scope-sensitive rules (e.g. "models may import config lazily but
 # never at module scope") are enforced by ast-grep instead — see
 # .ast-grep/rules/.
+#
+# Layers (spec 2026-10-11 placement-and-phases §2). `layers` lists otto's ten
+# role layers, highest first. A module may import its own layer and the ones
+# below it, never one above. `layers_explicit_depends_on = true` keeps every
+# depends_on list binding downward too: without it tach lets any import into a
+# lower layer through undeclared. A module in the import cycle has no `layer`
+# yet, which exempts it; it takes its layer in the commit that frees it, and
+# tests/unit/test_tach_layers.py fails on a module outside the cycle that has
+# none. Every module spells its depends_on, [] for one that imports no other:
+# tach reads a missing list as "may import anything", and
+# scripts/render_module_graph.py refuses one.
+#
+# tach reads `import` statements only. Imports by string (a facade's lazy
+# table, a registry Ref, importlib.import_module) are audited by
+# tests/unit/test_dynamic_import_audit.py.
 
 source_roots = ["src"]
 exclude = ["tests", "docs", "web", "scripts"]
+
+layers_explicit_depends_on = true
+layers = [
+    "entry",        # cli, testing, examples, the package facades, the shim
+    "root",         # the composition root, and the workflows that can start it
+    "workflows",    # instructions, project, init, the monitor service
+    "run",          # the live run: context, session, fleet accessors, docker
+    "composition",  # settings, Repo, discovery, the completion cache, env
+    "sources",      # where labs, inventory, creds and reservations come from
+    "topology",     # the Lab model, link, check, tunnel, the monitor's lower files
+    "specs",        # pydantic models for lab, settings and inventory data
+    "host",         # connections, transfer, host classes and host specs
+    "foundation",   # leaf definitions, slots filled from above, catalogs
+]
 
 [[modules]]
 path = "otto.bootstrap"
@@ -38,8 +67,8 @@ depends_on = [
     "otto.errors",
     # Phase-2 registration wraps each repo's init imports in
     # `registry.registering_repo(name)` so registration seams can attribute an
-    # entry to the repo that registered it. otto.registry is a zero-import
-    # leaf (same standing as otto.errors), so this cannot invert layering or
+    # entry to the repo that registered it. otto.registry is a foundation
+    # leaf (it depends only on otto.errors), so this cannot invert layering or
     # create a cycle.
     "otto.registry",
     # The D2 scope check (2026-08-18) reads the provider registries — the
@@ -81,7 +110,9 @@ path = "otto.cli"
 # make_app factory, and this file was not updated alongside).
 # otto.invocation: the root callback installs the run's policy, and
 # ensure_lab_context builds the context on it.
-depends_on = ["otto.invocation", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live", "otto.init", "otto.session"]
+# otto._shim_complete: cache.py's inspect verbs read the shim's own answer
+# (inspect_shim, inspect_tests).
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live", "otto.init", "otto.session"]
 
 [[modules]]
 path = "otto.config"
@@ -127,6 +158,8 @@ depends_on = [
 
 [[modules]]
 path = "otto.console"
+layer = "foundation"
+depends_on = []
 
 [[modules]]
 path = "otto.context"
@@ -175,6 +208,8 @@ depends_on = [
     # directory, function-locally, as otto.suite.run already does.
     # otto.context does not depend on otto.coverage, so no cycle.
     "otto.context",
+    # otto.layout: the run-tree paths (a pure leaf).
+    "otto.layout",
 ]
 
 [[modules]]
@@ -203,7 +238,7 @@ depends_on = [
     # `register_compose_adapter` is a registration seam — it writes into a
     # Registry and attributes the entry to the registering repo, exactly as
     # every other registration seam in the tree does (docker use-cases spec
-    # §5). otto.registry is a zero-import leaf too (see otto.bootstrap's note
+    # §5). otto.registry is a foundation leaf too (see otto.bootstrap's note
     # above), so the same no-cycle argument holds.
     "otto.registry",
     # The observe verbs run docker's own command with LogMode.QUIET so the
@@ -214,9 +249,12 @@ depends_on = [
 
 [[modules]]
 path = "otto.errors"
+layer = "foundation"
+depends_on = []
 
 [[modules]]
 path = "otto.examples"
+layer = "entry"
 # otto.inventory: the reference LabRepository resolves each record through
 # `resolve_host_entry` — the sample IS the documentation of how a backend
 # honours `inventory=` (spec 2026-08-28 host-inventory §6).
@@ -227,6 +265,8 @@ depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "ot
 
 [[modules]]
 path = "otto.filesystem"
+layer = "foundation"
+depends_on = []
 
 [[modules]]
 path = "otto.init"
@@ -298,6 +338,8 @@ depends_on = [
     # Hosts read the run's policy, resolve a peer host and register with their
     # event loop's registry through the leaf.
     "otto.invocation",
+    # otto.layout: the run-tree paths (a pure leaf).
+    "otto.layout",
 ]
 
 [[modules]]
@@ -345,12 +387,14 @@ depends_on = [
 
 [[modules]]
 path = "otto.invocation"
+layer = "foundation"
 # The run's policy, peer-host resolver and context bindings: a leaf the host
 # layer may import (spec 2026-10-06 run-state contracts §3).
 depends_on = []
 
 [[modules]]
 path = "otto.kmodcov"
+layer = "foundation"
 # otto.version: export_tree() writes the exporting otto's version into the
 # vendored copy's generated header. Function-local (this package sits inside
 # an import-budgeted CLI surface, see otto.cli below).
@@ -360,7 +404,8 @@ depends_on = ["otto.version"]
 path = "otto.labs"
 # otto.utils: sources.py anchors `[[lab.sources]]` json paths through the same
 # `anchor_path` every other settings path goes through — one authority for the
-# rule, not a copy. A zero-import leaf, so the edge cannot cycle.
+# rule, not a copy. A foundation leaf (it depends only on
+# otto.errors), so the edge cannot cycle.
 # otto.inventory: json_repository.py joins each host entry to its inventory
 # record (`resolve_host_entry`) BEFORE the factory sees it — the loader is the
 # single join site (spec 2026-08-28 host-inventory §6). One-way: otto.inventory
@@ -378,6 +423,7 @@ depends_on = [
 
 [[modules]]
 path = "otto.lifecycle"
+layer = "foundation"
 # otto.logger: sync_phase resolves shutdown_listener EAGERLY at entry so the
 # forced exit path (os._exit skips atexit) can flush the queue listener
 # without importing inside a signal handler.
@@ -393,6 +439,7 @@ depends_on = ["otto.lifecycle", "otto.logger", "otto.registry", "otto.models", "
 
 [[modules]]
 path = "otto.logger"
+layer = "foundation"
 depends_on = ["otto.console"]
 
 [[modules]]
@@ -422,6 +469,8 @@ depends_on = [
     # dependency-free leaf (importlib.metadata only): no cycle, no new member
     # in any component.
     "otto.version",
+    # otto.layout: the run-tree paths (a pure leaf).
+    "otto.layout",
 ]
 
 [[modules]]
@@ -442,6 +491,10 @@ depends_on = ["otto.monitor", "otto.config", "otto.context", "otto.tunnel", "ott
 
 [[modules]]
 path = "otto.params"
+layer = "foundation"
+# OptionsRegistrationError and OptionsCollisionError root at OttoError, and the
+# options registry is a Registry of Refs. Both are foundation leaves.
+depends_on = ["otto.errors", "otto.registry"]
 
 [[modules]]
 path = "otto.project"
@@ -508,10 +561,13 @@ depends_on = [
     "otto.models",
     "otto.instructions",
     "otto.params",
+    # otto.layout: the run-tree paths (a pure leaf).
+    "otto.layout",
 ]
 
 [[modules]]
 path = "otto.registry"
+layer = "foundation"
 # otto.errors: RegistrationRefused roots at OttoError like every named class.
 # otto.errors is a leaf with no imports, so no cycle can form.
 depends_on = ["otto.errors"]
@@ -522,13 +578,16 @@ depends_on = ["otto.registry", "otto.utils", "otto.models", "otto.config", "otto
 
 [[modules]]
 path = "otto.snmp"
+layer = "foundation"
 # A leaf: the one pysnmp GET, returning a raw outcome. otto.host (the probe
 # survey) and otto.monitor (the collector) both depend on it; the monitor
 # depends on the host, so the GET could not live in either without a cycle.
 # pysnmp is function-local, so importing this costs only the stdlib.
+depends_on = []
 
 [[modules]]
 path = "otto.result"
+layer = "foundation"
 # otto.errors is for CommandNotRunError's OttoError base. Like config's edge
 # below, this cannot invert layering or create a cycle: otto.errors is a
 # zero-import leaf. The error is defined HERE, not in otto.host.errors with its
@@ -553,6 +612,7 @@ depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle"
 
 [[modules]]
 path = "otto.testing"
+layer = "entry"
 # otto.inventory / otto.models: assert_inventory_conforms (spec §14, added
 # alongside the json backend) checks a candidate against the Inventory
 # protocol and its InventoryRecord fields.
@@ -567,15 +627,18 @@ path = "otto.testing"
 # without naming the type; its own docstring says to import it from otto.result
 # (it lives there, not in otto.host.errors, to avoid a result->host edge).
 # Cannot invert layering or create a cycle: otto.result depends only on
-# otto.errors, a zero-import leaf, and otto.host already depends on it.
+# otto.utils and otto.errors, both foundation leaves, and otto.host already
+# depends on it.
 depends_on = ["otto.config", "otto.context", "otto.creds", "otto.inventory", "otto.invocation", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.result", "otto.suite"]
 
 [[modules]]
 path = "otto.tls"
+layer = "foundation"
 # A leaf: the OS trust store and the request-timeout bound for any HTTPS
 # client. Imports only the stdlib at module level; requests, truststore and
 # typing_extensions are function-local. otto.inventory (NetBox) is its first
 # consumer; a user's reservation/creds/inventory backend is the second.
+depends_on = []
 
 [[modules]]
 path = "otto.tunnel"
@@ -586,9 +649,31 @@ depends_on = ["otto.host", "otto.models", "otto.registry", "otto.lifecycle", "ot
 
 [[modules]]
 path = "otto.utils"
+layer = "foundation"
+# Status and the validation errors root at OttoError.
+depends_on = ["otto.errors"]
 
 [[modules]]
 path = "otto.version"
+layer = "foundation"
+depends_on = []
 
 [[modules]]
 path = "otto._webassets"
+layer = "foundation"
+depends_on = []
+
+[[modules]]
+path = "otto.layout"
+layer = "foundation"
+# The run-tree contract: where per-host and per-product artifacts land. Pure,
+# and imports no other otto module. otto.host, otto.coverage, otto.models and
+# otto.project read it.
+depends_on = []
+
+[[modules]]
+path = "otto._shim_complete"
+layer = "foundation"
+# The TAB answerer: standard library only, imported by the console shim before
+# anything else in otto on every TAB. `otto cache` inspects it.
+depends_on = []
