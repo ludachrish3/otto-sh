@@ -188,7 +188,8 @@ What otto does with it, and when:
   `origin` (the settings file) and `profiles`, the selected repos'
   `[os_profiles]` tables as a {class}`~otto.host.ProfileContext`. Keep
   `profiles` and pass it as `profiles=` to every host helper you call
-  (`create_host_from_dict`, `host_identity`, `validate_host_dict`), so a
+  (`create_host_from_dict`, `host_identity`, `validate_host_dict`, each with
+  the element), so a
   host's `os_type` may name a table any selected repo declares; without it,
   such a host is refused as an unknown `os_type`. An unknown option or a bad
   value fails here,

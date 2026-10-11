@@ -144,20 +144,6 @@ class OsProfile:
     """The defaults and prompts the profile supplies."""
 
 
-def _all_slots(cls: type) -> frozenset[str]:
-    """All settable field names of *cls*, gathered across its MRO.
-
-    A ``@dataclass(slots=True)`` subclass may not repeat inherited slot names
-    (Python 3.11+ adds only *new* fields to the subclass ``__slots__``), so a
-    single-class ``__slots__`` lookup can miss inherited fields. The union over
-    the MRO is what the host factory filters host/profile dicts against.
-    """
-    names: set[str] = set()
-    for klass in cls.__mro__:
-        names.update(getattr(klass, "__slots__", ()))
-    return frozenset(names)
-
-
 def _check_prompts(where: str, login_prompt: str | None, password_prompt: str | None) -> None:
     """Refuse a prompt that is not a valid regex; *where* names the registration."""
     for field_name, pattern in (
@@ -211,7 +197,10 @@ def _check_host_class_entry(name: str, entry: HostClassEntry) -> None:
     checked when it resolves): the class must be a capable
     :class:`~otto.host.remote_host.RemoteHost` subclass, the spec a
     :class:`~otto.models.host.HostSpec` subclass, the profile's defaults
-    fields of the class, and its prompts valid regexes.
+    inputs the spec accepts from lab data
+    (:func:`~otto.host.construction.profile_inputs`), and its prompts valid
+    regexes. Once both are classes, the pair must cover each other
+    (:func:`~otto.host.construction.check_coverage`).
     """
     profile = entry.profile
     if not isinstance(profile, ProfileFields):
@@ -222,14 +211,21 @@ def _check_host_class_entry(name: str, entry: HostClassEntry) -> None:
     cls = entry.cls
     if not isinstance(cls, Ref):
         _validate_host_class(name, cls)
-        unknown = sorted(k for k in profile.defaults if k not in _all_slots(cls))
+    spec = entry.spec
+    if not isinstance(spec, Ref):
+        _validate_host_spec(name, spec)
+        from .construction import profile_inputs  # off the startup graph on purpose
+
+        unknown = sorted(k for k in profile.defaults if k not in profile_inputs(spec))
         if unknown:
             raise ValueError(
                 f"register_host_class({name!r}): unknown default field(s) for "
-                f"{cls.__name__}: {unknown}"
+                f"{spec.__name__}: {unknown}"
             )
-    if not isinstance(entry.spec, Ref):
-        _validate_host_spec(name, entry.spec)
+    if not isinstance(cls, Ref) and not isinstance(spec, Ref):
+        from .construction import check_coverage  # off the startup graph on purpose
+
+        check_coverage(f"register_host_class({name!r})", cls, spec)
     _check_prompts(f"register_host_class({name!r})", profile.login_prompt, profile.password_prompt)
 
 
@@ -246,12 +242,19 @@ HOST_CLASSES: Registry[HostClassEntry] = Registry(
 def profile_vocabulary(base: str) -> frozenset[str]:
     """Return the field names a profile over host class *base* may default.
 
+    They are the inputs *base*'s spec accepts from lab data
+    (:func:`~otto.host.construction.profile_inputs`): every spec field but
+    ``os_type`` and the ``Consume`` ones such as ``inventory``. A class-only
+    field (``products``, ``element``, ``lab_info``) is not one.
+
     Raises:
         ValueError: *base* names no registered host class.
         Exception: resolving a by-reference class failed (an import error, or
             the class's own resolution check); the caller wraps it.
     """
-    return _all_slots(resolved(HOST_CLASSES.get(base).cls))
+    from .construction import profile_inputs  # off the startup graph on purpose
+
+    return profile_inputs(resolved(HOST_CLASSES.get(base).spec))
 
 
 def check_os_profile(
@@ -269,8 +272,8 @@ def check_os_profile(
     for every repo table, and so does :func:`resolve_os_profile` for a repo
     table it selects. *base* must name a registered host class that resolves
     (a class registered by reference is imported and checked here), every
-    *defaults* key must be a field of that class, and each prompt must be a
-    valid regex.
+    *defaults* key must be an input that class's spec accepts from lab data
+    (:func:`profile_vocabulary`), and each prompt must be a valid regex.
     """
     _check_profile_meaning(
         f"register_os_profile({name!r})", base, defaults, login_prompt, password_prompt
@@ -403,7 +406,7 @@ def _builtin_profiles() -> "FrozenMap[str, OsProfile]":
 
     Naming a backend here is validated shallowly by design:
     :func:`register_os_profile`'s checks cover only that ``defaults``'s *keys*
-    are fields on the base class, never that its *values* make sense — a
+    are inputs the base's spec accepts, never that its *values* make sense — a
     typo'd or unregistered transfer name would register cleanly and only
     surface later, at host-build time, not here.
     ``TestBusyBoxProfile.test_busybox_names_the_shell_transfer_backend_and_it_is_registered``
@@ -572,8 +575,13 @@ def register_host_class(
         :class:`~otto.host.capability_grid.HostCapabilities` under
         ``capabilities``; if *spec* is given but is not a ``HostSpec``
         subclass; if *spec* is ``None`` and no base class of *cls* has a
-        registered spec; or if *profile* defaults a field the class lacks or
-        holds a prompt that is not a valid regex.
+        registered spec; if *profile* defaults a field the spec does not accept
+        from lab data or holds a prompt that is not a valid regex; or if the
+        class and the spec do not cover each other
+        (:func:`~otto.host.construction.check_coverage`: a spec field with no
+        constructor field, a public constructor field that is neither a spec
+        field nor marked ``RuntimeOnly``, a name that is both, or a malformed
+        marker). A class given by reference is checked at its first lookup.
     """
     if isinstance(cls, Ref):
         if spec is None:
@@ -623,7 +631,7 @@ def register_os_profile(
         Name of a registered host class (e.g. ``'unix'`` or ``'embedded'``).
     defaults : Mapping[str, object] | None
         Raw field defaults merged beneath each host's own fields. Keys are
-        validated against the base class's fields.
+        validated against the inputs its spec accepts from lab data.
     login_prompt : str | None
         Regex for this OS's login prompt (see :attr:`ProfileFields.login_prompt`).
     password_prompt : str | None
@@ -639,8 +647,9 @@ def register_os_profile(
         If a code profile named *name* exists and *overwrite* is false.
     ValueError
         Raised by :func:`check_os_profile`: if *base* is not a registered host
-        class name; if a ``defaults`` key is not a field on the base class (a
-        likely typo); or if ``login_prompt``/``password_prompt`` is not a
+        class name; if a ``defaults`` key is not an input the base's spec
+        accepts from lab data (a likely typo, or a class-only field such as
+        ``products``); or if ``login_prompt``/``password_prompt`` is not a
         valid regex.
     """
     shadows = name in _BUILTIN_NAMES and (name in BUILTIN_PROFILES or name in HOST_CLASSES)
@@ -793,9 +802,9 @@ def build_os_profile(name: str, *, data: ProfileContext | None = None) -> OsProf
 def get_os_profile(name: str, *, data: ProfileContext | None = None) -> OsProfile | None:
     """Return the :class:`OsProfile` *name* selects, or ``None`` when no layer holds it.
 
-    Non-raising for an unknown name, so a caller can produce its own error
-    (e.g. :func:`otto.host.factory.validate_host_dict`); a repo table it
-    selects that fails its check still raises.
+    Non-raising for an unknown name, so a caller can skip it or produce its
+    own error (e.g. the completion cache's host-class index skips it); a repo
+    table it selects that fails its check still raises.
     """
     context = data if data is not None else ProfileContext.empty()
     if name not in _layer_names(context):
@@ -847,7 +856,7 @@ def get_host_class(name: str) -> type | None:
     """Return the host class registered under *name*, or ``None``.
 
     Non-raising counterpart to :func:`build_host_class`, for callers that
-    produce their own error (e.g. :func:`otto.host.factory.validate_host_dict`).
+    produce their own answer (e.g. ``otto.cli.expose``'s verb lookup).
     """
     return build_host_class(name) if name in HOST_CLASSES else None
 

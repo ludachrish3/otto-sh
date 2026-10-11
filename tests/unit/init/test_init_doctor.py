@@ -580,7 +580,7 @@ def test_a_null_inventory_key_entry_is_still_validated_when_the_declaration_is_b
     report = check_repo(tmp_path)
     assert not report.ok
     assert "not-a-real-os-type" in _text(report)
-    assert "is not a registered profile" in _text(report)
+    assert "Unknown os_type profile" in _text(report)
 
 
 def test_a_referencing_host_is_not_double_reported_when_the_declaration_itself_is_broken(
@@ -1119,3 +1119,54 @@ def test_a_kmodcov_source_under_an_unknown_users_home_fails_kmodcov_and_never_ra
     report = check_repo(tmp_path)
     assert report.verdict("kmodcov").state == "failed"
     assert "~nosuchuser_xyz/kmodcov" in "\n".join(report.verdict("kmodcov").problems)
+
+
+def test_the_doctor_and_the_loader_report_the_same_contextual_error(tmp_path: Path) -> None:
+    """One pipeline: the doctor's problem and the loader's error carry the same host-named tail."""
+    from otto.init.doctor import _inventory_for
+    from otto.init.templates import EXAMPLE_LAB_NAME
+    from otto.labs.errors import LabRepositoryError
+    from otto.labs.json_repository import JsonFileLabRepository
+
+    _scaffold_all(tmp_path)
+    lab_file = tmp_path / "lab_data" / "lab.json"
+    data = json.loads(lab_file.read_text())
+    data["elements"][0]["hosts"][0].update(valid_terms=["console"])
+    lab_file.write_text(json.dumps(data))
+    doctor_lines = [line for line in _text(check_repo(tmp_path)).splitlines() if "hosts[0]" in line]
+    assert len(doctor_lines) == 1
+    # The scaffold's host is inventory-referenced: the loader resolves it against the
+    # inventory the doctor resolves it against.
+    repo = JsonFileLabRepository(search_paths=[tmp_path / "lab_data"])
+    with pytest.raises(LabRepositoryError) as exc:
+        repo.load_lab(EXAMPLE_LAB_NAME, inventory=_inventory_for(tmp_path))
+    tail = "term 'console' requires console_options.server"
+    assert tail in doctor_lines[0]
+    assert tail in str(exc.value)
+    assert doctor_lines[0].split("host '", 1)[1] == str(exc.value).split("host '", 1)[1]
+
+
+@pytest.mark.parametrize("kind", ["malformed", "uncopyable"])
+def test_the_doctor_reports_a_bad_power_table_naming_the_host(tmp_path: Path, kind: str) -> None:
+    from pydantic import PrivateAttr
+
+    from otto.host import register_power_controller
+    from otto.models.base import OttoModel
+
+    class _Uncopyable(OttoModel):
+        _gen: object = PrivateAttr(default_factory=lambda: (i for i in ()))
+
+    register_power_controller("t-uncopyable", config=_Uncopyable, factory=lambda c: None)
+    _scaffold_all(tmp_path)
+    lab_file = tmp_path / "lab_data" / "lab.json"
+    data = json.loads(lab_file.read_text())
+    data["elements"][0]["hosts"][0]["power_control"] = (
+        {"type": "command", "on_cmd": 5} if kind == "malformed" else "t-uncopyable"
+    )
+    lab_file.write_text(json.dumps(data))
+    text = _text(check_repo(tmp_path))
+    reason = "parse failed" if kind == "malformed" else "cannot be copied"
+    assert any(
+        "hosts[0]" in line and "host 'example-device'" in line and reason in line
+        for line in text.splitlines()
+    )

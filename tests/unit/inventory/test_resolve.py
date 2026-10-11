@@ -277,5 +277,5 @@ def test_the_composed_list_validates_as_a_unix_host():
         "creds": [{"login": "u"}, {"login": "root", "proxy": "su", "via": "u"}],
     }
     resolved = resolve_host_entry(entry, inv, _DUT).host_data
-    validate_host_dict(resolved)  # no raise: via names a login the record supplied
+    validate_host_dict(resolved, element=_DUT)  # no raise: via names a login the record supplied
     assert [c["login"] for c in resolved["creds"]] == ["u", "root"]

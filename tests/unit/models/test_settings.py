@@ -524,7 +524,7 @@ def test_host_default_option_keys_match_factory_options_keys():
 def test_docker_spec_fields_match_runtime_dataclass():
     """Bidirectional drift guard: each docker spec's field names match its
     runtime dataclass's init fields (so a field added to one but not the other
-    is caught), mirroring HOST_SPEC_RUNTIME_PAIRS in test_host_specs.py.
+    is caught), mirroring the coverage rule (otto.host.construction).
     """
     import dataclasses
 

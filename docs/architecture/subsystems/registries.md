@@ -219,8 +219,9 @@ Two consequences shape the code:
   backend states its declarations beside its `Ref`, so they are read without
   importing it; `check_resolved` refuses a class that disagrees with them.
   A `HOST_CLASSES` record carries the class, its spec and its own profile;
-  its one check covers all three. `OS_PROFILES` checks a profile's defaults
-  against its base class's fields and its prompt regexes.
+  its one check covers all three, and also proves the class and spec cover
+  each other. `OS_PROFILES` checks a profile's defaults against the inputs
+  its base's spec accepts from lab data and its prompt regexes.
 
 Built-ins whose value is built beside the registry itself — the `su` login proxy, the SNMP descriptors, the term backends (whose
 `ConnectionManager` class lives in the registry's own module) — are

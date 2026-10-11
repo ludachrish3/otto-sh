@@ -17,6 +17,7 @@ All three collect every violation on one
 """
 
 import asyncio
+import dataclasses
 import inspect
 from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
@@ -26,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from ..config.lab import Lab
 from ..context import OttoContext, reset_context, set_context
 from ..host.capability_grid import HostCapabilities, SessionIdentity, UserSupport
+from ..host.construction import check_coverage
 from ..host.host import BaseHost, Host
 from ..host.os_profile import _resolve_host_spec, _validate_host_class
 from ..host.transfer.base import BaseFileTransfer, ProgressGranularity
@@ -326,8 +328,12 @@ def assert_host_registrable(cls: type, *, spec: "type[HostSpec] | None" = None) 
       nearest base of *cls*. A class that adds fields passes the ``HostSpec``
       subclass declaring them as *spec*, exactly as it would to
       ``register_host_class``.
+    * a class and spec that cover each other
+      (:func:`~otto.host.construction.check_coverage`): every spec field the
+      constructor receives is a constructor field, and every public
+      constructor field is a spec field or marked ``RuntimeOnly``.
 
-    Both rules are the registry's own functions, called here without
+    All three are the registry's own checks, called here without
     registering anything: no host class, spec or ``os_type`` profile is
     written. Pass the *spec* you will pass to ``register_host_class``.
 
@@ -343,9 +349,15 @@ def assert_host_registrable(cls: type, *, spec: "type[HostSpec] | None" = None) 
         c.expect(False, f"Host registration: {e}")
     if isinstance(cls, type):
         try:
-            _resolve_host_spec(label, cls, spec)
+            resolved_spec = _resolve_host_spec(label, cls, spec)
         except ValueError as e:
             c.expect(False, f"Host registration: {e}")
+        else:
+            if isinstance(resolved_spec, type) and dataclasses.is_dataclass(cls):
+                try:
+                    check_coverage(label, cls, resolved_spec)
+                except ValueError as e:
+                    c.expect(False, f"Host registration: {e}")
     c.raise_if_failures()
 
 

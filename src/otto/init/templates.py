@@ -90,8 +90,9 @@ paths = ["lab_data"]
 #port = 22
 
 # --- [os_profiles.<name>] — named OS-profile bundles for lab.json hosts ------
-# `base` is the host class the profile builds on; any host field may follow
-# as a default applied to every host that selects this profile.
+# `base` is the host class the profile builds on; any input the base's spec
+# accepts from lab data may follow as a default applied to every host that
+# selects this profile (see docs/configuration/os-profiles.md).
 #[os_profiles.my-os]
 #base = "unix"
 #valid_terms = ["ssh"]

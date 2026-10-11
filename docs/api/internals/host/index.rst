@@ -21,6 +21,7 @@ host internals
    console
    capability_grid
    os_profile
+   construction
    factory
    lab_info
    element

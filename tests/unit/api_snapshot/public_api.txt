@@ -1522,6 +1522,16 @@ member	otto.host:ConnectionManager.term	property:gs-
 member	otto.host:ConnectionManager.transport_cred_for	method	sync	PK:protocol:-
 member	otto.host:ConnectionManager.unforward_port	method	sync	PK:dest_port:-
 abstract	otto.host:ConnectionManager	-
+name	otto.host:Consume	class
+mro	otto.host:Consume	-
+call	otto.host:Consume	sync	PK:reason:-
+member	otto.host:Consume.reason	field
+abstract	otto.host:Consume	-
+name	otto.host:Convert	class
+mro	otto.host:Convert	-
+call	otto.host:Convert	sync	PK:fn:-
+member	otto.host:Convert.fn	field
+abstract	otto.host:Convert	-
 name	otto.host:DeclaredProduct	class
 mro	otto.host:DeclaredProduct	{otto.host.product:ShellProduct,otto.host:ShellProduct} {otto.host.product:Product,otto.host:Product} {otto.host.dev_tool:DevTool,otto.host:DevTool}
 call	otto.host:DeclaredProduct	sync	PK:artifact:- PK:name:S:"" PK:stage_dir:O PK:cov_dir:N PK:debug_log_globs:O PK:instrumented_override:N PK:install_cmd:N PK:uninstall_cmd:N PK:check_cmd:N
@@ -1836,6 +1846,8 @@ input	otto.host:EmbeddedHostSpec	S:"transfer"	optional	N	S:"transfer"
 input	otto.host:EmbeddedHostSpec	S:"valid_terms"	optional	O	S:"valid_terms"
 input	otto.host:EmbeddedHostSpec	S:"valid_transfers"	optional	O	S:"valid_transfers"
 member	otto.host:EmbeddedHostSpec.board	field
+member	otto.host:EmbeddedHostSpec.build_kwargs	method	sync	PK:ready:-
+member	otto.host:EmbeddedHostSpec.check_in	method	sync	PK:ctx:-
 member	otto.host:EmbeddedHostSpec.command_frame	field
 member	otto.host:EmbeddedHostSpec.console_options	field
 member	otto.host:EmbeddedHostSpec.creds	field
@@ -1870,13 +1882,15 @@ member	otto.host:EmbeddedHostSpec.snmp	field
 member	otto.host:EmbeddedHostSpec.sw_version	field
 member	otto.host:EmbeddedHostSpec.telnet_options	field
 member	otto.host:EmbeddedHostSpec.term	field
-member	otto.host:EmbeddedHostSpec.to_host	method	sync	PK:cls:O KO:element:- KO:preferences:N
+member	otto.host:EmbeddedHostSpec.to_host	method	sync	KO:ready:-
 member	otto.host:EmbeddedHostSpec.toolchain	field
 member	otto.host:EmbeddedHostSpec.transfer	field
 member	otto.host:EmbeddedHostSpec.valid_terms	field
 member	otto.host:EmbeddedHostSpec.valid_transfers	field
+member	otto.host:EmbeddedHostSpec.validate_in	method	sync	PK:ctx:-
 abstract	otto.host:EmbeddedHostSpec	-
 name	otto.host:Expect	alias
+name	otto.host:FlatPreferences	alias
 name	otto.host:HopTransport	protocol
 mro	otto.host:HopTransport	-
 member	otto.host:HopTransport.close	method	coroutine	-
@@ -1944,6 +1958,16 @@ member	otto.host:Host.uninstall_dev_tools	method	coroutine	PK:owner:N
 member	otto.host:Host.wait_until_down	method	coroutine	PK:timeout:- PK:interval:F:0x1.0000000000000p+1
 member	otto.host:Host.wait_until_up	method	coroutine	PK:timeout:- PK:interval:F:0x1.0000000000000p+1
 requires	otto.host:Host	__aenter__ __aexit__ app_shell as_user cleanup close current_user debug_log_globs dev_tools element exec expect get get_debug_logs get_logs get_product_logs has_bash id install install_dev_tools install_toolchain_tools install_tools inventory_ref is_clean is_installed is_reachable is_uninstalled lab_info log log_dest login logout name open_session power power_control products put reboot remove_toolchain_tools resources run run_login run_logout send shadowed_dev_tools shadowed_products shutdown source_lab stage switch_user toolchain toolchain_tools_absent uninstall uninstall_dev_tools wait_until_down wait_until_up
+name	otto.host:HostBuild	class
+mro	otto.host:HostBuild	-
+call	otto.host:HostBuild	sync	PK:inputs:- PK:context:- PK:selections:- PK:power:-
+member	otto.host:HostBuild.__eq__	method	sync	PK:other:-
+member	otto.host:HostBuild.__hash__	method	sync	-
+member	otto.host:HostBuild.context	field
+member	otto.host:HostBuild.inputs	field
+member	otto.host:HostBuild.power	field
+member	otto.host:HostBuild.selections	field
+abstract	otto.host:HostBuild	-
 name	otto.host:HostCapabilities	class
 mro	otto.host:HostCapabilities	-
 call	otto.host:HostCapabilities	sync	PK:run_user:- PK:exec_user:- PK:put_user:- PK:get_user:- PK:show_progress:- PK:session_identity:- PK:transfer_family:S:"" PK:transfer:S:"" PK:note:S:""
@@ -1968,6 +1992,17 @@ member	otto.host:HostClassEntry.cls	field
 member	otto.host:HostClassEntry.profile	field
 member	otto.host:HostClassEntry.spec	field
 abstract	otto.host:HostClassEntry	-
+name	otto.host:HostContext	class
+mro	otto.host:HostContext	-
+call	otto.host:HostContext	sync	PK:element:- PK:entry:- PK:profile:- PK:host_id:- PK:preferences:-
+member	otto.host:HostContext.__eq__	method	sync	PK:other:-
+member	otto.host:HostContext.__hash__	method	sync	-
+member	otto.host:HostContext.element	field
+member	otto.host:HostContext.entry	field
+member	otto.host:HostContext.host_id	field
+member	otto.host:HostContext.preferences	field
+member	otto.host:HostContext.profile	field
+abstract	otto.host:HostContext	-
 name	otto.host:HostFilter	class
 mro	otto.host:HostFilter	-
 call	otto.host:HostFilter	sync	PK:name:S:""
@@ -1977,6 +2012,13 @@ name	otto.host:HostLoopError	class
 mro	otto.host:HostLoopError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.host:HostLoopError	sync	PK:host_id:- PK:owner:- PK:caller:-
 abstract	otto.host:HostLoopError	-
+name	otto.host:HostReadiness	class
+mro	otto.host:HostReadiness	-
+call	otto.host:HostReadiness	sync	PK:host_id:- PK:cls:- PK:selections:-
+member	otto.host:HostReadiness.cls	field
+member	otto.host:HostReadiness.host_id	field
+member	otto.host:HostReadiness.selections	field
+abstract	otto.host:HostReadiness	-
 name	otto.host:HostSession	class
 mro	otto.host:HostSession	-
 call	otto.host:HostSession	sync	PK:name:- PK:session:- PK:log_command:- PK:log_output:- PK:deregister:- PK:creds:N PK:host_id:S:"" PK:history_prefix:S:"" PK:target_frame:N PK:establishing:B:false KO:term:N
@@ -2029,6 +2071,8 @@ input	otto.host:HostSpec	S:"sw_version"	optional	N	S:"sw_version"
 input	otto.host:HostSpec	S:"telnet_options"	optional	O	S:"telnet_options"
 input	otto.host:HostSpec	S:"toolchain"	optional	O	S:"toolchain"
 member	otto.host:HostSpec.board	field
+member	otto.host:HostSpec.build_kwargs	method	sync	PK:ready:-
+member	otto.host:HostSpec.check_in	method	sync	PK:ctx:-
 member	otto.host:HostSpec.command_frame	field
 member	otto.host:HostSpec.console_options	field
 member	otto.host:HostSpec.creds	field
@@ -2060,9 +2104,22 @@ member	otto.host:HostSpec.slot	field
 member	otto.host:HostSpec.snmp	field
 member	otto.host:HostSpec.sw_version	field
 member	otto.host:HostSpec.telnet_options	field
-member	otto.host:HostSpec.to_host	method	sync	PK:cls:N KO:element:- KO:preferences:N
+member	otto.host:HostSpec.to_host	method	sync	KO:ready:-
 member	otto.host:HostSpec.toolchain	field
+member	otto.host:HostSpec.validate_in	method	sync	PK:ctx:-
 abstract	otto.host:HostSpec	-
+name	otto.host:HostSpecInContext	class
+mro	otto.host:HostSpecInContext	-
+call	otto.host:HostSpecInContext	sync	PK:spec:- PK:context:-
+member	otto.host:HostSpecInContext.__eq__	method	sync	PK:other:-
+member	otto.host:HostSpecInContext.__hash__	method	sync	-
+member	otto.host:HostSpecInContext.context	field
+member	otto.host:HostSpecInContext.spec	field
+abstract	otto.host:HostSpecInContext	-
+name	otto.host:HostValidationError	class
+mro	otto.host:HostValidationError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.host:HostValidationError	sync	@builtin:builtins.ValueError
+abstract	otto.host:HostValidationError	-
 name	otto.host:LocalHost	class
 mro	otto.host:LocalHost	{otto.host:PosixPrivilege} {otto.host:PosixFileOps} {otto.host:BaseHost}
 call	otto.host:LocalHost	sync	KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:lab_info:O KO:resources:O KO:element:N KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true
@@ -2171,6 +2228,7 @@ call	otto.host:MountNotFoundError	sync	@builtin:builtins.ValueError
 abstract	otto.host:MountNotFoundError	-
 name	otto.host:NcListenerCheck	alias
 name	otto.host:NcPortStrategy	alias
+name	otto.host:Omit	value
 name	otto.host:OsProfile	class
 mro	otto.host:OsProfile	-
 call	otto.host:OsProfile	sync	PK:name:- PK:base:- PK:fields:O
@@ -2184,6 +2242,10 @@ name	otto.host:OsType	class
 mro	otto.host:OsType	-
 call	otto.host:OsType	sync	@builtin:builtins.str
 abstract	otto.host:OsType	-
+name	otto.host:Pass	class
+mro	otto.host:Pass	-
+call	otto.host:Pass	sync	-
+abstract	otto.host:Pass	-
 name	otto.host:PosixFileOps	class
 mro	otto.host:PosixFileOps	-
 call	otto.host:PosixFileOps	sync	-
@@ -2215,6 +2277,12 @@ name	otto.host:PowerControlError	class
 mro	otto.host:PowerControlError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.host:PowerControlError	sync	@builtin:builtins.Exception
 abstract	otto.host:PowerControlError	-
+name	otto.host:PowerControlSpec	model
+mro	otto.host:PowerControlSpec	{otto.models:OttoModel}
+input	otto.host:PowerControlSpec	S:"type"	required	-	S:"type"
+member	otto.host:PowerControlSpec.model_config	attribute
+member	otto.host:PowerControlSpec.type	field
+abstract	otto.host:PowerControlSpec	-
 name	otto.host:PowerController	class
 mro	otto.host:PowerController	-
 call	otto.host:PowerController	sync	-
@@ -2397,6 +2465,11 @@ member	otto.host:RemoteHost.verify_connection	method	coroutine	-
 member	otto.host:RemoteHost.wait_until_down	method	coroutine	PK:timeout:- PK:interval:F:0x1.0000000000000p+1
 member	otto.host:RemoteHost.wait_until_up	method	coroutine	PK:timeout:- PK:interval:F:0x1.0000000000000p+1
 abstract	otto.host:RemoteHost	-
+name	otto.host:Resolve	class
+mro	otto.host:Resolve	-
+call	otto.host:Resolve	sync	PK:fn:-
+member	otto.host:Resolve.fn	field
+abstract	otto.host:Resolve	-
 name	otto.host:Results	class
 mro	otto.host:Results	{otto.result:Result,otto:Result}
 call	otto.host:Results	sync	PK:status:- PK:value:N PK:msg:S:""
@@ -2414,6 +2487,14 @@ member	otto.host:Results.only	property:g--
 member	otto.host:Results.status	field
 member	otto.host:Results.value	field
 abstract	otto.host:Results	-
+name	otto.host:RuntimeOnly	class
+mro	otto.host:RuntimeOnly	-
+call	otto.host:RuntimeOnly	sync	PK:reason:- PK:supplied_by:N
+member	otto.host:RuntimeOnly.__eq__	method	sync	PK:other:-
+member	otto.host:RuntimeOnly.__hash__	method	sync	-
+member	otto.host:RuntimeOnly.reason	field
+member	otto.host:RuntimeOnly.supplied_by	field
+abstract	otto.host:RuntimeOnly	-
 name	otto.host:SessionIdentity	enum
 mro	otto.host:SessionIdentity	@builtin:builtins.str
 enum	otto.host:SessionIdentity	as_user_scoped	S:"as_user\u0020scoped"
@@ -2610,7 +2691,7 @@ abstract	otto.host:TransferMetadata	-
 name	otto.host:TransferProgressHandler	alias
 name	otto.host:UnixHost	class
 mro	otto.host:UnixHost	{otto.host:PosixPrivilege} {otto.host:PosixFileOps} {otto.host:RemoteHost} {otto.host:BaseHost}
-call	otto.host:UnixHost	sync	PK:ip:- PK:creds:- KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:lab_info:O KO:resources:O KO:element:- KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true KO:board:N KO:slot:N KO:site:N KO:rack:N KO:shelf:N KO:hop:N KO:os_type:S:"unix" KO:os_name:S:"Linux" KO:os_version:N KO:hw_version:N KO:sw_version:N KO:term:S:"ssh" KO:transfer:S:"scp" KO:valid_terms:O KO:valid_transfers:O KO:is_virtual:B:false KO:command_frame:N KO:landing_frame:N KO:session_setup:N KO:default_dest_dir:O KO:max_filename_len:I:255 KO:telnet_options:O KO:console_options:O KO:snmp:N KO:metadata:O KO:interfaces:O KO:_lab:N KO:docker_capable:B:false KO:docker_priority:I:0 KO:impairer:S:"netem" KO:valid_impairers:O KO:ssh_options:O KO:sftp_options:O KO:scp_options:O KO:ftp_options:O KO:nc_options:O KO:userland_options:O KO:shell_history:B:false
+call	otto.host:UnixHost	sync	PK:ip:- PK:creds:O KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:lab_info:O KO:resources:O KO:element:- KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true KO:board:N KO:slot:N KO:site:N KO:rack:N KO:shelf:N KO:hop:N KO:os_type:S:"unix" KO:os_name:S:"Linux" KO:os_version:N KO:hw_version:N KO:sw_version:N KO:term:S:"ssh" KO:transfer:S:"scp" KO:valid_terms:O KO:valid_transfers:O KO:is_virtual:B:false KO:command_frame:N KO:landing_frame:N KO:session_setup:N KO:default_dest_dir:O KO:max_filename_len:I:255 KO:telnet_options:O KO:console_options:O KO:snmp:N KO:metadata:O KO:interfaces:O KO:_lab:N KO:docker_capable:B:false KO:docker_priority:I:0 KO:impairer:S:"netem" KO:valid_impairers:O KO:ssh_options:O KO:sftp_options:O KO:scp_options:O KO:ftp_options:O KO:nc_options:O KO:userland_options:O KO:shell_history:B:false
 member	otto.host:UnixHost.__aenter__	method	coroutine	-
 member	otto.host:UnixHost.__aexit__	method	coroutine	VP:exc:-
 member	otto.host:UnixHost.__eq__	method	sync	PK:other:-
@@ -2785,6 +2866,8 @@ input	otto.host:UnixHostSpec	S:"valid_impairers"	optional	O	S:"valid_impairers"
 input	otto.host:UnixHostSpec	S:"valid_terms"	optional	O	S:"valid_terms"
 input	otto.host:UnixHostSpec	S:"valid_transfers"	optional	O	S:"valid_transfers"
 member	otto.host:UnixHostSpec.board	field
+member	otto.host:UnixHostSpec.build_kwargs	method	sync	PK:ready:-
+member	otto.host:UnixHostSpec.check_in	method	sync	PK:ctx:-
 member	otto.host:UnixHostSpec.command_frame	field
 member	otto.host:UnixHostSpec.console_options	field
 member	otto.host:UnixHostSpec.creds	field
@@ -2826,13 +2909,14 @@ member	otto.host:UnixHostSpec.ssh_options	field
 member	otto.host:UnixHostSpec.sw_version	field
 member	otto.host:UnixHostSpec.telnet_options	field
 member	otto.host:UnixHostSpec.term	field
-member	otto.host:UnixHostSpec.to_host	method	sync	PK:cls:O KO:element:- KO:preferences:N
+member	otto.host:UnixHostSpec.to_host	method	sync	KO:ready:-
 member	otto.host:UnixHostSpec.toolchain	field
 member	otto.host:UnixHostSpec.transfer	field
 member	otto.host:UnixHostSpec.userland_options	field
 member	otto.host:UnixHostSpec.valid_impairers	field
 member	otto.host:UnixHostSpec.valid_terms	field
 member	otto.host:UnixHostSpec.valid_transfers	field
+member	otto.host:UnixHostSpec.validate_in	method	sync	PK:ctx:-
 abstract	otto.host:UnixHostSpec	-
 name	otto.host:UserSupport	enum
 mro	otto.host:UserSupport	@builtin:builtins.str
@@ -3007,6 +3091,8 @@ name	otto.host:get_host_class	function
 call	otto.host:get_host_class	sync	PK:name:-
 name	otto.host:get_os_profile	function
 call	otto.host:get_os_profile	sync	PK:name:- KO:data:N
+name	otto.host:host_context	function
+call	otto.host:host_context	sync	PK:host_data:- KO:element:- KO:profiles:N KO:preferences:N
 name	otto.host:host_identity	function
 call	otto.host:host_identity	sync	PK:host_data:- PK:element:- KO:profiles:N
 name	otto.host:is_dry_run	function
@@ -3042,7 +3128,7 @@ call	otto.host:registered_product_providers	sync	-
 name	otto.host:resolve_os_profile	function
 call	otto.host:resolve_os_profile	sync	PK:name:- KO:data:-
 name	otto.host:validate_host_dict	function
-call	otto.host:validate_host_dict	sync	PK:host_data:- KO:profiles:N
+call	otto.host:validate_host_dict	sync	PK:host_data:- KO:element:- KO:profiles:N
 name	otto.init:AREA_NAMES	value
 name	otto.init:AreaVerdict	class
 mro	otto.init:AreaVerdict	-

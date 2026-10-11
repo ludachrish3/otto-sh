@@ -123,7 +123,7 @@ def test_lab_scaffold_writes_three_files_that_resolve_to_one_host(tmp_path: Path
     inventory = _inventory_for(tmp_path)
     assert inventory is not None
     resolved = resolve_host_entry(host, inventory, element.to_element()).host_data
-    validate_host_dict(resolved)
+    validate_host_dict(resolved, element=element.to_element())
     spec = UnixHostSpec.model_validate(resolved)
     assert spec.ip == "192.0.2.1"
     assert [(c.login, c.password) for c in spec.creds] == [("admin", "CHANGE_ME")]

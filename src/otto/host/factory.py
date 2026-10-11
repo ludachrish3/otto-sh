@@ -5,18 +5,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..layout import validate_product_name
+from ..registry import resolved
 from .capability import select_option_defaults, select_preferences
+from .construction import HostContext, HostSpecInContext, _effective_default
 from .dev_tool import apply_declared_dev_tools, apply_dev_tool_providers
 from .element import Element
 from .inventory_ref import InventoryRef
 from .os_profile import (
+    HOST_CLASSES,
     OsProfile,
     ProfileContext,
-    build_host_class,
-    build_host_spec,
     constructing_with,
-    get_os_profile,
-    registered_profile_names,
     resolve_os_profile,
 )
 from .product import apply_declared_products, apply_product_providers, stamp_cov_dir
@@ -105,7 +104,8 @@ class HostIdentity:
     """Validated management address (a profile may supply it, so read it here)."""
 
     docker_capable: bool
-    """Whether the host declares (or its profile defaults) docker capability."""
+    """True when the host is docker-capable, as the entry (or its profile) sets it, else as
+    the host class declares by default."""
 
     board: str | None
     """Validated board (a profile may default it) — an id portion, kept to name the host."""
@@ -137,6 +137,73 @@ def reject_unresolved_reference(host_data: dict[str, Any]) -> None:
         )
 
 
+def _check_preferences_shape(preferences: "dict[str, Any]") -> None:
+    """Refuse a preferences table whose values are not selector-keyed tables."""
+    for selector, entries in preferences.items():
+        if not isinstance(entries, dict):
+            raise ValueError(  # noqa: TRY004 — a configuration error, as every factory refusal
+                f"preferences[{selector!r}] must be a table of capability lists and option "
+                f"tables keyed by a host-id selector, e.g. {{'.*': {{'term': ['ssh']}}}}; got "
+                f"{type(entries).__name__}"
+            )
+
+
+def _pipeline(
+    host_data: dict[str, Any],
+    *,
+    element: Element,
+    profiles: ProfileContext | None,
+    preferences: "dict[str, dict[str, Any]] | None",
+) -> HostSpecInContext:
+    """Resolve, merge, validate structurally, identify and select preferences."""
+    reject_unresolved_reference(host_data)
+    selector = host_data.get("os_type", "unix")
+    profile = resolve_os_profile(selector, data=_data(profiles))
+    entry = HOST_CLASSES.get(profile.base)
+    spec_cls = resolved(entry.spec)
+    merged = _merge_host_dict(host_data, None, profile, spec_cls)
+    merged["os_type"] = selector
+    spec = spec_cls.model_validate(merged)
+    # The id composes from the VALIDATED spec: a profile may default board or
+    # slot, and a lax slot ("03", 3.0) reads as the int the built host keeps.
+    host_id = make_host_id(element.name, spec.board, spec.slot)
+    flat: "dict[str, list[str]] | None" = None
+    if preferences is not None:
+        _check_preferences_shape(preferences)
+        flat = select_preferences(preferences, host_id)
+        option_defaults = select_option_defaults(preferences, host_id)
+        if option_defaults:
+            merged = _merge_host_dict(host_data, option_defaults, profile, spec_cls)
+            merged["os_type"] = selector
+            spec = spec_cls.model_validate(merged)
+    context = HostContext(
+        element=element, entry=entry, profile=profile, host_id=host_id, preferences=flat
+    )
+    return HostSpecInContext(spec=spec, context=context)
+
+
+def host_context(
+    host_data: dict[str, Any],
+    *,
+    element: Element,
+    profiles: ProfileContext | None = None,
+    preferences: "dict[str, dict[str, Any]] | None" = None,
+) -> HostSpecInContext:
+    """Return *host_data*'s validated spec and the context it validates in.
+
+    The supported route to a host without the factory:
+    ``hc.spec.to_host(ready=hc.spec.validate_in(hc.context))``. *preferences* is
+    the selector-keyed table :func:`create_host_from_dict` takes; ``None`` means
+    no preferences (the record builds).
+    """
+    return _pipeline(
+        host_data,
+        element=element,
+        profiles=profiles,
+        preferences=preferences if preferences is not None else {},
+    )
+
+
 def host_identity(
     host_data: dict[str, Any], element: Element, *, profiles: ProfileContext | None = None
 ) -> HostIdentity:
@@ -155,21 +222,22 @@ def host_identity(
     :func:`create_host_from_dict` takes — its name is the id's first part.
     *profiles* is the repo data the ``os_type`` resolves through, as there.
 
+    It runs the factory's pipeline in no-preference mode: structural, then
+    contextual, validation, with preferences unknown. No-preference mode
+    refuses an entry that cannot build under any selection.
+
     Raises the same errors as :func:`validate_host_dict` (``ValueError``,
-    including ``pydantic.ValidationError``) — callers enumerating a whole
+    including ``pydantic.ValidationError`` and
+    :class:`~otto.host.HostValidationError`) — callers enumerating a whole
     fleet are expected to skip entries that fail.
     """
-    reject_unresolved_reference(host_data)
-    selector = host_data.get("os_type", "unix")
-    profile = resolve_os_profile(selector, data=_data(profiles))
-    spec_cls = build_host_spec(profile.base)
-    merged = _merge_host_dict(host_data, None, profile, spec_cls)
-    merged["os_type"] = selector
-    spec = spec_cls.model_validate(merged)
+    hc = _pipeline(host_data, element=element, profiles=profiles, preferences=None)
+    hc.spec.validate_in(hc.context)
+    spec = hc.spec
     return HostIdentity(
-        id=make_host_id(element.name, spec.board, spec.slot),
+        id=hc.context.host_id,
         ip=spec.ip,
-        docker_capable=bool(getattr(spec, "docker_capable", False)),
+        docker_capable=bool(_effective_default(spec, hc.context.entry.cls, "docker_capable")),
         board=spec.board,
         slot=spec.slot,
         docker_priority=int(getattr(spec, "docker_priority", 0)),
@@ -189,9 +257,16 @@ def create_host_from_dict(
 
     ``os_type`` selects the profile / class / spec. ``preferences`` is the unified
     ``{selector: {capability_list | option_table}}`` table; for each host the
-    factory cascades it by ``id`` into capability selections (forwarded to
-    ``to_host``) and option-value defaults (merged per-key, product-wins). With
-    ``preferences=None`` the result is identical to a bare host dict.
+    factory cascades it by ``id`` into capability selections (resolved by
+    contextual validation) and option-value defaults (merged per-key,
+    product-wins). With ``preferences=None`` the result is identical to a bare
+    host dict. A value that is not a table (a flat ``{capability: [...]}``
+    map) is refused.
+
+    The entry runs one pipeline: resolve the profile, merge, validate
+    structurally, compute the id, select preferences, validate contextually
+    (:meth:`~otto.host.HostSpec.validate_in`, which issues a readiness record),
+    then construct from that record (:meth:`~otto.host.HostSpec.to_host`).
 
     ``lab_name`` is the lab the caller is loading, stamped onto
     :attr:`~otto.host.host.BaseHost.source_lab` before the product providers
@@ -205,7 +280,7 @@ def create_host_from_dict(
     host spec forbids element keys on the entry. It becomes the host's
     :attr:`~otto.host.host.BaseHost.element` unchanged — the very
     instance passed here, so every host of one element shares it — and reaches
-    ``to_host`` so the providers see it.
+    construction through the validation context so the providers see it.
 
     ``inventory_ref`` is the provenance of an entry the loader resolved from an
     inventory record — a LOADER argument like ``element``; the host spec's own
@@ -219,28 +294,17 @@ def create_host_from_dict(
     its console prompts come from that profile, across a connection rebuild
     and a copy too.
     """
-    reject_unresolved_reference(host_data)
-    selector = host_data.get("os_type", "unix")
-    profile = resolve_os_profile(selector, data=_data(profiles))
-    cls = build_host_class(profile.base)
-    spec_cls = build_host_spec(profile.base)
-
-    flat_prefs: dict[str, list[str]] | None = None
-    option_defaults: dict[str, dict[str, Any]] | None = None
-    if preferences:
-        # Match selectors against the id the host will actually REPORT, not a
-        # raw-dict rendering of it — they diverge under profile-defaulted
-        # identity fields (see host_identity). Costs one extra validation
-        # pass, and only when preferences exist.
-        host_id = host_identity(host_data, element, profiles=profiles).id
-        flat_prefs = select_preferences(preferences, host_id)
-        option_defaults = select_option_defaults(preferences, host_id)
-
-    merged = _merge_host_dict(host_data, option_defaults, profile, spec_cls)
-    merged["os_type"] = selector
-    spec = spec_cls.model_validate(merged)
-    with constructing_with(selector, profile.fields):
-        host = spec.to_host(cls, element=element, preferences=flat_prefs)
+    hc = _pipeline(
+        host_data,
+        element=element,
+        profiles=profiles,
+        preferences=preferences if preferences is not None else {},
+    )
+    ready = hc.spec.validate_in(hc.context)
+    # The stock to_host scopes its own construction too; this scope covers an
+    # override that does not reach them, and nesting the two is harmless.
+    with constructing_with(str(hc.spec.os_type), hc.context.profile.fields):
+        host = hc.spec.to_host(ready=ready)
     # Before the providers, not after: provider selection is allowed to depend
     # on which lab the host came from, and a stamp applied afterwards would be
     # invisible to exactly the code that needs it.
@@ -327,7 +391,7 @@ def check_stage_collisions(host: "RemoteHost | Any") -> None:
 
 
 def validate_host_dict(
-    host_data: dict[str, Any], *, profiles: ProfileContext | None = None
+    host_data: dict[str, Any], *, element: Element, profiles: ProfileContext | None = None
 ) -> None:
     """Validate a host dict without constructing the host.
 
@@ -335,25 +399,22 @@ def validate_host_dict(
     *profiles*, as in :func:`create_host_from_dict`); the profile's base spec
     validates the merged dict (``extra='forbid'``, required fields, typed
     coercion, family-specific field validators for ``command_frame`` /
-    ``filesystem`` / ``transfer`` / ``docker_capable``).
+    ``filesystem`` / ``transfer``). The spec is then
+    validated in its context (*element* names the host, as in
+    :func:`create_host_from_dict`), including the spec's own
+    :meth:`~otto.host.HostSpec.check_in`, in no-preference mode: preferences
+    are unknown here, and no-preference mode refuses an entry that cannot
+    build under any selection.
 
     Raises
     ------
     ValueError
-        If ``os_type`` names no registered profile.
+        If ``os_type`` names no registered profile (the text
+        :func:`~otto.host.os_profile.resolve_os_profile` raises).
     pydantic.ValidationError
         On any structural problem (subclass of ``ValueError``).
+    otto.host.HostValidationError
+        On a contextual problem, naming the host id (subclass of ``ValueError``).
     """
-    reject_unresolved_reference(host_data)
-    selector = host_data.get("os_type", "unix")
-    profile = get_os_profile(selector, data=profiles)
-    if profile is None:
-        known = ", ".join(registered_profile_names(data=profiles))
-        raise ValueError(
-            f"Field 'os_type' {selector!r} is not a registered profile. "
-            f"Registered profiles: {known}"
-        )
-    spec_cls = build_host_spec(profile.base)
-    merged = _merge_host_dict(host_data, None, profile, spec_cls)
-    merged["os_type"] = selector
-    spec_cls.model_validate(merged)
+    hc = _pipeline(host_data, element=element, profiles=profiles, preferences=None)
+    hc.spec.validate_in(hc.context)

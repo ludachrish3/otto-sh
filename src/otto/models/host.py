@@ -1,35 +1,70 @@
 """Pydantic boundary specs for the host record (a ``lab.json`` entry).
 
-``HostSpec`` and its family subclasses validate a host dict and build the
-unchanged runtime ``UnixHost`` / ``EmbeddedHost`` via ``to_host()``. The specs
-nest the per-protocol ``*OptionsSpec``s from ``otto.models.options`` and reuse
-their ``to_runtime()`` builders; embedded registry-name fields
-(``filesystem`` / ``command_frame`` / ``loader``) resolve through the existing
-host registries at build time.
+``HostSpec`` and its family subclasses validate a host dict, validate it in
+context (``validate_in``, which issues a readiness record) and build the
+runtime host from that record (``to_host``). One stock builder,
+``HostSpec.build_kwargs``, walks a spec's fields by their kind
+(:mod:`otto.host.construction`) over the record, so every family, and every
+custom spec, builds through it with no ``to_host`` of its own. The specs nest
+the per-protocol ``*OptionsSpec``s from ``otto.models.options`` and convert
+them with their ``to_runtime()`` builders; registry-name fields
+(``filesystem`` / ``command_frame`` / ``loader``) resolve through the host
+registries at build time.
 """
 
 import dataclasses
-import inspect
+import itertools
+from collections.abc import Callable, Mapping
 from ipaddress import ip_address, ip_network
 from pathlib import Path
-from typing import Annotated, Any, ClassVar
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, final
 
-from pydantic import BeforeValidator, Field, StrictInt, field_validator, model_validator
+from pydantic import (
+    BeforeValidator,
+    ConfigDict,
+    Discriminator,
+    Field,
+    StrictInt,
+    Tag,
+    field_validator,
+    model_validator,
+)
 from typing_extensions import override
 
-from ..host.binary_loader import build_binary_loader
+if TYPE_CHECKING:
+    from pydantic import GetCoreSchemaHandler
+    from pydantic_core import CoreSchema
+
+from ..host.binary_loader import LOADER_CLASSES, build_binary_loader
 from ..host.capability import (
     IMPAIRER_RESOLVER,
     TERM_RESOLVER,
     TRANSFER_RESOLVER,
+    CapabilityResolver,
     authenticating_protocols,
     console_transfer_menu,
 )
 from ..host.command_frame import FRAME_CLASSES, BashFrame, build_command_frame
 from ..host.connections import TERM_BACKENDS
-from ..host.element import Element
+from ..host.construction import (
+    Consume,
+    Convert,
+    FlatPreferences,
+    HostBuild,
+    HostContext,
+    HostReadiness,
+    HostValidationError,
+    Omit,
+    Resolve,
+    RuntimeOnly,
+    _effective_default,
+    _issue_readiness,
+    _open_record,
+    _required_params,
+    class_marker,
+    field_kind,
+)
 from ..host.embedded_filesystem import FILESYSTEM_CLASSES, build_filesystem
-from ..host.embedded_host import EmbeddedHost
 from ..host.interface import Interface
 from ..host.login_proxy import (
     LOGIN_PROXIES,
@@ -39,11 +74,13 @@ from ..host.login_proxy import (
     resolve_chain,
     via_cred,
 )
-from ..host.remote_host import RemoteHost
+from ..host.os_profile import constructing_with
+from ..host.power import POWER_CONTROLLERS, PowerConstructionError, PowerEnv
+from ..host.remote_host import RemoteHost, make_host_id
 from ..host.toolchain import Toolchain, ToolchainTool
 from ..host.transfer import TRANSFER_BACKENDS
-from ..host.unix_host import UnixHost
 from ..link import IMPAIRERS, build_impairer
+from ..link.impairer import _is_unresolved_stock
 from ..logger.mode import LogMode
 from .base import OttoModel
 from .lab import resources_nonempty
@@ -204,33 +241,6 @@ class InterfaceSpec(OttoModel):
         return Interface(ip=self.ip, subnet=self.subnet)
 
 
-# Common fields passed straight through to the host constructor (no conversion).
-# Conversions for default_dest_dir/metadata/telnet_options/snmp/toolchain are
-# applied separately in _common_host_kwargs.
-_COMMON_PLAIN_FIELDS = (
-    "ip",
-    "name",
-    "os_type",
-    "os_name",
-    "os_version",
-    "hw_version",
-    "sw_version",
-    "board",
-    "slot",
-    "site",
-    "rack",
-    "shelf",
-    "hop",
-    "is_virtual",
-    "has_bash",
-    "max_filename_len",
-    "log",
-    "power_control",
-    "session_setup",
-    "landing_frame",
-)
-
-
 def _validate_transfer_for_family(v: str, family: str, host_label: str) -> str:
     """Validate a transfer selector against the registry and host-family applicability."""
     if v not in TRANSFER_BACKENDS:
@@ -272,22 +282,18 @@ def _validate_transfer_menu(v: list[str], family: str, label: str) -> list[str]:
     return [_validate_transfer_for_family(t, family, label) for t in v]
 
 
-def _validate_impairer_for_family(v: str, family: str, host_label: str) -> str:
-    """Validate an impairer selector against the registry and host-family applicability."""
+def _validate_impairer_name(v: str) -> str:
+    """Validate an impairer selector against the registry (its family is checked in context)."""
     if v not in IMPAIRERS:
         known = ", ".join(sorted(IMPAIRERS.names()))
         raise ValueError(f"impairer {v!r} is not a registered impairer. Known: {known}")
-    families = build_impairer(v).host_families
-    if family not in families:
-        fam = ", ".join(sorted(families))
-        raise ValueError(f"impairer {v!r} is not valid on {host_label} (it serves: {fam}).")
     return v
 
 
-def _validate_impairer_menu(v: list[str], family: str, label: str) -> list[str]:
+def _validate_impairer_menu(v: list[str]) -> list[str]:
     if not v:
         raise ValueError("valid_impairers must be a non-empty list of impairers")
-    return [_validate_impairer_for_family(entry, family, label) for entry in v]
+    return [_validate_impairer_name(entry) for entry in v]
 
 
 class CredSpec(OttoModel):
@@ -328,24 +334,218 @@ class CredSpec(OttoModel):
         )
 
 
+class PowerControlSpec(OttoModel):
+    """A ``power_control`` table: the controller's ``type`` and the keys its config model parses."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    """The registered power controller's name."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _missing_type_on_its_key(cls, data: object) -> object:
+        # pydantic reports a missing field with the whole table as its input,
+        # secrets included; a None in its place reports on the key alone.
+        if isinstance(data, Mapping) and "type" not in data:
+            return {**dict(data), "type": None}
+        return data
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _type_present(cls, v: object) -> object:
+        if v is None:
+            raise ValueError(
+                "a power_control table needs a 'type' naming a registered power controller"
+            )
+        return v
+
+    @field_validator("type")
+    @classmethod
+    def _registered(cls, v: str) -> str:
+        if v not in POWER_CONTROLLERS:
+            known = ", ".join(sorted(POWER_CONTROLLERS.names())) or "<none>"
+            raise ValueError(
+                f"power_control {v!r} is not a registered power controller. Known: {known}"
+            )
+        return v
+
+
+def _power_form(value: object) -> str:
+    """Tag a ``power_control`` value: a table, else a name."""
+    return "table" if isinstance(value, (Mapping, PowerControlSpec)) else "name"
+
+
+@final
+class _OneFormByShape:
+    """Validate ``power_control`` as a table or a name, chosen by the value's shape.
+
+    Validating one branch only keeps a bad table's errors on the table, never
+    adding the name branch's error, whose input is the whole table. Its repr
+    is a plain phrase, so the field's rendered annotation names no private
+    function.
+    """
+
+    __slots__ = ()
+
+    def __get_pydantic_core_schema__(
+        self, source: object, handler: "GetCoreSchemaHandler"
+    ) -> "CoreSchema":
+        del source  # the annotated type is restated below, tagged
+        return handler(
+            Annotated[
+                Annotated[PowerControlSpec, Tag("table")] | Annotated[str, Tag("name")],
+                Discriminator(_power_form),
+            ]
+            | None
+        )
+
+    @override
+    def __repr__(self) -> str:
+        return "'one form, by shape'"
+
+
+def _value_only(fn: "Callable[[Any], object]") -> "Callable[[Any, Any], object]":
+    """Adapt a conversion of the value alone to Convert's ``fn(value, build)``."""
+
+    def convert(value: Any, build: Any) -> object:  # noqa: ARG001 — Convert's signature
+        return fn(value)
+
+    return convert
+
+
+def _to_creds(value: "list[CredSpec]") -> list[Cred]:
+    return [c.to_cred() for c in value]
+
+
+def _to_path(value: object) -> Path:
+    return Path(value)  # ty: ignore[invalid-argument-type]
+
+
+def _to_dict(value: "dict[str, Any]") -> "dict[str, Any]":
+    return dict(value)  # copied: the host never shares a container with its spec
+
+
+def _to_frozenset(value: "set[str]") -> frozenset[str]:
+    return frozenset(value)
+
+
+def _to_list(value: "list[str]") -> list[str]:
+    return list(value)
+
+
+def _to_interfaces(value: "dict[str, InterfaceSpec]") -> "dict[str, Interface]":
+    return {k: e.to_runtime() for k, e in value.items()}
+
+
+def _to_runtime(value: Any) -> object:
+    return value.to_runtime()
+
+
+def _to_snmp(value: "SnmpOptionsSpec | None") -> object:
+    return value.to_runtime() if value is not None else None
+
+
+def _to_command_frame(value: str | None) -> object:
+    return Omit if value is None else build_command_frame(value)
+
+
+def _to_filesystem(value: str | None) -> object:
+    return Omit if value is None else build_filesystem(value)
+
+
+def _to_loader(value: str | None) -> object:
+    return Omit if value is None else build_binary_loader(value)
+
+
+def _build_power(value: object, build: HostBuild) -> object:
+    """Build the controller from the record's parse; ``None`` stays ``None``."""
+    if value is None or build.power is None:
+        return None
+    return POWER_CONTROLLERS.build(build.power)
+
+
+def _menu(name: str) -> "Callable[[HostBuild], object]":
+    """Resolve a menu: the entry's list (its default when unset), copied."""
+
+    def resolve(build: HostBuild) -> object:
+        return list(build.inputs[name])  # ty: ignore[invalid-argument-type] — a validated menu
+
+    return resolve
+
+
+def _selection(name: str) -> "Callable[[HostBuild], object]":
+    """Resolve an active selection: the one validation chose."""
+
+    def resolve(build: HostBuild) -> object:
+        return build.selections[name]
+
+    return resolve
+
+
+@dataclasses.dataclass(frozen=True)
+class _Selected:
+    """What the selection checks settled: the selections, or the no-preference witness."""
+
+    selections: "dict[str, str] | None"
+    witness: "dict[str, str] | None"
+
+
+def _message(exc: Exception) -> str | None:
+    """Render a ValidationError without its input (its ``str()`` quotes it); else ``None``."""
+    from pydantic import ValidationError
+
+    from .base import compact_validation_error
+
+    return compact_validation_error(exc) if isinstance(exc, ValidationError) else None
+
+
+def _describe(exc: Exception) -> str:
+    """Render *exc* for a message without quoting its input (a ValidationError's input may)."""
+    message = _message(exc)
+    return message if message is not None else f"{type(exc).__name__}: {exc}"
+
+
+def _class_supplies_frame(cls: object) -> bool:
+    """Return whether host class *cls* defaults ``command_frame``, to a value or a factory."""
+    declared = getattr(cls, "__dataclass_fields__", {}).get("command_frame")
+    if declared is None:
+        return False
+    if declared.default_factory is not dataclasses.MISSING:
+        return True
+    return declared.default is not dataclasses.MISSING and declared.default is not None
+
+
+def _check_pins_in_menus(
+    spec: "HostSpec", pins: "list[tuple[CapabilityResolver, str, str]]"
+) -> None:
+    """Refuse a pin outside its menu, per (resolver, pin field, menu field)."""
+    for resolver, pin_field, menu_field in pins:
+        pin = getattr(spec, pin_field)
+        if pin is not None:
+            resolver.validate_choice(getattr(spec, menu_field), pin)
+
+
 class HostSpec(OttoModel):
     """Abstract boundary spec for a ``lab.json`` host entry.
 
     Holds the fields common to both host families (addressing, credentials,
-    telnet/SNMP options, toolchain, power control) and builds the constructor
-    kwargs via ``_common_host_kwargs()``. Concrete subclasses (``UnixHostSpec``,
-    ``EmbeddedHostSpec``) override ``to_host()`` to produce the appropriate runtime
-    class.
+    telnet/SNMP options, toolchain, power control). :meth:`validate_in` checks
+    the spec in its :class:`~otto.host.HostContext` and issues the
+    :class:`~otto.host.HostReadiness` record that :meth:`to_host` consumes:
+    the stock builder, :meth:`build_kwargs`, walks the spec's fields by kind
+    over that record and :meth:`to_host` constructs the class it names, so a
+    subclass's own fields reach the constructor with no override.
 
-    The element is not a host field: it reaches the host as the factory's
-    ``element=`` argument (spec 2026-09-05 §2.6).
+    The element is not a host field: it reaches the host through the context,
+    from the factory's ``element=`` argument (spec 2026-09-05 §2.6).
     """
 
     # --- required addressing (both families) ---
     ip: str
 
     # --- common optional fields ---
-    creds: list[CredSpec] = Field(default_factory=list)
+    creds: Annotated[list[CredSpec], Convert(_value_only(_to_creds))] = Field(default_factory=list)
     name: str | None = None
     os_type: str = "unix"
     os_name: str | None = None
@@ -372,22 +572,28 @@ class HostSpec(OttoModel):
     shelf: int | None = None
     hop: str | None = None
 
-    inventory: str | None = None
+    inventory: Annotated[
+        str | None, Consume("the loader resolves the entry from this inventory key")
+    ] = None
     """Inventory key this entry is resolved from (spec 2026-08-28 host-inventory §5).
     Spec-only: the loader consumes it and never forwards it to the host."""
 
     is_virtual: bool = False
     has_bash: bool = True
-    default_dest_dir: Path = Path()
+    default_dest_dir: Annotated[Path, Convert(_value_only(_to_path))] = Path()
     max_filename_len: int = 255
-    debug_log_globs: list[str] = Field(default_factory=list)
+    debug_log_globs: Annotated[list[str], Convert(_value_only(_to_list))] = Field(
+        default_factory=list
+    )
 
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: Annotated[dict[str, Any], Convert(_value_only(_to_dict))] = Field(
+        default_factory=dict
+    )
     """Opaque user data (spec §4). A JSON object; otto never reads it. The
     sanctioned home for custom fields, so ``extra='forbid'`` never has to
     give way: a key here can never collide with a field otto adds later."""
 
-    resources: set[str] = Field(default_factory=set)
+    resources: Annotated[set[str], Convert(_value_only(_to_frozenset))] = Field(default_factory=set)
     """This host's own reservation identifiers — a slot (spec 2026-08-28
     three-level-reservations §2).
 
@@ -396,17 +602,23 @@ class HostSpec(OttoModel):
     ``element.resources`` and ``lab_info.resources``), so an entry never
     restates them."""
 
-    interfaces: dict[str, InterfaceSpec] = Field(default_factory=dict)
+    interfaces: Annotated[dict[str, InterfaceSpec], Convert(_value_only(_to_interfaces))] = Field(
+        default_factory=dict
+    )
     log: LogMode = LogMode.NORMAL
-    telnet_options: TelnetOptionsSpec = TelnetOptionsSpec()
-    console_options: ConsoleOptionsSpec = ConsoleOptionsSpec()
+    telnet_options: Annotated[TelnetOptionsSpec, Convert(_value_only(_to_runtime))] = (
+        TelnetOptionsSpec()
+    )
+    console_options: Annotated[ConsoleOptionsSpec, Convert(_value_only(_to_runtime))] = (
+        ConsoleOptionsSpec()
+    )
     """The ``console`` term's address and login behaviour: the lab host that
     runs the telnet server, the port, the dial mode and the prompt
     patterns. See :class:`~otto.models.options.ConsoleOptionsSpec`."""
 
-    snmp: SnmpOptionsSpec | None = None
-    toolchain: ToolchainSpec = ToolchainSpec()
-    command_frame: str | None = None
+    snmp: Annotated[SnmpOptionsSpec | None, Convert(_value_only(_to_snmp))] = None
+    toolchain: Annotated[ToolchainSpec, Convert(_value_only(_to_runtime))] = ToolchainSpec()
+    command_frame: Annotated[str | None, Convert(_value_only(_to_command_frame))] = None
 
     session_setup: dict[str, Any] | str | None = None
     """A registered session-setup hook, by name or as a table whose ``type``
@@ -420,15 +632,14 @@ class HostSpec(OttoModel):
     which is what manoeuvres from the one to the other. ``"raw"`` for a
     landing that answers no frame at all."""
 
-    # ``power_control`` is lab-infrastructure data (which controller host runs
-    # the on/off/status commands, and the commands themselves), so it is a spec
-    # field: it takes the lab-data ``[power]`` form — a controller type-name
-    # string or a table dict — and the runtime host's __post_init__ coerces it
-    # via power_control_from_spec. Passed straight through _common_host_kwargs
-    # when set. (``products`` is deliberately NOT a spec field: it is user product
-    # data, independent of lab data, attached to hosts by repo logic — the drift
-    # guard's _NON_SPEC_RUNTIME_FIELDS excludes it.)
-    power_control: dict[str, Any] | str | None = None
+    # ``products`` is deliberately NOT a spec field: it is user product data,
+    # independent of lab data, attached to hosts by repo logic — the host class
+    # marks it RuntimeOnly, see otto.host.construction.
+    power_control: Annotated[
+        PowerControlSpec | str | None, _OneFormByShape(), Convert(_build_power)
+    ] = None
+    """The host's power controller, as a registered controller name or a table naming it in
+    ``type`` beside the keys its config model parses. Parsed when the host is validated."""
 
     @model_validator(mode="before")
     @classmethod
@@ -561,6 +772,19 @@ class HostSpec(OttoModel):
             )
         return v
 
+    @field_validator("power_control")
+    @classmethod
+    def _validate_power_type(
+        cls, v: "PowerControlSpec | str | None"
+    ) -> "PowerControlSpec | str | None":
+        # A table checked its own ``type`` (PowerControlSpec); a name is checked here.
+        if isinstance(v, str) and v not in POWER_CONTROLLERS:
+            known = ", ".join(sorted(POWER_CONTROLLERS.names())) or "<none>"
+            raise ValueError(
+                f"power_control {v!r} is not a registered power controller. Known: {known}"
+            )
+        return v
+
     @model_validator(mode="after")
     def _validate_cred_entries(self) -> "HostSpec":
         # The vocabulary walks two backend registries, and nothing below needs
@@ -587,7 +811,6 @@ class HostSpec(OttoModel):
                 raise ValueError(
                     f"cred {c.login!r}: {c.proxy!r} is not a registered login proxy. Known: {known}"
                 )
-        self._validate_term_has_a_candidate()
         for c in runtime:
             if c.proxy is not None:
                 # One try per cred, around the whole per-protocol walk rather
@@ -603,30 +826,6 @@ class HostSpec(OttoModel):
                         f"cred {c.login!r}: unresolvable via-chain{over}: {e}"
                     ) from None
         return self
-
-    def _validate_term_has_a_candidate(self) -> None:
-        """At least one cred must be able to log the host's term in.
-
-        Spec 2026-09-13 cred-scope §3.2: a protocol's candidates are the creds
-        scoped to it plus the unscoped ones. Scope every entry elsewhere and
-        the term has nothing to authenticate as — the pick returns the
-        loginless ``""`` and the host connects as nobody, which on ssh is a
-        refusal at the far end and on telnet is a session that never reaches a
-        prompt. Cheaper and far clearer at load, naming what IS there.
-
-        Skipped when ``creds`` is empty: a host with no creds (a console with
-        no login step, of either family) is loginless on purpose; and when the
-        host declares no term at all.
-        """
-        term = self._effective_term()
-        if not self.creds or term is None:
-            return
-        if any(not c.protocols or term in c.protocols for c in self.creds):
-            return
-        identities = ", ".join(c.identity for c in self.creds)
-        raise ValueError(
-            f"no cred can log in over term {term!r}: every cred is scoped elsewhere ({identities})"
-        )
 
     def _pick_protocols(self, cred: Cred, vocabulary: list[str]) -> list[str | None]:
         """Protocols *cred* can be the pick for — its chain must resolve under each.
@@ -647,24 +846,10 @@ class HostSpec(OttoModel):
             return list(cred.protocols)
         if not vocabulary:
             return [None]
+        # Pins are in their menus (checked structurally), so the menus hold them.
         menu = {*getattr(self, "valid_terms", []), *getattr(self, "valid_transfers", [])}
-        for pin in (getattr(self, "term", None), getattr(self, "transfer", None)):
-            if pin is not None:
-                menu.add(pin)
         surface = sorted(menu & set(vocabulary))
         return list(surface) or [None]
-
-    def _effective_term(self) -> str | None:
-        """Return the term the host will use.
-
-        The pin, else the first menu entry, else None (embedded hosts
-        without a menu).
-        """
-        term = getattr(self, "term", None)
-        if term is not None:
-            return term
-        menu = getattr(self, "valid_terms", None)
-        return menu[0] if menu else None
 
     @model_validator(mode="after")
     def _validate_landing_rules(self) -> "HostSpec":
@@ -684,115 +869,222 @@ class HostSpec(OttoModel):
             )
         return self
 
-    @model_validator(mode="after")
-    def _validate_console_rules(self) -> "HostSpec":
-        """Require a console-term host to say where its console is.
+    @final
+    def validate_in(self, ctx: HostContext) -> HostReadiness:
+        """Validate this spec in *ctx* and issue the record :meth:`to_host` consumes.
 
-        Only the active term is checked: ``console_options`` on a host that
-        runs ssh today is inert data, and a lab may pre-declare it. Server
-        existence and the server's ssh cred are lab-wide facts, resolved
-        at connect time the way ``hop`` is.
+        Runs the context checks, the stock contextual checks, :meth:`check_in`,
+        then prepares what construction needs: the ``power_control``
+        configuration, parsed by its controller's config model. Raises
+        :class:`~otto.host.HostValidationError` naming the host id.
         """
-        if self._effective_term() != "console":
-            return self
-        opts = self.console_options
-        if not opts.server:
-            raise ValueError(
-                "term 'console' requires console_options.server: the lab host ID of the "
-                "telnet server fronting this console"
+        if ctx.entry.spec is not type(self):
+            name = getattr(ctx.entry.spec, "__name__", repr(ctx.entry.spec))
+            raise HostValidationError(
+                f"host {ctx.host_id!r}: the context was resolved for {name}, not "
+                f"{type(self).__name__}; build the context with otto.host.host_context"
             )
-        if not 1 <= opts.port <= 65535:  # noqa: PLR2004 — port range, not a magic constant
-            raise ValueError(
-                f"term 'console' requires console_options.port in 1..65535, got {opts.port}"
+        expected = make_host_id(ctx.element.name, self.board, self.slot)
+        if ctx.host_id != expected:
+            raise HostValidationError(
+                f"host {expected!r}: the context names host {ctx.host_id!r}; build the "
+                f"context with otto.host.host_context"
             )
-        console_transfer_menu(
-            self.name or self.ip,
-            getattr(self, "valid_transfers", []),
-            getattr(self, "transfer", None),
+        try:
+            selected = self._contextual_checks(ctx)
+        except HostValidationError:
+            raise
+        except ValueError as exc:
+            message = _message(exc)
+            raise HostValidationError(
+                f"host {ctx.host_id!r}: {exc if message is None else message}"
+            ) from exc
+        try:
+            self.check_in(ctx)
+        except HostValidationError:
+            raise
+        except Exception as exc:
+            raise HostValidationError(
+                f"host {ctx.host_id!r}: check_in failed: {_describe(exc)}"
+            ) from exc
+        power = None
+        value = self.power_control
+        if value is not None:
+            if isinstance(value, str):
+                name, raw = value, {}
+            else:
+                name, raw = value.type, dict(value.model_extra or {})
+            try:
+                power = POWER_CONTROLLERS.prepare(
+                    name,
+                    raw,
+                    PowerEnv(host_id=ctx.host_id),
+                    source=f"power_control of host {ctx.host_id!r}",
+                )
+            except PowerConstructionError as exc:
+                raise HostValidationError(f"host {ctx.host_id!r}: {exc}") from exc
+        return _issue_readiness(
+            owner=self,
+            context=ctx,
+            values={name: getattr(self, name) for name in type(self).model_fields},
+            fields_set=frozenset(self.model_fields_set),
+            selections=selected.selections,
+            witness=selected.witness,
+            power=power,
         )
-        return self
 
-    def _common_host_kwargs(self) -> dict[str, Any]:
-        """Build constructor kwargs for the common fields the spec *explicitly set*.
+    def check_in(self, ctx: HostContext) -> None:
+        """Run a custom spec's contextual checks; the stock spec checks nothing here.
 
-        Mirrors the factory: a field absent from the source dict is omitted so
-        the host class's own default applies — including subclass overrides
-        (``UnixHost.os_name='Linux'``, ``ZephyrHost.os_name='Zephyr'``). Passing
-        every field unconditionally would clobber those defaults with the spec's
-        neutral ones.
+        Called once by :meth:`validate_in`, after the stock checks and before
+        preparation. Raise any exception to refuse the entry; it reaches the
+        caller as a :class:`~otto.host.HostValidationError` naming the host.
         """
-        s = self.model_fields_set
-        kw: dict[str, Any] = {n: getattr(self, n) for n in _COMMON_PLAIN_FIELDS if n in s}
-        if "creds" in s:
-            kw["creds"] = [c.to_cred() for c in self.creds]
-        if "default_dest_dir" in s:
-            kw["default_dest_dir"] = Path(self.default_dest_dir)
-        if "metadata" in s:
-            kw["metadata"] = dict(self.metadata)
-        if "resources" in s:
-            kw["resources"] = frozenset(self.resources)
-        if "debug_log_globs" in s:
-            # Copied, like ``metadata``: the host must not share a mutable
-            # container with the spec that built it.
-            kw["debug_log_globs"] = list(self.debug_log_globs)
-        if "interfaces" in s:
-            kw["interfaces"] = {k: e.to_runtime() for k, e in self.interfaces.items()}
-        if "telnet_options" in s:
-            kw["telnet_options"] = self.telnet_options.to_runtime()
-        if "console_options" in s:
-            kw["console_options"] = self.console_options.to_runtime()
-        if "snmp" in s:
-            kw["snmp"] = self.snmp.to_runtime() if self.snmp is not None else None
-        if "toolchain" in s:
-            kw["toolchain"] = self.toolchain.to_runtime()
-        if "command_frame" in s and self.command_frame is not None:
-            kw["command_frame"] = build_command_frame(self.command_frame)
+
+    def _resolve_selections(self, preferences: FlatPreferences) -> dict[str, str]:
+        """Return the selections construction uses under *preferences*.
+
+        The base spec has no menus, so none; a family with menus overrides it.
+        """
+        del preferences  # the base spec has no menus to select from
+        return {}
+
+    def _label(self) -> str:
+        return self.name or self.ip
+
+    def _selection_menus(self) -> dict[str, list[str]]:
+        """Return the menus a preference may choose from, in selection order.
+
+        The base spec has none; a family with menus overrides it.
+        """
+        return {}
+
+    def _check_selection(self, selection: "Mapping[str, str]") -> None:
+        """Refuse a resolved *selection* the cred term-candidate check or the console rule fails.
+
+        The cred check (spec 2026-09-13 cred-scope §3.2): a protocol's
+        candidates are the creds scoped to it plus the unscoped ones, so a
+        term every cred is scoped away from would log in as nobody. Skipped
+        when ``creds`` is empty (a loginless host is loginless on purpose)
+        and when the selection has no term.
+
+        The console rule: a console term needs ``console_options`` to say
+        where the console is. Only the selected term is checked, so
+        ``console_options`` on a host that runs ssh is inert data. Server
+        existence and the server's ssh cred are lab-wide facts, resolved at
+        connect time the way ``hop`` is.
+        """
+        term = selection.get("term")
+        if term is None:
+            return
+        if self.creds and not any(not c.protocols or term in c.protocols for c in self.creds):
+            identities = ", ".join(c.identity for c in self.creds)
+            raise ValueError(
+                f"no cred can log in over term {term!r}: every cred is scoped elsewhere "
+                f"({identities})"
+            )
+        if term == "console":
+            opts = self.console_options
+            if not opts.server:
+                raise ValueError(
+                    "term 'console' requires console_options.server: the lab host ID of the "
+                    "telnet server fronting this console"
+                )
+            if not 1 <= opts.port <= 65535:  # noqa: PLR2004 — port range, not a magic constant
+                raise ValueError(
+                    f"term 'console' requires console_options.port in 1..65535, got {opts.port}"
+                )
+
+    def _static_contextual_checks(self, ctx: HostContext) -> None:
+        """Run the checks that read the class or the id but no selection; a family extends it."""
+
+    def _contextual_checks(self, ctx: HostContext) -> _Selected:
+        self._static_contextual_checks(ctx)
+        if ctx.preferences is not None:
+            selections = self._resolve_selections(ctx.preferences)
+            self._check_selection(selections)
+            return _Selected(selections=selections, witness=None)
+        menus = self._selection_menus()
+        for combo in itertools.product(*menus.values()):
+            # A witness is what the concrete resolver produces for some preferences:
+            # one-item preferences reach every menu entry, and pins and the console
+            # narrowing still apply, exactly as at load.
+            preference = {name: [choice] for name, choice in zip(menus, combo, strict=True)}
+            try:
+                candidate = self._resolve_selections(preference)
+                self._check_selection(candidate)
+            except ValueError:
+                continue
+            return _Selected(selections=None, witness=candidate)
+        # Nothing passes: report what a load without preferences would say. That
+        # pick is one of the combinations above, so it fails its check too.
+        self._check_selection(self._resolve_selections({}))
+        raise AssertionError(  # pragma: no cover - the invariant above
+            "the empty-preference pick is one of the enumerated combinations"
+        )
+
+    @final
+    def build_kwargs(self, ready: HostReadiness) -> dict[str, object]:
+        """Return the constructor keyword arguments *ready* builds, consuming the record.
+
+        Walks this spec's fields by kind over the record's :class:`~otto.host.HostBuild`
+        and adds the element to the class field marked ``RuntimeOnly(supplied_by="element")``.
+        Refuses a record from another spec, a no-preference record and a consumed one.
+        A field the entry left unset is not passed, so the host class's own default
+        applies; a ``Resolve`` field is always passed; a ``Consume`` field never is.
+
+        Raises:
+            HostValidationError: The record cannot build, or a ``Convert`` returned
+                :data:`~otto.host.Omit` for a parameter the constructor requires.
+        """
+        build = _open_record(ready, self)
+        fields_set = ready._payload.fields_set  # noqa: SLF001 — the record's issuer reads its payload
+        required = set(_required_params(ready.cls))
+        kw: dict[str, object] = {}
+        for name in type(self).model_fields:
+            kind = field_kind(type(self), name)
+            if isinstance(kind, Consume):
+                continue
+            if isinstance(kind, Resolve):
+                kw[name] = kind.fn(build)
+                continue
+            if name not in fields_set:
+                continue
+            value = build.inputs[name]
+            if isinstance(kind, Convert):
+                value = kind.fn(value, build)
+            if value is Omit:
+                if name in required:
+                    raise HostValidationError(
+                        f"host {ready.host_id!r}: field {name!r} is required by "
+                        f"{ready.cls.__name__} but its conversion returned Omit"
+                    )
+                continue
+            kw[name] = value
+        for f in dataclasses.fields(ready.cls):
+            marker = class_marker(ready.cls, f.name)
+            if f.init and isinstance(marker, RuntimeOnly) and marker.supplied_by == "element":
+                kw[f.name] = build.context.element
         return kw
 
-    def to_host(
-        self,
-        cls: Any = None,
-        *,
-        element: Element,
-        preferences: dict[str, list[str]] | None = None,
-    ) -> RemoteHost:
-        """Build the runtime host this spec describes.
+    def to_host(self, *, ready: HostReadiness) -> RemoteHost:
+        """Build the runtime host *ready* describes: ``ready.cls(**self.build_kwargs(ready))``.
 
-        Overridden by the concrete family specs (:class:`UnixHostSpec`,
-        :class:`EmbeddedHostSpec`), each of which knows the runtime class to
-        construct. The abstract base carries the contract so the host
-        factory can call ``spec.to_host(cls)`` against a ``HostSpec`` reference.
+        *ready* is the record :meth:`validate_in` issued for this spec; the class
+        comes from it. Override for construction that is not keyword arguments,
+        or to act on the built host before it leaves the factory; build through
+        :meth:`build_kwargs` either way.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement to_host(); use a "
-            f"concrete host spec (UnixHostSpec / EmbeddedHostSpec)."
-        )
+        kw: dict[str, Any] = self.build_kwargs(ready)
+        payload = ready._payload  # noqa: SLF001 — the record's issuer reads its payload
+        # Scoped here, not only by the factory: a host built through
+        # otto.host.host_context keeps its data profile's console prompts too.
+        with constructing_with(str(payload.values["os_type"]), payload.context.profile.fields):
+            return ready.cls(**kw)
 
 
-def _constructor_requires(cls: type[UnixHost], name: str) -> bool:
-    """Whether *cls*'s constructor must be passed the argument *name*.
-
-    The constructor's signature decides first: a parameter *name* with no
-    default is required, and one with a default is not. A signature with no
-    parameter *name* but a ``**kwargs`` (a passthrough ``__init__``) hides the
-    contract, so the dataclass field decides: required only when *cls* has an
-    ``init`` field *name* with neither a default nor a default factory. A
-    signature with neither cannot accept *name* at all (e.g. a
-    ``field(init=False)`` set in ``__post_init__``), so it is not required.
-    """
-    params = inspect.signature(cls).parameters
-    param = params.get(name)
-    if param is not None:
-        return param.default is inspect.Parameter.empty
-    if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
-        return False
-    f = next((f for f in dataclasses.fields(cls) if f.name == name), None)
-    return (
-        f is not None
-        and f.init
-        and f.default is dataclasses.MISSING
-        and f.default_factory is dataclasses.MISSING
-    )
+_STOCK_UNIX_IMPAIRERS: list[str] = ["netem"]
+"""otto's default Unix impairer menu; while it is otto's own registration, context skips it."""
 
 
 class UnixHostSpec(HostSpec):
@@ -800,33 +1092,43 @@ class UnixHostSpec(HostSpec):
 
     Extends ``HostSpec`` with the Unix-specific fields: term/transfer/impairer menus and
     active selections, SSH/SFTP/SCP/FTP/nc option tables, and Docker
-    capability. ``to_host()`` resolves the active term, transfer, and
-    impairer from preferences and builds a ``UnixHost`` (or a custom subclass passed as
-    ``cls``).
+    capability. Contextual validation resolves the active term, transfer and
+    impairer from preferences; the stock ``to_host()`` builds the ``UnixHost`` (or
+    the registered subclass) the readiness record names.
     """
 
     # optional: a loginless host needs none, and an inventory record or creds store may hold none
     creds: list[CredSpec] = Field(default_factory=list)
-    valid_terms: list[str] = Field(default_factory=lambda: ["ssh", "telnet"])
-    valid_transfers: list[str] = Field(default_factory=lambda: ["scp", "sftp", "ftp", "nc"])
-    valid_impairers: list[str] = Field(default_factory=lambda: ["netem"])
-    term: str | None = None  # optional active pin; resolved at to_host
-    transfer: str | None = None  # optional active pin; resolved at to_host
-    impairer: str | None = None  # optional active pin; resolved at to_host
+    valid_terms: Annotated[list[str], Resolve(_menu("valid_terms"))] = Field(
+        default_factory=lambda: ["ssh", "telnet"]
+    )
+    valid_transfers: Annotated[list[str], Resolve(_menu("valid_transfers"))] = Field(
+        default_factory=lambda: ["scp", "sftp", "ftp", "nc"]
+    )
+    valid_impairers: Annotated[list[str], Resolve(_menu("valid_impairers"))] = Field(
+        default_factory=lambda: list(_STOCK_UNIX_IMPAIRERS)
+    )
+    # optional active pins; resolved at to_host
+    term: Annotated[str | None, Resolve(_selection("term"))] = None
+    transfer: Annotated[str | None, Resolve(_selection("transfer"))] = None
+    impairer: Annotated[str | None, Resolve(_selection("impairer"))] = None
     docker_capable: bool = False
     shell_history: bool = False
     docker_priority: StrictInt = 0
     """Which docker-capable host a use-case deploys on when ``--parent`` is
     omitted and the lab selection has several. Highest wins; a tie at the top
     refuses. Strictly an integer (JSON ``true`` is not a rank of 1), and only
-    on a ``docker_capable`` host. Intent about how THIS LAB uses the host,
+    on a docker-capable host (``docker_capable`` set, or the host class's own
+    default; checked in context). Intent about how THIS LAB uses the host,
     never an inventory fact."""
-    ssh_options: SshOptionsSpec = SshOptionsSpec()
-    sftp_options: SftpOptionsSpec = SftpOptionsSpec()
-    scp_options: ScpOptionsSpec = ScpOptionsSpec()
-    ftp_options: FtpOptionsSpec = FtpOptionsSpec()
-    nc_options: NcOptionsSpec = NcOptionsSpec()
-    userland_options: UserlandOptionsSpec = UserlandOptionsSpec()
+    ssh_options: Annotated[SshOptionsSpec, Convert(_value_only(_to_runtime))] = SshOptionsSpec()
+    sftp_options: Annotated[SftpOptionsSpec, Convert(_value_only(_to_runtime))] = SftpOptionsSpec()
+    scp_options: Annotated[ScpOptionsSpec, Convert(_value_only(_to_runtime))] = ScpOptionsSpec()
+    ftp_options: Annotated[FtpOptionsSpec, Convert(_value_only(_to_runtime))] = FtpOptionsSpec()
+    nc_options: Annotated[NcOptionsSpec, Convert(_value_only(_to_runtime))] = NcOptionsSpec()
+    userland_options: Annotated[UserlandOptionsSpec, Convert(_value_only(_to_runtime))] = (
+        UserlandOptionsSpec()
+    )
     """Declared answers about this host's userland; every key defaults to
     "probe it". Unlike its siblings this table is not per-protocol — it
     describes the DEVICE (which elevation mechanism exists, which ``timeout``
@@ -844,17 +1146,6 @@ class UnixHostSpec(HostSpec):
                 "(rank one docker-capable host as the default parent)"
             )
         return data
-
-    @model_validator(mode="after")
-    def _priority_needs_docker_capable(self) -> "UnixHostSpec":
-        # The key is the mistake, whatever its value: ranking a host that can
-        # never be a parent is a lab.json error worth naming at load.
-        if "docker_priority" in self.model_fields_set and not self.docker_capable:
-            raise ValueError(
-                f"docker_priority on {self.name or self.ip!r}, which is not docker_capable — "
-                f"only a docker-capable host can be ranked as a parent"
-            )
-        return self
 
     @field_validator("valid_terms", "valid_transfers", "valid_impairers", mode="before")
     @classmethod
@@ -874,81 +1165,103 @@ class UnixHostSpec(HostSpec):
     @field_validator("valid_impairers")
     @classmethod
     def _validate_unix_valid_impairers(cls, v: list[str]) -> list[str]:
-        return _validate_impairer_menu(v, cls._host_family, "a unix host")
+        return _validate_impairer_menu(v)
+
+    @model_validator(mode="after")
+    def _pins_in_menus(self) -> "UnixHostSpec":
+        _check_pins_in_menus(
+            self,
+            [
+                (TERM_RESOLVER, "term", "valid_terms"),
+                (TRANSFER_RESOLVER, "transfer", "valid_transfers"),
+                (IMPAIRER_RESOLVER, "impairer", "valid_impairers"),
+            ],
+        )
+        return self
 
     @override
-    def to_host(
-        self,
-        cls: type[UnixHost] = UnixHost,
-        *,
-        element: Element,
-        preferences: dict[str, list[str]] | None = None,
-    ) -> UnixHost:
-        kw = self._common_host_kwargs()
-        if "creds" not in kw and _constructor_requires(cls, "creds"):
-            # UnixHost's constructor requires creds, so an entry with none
-            # builds a credless host; a class that defaults its creds, or sets
-            # them itself, keeps its own.
-            kw["creds"] = []
-        kw["element"] = element
-        s = self.model_fields_set
-        prefs = preferences or {}
-        kw["valid_terms"] = list(self.valid_terms)
-        kw["valid_transfers"] = list(self.valid_transfers)
-        kw["valid_impairers"] = list(self.valid_impairers)
+    def _selection_menus(self) -> dict[str, list[str]]:
+        return {"term": list(self.valid_terms), "transfer": list(self.valid_transfers)}
+
+    @override
+    def _static_contextual_checks(self, ctx: HostContext) -> None:
+        # Every menu is checked but otto's stock default, left unset, while its
+        # names are still otto's own unimported registrations: their family is
+        # otto's own fact, and resolving them would import their backend on
+        # every load. A replaced registration, or a custom spec's own default,
+        # is checked like any entry's menu.
+        stock = (
+            "valid_impairers" not in self.model_fields_set
+            and list(self.valid_impairers) == _STOCK_UNIX_IMPAIRERS
+            and all(_is_unresolved_stock(name) for name in _STOCK_UNIX_IMPAIRERS)
+        )
+        menu = [] if stock else self.valid_impairers
+        for name in menu:
+            families = build_impairer(name).host_families
+            if self._host_family not in families:
+                raise ValueError(
+                    f"impairer {name!r} is not valid on a unix host "
+                    f"(it serves: {', '.join(sorted(families))})."
+                )
+        # The key is the mistake, whatever its value: ranking a host that can
+        # never be a parent is a lab.json error worth naming at load.
+        if "docker_priority" in self.model_fields_set and not _effective_default(
+            self, ctx.entry.cls, "docker_capable"
+        ):
+            raise ValueError(
+                f"docker_priority on {self._label()!r}, which is not docker_capable — only a "
+                f"docker-capable host can be ranked as a parent"
+            )
+
+    @override
+    def _resolve_selections(self, preferences: FlatPreferences) -> dict[str, str]:
         # Active selection precedence: the first product preference present in
         # the menu wins; else the lab pin (self.term/.transfer/.impairer, validated
         # against the menu); else the menu's first entry. Out-of-menu preferences
         # are skipped by the resolver.
-        kw["term"] = TERM_RESOLVER.resolve_active(
-            self.valid_terms, pin=self.term, preference=prefs.get("term")
+        term = TERM_RESOLVER.resolve_active(
+            self.valid_terms, pin=self.term, preference=preferences.get("term")
         )
         # A console serves one client, so nc (whose listener needs a second
         # session) leaves the menu there: an nc preference falls through to the
         # next kind. Only the resolution narrows; the host keeps its full menu.
         transfers = (
-            console_transfer_menu(self.name or self.ip, self.valid_transfers, self.transfer)
-            if kw["term"] == "console"
+            console_transfer_menu(self._label(), self.valid_transfers, self.transfer)
+            if term == "console"
             else self.valid_transfers
         )
-        kw["transfer"] = TRANSFER_RESOLVER.resolve_active(
-            transfers, pin=self.transfer, preference=prefs.get("transfer")
-        )
-        kw["impairer"] = IMPAIRER_RESOLVER.resolve_active(
-            self.valid_impairers, pin=self.impairer, preference=prefs.get("impairer")
-        )
-        for n in ("docker_capable", "docker_priority", "shell_history"):
-            if n in s:
-                kw[n] = getattr(self, n)
-        for n in (
-            "ssh_options",
-            "sftp_options",
-            "scp_options",
-            "ftp_options",
-            "nc_options",
-            "userland_options",
-        ):
-            if n in s:
-                kw[n] = getattr(self, n).to_runtime()
-        return cls(**kw)
+        return {
+            "term": term,
+            "transfer": TRANSFER_RESOLVER.resolve_active(
+                transfers, pin=self.transfer, preference=preferences.get("transfer")
+            ),
+            "impairer": IMPAIRER_RESOLVER.resolve_active(
+                self.valid_impairers, pin=self.impairer, preference=preferences.get("impairer")
+            ),
+        }
 
 
 class EmbeddedHostSpec(HostSpec):
     """Boundary spec for an embedded host entry in ``lab.json``.
 
     Extends ``HostSpec`` with the embedded-family fields: term/transfer menus and active
-    selections, filesystem and binary loader registry names. ``to_host()`` resolves the
-    active term and transfer, looks up the filesystem and loader from their registries,
-    and builds an ``EmbeddedHost`` (or a custom subclass passed as ``cls``).
+    selections, filesystem and binary loader registry names. Contextual validation
+    resolves the active term and transfer; the stock ``to_host()`` looks up the filesystem and
+    loader from their registries and builds the ``EmbeddedHost`` (or the registered
+    subclass) the readiness record names.
     """
 
     os_type: str = "embedded"
-    valid_terms: list[str] = Field(default_factory=lambda: ["telnet"])
-    valid_transfers: list[str] = Field(default_factory=lambda: ["console"])
-    term: str | None = None
-    transfer: str | None = None
-    filesystem: str | None = None
-    loader: str | None = None
+    valid_terms: Annotated[list[str], Resolve(_menu("valid_terms"))] = Field(
+        default_factory=lambda: ["telnet"]
+    )
+    valid_transfers: Annotated[list[str], Resolve(_menu("valid_transfers"))] = Field(
+        default_factory=lambda: ["console"]
+    )
+    term: Annotated[str | None, Resolve(_selection("term"))] = None
+    transfer: Annotated[str | None, Resolve(_selection("transfer"))] = None
+    filesystem: Annotated[str | None, Convert(_value_only(_to_filesystem))] = None
+    loader: Annotated[str | None, Convert(_value_only(_to_loader))] = None
 
     _host_family: ClassVar[str] = "embedded"
 
@@ -967,49 +1280,58 @@ class EmbeddedHostSpec(HostSpec):
     def _validate_embedded_valid_transfers(cls, v: list[str]) -> list[str]:
         return _validate_transfer_menu(v, cls._host_family, "an embedded host")
 
+    @model_validator(mode="after")
+    def _pins_in_menus(self) -> "EmbeddedHostSpec":
+        _check_pins_in_menus(
+            self,
+            [
+                (TERM_RESOLVER, "term", "valid_terms"),
+                (TRANSFER_RESOLVER, "transfer", "valid_transfers"),
+            ],
+        )
+        return self
+
+    @field_validator("loader")
+    @classmethod
+    def _validate_loader_name(cls, v: str | None) -> str | None:
+        if v is not None and v not in LOADER_CLASSES:
+            known = ", ".join(sorted(LOADER_CLASSES.names())) or "<none>"
+            raise ValueError(f"loader {v!r} is not a registered binary loader. Known: {known}")
+        return v
+
     @field_validator("filesystem")
     @classmethod
     def _validate_filesystem_name(cls, v: str | None) -> str | None:
         if v is not None and v not in FILESYSTEM_CLASSES:
-            known = ", ".join(sorted(FILESYSTEM_CLASSES.names()))
+            known = ", ".join(sorted(FILESYSTEM_CLASSES.names())) or "<none>"
             raise ValueError(f"filesystem {v!r} is not a registered filesystem. Known: {known}")
         return v
 
     @override
-    def to_host(
-        self,
-        cls: type[EmbeddedHost] = EmbeddedHost,
-        *,
-        element: Element,
-        preferences: dict[str, list[str]] | None = None,
-    ) -> EmbeddedHost:
-        kw = self._common_host_kwargs()
-        kw["element"] = element
-        s = self.model_fields_set
-        prefs = preferences or {}
-        kw["valid_terms"] = list(self.valid_terms)
-        kw["valid_transfers"] = list(self.valid_transfers)
-        # Same precedence as UnixHostSpec.to_host: pin -> product preference
-        # present in the menu -> menu[0].
-        kw["term"] = TERM_RESOLVER.resolve_active(
-            self.valid_terms, pin=self.term, preference=prefs.get("term")
-        )
-        kw["transfer"] = TRANSFER_RESOLVER.resolve_active(
-            self.valid_transfers, pin=self.transfer, preference=prefs.get("transfer")
-        )
-        if "filesystem" in s and self.filesystem is not None:
-            kw["filesystem"] = build_filesystem(self.filesystem)
-        if "loader" in s and self.loader is not None:
-            kw["loader"] = build_binary_loader(self.loader)
-        return cls(**kw)
+    def _selection_menus(self) -> dict[str, list[str]]:
+        return {"term": list(self.valid_terms), "transfer": list(self.valid_transfers)}
 
+    @override
+    def _static_contextual_checks(self, ctx: HostContext) -> None:
+        # The spec's frame counts only when it is forwarded: set by the entry (or
+        # its profile) and not null. An unset field keeps the class's default.
+        forwarded = "command_frame" in self.model_fields_set and self.command_frame is not None
+        if not forwarded and not _class_supplies_frame(ctx.entry.cls):
+            cls_name = getattr(ctx.entry.cls, "__name__", "the host class")
+            raise ValueError(
+                f"os_type {self.os_type!r} builds a {cls_name}, which supplies no command_frame. "
+                f'Set os_type to a profile that supplies one (e.g. "zephyr"), or set command_frame.'
+            )
 
-HOST_SPEC_RUNTIME_PAIRS: list[tuple[type[HostSpec], type]] = [
-    (UnixHostSpec, UnixHost),
-    (EmbeddedHostSpec, EmbeddedHost),
-]
-"""Each host spec paired with the runtime class it builds. Drives the drift
-guard so a spec field that has no constructor counterpart is caught.
-
-:meta hide-value:
-"""
+    @override
+    def _resolve_selections(self, preferences: FlatPreferences) -> dict[str, str]:
+        # Same precedence as UnixHostSpec: product preference present in the
+        # menu -> pin -> menu[0].
+        return {
+            "term": TERM_RESOLVER.resolve_active(
+                self.valid_terms, pin=self.term, preference=preferences.get("term")
+            ),
+            "transfer": TRANSFER_RESOLVER.resolve_active(
+                self.valid_transfers, pin=self.transfer, preference=preferences.get("transfer")
+            ),
+        }

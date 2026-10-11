@@ -1,10 +1,9 @@
 # #590 P1: switch the public-surface declaration on
 
-**Status (2026-10-09):** P1 landed as 14caec5b on top of the erratum f37ff1e9. Spec 4
-commit 4 (`OttoContext.scopes` never widens silently) and spec 2 commits 4-6 (the run-state
-contracts) are done. What is left is the other "After P1" commits: spec 3a commits 4-6,
-spec 3b commits 3b-1 to 3b-5, and the marked commit that adds the writer refusals P1
-deferred (`Capture.save`, `archive_edit`).
+**Status (2026-10-10):** P1 landed as 14caec5b on top of the erratum f37ff1e9. The after-P1
+contract commits of spec 4 (6022fcf8), spec 2 (96671a51), spec 3a (5b332cce) and spec 3b
+(commits 3b-1 to 3b-5, squashed into one marked commit) are done. What is left is the marked
+commit that adds the writer refusals P1 deferred (`Capture.save`, `archive_edit`).
 
 P0 built the tooling and left it dormant: no `api/public.toml`, the golden is
 still v1, nothing gates on the validator. P0 was rebuilt (dump spec
@@ -175,7 +174,7 @@ Spec `docs/superpowers/specs/2026-10-06-host-construction-design.md` §2 and §7
 - [x] ✅ (14caec5b) `otto.host.__all__` gains `HostSpec`, `UnixHostSpec`, `EmbeddedHostSpec` and `host_identity`;
   `otto.models.__all__`, its typing exports and lazy bindings drop the three specs (appendix G
   addendum). Docs re-point.
-- [ ] **After P1**, each its own commit (spec 3b §7), marked except 3b-5: 3b-1 (structural gaps,
+- [x] ✅ (spec 3b squash, 2026-10-10) **After P1**, each its own commit (spec 3b §7), marked except 3b-5: 3b-1 (structural gaps,
   after 3a 5.1 and 5.8), 3b-2 (field kinds, coverage rule, profile-eligible inputs; after 3a 5.9),
   3b-3 (the pipeline, readiness, power preparation; after 3a 5.12), 3b-4 (one stock builder),
   3b-5 (`refactor`: the loader's duplicate validation goes).

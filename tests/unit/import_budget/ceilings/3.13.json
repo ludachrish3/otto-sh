@@ -72,7 +72,7 @@
       "by_bucket": {
         "fd": 110,
         "other": 204,
-        "otto:*": 28,
+        "otto:*": 27,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-313-aarch64-linux-gnu.so": 1,
@@ -86,15 +86,13 @@
         "otto:bootstrap.cpython-313.pyc": 1,
         "otto:cli": 37,
         "otto:config": 53,
-        "otto:console": 2,
-        "otto:console.cpython-313.pyc": 1,
         "otto:context": 2,
         "otto:context.cpython-313.pyc": 1,
         "otto:declared": 2,
         "otto:declared.cpython-313.pyc": 1,
         "otto:errors": 2,
         "otto:errors.cpython-313.pyc": 1,
-        "otto:host": 167,
+        "otto:host": 131,
         "otto:instructions": 2,
         "otto:instructions.cpython-313.pyc": 1,
         "otto:inventory": 29,
@@ -127,7 +125,7 @@
         "site:pydantic": 201,
         "site:pydantic_core": 16,
         "site:pydantic_settings": 105,
-        "site:rich": 227,
+        "site:rich": 123,
         "site:shellingham": 13,
         "site:sphinxcontrib": 12,
         "site:sphinxcontrib_jsmath-1": 4,
@@ -139,9 +137,9 @@
         "workspace": 38
       },
       "by_process": {
-        "python": 2454
+        "python": 2310
       },
-      "file_ops": 2454,
+      "file_ops": 2310,
       "workspace": 38
     },
     "completion_repo_warm": {
@@ -535,7 +533,7 @@
       "by_bucket": {
         "fd": 128,
         "other": 244,
-        "otto:*": 23,
+        "otto:*": 22,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-313-aarch64-linux-gnu.so": 1,
@@ -547,15 +545,13 @@
         "otto:bootstrap.cpython-313.pyc": 1,
         "otto:cli": 33,
         "otto:config": 49,
-        "otto:console": 2,
-        "otto:console.cpython-313.pyc": 1,
         "otto:context": 2,
         "otto:context.cpython-313.pyc": 1,
         "otto:declared": 2,
         "otto:declared.cpython-313.pyc": 1,
         "otto:errors": 2,
         "otto:errors.cpython-313.pyc": 1,
-        "otto:host": 163,
+        "otto:host": 123,
         "otto:inventory": 29,
         "otto:labs": 25,
         "otto:layout": 2,
@@ -587,7 +583,7 @@
         "site:pydantic_core": 16,
         "site:pydantic_settings": 105,
         "site:pygments": 76,
-        "site:rich": 275,
+        "site:rich": 239,
         "site:shellingham": 13,
         "site:sphinxcontrib": 12,
         "site:sphinxcontrib_jsmath-1": 4,
@@ -599,9 +595,9 @@
         "workspace": 16
       },
       "by_process": {
-        "python": 2909
+        "python": 2829
       },
-      "file_ops": 2909,
+      "file_ops": 2829,
       "workspace": 16
     },
     "host": {

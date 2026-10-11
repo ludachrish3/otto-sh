@@ -4,7 +4,7 @@ import pytest
 
 import otto.host.os_profile as op
 from otto.host.unix_host import UnixHost
-from otto.models.host import HostSpec
+from otto.models.host import UnixHostSpec
 from otto.models.jsonschema import build_schemas
 
 
@@ -173,7 +173,7 @@ def test_link_schema_emitted():
 def test_custom_registered_spec_appears():
     # A custom host class + spec registered at runtime must flow into both its
     # own file and the hosts wrapper, without touching the real registry.
-    class AcmeSpec(HostSpec):
+    class AcmeSpec(UnixHostSpec):
         pass
 
     op.register_host_class("acme", UnixHost, spec=AcmeSpec)
@@ -186,7 +186,7 @@ def test_custom_registered_spec_appears():
 
 def test_stem_handles_runs_of_capitals():
     # A contrib spec name with consecutive capitals still kebab-cases cleanly.
-    class ACMEHostSpec(HostSpec):
+    class ACMEHostSpec(UnixHostSpec):
         pass
 
     op.register_host_class("acme", UnixHost, spec=ACMEHostSpec)
@@ -197,7 +197,7 @@ def test_stem_handles_runs_of_capitals():
 def test_builtins_only_excludes_custom_specs():
     # build_schemas(builtins_only=True) emits only the in-tree host types, even
     # when a custom spec is registered.
-    class AcmeSpec(HostSpec):
+    class AcmeSpec(UnixHostSpec):
         pass
 
     op.register_host_class("acme", UnixHost, spec=AcmeSpec)

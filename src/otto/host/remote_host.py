@@ -41,6 +41,7 @@ from ..logger.mode import LogMode
 from ..result import CommandResult
 from ..utils import Status
 from .connections import LOGINLESS, ConsoleEndpoint, connect_and_describe
+from .construction import RuntimeOnly
 from .errors import ConsoleError
 from .host import BaseHost, is_dry_run
 from .login_proxy import Cred
@@ -168,7 +169,12 @@ class RemoteHost(BaseHost):
     ip: str = field(kw_only=False)
     """IP address of the host."""
 
-    element: "Element" = field(repr=False)
+    element: "Element" = field(
+        repr=False,
+        metadata={
+            "otto": RuntimeOnly(reason="the factory's element argument", supplied_by="element")
+        },
+    )
     """The element this host belongs to — see
     :attr:`~otto.host.host.BaseHost.element` for what it carries. REQUIRED
     here, unlike on the base: a networked host always belongs to one. Keyword-
@@ -182,9 +188,11 @@ class RemoteHost(BaseHost):
     :meth:`~otto.host.unix_host.UnixHost.cred` /
     :attr:`~otto.host.unix_host.UnixHost.default_cred` and the
     connection-layer chain resolution
-    (:func:`~otto.host.login_proxy.resolve_chain`) handle that. Optional on
-    a console family whose shell has no login step (a stock Zephyr target);
-    :class:`~otto.host.unix_host.UnixHost` makes it required."""
+    (:func:`~otto.host.login_proxy.resolve_chain`) handle that. Empty by
+    default: an entry with no creds connects loginless (a console, or a stock
+    Zephyr target whose shell has no login step).
+    :class:`~otto.host.unix_host.UnixHost` takes it as its second positional
+    parameter."""
 
     board: str | None = field(default=None, repr=False)
     """Board type name, or None."""

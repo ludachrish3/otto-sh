@@ -47,11 +47,13 @@ from ..utils import (
     wait_for_async,
 )
 
-# Runtime imports, not TYPE_CHECKING ones: these three are ``default_factory``
-# callables on :class:`BaseHost`'s dataclass fields, so they must exist when the
-# class body executes. All three are leaf modules (stdlib-only imports), so they
-# add no edge to the host package's import graph beyond themselves.
+# Runtime imports, not TYPE_CHECKING ones: of these four, ``UserSupport``,
+# ``InventoryRef`` and ``LabInfo`` are ``default_factory`` callables on
+# :class:`BaseHost`'s dataclass fields and ``RuntimeOnly`` is field metadata, so
+# all must exist when the class body executes. Each is a leaf (stdlib, or
+# ``otto.errors`` for ``construction``), so none adds an edge beyond itself.
 from .capability_grid import UserSupport
+from .construction import RuntimeOnly
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
 from .log_haul import haul_globs
@@ -1111,7 +1113,11 @@ class BaseHost(ABC):
     I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
     (warnings/errors are unaffected)."""
 
-    lab_info: "LabInfo" = field(default_factory=LabInfo, repr=False)
+    lab_info: "LabInfo" = field(
+        default_factory=LabInfo,
+        repr=False,
+        metadata={"otto": RuntimeOnly(reason="stamped by the lab layer above the host entry")},
+    )
     """The resolved lab this host came from (see
     :class:`~otto.host.lab_info.LabInfo`), stamped by the loader."""
 
@@ -1120,7 +1126,13 @@ class BaseHost(ABC):
     three-level-reservations §3); empty for containers and ``local``. The lab's
     are on :attr:`lab_info`; the element's on :attr:`element`'s ``resources``."""
 
-    element: "Element | None" = field(default=None, repr=False)
+    element: "Element | None" = field(
+        default=None,
+        repr=False,
+        metadata={
+            "otto": RuntimeOnly(reason="the factory's element argument", supplied_by="element")
+        },
+    )
     """The element this host belongs to, or ``None`` for a container / ``local``.
 
     The ONLY path to element data (spec 2026-09-05 §2.5): ``element.name``,
@@ -1128,21 +1140,41 @@ class BaseHost(ABC):
     :class:`~otto.host.remote_host.RemoteHost` narrows it to a required
     :class:`~otto.host.element.Element`."""
 
-    inventory_ref: "InventoryRef" = field(default_factory=InventoryRef, repr=False)
+    inventory_ref: "InventoryRef" = field(
+        default_factory=InventoryRef,
+        repr=False,
+        metadata={
+            "otto": RuntimeOnly(reason="stamped by the loader from the resolved inventory record")
+        },
+    )
     """Inventory provenance (see :class:`~otto.host.inventory_ref.InventoryRef`); empty for an
     inline host."""
 
-    products: list["Product"] = field(default_factory=list)
+    products: list["Product"] = field(
+        default_factory=list,
+        metadata={"otto": RuntimeOnly(reason="attached by repo logic after construction")},
+    )
     """Software-under-test deployed to this host. Default empty."""
 
-    dev_tools: list["DevTool"] = field(default_factory=list)
+    dev_tools: list["DevTool"] = field(
+        default_factory=list,
+        metadata={"otto": RuntimeOnly(reason="attached by repo logic after construction")},
+    )
     """Repo-internal tooling deployed to this host. Default empty."""
 
-    shadowed_products: list[tuple[str, "Product"]] = field(default_factory=list, repr=False)
+    shadowed_products: list[tuple[str, "Product"]] = field(
+        default_factory=list,
+        repr=False,
+        metadata={"otto": RuntimeOnly(reason="recorded by the ingest after construction")},
+    )
     """Provider products dropped at ingest because their name was already taken, as
     ``(host id, product)`` pairs. Recorded for ``otto --list-products``; default empty."""
 
-    shadowed_dev_tools: list[tuple[str, "DevTool"]] = field(default_factory=list, repr=False)
+    shadowed_dev_tools: list[tuple[str, "DevTool"]] = field(
+        default_factory=list,
+        repr=False,
+        metadata={"otto": RuntimeOnly(reason="recorded by the ingest after construction")},
+    )
     """The dev-tool twin of :attr:`shadowed_products`. Default empty."""
 
     toolchain: "Toolchain" = field(default_factory=Toolchain, repr=False)

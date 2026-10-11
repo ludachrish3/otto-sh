@@ -14,10 +14,50 @@ Each kind of input has a `*Spec` model whose job ends at construction:
 ```text
 lab.json labs entry   → LabEntrySpec.model_validate(…) → Lab.resources / .metadata
 lab.json element      → ElementSpec.model_validate(…)  → .to_element() + .hosts → factory(entry, element=…)
-  its host entry      → HostSpec.model_validate(…)     → spec.to_host(cls, …)  → UnixHost
+  its host entry      → HostSpec.model_validate(…)     → spec.validate_in(ctx) → spec.to_host(ready=…) → UnixHost
 settings.toml tables  → settings spec models           → spec.to_runtime()     → backend objects
 OTTO_* environment    → OttoEnvSettings                → typed fields (paths, …)
 ```
+
+A host entry crosses in two validations. The factory, `otto init`'s doctor
+and {func}`~otto.host.factory.host_identity` all run structural validation
+(the spec's `model_validate`), then contextual validation
+({meth}`~otto.host.HostSpec.validate_in`, which reads the entry's
+{class}`~otto.host.HostContext`: its element, profile, id and preferences).
+Contextual validation issues a readiness record, and only that record builds:
+`to_host` consumes it once, and refuses a record from another spec, from
+validation without preferences, or one already used. A custom spec adds its
+own contextual checks in `check_in`; see
+{doc}`../../cookbook/extending/custom-host-classes`.
+
+That is the readiness guarantee: a host is built only from the record its
+contextual validation issued, with the entry's `power_control` configuration
+already parsed by its controller's config model. The record builds once.
+Changing the spec, the preferences or the context afterwards changes nothing
+it builds; to build again, validate again. One stock builder,
+{meth}`~otto.host.HostSpec.build_kwargs`, walks a spec's fields by kind over
+the record, so every spec — a custom one included — builds with no `to_host`
+of its own; a spec that overrides `to_host` keeps the guarantee by building
+through `build_kwargs`; see {doc}`../../cookbook/extending/custom-host-classes`.
+
+Contextual validation runs in one of two modes, and the checks that need the
+selected term or transfer, the host class or the id run in both:
+
+- **With preferences** (the factory and lab loading), the term and transfer
+  the resolver selects are checked: they are what the host is built with.
+- **Without preferences** (`otto init`'s doctor, host listings and
+  {func}`~otto.host.factory.host_identity`), an entry passes when some
+  selection its menus and pins can produce passes. The resolver produces that
+  selection, the *witness*, from a one-item preference per menu entry, so the
+  pins and the console's narrowing apply exactly as at load.
+- When no selection passes, the error is the one a load without preferences
+  would raise, so the doctor and the loader report the same message.
+
+The doctor therefore refuses only what no preference can rescue. It does not
+promise the repo loads: an entry that passes through one selection still fails
+to load when its preferences select another. The rules themselves are in
+{doc}`../../configuration/lab-config` and, for the console term,
+{ref}`console-term`.
 
 `lab.json` has three nested boundaries, not one. The wrapper specs live in
 {mod}`otto.models.lab`: `LabEntrySpec` for a declared lab's `resources` and
@@ -67,12 +107,16 @@ Construction, driven by
 2. Profile defaults are merged under the host's own fields (explicit lab data
    always wins over profile defaults), and preference-resolved option
    defaults are folded in ({doc}`hosts`).
-3. The spec validates the merged dict; `to_host()` builds the runtime host.
+3. The spec validates the merged dict, then validates in its context;
+   `to_host()` builds the runtime host from the record contextual validation
+   issued.
 4. Product providers run, attaching products ({doc}`hosts`).
 
-A drift guard in otto's test suite enforces that runtime host fields and spec
-fields stay mirrored — adding an init field to a host class without its spec
-counterpart fails CI.
+The coverage rule in {mod}`otto.host.construction` holds the two declarations
+together: `register_host_class` refuses a class field the spec lacks and a spec
+field the class lacks, so the mismatch fails at registration (or at the first
+lookup of a class given by `Ref`), not at load; see
+{doc}`../../cookbook/extending/custom-host-classes`.
 
 ## Settings and environment
 

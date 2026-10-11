@@ -227,7 +227,8 @@ Host construction is a boundary crossing, described fully in
 {class}`~otto.host.os_profile.OsProfile` — a named bundle of field defaults
 over a *base family* (`unix`, `embedded`) — the profile picks the host class
 and its pydantic spec, defaults and host fields are merged (host fields win),
-the spec validates, and `to_host()` builds the runtime object. Custom host
+the spec validates (structurally, then in its context), and `to_host()`
+builds the runtime object from the record that validation issued. Custom host
 classes and profiles register through `register_host_class` /
 `register_os_profile` ({doc}`../../configuration/os-profiles`).
 

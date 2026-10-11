@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..models.host import EmbeddedHostSpec as EmbeddedHostSpec
     from ..models.host import HostSpec as HostSpec
+    from ..models.host import PowerControlSpec as PowerControlSpec
     from ..models.host import UnixHostSpec as UnixHostSpec
     from ..result import CommandResult as CommandResult
     from ..result import Results as Results
@@ -45,6 +46,18 @@ if TYPE_CHECKING:
     from .connections import TermMetadata as TermMetadata
     from .connections import build_term_backend as build_term_backend
     from .connections import register_term_backend as register_term_backend
+    from .construction import Consume as Consume
+    from .construction import Convert as Convert
+    from .construction import FlatPreferences as FlatPreferences
+    from .construction import HostBuild as HostBuild
+    from .construction import HostContext as HostContext
+    from .construction import HostReadiness as HostReadiness
+    from .construction import HostSpecInContext as HostSpecInContext
+    from .construction import HostValidationError as HostValidationError
+    from .construction import Omit as Omit
+    from .construction import Pass as Pass
+    from .construction import Resolve as Resolve
+    from .construction import RuntimeOnly as RuntimeOnly
     from .declared_product import DeclaredProduct as DeclaredProduct
     from .dev_tool import DevTool as DevTool
     from .dev_tool import DevToolProvider as DevToolProvider
@@ -58,6 +71,7 @@ if TYPE_CHECKING:
     from .errors import RawLandingError as RawLandingError
     from .errors import SessionSetupError as SessionSetupError
     from .factory import create_host_from_dict as create_host_from_dict
+    from .factory import host_context as host_context
     from .factory import host_identity as host_identity
     from .factory import validate_host_dict as validate_host_dict
     from .file_ops import PosixFileOps as PosixFileOps
@@ -145,6 +159,18 @@ _LAZY_ATTRS: dict[str, str] = {
     "TermMetadata": "otto.host.connections",
     "build_term_backend": "otto.host.connections",
     "register_term_backend": "otto.host.connections",
+    "Consume": "otto.host.construction",
+    "Convert": "otto.host.construction",
+    "FlatPreferences": "otto.host.construction",
+    "HostBuild": "otto.host.construction",
+    "HostContext": "otto.host.construction",
+    "HostReadiness": "otto.host.construction",
+    "HostSpecInContext": "otto.host.construction",
+    "HostValidationError": "otto.host.construction",
+    "Omit": "otto.host.construction",
+    "Pass": "otto.host.construction",
+    "Resolve": "otto.host.construction",
+    "RuntimeOnly": "otto.host.construction",
     "DeclaredProduct": "otto.host.declared_product",
     "DevTool": "otto.host.dev_tool",
     "DevToolProvider": "otto.host.dev_tool",
@@ -158,6 +184,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "RawLandingError": "otto.host.errors",
     "SessionSetupError": "otto.host.errors",
     "create_host_from_dict": "otto.host.factory",
+    "host_context": "otto.host.factory",
     "host_identity": "otto.host.factory",
     "validate_host_dict": "otto.host.factory",
     "PosixFileOps": "otto.host.file_ops",
@@ -231,6 +258,7 @@ _LAZY_ATTRS: dict[str, str] = {
     # move (host construction spec §2.1).
     "EmbeddedHostSpec": "otto.models.host",
     "HostSpec": "otto.models.host",
+    "PowerControlSpec": "otto.models.host",
     "UnixHostSpec": "otto.models.host",
 }
 
@@ -257,6 +285,8 @@ __all__ = [
     "CommandPowerController",
     "CommandResult",
     "ConnectionManager",
+    "Consume",
+    "Convert",
     "DeclaredProduct",
     "DevTool",
     "DevToolProvider",
@@ -266,26 +296,35 @@ __all__ = [
     "EmbeddedHost",
     "EmbeddedHostSpec",
     "Expect",
+    "FlatPreferences",
     "HopTransport",
     "Host",
+    "HostBuild",
     "HostCapabilities",
     "HostClassEntry",
+    "HostContext",
     "HostFilter",
     "HostLoopError",
+    "HostReadiness",
     "HostSession",
     "HostSpec",
+    "HostSpecInContext",
+    "HostValidationError",
     "LocalHost",
     "LocalSession",
     "Mount",
     "MountNotFoundError",
     "NcListenerCheck",
     "NcPortStrategy",
+    "Omit",
     "OsProfile",
     "OsType",
+    "Pass",
     "PosixFileOps",
     "PosixPrivilege",
     "PowerConstructionError",
     "PowerControlError",
+    "PowerControlSpec",
     "PowerController",
     "PowerEnv",
     "PowerState",
@@ -296,7 +335,9 @@ __all__ = [
     "RawFrame",
     "RawLandingError",
     "RemoteHost",
+    "Resolve",
     "Results",
+    "RuntimeOnly",
     "SessionIdentity",
     "SessionManager",
     "SessionMarkers",
@@ -334,6 +375,7 @@ __all__ = [
     "create_host_from_dict",
     "get_host_class",
     "get_os_profile",
+    "host_context",
     "host_identity",
     "is_dry_run",
     "make_rich_progress_handler",

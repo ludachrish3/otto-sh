@@ -54,9 +54,10 @@ whose `base` is a host class an init module registers works.
 
 Add an `[os_profiles.<name>]` sub-table to `.otto/settings.toml`.  The only
 required key is `base` — the name of a registered host class.  Every other key
-is a raw field default merged beneath each matching host's own fields, exactly
-as written — otto does not expand or anchor paths in them, so write any path
-here absolute.  (`~` works only if the field's own consumer expands it; otto
+is a raw default for a field the base's host spec accepts from lab data (any
+spec field but `os_type` and `inventory`), merged beneath each matching host's
+own fields exactly as written — otto does not expand or anchor paths in them,
+so write any path here absolute.  (`~` works only if the field's own consumer expands it; otto
 does not do so on the way in.)
 
 Example — a profile for a specific Zephyr 3.7 FAT build:

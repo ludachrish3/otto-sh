@@ -228,15 +228,19 @@ it for one invocation with `--term console` ({doc}`../cli/host/connections`).
   the server's `hop` chain, when it has one). For a console appliance that
   has no SSH of its own.
 
-A missing `server`, or a `port` outside `1`–`65535`, on a host whose term
-is `console` is an error when the lab loads. A `server` that names the host
+A missing `server`, or a `port` outside `1`–`65535`, is checked for the
+term the host will use: under no preferences (`otto init`'s doctor, host
+listings) an entry passes when some selection its menus and pins can produce
+passes; at load, the selected one must. So a host whose menu offers `console`
+beside `ssh` lists and passes the doctor with no `server`, and fails to load
+only when `console` is the term it selects. A `server` that names the host
 itself, or a host not in the lab, is an error naming both, raised on the
 first connect, as a bad `hop` is, not at lab load.
 
 | Field | Default | Meaning |
 |---|---|---|
-| `server` | — | Lab host ID of the telnet server. Required when the term is `console`; missing, the lab fails to load. |
-| `port` | — | The console's telnet port on the server, `1`–`65535`. Required when the term is `console`; missing or out of range, the lab fails to load. |
+| `server` | — | Lab host ID of the telnet server. Required when the selected term is `console`; missing, the lab fails to load. |
+| `port` | — | The console's telnet port on the server, `1`–`65535`. Required when the selected term is `console`; missing or out of range, the lab fails to load. |
 | `dial` | `"ssh"` | `"ssh"` or `"direct"`, as above. |
 | `login` | `true` | Log in from the `login:` prompt. Set `false` for a line with no login step (an RTOS shell); embedded hosts always force `false`. |
 | `login_prompt`, `password_prompt` | from the OS profile | Regexes matched against the *end* of what the line shows. Unset means the host's OS profile's patterns ({doc}`os-profiles`); set them for a device whose prompts read differently. |

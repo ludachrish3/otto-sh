@@ -252,8 +252,9 @@ def register_power_controller(
 
     *config* is the model that parses the table's keys (every key but
     ``type``): otto calls its ``model_validate(table, context={"env": env})``
-    once per host, with a :class:`PowerEnv` naming the host as *env*. The
-    parsed configuration must be deep-copyable. *factory* receives
+    each time a host is validated, with a :class:`PowerEnv` naming the host
+    as *env*. The parsed configuration must be deep-copyable: one that is not
+    fails the host's validation. *factory* receives
     ``Configured(config, env)`` and returns the :class:`PowerController`.
     Either may be a :class:`~otto.registry.Ref` (``"module:attr"``),
     imported at first use.

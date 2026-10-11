@@ -149,7 +149,19 @@ IMPAIRERS: "Registry[ClassEntry[LinkImpairer]]" = Registry(
     check_resolved=lambda name, entry: _check_impairer_class(name, resolved(entry.cls)),
 )
 """The impairer classes lab data can name, keyed by impairer name."""
-IMPAIRERS.register("netem", ClassEntry(Ref("otto.link.netem:NetEmImpairer")))
+_STOCK_REFS = {"netem": Ref("otto.link.netem:NetEmImpairer")}
+IMPAIRERS.register("netem", ClassEntry(_STOCK_REFS["netem"]))
+
+
+def _is_unresolved_stock(name: str) -> bool:
+    """Return whether *name* is still otto's own registration, not yet imported.
+
+    Read from the stored record, so it imports nothing. A class registered over
+    a stock name with ``overwrite=True`` is not stock. A resolved record is not
+    unresolved either; its class is already imported, so reading it is free.
+    """
+    ref = _STOCK_REFS.get(name)
+    return ref is not None and name in IMPAIRERS and IMPAIRERS.peek(name).cls == ref
 
 
 @registration_boundary

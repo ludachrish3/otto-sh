@@ -41,8 +41,9 @@ def test_host_spec_refuses_element_keys(key):
     assert [(e["type"], e["loc"]) for e in exc.value.errors()] == [("extra_forbidden", (key,))]
 
 
-def test_validate_host_dict_needs_no_element():
-    validate_host_dict(dict(ENTRY))
+def test_validate_host_dict_requires_the_element():
+    with pytest.raises(TypeError, match="element"):
+        validate_host_dict(dict(ENTRY))  # ty: ignore[missing-argument]
 
 
 def test_flatten_is_gone():

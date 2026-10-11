@@ -8,7 +8,8 @@ from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.session_setup import SESSION_SETUPS, SessionSetup, register_session_setup
 from otto.host.unix_host import UnixHost
-from otto.models.host import EmbeddedHostSpec, UnixHostSpec
+from otto.models.host import UnixHostSpec
+from tests._fixtures.host_build import build_host
 
 _CREDS = [{"login": "admin", "password": "pw"}]
 _PROXIED = [*_CREDS, {"login": "mysql", "proxy": "su", "via": "admin"}]
@@ -27,16 +28,15 @@ def _registered():
 
 
 def test_name_form_reaches_the_unix_host_and_its_manager():
-    spec = UnixHostSpec(ip="10.0.0.1", creds=_CREDS, session_setup="t6-hook")
-    host = spec.to_host(element=_E)
+    host = build_host({"ip": "10.0.0.1", "creds": _CREDS, "session_setup": "t6-hook"}, element=_E)
     assert host.session_setup == SessionSetup(name="t6-hook", params={})
     assert host._session_mgr._session_setup == host.session_setup
     assert host.landing_frame is None
 
 
 def test_table_form_keeps_params():
-    spec = UnixHostSpec(ip="10.0.0.1", creds=_CREDS, session_setup={"type": "t6-hook", "db": "x"})
-    assert spec.to_host(element=_E).session_setup == SessionSetup(
+    entry = {"ip": "10.0.0.1", "creds": _CREDS, "session_setup": {"type": "t6-hook", "db": "x"}}
+    assert build_host(entry, element=_E).session_setup == SessionSetup(
         name="t6-hook", params={"db": "x"}
     )
 
@@ -72,19 +72,26 @@ def test_non_bash_landing_with_a_proxied_cred_is_refused():
 
 
 def test_bash_landing_with_a_proxied_cred_is_allowed():
-    spec = UnixHostSpec(
-        ip="10.0.0.1", creds=_PROXIED, session_setup="t6-hook", landing_frame="bash"
-    )
-    host = spec.to_host(element=_E)
+    entry = {
+        "ip": "10.0.0.1",
+        "creds": _PROXIED,
+        "session_setup": "t6-hook",
+        "landing_frame": "bash",
+    }
+    host = build_host(entry, element=_E)
     assert isinstance(host.landing_frame, BashFrame)
     assert isinstance(host._session_mgr._landing_frame, BashFrame)
 
 
 def test_embedded_accepts_a_raw_landing():
-    spec = EmbeddedHostSpec(
-        ip="192.0.2.1", command_frame="zephyr", session_setup="t6-hook", landing_frame="raw"
-    )
-    host = spec.to_host(element=Element("dut"))
+    entry = {
+        "ip": "192.0.2.1",
+        "os_type": "embedded",
+        "command_frame": "zephyr",
+        "session_setup": "t6-hook",
+        "landing_frame": "raw",
+    }
+    host = build_host(entry, element=Element("dut"))
     assert isinstance(host, EmbeddedHost)
     assert isinstance(host.landing_frame, RawFrame)
     assert isinstance(host._session_mgr._landing_frame, RawFrame)

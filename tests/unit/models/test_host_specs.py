@@ -1,30 +1,33 @@
 import dataclasses
 from pathlib import Path
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
 import pytest
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
+from otto.host import HostValidationError, host_context
 from otto.host.command_frame import ZephyrFrame
+from otto.host.construction import Consume
 from otto.host.element import Element
 from otto.host.embedded_filesystem import NoFileSystem
 from otto.host.embedded_host import EmbeddedHost
-from otto.host.factory import create_host_from_dict
+from otto.host.factory import create_host_from_dict, validate_host_dict
 from otto.host.interface import Interface
 from otto.host.login_proxy import Cred, via_cred
 from otto.host.options import TelnetOptions
+from otto.host.os_profile import register_host_class
 from otto.host.toolchain import Toolchain
 from otto.host.unix_host import UnixHost
 from otto.link import LinkImpairer, register_impairer
 from otto.logger.mode import LogMode
 from otto.models.host import (
-    HOST_SPEC_RUNTIME_PAIRS,
     CredSpec,
     EmbeddedHostSpec,
     HostSpec,
     ToolchainSpec,
     UnixHostSpec,
 )
+from tests._fixtures.host_build import build_host
 
 
 def _minimal_unix_kwargs() -> dict:
@@ -124,27 +127,26 @@ def test_hostspec_forbids_unknown_field():
 
 @pytest.mark.parametrize(("raw", "expected"), [(3, 3), ("3", 3), ("R3", "R3")])
 def test_hostspec_site_and_rack_coerce_digit_strings(raw, expected):
-    spec = UnixHostSpec(
-        ip="10.0.0.1",
-        creds=[{"login": "u", "password": "p"}],
-        site=raw,
-        rack=raw,
-        shelf=2,
+    hc = host_context(
+        {
+            "ip": "10.0.0.1",
+            "creds": [{"login": "u", "password": "p"}],
+            "site": raw,
+            "rack": raw,
+            "shelf": 2,
+        },
+        element=Element("lab"),
     )
-    assert spec.site == expected
-    assert spec.rack == expected
-    host = spec.to_host(element=Element("lab"))
+    assert hc.spec.site == expected
+    assert hc.spec.rack == expected
+    host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
     assert (host.site, host.rack, host.shelf) == (expected, expected, 2)
 
 
 def test_location_fields_default_none_and_stay_out_of_the_id():
-    spec = UnixHostSpec(
-        ip="10.0.0.1",
-        creds=[{"login": "u", "password": "p"}],
-        board="cx",
-        slot=1,
+    host = build_host(
+        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}], "board": "cx", "slot": 1}
     )
-    host = spec.to_host(element=Element("lab"))
     assert (host.site, host.rack, host.shelf) == (None, None, None)
     assert host.id == "lab-cx-1"
 
@@ -154,28 +156,31 @@ def test_hostspec_shelf_rejects_negative():
         UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}], shelf=-1)
 
 
-def test_common_host_kwargs_omits_unset():
-    spec = HostSpec(
-        ip="10.0.0.1",
-    )
-    kw = spec._common_host_kwargs()
+def _kwargs(entry, element=None):
+    """The validated spec, and the constructor kwargs the stock builder makes of its record."""
+    hc = host_context(entry, element=element if element is not None else Element("lab"))
+    return hc.spec, hc.spec.build_kwargs(hc.spec.validate_in(hc.context))
+
+
+def test_build_kwargs_omits_unset_fields_and_supplies_the_element():
+    element = Element("lab")
+    _, kw = _kwargs({"ip": "10.0.0.1"}, element)
     assert kw["ip"] == "10.0.0.1"
-    # ``element`` is not a plain pass-through field any more: the factory builds
-    # the ``Element`` and hands it to ``to_host(element=...)``.
-    assert "element" not in kw
-    # unset common fields are omitted so the host class's own default applies
+    assert kw["element"] is element
+    # unset fields are omitted so the host class's own default applies
     for absent in ("os_name", "metadata", "telnet_options", "snmp", "toolchain"):
         assert absent not in kw
 
 
-def test_common_host_kwargs_builds_nested_when_set():
-    spec = HostSpec(
-        ip="10.0.0.1",
-        metadata={"owner": "infra"},
-        telnet_options={"port": 99},
-        toolchain={"sysroot": "/opt"},
+def test_build_kwargs_builds_nested_fields_when_set():
+    spec, kw = _kwargs(
+        {
+            "ip": "10.0.0.1",
+            "metadata": {"owner": "infra"},
+            "telnet_options": {"port": 99},
+            "toolchain": {"sysroot": "/opt"},
+        }
     )
-    kw = spec._common_host_kwargs()
     assert kw["metadata"] == {"owner": "infra"}
     assert kw["metadata"] is not spec.metadata  # copied, never aliased
     assert isinstance(kw["telnet_options"], TelnetOptions)
@@ -190,9 +195,9 @@ def test_unix_spec_without_creds_builds_a_credless_host():
     The runtime already connects such a host loginless, so the spec must not
     refuse what the host can do.
     """
-    spec = UnixHostSpec(ip="10.0.0.1")
-    assert spec.creds == []
-    host = spec.to_host(element=Element("lab"))
+    hc = host_context({"ip": "10.0.0.1"}, element=Element("lab"))
+    assert hc.spec.creds == []
+    host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
     assert isinstance(host, UnixHost)
     assert host.creds == []
     assert host.default_cred is None
@@ -209,23 +214,30 @@ class _DeviceDefaultHost(UnixHost):
 
 def test_a_credless_spec_keeps_a_host_subclass_s_own_creds_default():
     """Omitted creds fall through to the TARGET class's default, as every other
-    unset field does; ``[]`` is supplied only where the class has no default."""
-    host = UnixHostSpec(ip="10.0.0.1").to_host(_DeviceDefaultHost, element=Element("lab"))
+    unset field does: here the device's account rather than UnixHost's ``[]``."""
+    register_host_class("t-device-default", _DeviceDefaultHost)
+    host = build_host({"ip": "10.0.0.1", "os_type": "t-device-default"})
     assert isinstance(host, _DeviceDefaultHost)
     assert [c.login for c in host.creds] == ["device"]
 
 
 def test_explicit_creds_still_beat_a_host_subclass_s_default():
-    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "lab", "password": "p"}])
-    host = spec.to_host(_DeviceDefaultHost, element=Element("lab"))
+    register_host_class("t-device-default", _DeviceDefaultHost)
+    host = build_host(
+        {
+            "ip": "10.0.0.1",
+            "creds": [{"login": "lab", "password": "p"}],
+            "os_type": "t-device-default",
+        }
+    )
     assert [c.login for c in host.creds] == ["lab"]
 
 
 class _ConstructorDefaultHost(UnixHost):
     """An undecorated host class whose own constructor defaults creds.
 
-    Its dataclass field is still UnixHost's required one: only the signature
-    says creds may be omitted.
+    Its dataclass field is UnixHost's (defaulting to ``[]``); the signature's
+    own default is the one that applies.
     """
 
     def __init__(self, creds: list[Cred] | None = None, **kwargs) -> None:
@@ -245,23 +257,39 @@ class _SelfCredHost(UnixHost):
         UnixHost.__post_init__(self)
 
 
+class _SelfCredSpec(UnixHostSpec):
+    """The paired spec of a class that sets its own creds: the entry's creds are never passed."""
+
+    creds: Annotated[list[CredSpec], Consume("the class sets its own creds")] = Field(
+        default_factory=list
+    )
+
+
 def test_a_credless_spec_keeps_a_host_constructor_s_creds_default():
     """The constructor's contract decides, not the dataclass field: a default
     in a hand-written ``__init__`` applies when the entry omits creds."""
-    host = UnixHostSpec(ip="10.0.0.1").to_host(_ConstructorDefaultHost, element=Element("lab"))
+    register_host_class("t-constructor-default", _ConstructorDefaultHost)
+    host = build_host({"ip": "10.0.0.1", "os_type": "t-constructor-default"})
     assert isinstance(host, _ConstructorDefaultHost)
     assert [c.login for c in host.creds] == ["device"]
 
 
 def test_explicit_creds_still_beat_a_host_constructor_s_default():
-    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "lab", "password": "p"}])
-    host = spec.to_host(_ConstructorDefaultHost, element=Element("lab"))
+    register_host_class("t-constructor-default", _ConstructorDefaultHost)
+    host = build_host(
+        {
+            "ip": "10.0.0.1",
+            "creds": [{"login": "lab", "password": "p"}],
+            "os_type": "t-constructor-default",
+        }
+    )
     assert [c.login for c in host.creds] == ["lab"]
 
 
 def test_a_credless_spec_builds_a_host_that_sets_its_own_creds():
     """A constructor with no ``creds`` parameter at all is passed none."""
-    host = UnixHostSpec(ip="10.0.0.1").to_host(_SelfCredHost, element=Element("lab"))
+    register_host_class("t-self-cred", _SelfCredHost, spec=_SelfCredSpec)
+    host = build_host({"ip": "10.0.0.1", "os_type": "t-self-cred"})
     assert isinstance(host, _SelfCredHost)
     assert [c.login for c in host.creds] == ["self"]
 
@@ -281,22 +309,23 @@ class _PassthroughSelfCredHost(_SelfCredHost):
 
 
 def test_a_credless_spec_builds_a_passthrough_host_credless():
-    """Behind ``**kwargs`` the dataclass field speaks: UnixHost's creds is required."""
-    host = UnixHostSpec(ip="10.0.0.1").to_host(_PassthroughHost, element=Element("lab"))
+    """Behind ``**kwargs`` the dataclass field speaks: UnixHost's creds defaults to ``[]``."""
+    register_host_class("t-passthrough", _PassthroughHost)
+    host = build_host({"ip": "10.0.0.1", "os_type": "t-passthrough"})
     assert isinstance(host, _PassthroughHost)
     assert host.creds == []
 
 
 def test_a_credless_spec_keeps_a_passthrough_host_s_own_creds():
     """An ``init=False`` field behind the passthrough is not passed: the class sets it."""
-    host = UnixHostSpec(ip="10.0.0.1").to_host(_PassthroughSelfCredHost, element=Element("lab"))
+    register_host_class("t-passthrough-self-cred", _PassthroughSelfCredHost, spec=_SelfCredSpec)
+    host = build_host({"ip": "10.0.0.1", "os_type": "t-passthrough-self-cred"})
     assert isinstance(host, _PassthroughSelfCredHost)
     assert [c.login for c in host.creds] == ["self"]
 
 
 def test_unix_spec_builds_unix_host_with_defaults():
-    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}])
-    host = spec.to_host(element=Element("lab"))
+    host = build_host({"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]})
     assert isinstance(host, UnixHost)
     assert host.ip == "10.0.0.1"
     assert host.term == "ssh"
@@ -306,9 +335,9 @@ def test_unix_spec_builds_unix_host_with_defaults():
 
 
 def test_hostspec_log_default_is_normal_on_spec_and_runtime():
-    spec = UnixHostSpec.model_validate(_minimal_unix_kwargs())
-    assert spec.log is LogMode.NORMAL
-    assert spec.to_host(element=Element("lab")).log is LogMode.NORMAL
+    hc = host_context(_minimal_unix_kwargs(), element=Element("lab"))
+    assert hc.spec.log is LogMode.NORMAL
+    assert hc.spec.to_host(ready=hc.spec.validate_in(hc.context)).log is LogMode.NORMAL
 
 
 def test_hostspec_log_rejects_bool_and_names_the_modes():
@@ -328,14 +357,15 @@ def test_hostspec_log_accepts_logmode_string():
 
 
 def test_unix_spec_builds_nested_options_and_snmp():
-    spec = UnixHostSpec(
-        ip="10.0.0.1",
-        creds=[{"login": "u", "password": "p"}],
-        ssh_options={"port": 2222, "extra": {"x": 1}},
-        snmp={"oids": ["1.3.6.1.2.1.1.3.0"], "port": 16101},
-        metadata={"owner": "infra"},
+    host = build_host(
+        {
+            "ip": "10.0.0.1",
+            "creds": [{"login": "u", "password": "p"}],
+            "ssh_options": {"port": 2222, "extra": {"x": 1}},
+            "snmp": {"oids": ["1.3.6.1.2.1.1.3.0"], "port": 16101},
+            "metadata": {"owner": "infra"},
+        }
     )
-    host = spec.to_host(element=Element("lab"))
     assert host.ssh_options.port == 2222
     assert host.ssh_options.extra == {"x": 1}
     assert host.snmp is not None
@@ -353,16 +383,14 @@ def test_unix_spec_rejects_embedded_only_field():
 
 
 def test_embedded_spec_builds_with_command_frame():
-    spec = EmbeddedHostSpec(ip="192.0.2.1", command_frame="zephyr")
-    host = spec.to_host(element=Element("lab"))
+    host = build_host({"ip": "192.0.2.1", "os_type": "embedded", "command_frame": "zephyr"})
     assert isinstance(host, EmbeddedHost)
     assert host.os_type == "embedded"
     assert isinstance(host.command_frame, ZephyrFrame)
 
 
 def test_embedded_spec_absent_filesystem_keeps_runtime_default():
-    spec = EmbeddedHostSpec(ip="192.0.2.1", command_frame="zephyr")
-    host = spec.to_host(element=Element("lab"))
+    host = build_host({"ip": "192.0.2.1", "os_type": "embedded", "command_frame": "zephyr"})
     assert isinstance(host.filesystem, NoFileSystem)  # EmbeddedHost default
 
 
@@ -375,14 +403,20 @@ def test_embedded_spec_rejects_unknown_filesystem():
 
 def test_embedded_spec_accepts_registered_filesystem():
     # A registered filesystem name validates (resolved to an instance at build).
-    spec = EmbeddedHostSpec(
-        ip="192.0.2.1",
-        command_frame="zephyr",
-        filesystem="none",
+    hc = host_context(
+        {
+            "ip": "192.0.2.1",
+            "os_type": "embedded",
+            "command_frame": "zephyr",
+            "filesystem": "none",
+        },
+        element=Element("lab"),
     )
-    assert spec.filesystem == "none"
+    assert hc.spec.filesystem == "none"
     # the validated name still resolves to its instance through build_filesystem
-    assert isinstance(spec.to_host(element=Element("lab")).filesystem, NoFileSystem)
+    assert isinstance(
+        hc.spec.to_host(ready=hc.spec.validate_in(hc.context)).filesystem, NoFileSystem
+    )
 
 
 def test_hostspec_rejects_unregistered_command_frame():
@@ -407,12 +441,11 @@ def test_host_resources_reach_the_runtime_host_as_a_frozenset_copy():
     ``resources.*non-empty``: the failure text carries this test's locals, so a
     wide pattern is satisfiable by the test's own names.
     """
-    spec = UnixHostSpec(**_minimal_unix_kwargs(), resources=["slot-1", "slot-1"])
-    host = spec.to_host(element=Element("lab"))
+    host = build_host({**_minimal_unix_kwargs(), "resources": ["slot-1", "slot-1"]})
     assert host.resources == frozenset({"slot-1"})
     assert isinstance(host.resources, frozenset)
 
-    bare = UnixHostSpec(**_minimal_unix_kwargs()).to_host(element=Element("x"))
+    bare = build_host(_minimal_unix_kwargs(), element=Element("x"))
     assert bare.resources == frozenset()
 
     with pytest.raises(ValidationError, match=r"resources must be non-empty strings"):
@@ -425,80 +458,45 @@ def test_host_resources_reach_the_runtime_host_as_a_frozenset_copy():
 # new shape.
 
 
-# Runtime host init fields applied by overridable repo logic (NOT lab data) —
-# intentionally absent from the lab.json spec, so the drift guard skips them.
-# ``products`` is user product data, independent of lab data; it is attached to
-# hosts by repo logic, never declared in lab.json. ``dev_tools`` is the same
-# category for the same reason — repo-defined tooling attached by a registered
-# provider at ingest, deliberately not declarable in lab data. ``lab_info`` is
-# stamped by the lab layer above the host entry, never declared on it.
-# ``inventory_ref`` is the loader-stamped provenance of a referenced entry
-# (spec §7) — never declared on the entry itself.
-# ``element`` joins them since spec 2026-09-05 §2.6: it is the FACTORY's own
-# argument, built once per element by the loader and shared by every host of
-# it, so a host entry declares no part of it and the spec has no such field.
-# ``shadowed_products`` / ``shadowed_dev_tools`` are the provider-built items
-# the ingest dropped because a declared entry already held the name — recorded
-# for ``otto --list-products`` / ``--list-tools``, never declared in lab data.
-_NON_SPEC_RUNTIME_FIELDS = frozenset(
-    {
-        "products",
-        "dev_tools",
-        "shadowed_products",
-        "shadowed_dev_tools",
-        "lab_info",
-        "inventory_ref",
-        "element",
-    }
-)
-# Spec-only fields: on the lab-data entry but deliberately NOT a constructor
-# argument. ``inventory`` is the key of the record a referenced entry was
-# resolved from; the loader consumes it (otto.inventory.resolve_host_entry)
-# and hands the factory an ``InventoryRef`` instead.
-_SPEC_ONLY_FIELDS = frozenset({"inventory"})
+def test_every_registered_pair_passes_the_coverage_rule():
+    from otto.host.construction import check_coverage
+    from otto.host.os_profile import build_host_class, registered_host_specs
 
-
-@pytest.mark.parametrize(("spec_cls", "runtime_cls"), HOST_SPEC_RUNTIME_PAIRS)
-def test_host_spec_fields_match_runtime_init(spec_cls, runtime_cls):
-    """Bidirectional: every spec field maps to a constructor param AND every
-    lab-data init field of the runtime class is exposed by the spec.
-    ``_NON_SPEC_RUNTIME_FIELDS`` are runtime-only (applied by repo logic or by
-    the layers above the host entry, not lab-data host fields).
-    """
-    spec_fields = set(spec_cls.model_fields) - _SPEC_ONLY_FIELDS
-    init_fields = {
-        f.name for f in dataclasses.fields(runtime_cls) if f.init and not f.name.startswith("_")
-    } - _NON_SPEC_RUNTIME_FIELDS
-    assert spec_fields == init_fields, (
-        f"{spec_cls.__name__} <-> {runtime_cls.__name__} field mismatch — "
-        f"spec-only={sorted(spec_fields - init_fields)}, "
-        f"runtime-only (spec forgot)={sorted(init_fields - spec_fields)}"
-    )
+    for name, spec_cls in registered_host_specs().items():
+        check_coverage(name, build_host_class(name), spec_cls)
 
 
 def test_spec_inventory_key_never_reaches_the_host():
-    """``inventory`` is spec-only (the loader's join key, §5) — subtracting it in
-    ``_SPEC_ONLY_FIELDS`` above removes it from the drift guard's coverage, so this
-    pins the property that matters directly: it must never become a host attribute.
+    """``inventory`` is spec-only (the loader's join key, §5) — it is ``Consume``, so the
+    coverage rule never asks the host for it, and this pins the property that matters
+    directly: it must never become a host attribute.
     """
+    # The pipeline refuses an unresolved inventory key, so the spec that carries one is
+    # validated directly, in the context of the same entry without it.
+    hc = host_context(
+        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}, element=Element("lab")
+    )
     spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}], inventory="k")
-    host = spec.to_host(element=Element("lab"))
+    host = spec.to_host(ready=spec.validate_in(hc.context))
     assert not hasattr(host, "inventory")
 
 
 def test_hostspec_interfaces_default_empty_and_passes_to_host():
-    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}])
-    assert spec.interfaces == {}
-    assert spec.to_host(element=Element("lab")).interfaces == {}
+    hc = host_context(
+        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}, element=Element("lab")
+    )
+    assert hc.spec.interfaces == {}
+    assert hc.spec.to_host(ready=hc.spec.validate_in(hc.context)).interfaces == {}
 
 
 def test_hostspec_interfaces_resolve_on_built_host():
-    spec = UnixHostSpec(
-        ip="10.0.0.1",
-        creds=[{"login": "u", "password": "p"}],
-        interfaces={"mgmt": "10.9.9.9"},
+    host = build_host(
+        {
+            "ip": "10.0.0.1",
+            "creds": [{"login": "u", "password": "p"}],
+            "interfaces": {"mgmt": "10.9.9.9"},
+        }
     )
-    host = spec.to_host(element=Element("lab"))
     assert host.interfaces == {"mgmt": Interface(ip="10.9.9.9")}
     assert host.address_for("mgmt") == "10.9.9.9"
 
@@ -526,7 +524,8 @@ def test_unix_to_host_matches_factory():
         "metadata": {"owner": "infra"},
         "ssh_options": {"port": 2200},
     }
-    spec_host = UnixHostSpec.model_validate(d).to_host(element=Element("test1"))
+    hc = host_context(dict(d), element=Element("test1"))
+    spec_host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
     factory_host = create_host_from_dict(d, element=Element("test1"))
     for attr in (
         "ip",
@@ -554,7 +553,8 @@ def test_embedded_to_host_matches_factory():
         "command_frame": "zephyr",
         "telnet_options": {"port": 9023},
     }
-    spec_host = EmbeddedHostSpec.model_validate(d).to_host(element=Element("dut"))
+    hc = host_context(dict(d), element=Element("dut"))
+    spec_host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
     factory_host = create_host_from_dict(d, element=Element("dut"))
     assert type(spec_host) is type(factory_host)
     assert spec_host.telnet_options.port == factory_host.telnet_options.port == 9023
@@ -564,37 +564,36 @@ def test_embedded_to_host_matches_factory():
 def test_unix_spec_accepts_command_frame_string():
     from otto.host.command_frame import BashFrame
 
-    spec = UnixHostSpec(
-        ip="10.0.0.1",
-        creds=[{"login": "u", "password": "p"}],
-        command_frame="bash",
+    host = build_host(
+        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}], "command_frame": "bash"}
     )
-    host = spec.to_host(element=Element("lab"))
     assert isinstance(host.command_frame, BashFrame)
 
 
 def test_unix_spec_omits_command_frame_when_unset():
-    spec = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}])
+    entry = {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}
     # unset -> not passed -> UnixHost default (None -> SessionManager BashFrame)
-    assert "command_frame" not in spec._common_host_kwargs()
-    assert spec.to_host(element=Element("lab")).command_frame is None
+    _, kw = _kwargs(dict(entry))
+    assert "command_frame" not in kw
+    assert build_host(entry).command_frame is None
 
 
 def test_spec_power_control_coerces_through_to_host():
     """A lab-data ``[power]`` table on the spec builds a runtime controller."""
     from otto.host.power import CommandPowerController
 
-    spec = UnixHostSpec(
-        ip="10.0.0.1",
-        creds=[{"login": "u", "password": "p"}],
-        power_control={
-            "type": "command",
-            "on_cmd": "on {name}",
-            "off_cmd": "off {name}",
-            "controller": "hyp",
-        },
+    host = build_host(
+        {
+            "ip": "10.0.0.1",
+            "creds": [{"login": "u", "password": "p"}],
+            "power_control": {
+                "type": "command",
+                "on_cmd": "on {name}",
+                "off_cmd": "off {name}",
+                "controller": "hyp",
+            },
+        }
     )
-    host = spec.to_host(element=Element("lab"))
     assert isinstance(host.power_control, CommandPowerController)
     assert host.power_control.config.controller == "hyp"
 
@@ -603,8 +602,8 @@ def test_spec_unset_power_control_defaults_none():
     """Unset power_control falls through to the runtime host default; products is
     not a spec field, so the host keeps its own empty default.
     """
-    host = UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}]).to_host(
-        element=Element("x")
+    host = build_host(
+        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}]}, element=Element("x")
     )
     assert host.power_control is None
     assert host.products == []
@@ -616,27 +615,6 @@ def test_spec_rejects_products_as_lab_data():
     """
     with pytest.raises(ValidationError, match=r"products\s+Extra inputs are not permitted"):
         UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}], products=[])
-
-
-def test_registered_pairs_drift_guard():
-    """Every registered (host_class, spec) pair has matching field sets — the
-    same bidirectional check as HOST_SPEC_RUNTIME_PAIRS, but sourced from the
-    live registry so it covers the built-ins as well as anything registered
-    through register_host_class.
-    """
-    from otto.host.os_profile import build_host_class, registered_host_specs
-
-    for name, spec_cls in registered_host_specs().items():
-        runtime_cls = build_host_class(name)
-        spec_fields = set(spec_cls.model_fields) - _SPEC_ONLY_FIELDS
-        init_fields = {
-            f.name for f in dataclasses.fields(runtime_cls) if f.init and not f.name.startswith("_")
-        } - _NON_SPEC_RUNTIME_FIELDS
-        assert spec_fields == init_fields, (
-            f"{name}: {spec_cls.__name__} <-> {runtime_cls.__name__} mismatch — "
-            f"spec-only={sorted(spec_fields - init_fields)}, "
-            f"runtime-only={sorted(init_fields - spec_fields)}"
-        )
 
 
 class TestMenuValidation:
@@ -727,55 +705,55 @@ class TestMenuValidation:
 
 class TestPreferenceResolution:
     def test_preference_in_menu_becomes_active(self):
-        spec = UnixHostSpec(
-            ip="1.1.1.1",
-            creds=[{"login": "root", "password": "x"}],
-            valid_transfers=["scp", "sftp"],
-        )
-        host = spec.to_host(element=Element("lab"), preferences={"transfer": ["sftp"]})
+        entry = {
+            "ip": "1.1.1.1",
+            "creds": [{"login": "root", "password": "x"}],
+            "valid_transfers": ["scp", "sftp"],
+        }
+        host = build_host(entry, selections={"transfer": ["sftp"]})
         assert host.transfer == "sftp"
 
     def test_preference_out_of_menu_is_skipped(self):
-        spec = UnixHostSpec(
-            ip="1.1.1.1",
-            creds=[{"login": "root", "password": "x"}],
-            valid_transfers=["scp", "nc"],
-        )
-        host = spec.to_host(element=Element("lab"), preferences={"transfer": ["sftp", "nc"]})
+        entry = {
+            "ip": "1.1.1.1",
+            "creds": [{"login": "root", "password": "x"}],
+            "valid_transfers": ["scp", "nc"],
+        }
+        host = build_host(entry, selections={"transfer": ["sftp", "nc"]})
         # sftp not in menu -> skipped; nc is the first preference in the menu
         assert host.transfer == "nc"
 
     def test_preference_beats_pin(self):
         # Product preference now wins over the lab pin when the preference is in menu.
-        spec = UnixHostSpec(
-            ip="1.1.1.1",
-            creds=[{"login": "root", "password": "x"}],
-            valid_transfers=["scp", "sftp"],
-            transfer="scp",
-        )
-        host = spec.to_host(element=Element("lab"), preferences={"transfer": ["sftp"]})
+        entry = {
+            "ip": "1.1.1.1",
+            "creds": [{"login": "root", "password": "x"}],
+            "valid_transfers": ["scp", "sftp"],
+            "transfer": "scp",
+        }
+        host = build_host(entry, selections={"transfer": ["sftp"]})
         assert host.transfer == "sftp"
 
     def test_pin_still_validated_when_preference_overrides(self):
-        # A bad lab pin is still fail-loud even when a preference would override it.
-        spec = UnixHostSpec(
-            ip="1.1.1.1",
-            creds=[{"login": "root", "password": "x"}],
-            valid_transfers=["scp", "sftp"],
-            transfer="nc",
-        )
+        # A bad lab pin is refused at validation, so a preference never gets to override it.
         import pytest
 
-        with pytest.raises(ValueError, match="transfer 'nc' is not in"):
-            spec.to_host(element=Element("lab"), preferences={"transfer": ["sftp"]})
+        with pytest.raises(ValidationError, match="transfer 'nc' is not in"):
+            UnixHostSpec(
+                ip="1.1.1.1",
+                creds=[{"login": "root", "password": "x"}],
+                valid_transfers=["scp", "sftp"],
+                transfer="nc",
+            )
 
     def test_no_preference_uses_menu_first(self):
-        spec = UnixHostSpec(
-            ip="1.1.1.1",
-            creds=[{"login": "root", "password": "x"}],
-            valid_terms=["telnet", "ssh"],
+        host = build_host(
+            {
+                "ip": "1.1.1.1",
+                "creds": [{"login": "root", "password": "x"}],
+                "valid_terms": ["telnet", "ssh"],
+            }
         )
-        host = spec.to_host(element=Element("lab"))
         assert host.term == "telnet"
 
 
@@ -806,12 +784,14 @@ class TestImpairerValidation:
             host_families: ClassVar[frozenset[str]] = frozenset({"embedded"})
 
         register_impairer("embedded-only", _EmbeddedOnly)
-        with pytest.raises(ValueError, match="not valid on a unix host"):
-            UnixHostSpec(
-                ip="1.1.1.1",
-                creds=[{"login": "u", "password": "p"}],
-                valid_impairers=["embedded-only"],
-            )
+        entry = {
+            "ip": "1.1.1.1",
+            "creds": [{"login": "u", "password": "p"}],
+            "valid_impairers": ["embedded-only"],
+        }
+        UnixHostSpec.model_validate(entry)  # structural: membership only
+        with pytest.raises(HostValidationError, match="not valid on a unix host"):
+            validate_host_dict(entry, element=Element("e"))
 
     def test_empty_menu_rejected(self) -> None:
         with pytest.raises(ValueError, match="must be a non-empty"):
@@ -821,30 +801,29 @@ class TestImpairerValidation:
                 valid_impairers=[],
             )
 
-    def test_pin_out_of_menu_rejected_at_to_host(self) -> None:
-        spec = UnixHostSpec(
-            ip="1.1.1.1",
-            creds=[{"login": "u", "password": "p"}],
-            impairer="fake",
-        )
-        with pytest.raises(ValueError, match="impairer 'fake' is not in"):
-            spec.to_host(element=Element("lab"))
+    def test_pin_out_of_menu_rejected_at_validation(self) -> None:
+        with pytest.raises(ValidationError, match="impairer 'fake' is not in"):
+            UnixHostSpec(
+                ip="1.1.1.1",
+                creds=[{"login": "u", "password": "p"}],
+                impairer="fake",
+            )
 
     def test_to_host_resolves_family_default(self) -> None:
-        spec = UnixHostSpec(ip="1.1.1.1", creds=[{"login": "u", "password": "p"}])
-        assert spec.to_host(element=Element("lab")).impairer == "netem"
+        host = build_host({"ip": "1.1.1.1", "creds": [{"login": "u", "password": "p"}]})
+        assert host.impairer == "netem"
 
     def test_preference_beats_default(self) -> None:
         class _Fake(LinkImpairer):
             host_families: ClassVar[frozenset[str]] = frozenset({"unix"})
 
         register_impairer("fake", _Fake)
-        spec = UnixHostSpec(
-            ip="1.1.1.1",
-            creds=[{"login": "u", "password": "p"}],
-            valid_impairers=["netem", "fake"],
-        )
-        host = spec.to_host(element=Element("lab"), preferences={"impairer": ["fake"]})
+        entry = {
+            "ip": "1.1.1.1",
+            "creds": [{"login": "u", "password": "p"}],
+            "valid_impairers": ["netem", "fake"],
+        }
+        host = build_host(entry, selections={"impairer": ["fake"]})
         assert host.impairer == "fake"
 
 
@@ -855,21 +834,24 @@ def _cred_spec(creds, **extra):
     return UnixHostSpec.model_validate({**CRED_BASE, "creds": creds, **extra})
 
 
+def _cred_host(creds, **extra):
+    return build_host({**CRED_BASE, "creds": creds, **extra})
+
+
 class TestCredSpec:
     def test_creds_list_minimal(self):
-        spec = _cred_spec([{"login": "admin", "password": "pw"}])
-        host = spec.to_host(element=Element("lab"))
+        host = _cred_host([{"login": "admin", "password": "pw"}])
         assert host.creds[0].login == "admin"
         assert host.creds[0].password == "pw"
 
     def test_creds_proxied_entry_roundtrip(self):
-        spec = _cred_spec(
+        host = _cred_host(
             [
                 {"login": "admin", "password": "pw"},
                 {"login": "mysql", "proxy": "su", "via": "admin", "params": {"svc": "db"}},
             ]
         )
-        mysql = spec.to_host(element=Element("lab")).creds[1]
+        mysql = host.creds[1]
         assert (mysql.proxy, mysql.via, mysql.params) == ("su", "admin", {"svc": "db"})
 
     def test_creds_legacy_dict_rejected_with_migration_hint(self):
@@ -924,13 +906,13 @@ class TestCredSpec:
         assert UnixHostSpec.model_validate(CRED_BASE).creds == []
 
     def test_creds_protocols_roundtrip_and_default_to_unscoped(self):
-        spec = _cred_spec(
+        host = _cred_host(
             [
                 {"login": "admin", "password": "pw"},
                 {"login": "ftpuser", "password": "fp", "protocols": ["ftp"]},
             ]
         )
-        creds = spec.to_host(element=Element("lab")).creds
+        creds = host.creds
         assert creds[0].protocols == []
         assert creds[1].protocols == ["ftp"]
         assert isinstance(creds[1].protocols, list)
@@ -991,14 +973,20 @@ class TestCredSpec:
                 term="telnet",
             )
 
-    def test_every_cred_scoped_away_from_the_term_is_rejected(self):
+    def test_every_cred_scoped_away_from_the_term_is_rejected_where_that_term_is_used(self):
         """A host whose term can authenticate as nobody fails at load, not at connect."""
+        entry = {
+            **CRED_BASE,
+            "creds": [{"login": "admin", "password": "x", "protocols": ["telnet"]}],
+        }
+        UnixHostSpec.model_validate(entry)  # structural: no selection is known yet
         with pytest.raises(
-            ValidationError,
+            HostValidationError,
             match=r"no cred can log in over term 'ssh': every cred is scoped elsewhere "
             r"\(admin \[telnet\]\)",
         ):
-            _cred_spec([{"login": "admin", "password": "x", "protocols": ["telnet"]}])
+            create_host_from_dict(dict(entry), element=Element("lab"))  # the resolver picks ssh
+        validate_host_dict(dict(entry), element=Element("lab"))  # the telnet witness passes
 
     def test_a_chain_that_terminates_only_in_a_foreign_scope_is_rejected(self):
         """`root` is unscoped, so ssh and telnet pick it too — and there it has no direct end.
@@ -1056,9 +1044,7 @@ class TestInterfaceSpec:
             UnixHostSpec.model_validate(self._host({"eth1": {"ip": "10.0.0.5", "mac": "x"}}))
 
     def test_runtime_host_gets_interface_objects(self):
-        host = UnixHostSpec.model_validate(self._host({"eth1": "10.0.0.5"})).to_host(
-            element=Element("x")
-        )
+        host = build_host(self._host({"eth1": "10.0.0.5"}), element=Element("x"))
         assert host.interfaces["eth1"] == Interface(ip="10.0.0.5")
 
     def test_subnet_optional_and_parsed(self):
@@ -1091,39 +1077,45 @@ class TestInterfaceSpec:
             )
 
     def test_runtime_interface_carries_subnet(self):
-        host = UnixHostSpec.model_validate(
-            self._host({"eth1": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}})
-        ).to_host(element=Element("x"))
+        host = build_host(
+            self._host({"eth1": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}}),
+            element=Element("x"),
+        )
         assert host.interfaces["eth1"] == Interface(ip="192.168.1.11", subnet="192.168.1.0/24")
 
 
 class TestConsoleRules:
-    def _unix(self, **extra):
-        return UnixHostSpec(ip="10.0.0.9", creds=[{"login": "u", "password": "p"}], **extra)
+    def _entry(self, **extra):
+        return {"ip": "10.0.0.9", "creds": [{"login": "u", "password": "p"}], **extra}
 
     def test_console_term_requires_a_server(self):
-        with pytest.raises(ValidationError, match=r"console_options\.server"):
-            self._unix(valid_terms=["console"], console_options={"port": 4001})
+        entry = self._entry(valid_terms=["console"], console_options={"port": 4001})
+        with pytest.raises(HostValidationError, match=r"console_options\.server"):
+            validate_host_dict(entry, element=Element("e"))
 
     def test_console_term_requires_a_port(self):
-        with pytest.raises(ValidationError, match=r"console_options\.port"):
-            self._unix(valid_terms=["console"], console_options={"server": "test1"})
+        entry = self._entry(valid_terms=["console"], console_options={"server": "test1"})
+        with pytest.raises(HostValidationError, match=r"console_options\.port"):
+            validate_host_dict(entry, element=Element("e"))
 
     def test_console_options_are_inert_on_an_ssh_host(self):
         # Review Focus 5: pre-declared console data on a host that runs ssh
         # today must not be validated against anything.
-        spec = self._unix(valid_terms=["ssh", "console"], console_options={"server": "nope"})
-        assert spec.console_options.server == "nope"
-        host = spec.to_host(element=Element("e"))
+        hc = host_context(
+            self._entry(valid_terms=["ssh", "console"], console_options={"server": "nope"}),
+            element=Element("e"),
+        )
+        assert hc.spec.console_options.server == "nope"
+        host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
         assert host.term == "ssh"
         assert host.console_options.server == "nope"
 
     def test_console_options_reach_the_runtime(self):
-        spec = self._unix(
+        entry = self._entry(
             valid_terms=["console"],
             console_options={"server": "test1", "port": 4001, "dial": "direct"},
         )
-        host = spec.to_host(element=Element("e"))
+        host = build_host(entry, element=Element("e"))
         assert host.console_options.port == 4001
         assert host.console_options.dial == "direct"
 
@@ -1131,10 +1123,13 @@ class TestConsoleRules:
         # No term-menu validation ever touches console_options here: "console"
         # is not even in valid_terms, so the passthrough and inert paths hold
         # regardless of which term the host actually runs.
-        spec = self._unix(valid_terms=["ssh"], console_options={"server": "nope", "port": 0})
-        assert spec.console_options.server == "nope"
-        assert spec.console_options.port == 0
-        host = spec.to_host(element=Element("e"))
+        hc = host_context(
+            self._entry(valid_terms=["ssh"], console_options={"server": "nope", "port": 0}),
+            element=Element("e"),
+        )
+        assert hc.spec.console_options.server == "nope"
+        assert hc.spec.console_options.port == 0
+        host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
         assert host.console_options.server == "nope"
         assert host.console_options.port == 0
 
@@ -1151,60 +1146,80 @@ class TestConsoleRefusesNc:
         "console_options": {"server": "test1", "port": 4001},
     }
 
-    def _unix(self, **extra):
-        return UnixHostSpec(
-            ip="10.0.0.9", name="cons1", creds=[{"login": "u", "password": "p"}], **extra
-        )
+    def _entry(self, **extra):
+        return {
+            "ip": "10.0.0.9",
+            "name": "cons1",
+            "creds": [{"login": "u", "password": "p"}],
+            **extra,
+        }
 
     def test_an_nc_pin_on_a_console_is_a_config_error(self):
         with pytest.raises(
-            ValidationError, match=r"cons1.*nc.*second command channel.*single-client console"
+            HostValidationError,
+            match=r"cons1.*nc.*second command channel.*single-client console",
         ):
-            self._unix(transfer="nc", **self._CONSOLE)
+            validate_host_dict(self._entry(transfer="nc", **self._CONSOLE), element=Element("e"))
 
     def test_a_menu_of_only_nc_on_a_console_is_a_config_error(self):
         with pytest.raises(
-            ValidationError, match=r"cons1.*nc.*second command channel.*single-client console"
+            HostValidationError,
+            match=r"cons1.*nc.*second command channel.*single-client console",
         ):
-            self._unix(valid_transfers=["nc"], **self._CONSOLE)
+            validate_host_dict(
+                self._entry(valid_transfers=["nc"], **self._CONSOLE), element=Element("e")
+            )
 
     def test_a_menu_with_nc_and_scp_on_a_console_resolves_scp(self):
-        spec = self._unix(valid_transfers=["nc", "scp"], **self._CONSOLE)
-        host = spec.to_host(element=Element("e"))
+        host = build_host(
+            self._entry(valid_transfers=["nc", "scp"], **self._CONSOLE), element=Element("e")
+        )
         assert host.transfer == "scp"
         assert host.valid_transfers == ["nc", "scp"]
 
     def test_an_nc_preference_on_a_console_falls_through_to_scp(self):
-        spec = self._unix(**self._CONSOLE)
-        host = spec.to_host(element=Element("e"), preferences={"transfer": ["nc", "scp"]})
+        host = build_host(
+            self._entry(**self._CONSOLE),
+            element=Element("e"),
+            selections={"transfer": ["nc", "scp"]},
+        )
         assert host.transfer == "scp"
 
     def test_an_nc_preference_on_an_ssh_host_still_resolves_nc(self):
-        spec = self._unix()
-        host = spec.to_host(element=Element("e"), preferences={"transfer": ["nc", "scp"]})
+        host = build_host(
+            self._entry(), element=Element("e"), selections={"transfer": ["nc", "scp"]}
+        )
         assert host.term == "ssh"
         assert host.transfer == "nc"
 
     def test_an_nc_pin_on_an_ssh_host_is_accepted(self):
-        host = self._unix(transfer="nc").to_host(element=Element("e"))
+        host = build_host(self._entry(transfer="nc"), element=Element("e"))
         assert host.transfer == "nc"
 
     def test_a_console_chosen_by_preference_refuses_an_nc_pin(self):
-        # The term preference is invisible to the spec validator, so the nc
-        # pin only meets the console at resolution — still a config error.
-        spec = self._unix(
-            valid_terms=["ssh", "console"],
-            console_options={"server": "test1", "port": 4001},
-            transfer="nc",
+        # The term preference is invisible to the structural validator, so the nc
+        # pin only meets the console in contextual validation — still a config error.
+        hc = host_context(
+            self._entry(
+                valid_terms=["ssh", "console"],
+                console_options={"server": "test1", "port": 4001},
+                transfer="nc",
+            ),
+            element=Element("e"),
+            preferences={".*": {"term": ["console"]}},
         )
-        with pytest.raises(ValueError, match=r"cons1.*second command channel"):
-            spec.to_host(element=Element("e"), preferences={"term": ["console"]})
+        with pytest.raises(HostValidationError, match=r"cons1.*second command channel"):
+            hc.spec.validate_in(hc.context)
 
     def test_a_console_chosen_by_preference_with_only_nc_is_a_config_error(self):
-        spec = self._unix(
-            valid_terms=["ssh", "console"],
-            console_options={"server": "test1", "port": 4001},
-            valid_transfers=["nc"],
+        hc = host_context(
+            self._entry(
+                valid_terms=["ssh", "console"],
+                console_options={"server": "test1", "port": 4001},
+                valid_transfers=["nc"],
+            ),
+            element=Element("e"),
+            preferences={".*": {"term": ["console"]}},
         )
-        with pytest.raises(ValueError, match=r"cons1.*second command channel"):
-            spec.to_host(element=Element("e"), preferences={"term": ["console"]})
+        with pytest.raises(HostValidationError, match=r"cons1.*second command channel"):
+            hc.spec.validate_in(hc.context)

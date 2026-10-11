@@ -82,18 +82,20 @@ class TestValidateHostDict:
             "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         # Should not raise any exception
-        validate_host_dict(host_data)
+        validate_host_dict(host_data, element=Element("lab"))
 
     def test_validate_missing_required_field(self):
         """Test validation fails for missing required field."""
         with pytest.raises(ValueError, match="ip") as exc_info:
-            validate_host_dict({"creds": [{"login": "vagrant", "password": "vagrant"}]})
+            validate_host_dict(
+                {"creds": [{"login": "vagrant", "password": "vagrant"}]}, element=Element("lab")
+            )
 
         assert "ip" in str(exc_info.value)
 
     def test_validate_accepts_a_unix_entry_without_creds(self):
         """``creds`` is optional on a Unix host (a console, or creds from elsewhere)."""
-        validate_host_dict({"ip": "10.10.200.11"})
+        validate_host_dict({"ip": "10.10.200.11"}, element=Element("lab"))
 
     def test_validate_ip_not_string(self):
         """Test validation fails when ip is not a string."""
@@ -102,7 +104,7 @@ class TestValidateHostDict:
             "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         with pytest.raises(ValueError, match="ip") as exc_info:
-            validate_host_dict(host_data)
+            validate_host_dict(host_data, element=Element("lab"))
 
         assert "ip" in str(exc_info.value)
         assert "str" in str(exc_info.value)
@@ -114,7 +116,7 @@ class TestValidateHostDict:
             "creds": "not_a_list",
         }
         with pytest.raises(ValueError, match="creds") as exc_info:
-            validate_host_dict(host_data)
+            validate_host_dict(host_data, element=Element("lab"))
 
         assert "creds" in str(exc_info.value)
         assert "list" in str(exc_info.value)
@@ -556,7 +558,9 @@ class TestValidateOsType:
             {
                 "ip": "192.0.2.1",
                 "os_type": "embedded",
-            }
+                "command_frame": "zephyr",
+            },
+            element=Element("lab"),
         )
 
     def test_validate_unix_minimal(self):
@@ -565,7 +569,8 @@ class TestValidateOsType:
             {
                 "ip": "10.10.200.11",
                 "os_type": "unix",
-            }
+            },
+            element=Element("lab"),
         )
 
     def test_validate_invalid_ostype_raises(self):
@@ -574,7 +579,8 @@ class TestValidateOsType:
                 {
                     "ip": "192.0.2.1",
                     "os_type": "windows",
-                }
+                },
+                element=Element("lab"),
             )
         assert "os_type" in str(exc_info.value)
 
@@ -585,7 +591,8 @@ class TestValidateOsType:
                     "ip": "192.0.2.1",
                     "os_type": "embedded",
                     "docker_capable": True,
-                }
+                },
+                element=Element("lab"),
             )
         assert "docker_capable" in str(exc_info.value)
 
@@ -595,8 +602,11 @@ class TestValidateOsType:
                 {
                     "ip": "192.0.2.1",
                     "os_type": "embedded",
+                    "command_frame": "zephyr",
+                    "valid_transfers": ["console", "tftp"],
                     "transfer": backend,
-                }
+                },
+                element=Element("lab"),
             )
 
     def test_validate_embedded_invalid_transfer_raises(self):
@@ -609,7 +619,8 @@ class TestValidateOsType:
                     "ip": "192.0.2.1",
                     "os_type": "embedded",
                     "valid_transfers": ["scp"],
-                }
+                },
+                element=Element("lab"),
             )
         assert "transfer" in str(exc_info.value)
 
@@ -675,7 +686,8 @@ class TestEmbeddedFilesystem:
                     "ip": "192.0.2.1",
                     "os_type": "embedded",
                     "filesystem": "btrfs",  # not a registered embedded FS
-                }
+                },
+                element=Element("lab"),
             )
         assert "filesystem" in str(exc_info.value)
         assert "btrfs" in str(exc_info.value)
@@ -835,7 +847,8 @@ class TestMergeAndValidation:
                     "ip": "10.0.0.1",
                     "creds": [{"login": "u", "password": "p"}],
                     "lab": ["x"],
-                }
+                },
+                element=Element("lab"),
             )
 
     def test_validate_rejects_misplaced_ssh_options_on_embedded(self):
@@ -851,7 +864,8 @@ class TestMergeAndValidation:
                     "os_type": "embedded",
                     "command_frame": "zephyr",
                     "ssh_options": {"port": 22},
-                }
+                },
+                element=Element("lab"),
             )
 
 
@@ -903,7 +917,7 @@ def test_create_host_from_dict_selector_not_matching_is_inert():
 def test_create_host_from_dict_applies_preference_to_embedded_host():
     from otto.host.factory import create_host_from_dict
 
-    # Embedded path: EmbeddedHostSpec.to_host(preferences=) + the factory's
+    # Embedded path: EmbeddedHostSpec's contextual selection + the factory's
     # flatten-for-embedded path (the unix tests above cover the unix branch).
     # Default transfer menu[0] is console; tftp is in the menu and preferred.
     host = create_host_from_dict(

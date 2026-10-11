@@ -281,7 +281,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     )
     """What this family promises. See :class:`~otto.host.capability_grid.HostCapabilities`."""
 
-    creds: list[Cred] = field(kw_only=False)
+    creds: list[Cred] = field(default_factory=list, kw_only=False)
 
     os_name: str | None = "Linux"
 

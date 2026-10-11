@@ -3,8 +3,11 @@
 import pytest
 from pydantic import ValidationError
 
+from otto.host import HostValidationError
 from otto.host.element import Element
+from otto.host.factory import validate_host_dict
 from otto.models.host import UnixHostSpec
+from tests._fixtures.host_build import build_host
 
 BASE = {"ip": "10.0.0.1", "name": "dut1", "creds": [{"login": "u", "password": "p"}]}
 
@@ -12,8 +15,9 @@ BASE = {"ip": "10.0.0.1", "name": "dut1", "creds": [{"login": "u", "password": "
 def test_docker_priority_defaults_to_zero_and_forwards_to_the_host():
     spec = UnixHostSpec.model_validate({**BASE, "docker_capable": True})
     assert spec.docker_priority == 0
-    spec = UnixHostSpec.model_validate({**BASE, "docker_capable": True, "docker_priority": 10})
-    host = spec.to_host(element=Element("server"))
+    host = build_host(
+        {**BASE, "docker_capable": True, "docker_priority": 10}, element=Element("server")
+    )
     assert host.docker_priority == 10
     assert host.docker_capable is True
 
@@ -25,17 +29,17 @@ def test_a_negative_priority_ranks_below_the_default():
 
 def test_a_priority_on_a_host_that_is_not_docker_capable_is_refused():
     with pytest.raises(
-        ValidationError, match="docker_priority on 'dut1', which is not docker_capable"
+        HostValidationError, match="docker_priority on 'dut1', which is not docker_capable"
     ):
-        UnixHostSpec.model_validate({**BASE, "docker_priority": 3})
+        validate_host_dict({**BASE, "docker_priority": 3}, element=Element("server"))
 
 
 def test_an_explicit_zero_on_a_host_that_is_not_docker_capable_is_refused_too():
     # The key is the mistake, not its value: a ranked host must be a parent candidate.
     with pytest.raises(
-        ValidationError, match="docker_priority on 'dut1', which is not docker_capable"
+        HostValidationError, match="docker_priority on 'dut1', which is not docker_capable"
     ):
-        UnixHostSpec.model_validate({**BASE, "docker_priority": 0})
+        validate_host_dict({**BASE, "docker_priority": 0}, element=Element("server"))
 
 
 def test_a_bool_is_not_a_priority():

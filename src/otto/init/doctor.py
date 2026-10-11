@@ -443,7 +443,9 @@ def _validate_lab(
 
     def _validate_entry(host_data: dict[str, Any], *, element: "Element") -> None:
         validate_host_dict(
-            resolve_host_entry(host_data, inventory, element).host_data, profiles=profiles
+            resolve_host_entry(host_data, inventory, element).host_data,
+            element=element,
+            profiles=profiles,
         )
 
     for lab_file, _, elements, links in documents:

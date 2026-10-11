@@ -7,15 +7,17 @@ from otto.host.embedded_host import ZephyrHost
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
-from otto.models.host import EmbeddedHostSpec, UnixHostSpec
+from tests._fixtures.host_build import build_host
 
 
-def _unix_spec(**kw):
-    return UnixHostSpec(ip="10.0.0.1", creds=[{"login": "u", "password": "p"}], **kw)
+def _unix_host(**kw):
+    return build_host(
+        {"ip": "10.0.0.1", "creds": [{"login": "u", "password": "p"}], **kw}, element=Element("x")
+    )
 
 
 def test_unix_defaults_active_is_menu_first():
-    h = _unix_spec().to_host(element=Element("x"))
+    h = _unix_host()
     assert h.term == "ssh"
     assert h.transfer == "scp"
     assert h.valid_terms == ["ssh", "telnet"]
@@ -23,19 +25,19 @@ def test_unix_defaults_active_is_menu_first():
 
 
 def test_unix_single_element_menu_sets_active():
-    h = _unix_spec(valid_transfers="nc").to_host(element=Element("x"))
+    h = _unix_host(valid_transfers="nc")
     assert h.valid_transfers == ["nc"]
     assert h.transfer == "nc"
 
 
 def test_unix_pin_selects_within_menu():
-    h = _unix_spec(valid_transfers=["scp", "nc"], transfer="nc").to_host(element=Element("x"))
+    h = _unix_host(valid_transfers=["scp", "nc"], transfer="nc")
     assert h.transfer == "nc"
 
 
 def test_unix_pin_outside_menu_fails_loud():
     with pytest.raises(ValueError, match="transfer 'sftp' is not in"):
-        _unix_spec(valid_transfers=["scp", "nc"], transfer="sftp").to_host(element=Element("x"))
+        _unix_host(valid_transfers=["scp", "nc"], transfer="sftp")
 
 
 def test_directly_built_unix_host_validates_active_against_menu():
@@ -51,7 +53,10 @@ def test_directly_built_unix_host_validates_active_against_menu():
 
 
 def test_embedded_defaults_active():
-    h = EmbeddedHostSpec(ip="192.0.2.1", command_frame="zephyr").to_host(element=Element("x"))
+    h = build_host(
+        {"ip": "192.0.2.1", "os_type": "embedded", "command_frame": "zephyr"},
+        element=Element("x"),
+    )
     assert h.term == "telnet"
     assert h.valid_terms == ["telnet"]
     assert h.transfer == "console"

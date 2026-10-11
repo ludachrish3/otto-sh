@@ -64,7 +64,7 @@ _ENTRY_POINTS = [
         partial(create_host_from_dict, element=Element("dut")), id="create_host_from_dict"
     ),
     pytest.param(lambda d: host_identity(d, Element("dut")), id="host_identity"),
-    pytest.param(validate_host_dict, id="validate_host_dict"),
+    pytest.param(partial(validate_host_dict, element=Element("dut")), id="validate_host_dict"),
 ]
 
 

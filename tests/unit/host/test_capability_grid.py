@@ -27,6 +27,7 @@ from otto.host.capability_grid import (
     UserSupport,
     shipped_host_families,
 )
+from otto.host.embedded_host import EmbeddedHost
 from otto.host.os_profile import register_host_class
 from otto.host.remote_host import RemoteHost
 from otto.models.host import EmbeddedHostSpec
@@ -76,7 +77,7 @@ class TestRegistrationRefusesAnUndeclaredClass:
     def test_a_class_that_declares_one_registers(self):
         """The positive control: without it, a refusal of EVERY class would pass above."""
 
-        class Declared(RemoteHost):
+        class Declared(EmbeddedHost):
             capabilities = _capabilities()
 
         register_host_class("declared", Declared, spec=EmbeddedHostSpec)

@@ -63,6 +63,7 @@ from otto.env.backends import BackendUnavailableError
 from otto.errors import EnsureStateError, FieldError, OttoError
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
 from otto.host.connections import TermBackendError, TermConstructionError
+from otto.host.construction import HostValidationError
 from otto.host.errors import (
     ConsoleError,
     CoverageToolMissingError,
@@ -180,6 +181,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (UseCaseResolutionError, ValueError),
     (DockerVerbError, ValueError),
     (ParseMismatch, ValueError),
+    (HostValidationError, ValueError),
     (HostUnreachableError, RuntimeError),
     (HostCommandError, RuntimeError),
     (CoverageToolMissingError, RuntimeError),

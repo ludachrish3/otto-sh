@@ -11,11 +11,10 @@ from pydantic import ConfigDict, Field, ValidationError, ValidationInfo, field_v
 from ..host.factory import (
     create_host_from_dict,
     host_identity,
-    validate_host_dict,
 )
 from ..host.os_profile import ProfileContext
 from ..host.remote_host import describe_identity
-from ..models.base import OttoModel
+from ..models.base import OttoModel, compact_validation_error
 from ..models.lab import ElementSpec, LabEntrySpec
 from ..utils import anchor_path
 from .errors import (
@@ -543,8 +542,14 @@ class JsonFileLabRepository:
                     except (ValueError, TypeError, InventoryError) as e:
                         # Skipped, never raised — but SAID: this is the one
                         # place a referenced entry silently fell out of
-                        # completion (see otto.labs.drops).
-                        record_drop(f"{doc.path}: element {element.name!r} hosts[{index}]", str(e))
+                        # completion (see otto.labs.drops). A ValidationError is
+                        # rendered without its input, as the loader renders it.
+                        reason = (
+                            compact_validation_error(e)
+                            if isinstance(e, ValidationError)
+                            else str(e)
+                        )
+                        record_drop(f"{doc.path}: element {element.name!r} hosts[{index}]", reason)
                         continue
                     first = by_id.get(identity.id)
                     if first is not None:
@@ -761,6 +766,9 @@ def _add_host(
     is the exact mistake the conformance suite's signature rule exists to
     catch in third-party backends.
 
+    The factory is the single validation: it runs structural and contextual
+    validation (power included) itself, so nothing validates the entry first.
+
     EVERY failure becomes a :class:`~otto.labs.errors.LabRepositoryError`
     carrying that context, with the original chained as ``__cause__`` — an
     :class:`~otto.inventory.errors.InventoryError` included, which is what
@@ -770,7 +778,6 @@ def _add_host(
 
     try:
         entry = resolve_host_entry(host_data, inventory, element)
-        validate_host_dict(entry.host_data, profiles=profiles)
         host = create_host_from_dict(
             entry.host_data,
             preferences=preferences,
@@ -786,8 +793,6 @@ def _add_host(
         # would end in pydantic's ``input_value=`` repr of that dict, so a
         # model-level failure on an otherwise-fine entry prints the store's
         # password. ``compact_validation_error`` never reads ``input``.
-        from ..models.base import compact_validation_error
-
         raise LabRepositoryError(
             f"Lab file '{path}': element {element.name!r} hosts[{idx}] in lab {lab.name!r}: "
             f"{compact_validation_error(e)}"

@@ -211,9 +211,9 @@ host field — the third reservation level, beside the
 | `metadata` | object | Opaque user data — the home for custom fields; any other unknown key fails the load.  Otto never reads it.  Surfaces as `host.metadata`; the element's as `host.element.metadata`; the lab's as `host.lab_info.metadata`. |
 | `resources` | array of strings | This host's own reservation identifiers — a slot.  Combined with the element's and the lab's; see {doc}`../cli/reservation/index`.  Defaults to empty. |
 | `board` | string | Board type, included in the host id when set. |
-| `term` | string | Terminal protocol lab pin — must be in the host's `valid_terms` menu.  Product `[host_preferences]` and CLI `--term` can override; see the precedence chain below. |
-| `transfer` | string | File-transfer protocol lab pin — must be in the host's `valid_transfers` menu.  Product `[host_preferences]` and CLI `--transfer` can override; see the precedence chain below.  On a `console` term `nc` is never chosen: its remote listener needs a second command channel, and a console serves one client.  An `nc` entry in `[host_preferences]` falls through to the next one, and a pin of `nc` (or a menu holding only `nc`) fails the load. |
-| `impairer` | string | Link-impairment backend lab pin — must be in the host's `valid_impairers` menu (Unix hosts only).  Product `[host_preferences]` can override.  See {doc}`../cli/link/index`. |
+| `term` | string | Terminal protocol lab pin — must be in the host's `valid_terms` menu; a pin outside it is refused when the lab file is validated (`otto init`'s doctor, host listing, load).  Product `[host_preferences]` and CLI `--term` can override; see the precedence chain below. |
+| `transfer` | string | File-transfer protocol lab pin — must be in the host's `valid_transfers` menu; a pin outside it is refused when the lab file is validated (`otto init`'s doctor, host listing, load).  Product `[host_preferences]` and CLI `--transfer` can override; see the precedence chain below.  On a `console` term `nc` is never chosen: its remote listener needs a second command channel, and a console serves one client.  An `nc` entry in `[host_preferences]` falls through to the next one, and a pin of `nc` (or a menu holding only `nc`) fails the load. |
+| `impairer` | string | Link-impairment backend lab pin — must be in the host's `valid_impairers` menu (Unix hosts only); a pin outside it is refused when the lab file is validated (`otto init`'s doctor, host listing, load).  Product `[host_preferences]` can override.  See {doc}`../cli/link/index`. |
 | `valid_terms` | array of strings | Ordered list of term backends that may be selected for this host (gates `--term` and `[host_preferences]`).  Defaults to `["ssh", "telnet"]` for Unix hosts and `["telnet"]` for embedded hosts.  Custom backends registered via `register_term_backend` also appear. |
 | `valid_transfers` | array of strings | Ordered list of transfer backends that may be selected for this host (gates `--transfer` and `[host_preferences]`).  Defaults to `["scp", "sftp", "ftp", "nc"]` for Unix hosts and `["console"]` for embedded hosts.  Custom backends registered via `register_transfer_backend` also appear. |
 | `valid_impairers` | array of strings | Ordered list of impairer backends that may be selected for this host (gates `impairer` and `[host_preferences]`).  Unix hosts only; defaults to `["netem"]`.  Custom impairers registered via `register_impairer` are valid entries too. |
@@ -229,10 +229,10 @@ host field — the third reservation level, beside the
 | `is_virtual` | boolean | `true` when the host is a VM or emulator. |
 | `log` | string | Standing log disposition for this host's command I/O, named by its `LogMode`: `"normal"` (the default) logs everywhere, `"quiet"` keeps it in `verbose.log` but off the console, `"never"` redacts it from every sink.  Composed with each command's own mode, the more restrictive winning.  Booleans are no longer accepted — write the mode name. |
 | `docker_capable` | boolean | `true` when this host can run Docker containers (Unix hosts only). |
-| `docker_priority` | integer | Lab intent: ranks this host as the docker verbs' default parent ({ref}`Which host <docker-which-host>`). Defaults to `0`. Strictly an integer (`true` is refused), and the key is allowed only on a `docker_capable` host — even `0`. |
+| `docker_priority` | integer | Lab intent: ranks this host as the docker verbs' default parent ({ref}`Which host <docker-which-host>`). Defaults to `0`. Strictly an integer (`true` is refused), and the key is allowed only on a docker-capable host, even as `0`. A host is docker-capable when `docker_capable` is set, or when the host class's own default says so. |
 | `has_bash` | boolean | `true` when the host has a working `bash` to `exec -a`-tag processes through. Gates which hosts can host or be scanned for `otto tunnel` tunnels — see {doc}`../cli/tunnel/index`. Defaults to `true` for Unix hosts (including `local` and Docker containers), `false` for embedded hosts. |
 | `shell_history` | boolean | Whether otto's own commands are recorded in this host's shell history (Unix hosts only). Defaults to `false` — otto neutralizes `HISTFILE` on each shell it opens so automation traffic doesn't bury a human's history. Set `true` where otto's commands should stay visible in the history file. See {ref}`per-host-shell-history`. |
-| `command_frame` | string | Shell-framing dialect (e.g. `"bash"`, `"zephyr"`, `"zephyr-serial"`). `"raw"` is refused here — it is a landing-only dialect, valid only as `landing_frame`. See {ref}`per-host-session-setup`. |
+| `command_frame` | string | Shell-framing dialect (e.g. `"bash"`, `"zephyr"`, `"zephyr-serial"`). `"raw"` is refused here — it is a landing-only dialect, valid only as `landing_frame`. On an embedded host it is required unless the `os_type`'s host class supplies one (`zephyr` does). See {ref}`per-host-session-setup`. |
 | `session_setup` | string or object | A registered session-setup hook that runs once on every shell session, after the readiness handshake and every login-proxy hop, with a real session handle: export variables, provision through an app shell, or manoeuvre into the application the `command_frame` describes. A string names the hook; an object names it in `type` and passes every other key as the hook's params. See {ref}`per-host-session-setup`. |
 | `landing_frame` | string | Dialect of the shell otto *lands* in when it is not the shell `command_frame` describes — `"bash"` for a Linux login shell in front of a vendor CLI, `"raw"` for a landing that answers no frame at all (a boot menu). Only valid with `session_setup`, which does the manoeuvring; with a proxied cred the landing must be bash-family. See {ref}`per-host-session-setup`. |
 
@@ -376,7 +376,7 @@ details.
 | Field | Type | Description |
 |-------|------|-------------|
 | `filesystem` | string | On-device filesystem variant (`"none"`, `"fat-ram"`, `"littlefs"`). |
-| `loader` | string | Binary-load strategy for this target's runtime, by registry name (e.g. `"llext-hex"`).  Optional — omit it on a target that never loads binaries, and `host.load()`/`unload()` then fail loud.  Projects register their own via `register_binary_loader`. |
+| `loader` | string | Binary-load strategy for this target's runtime, by registry name (e.g. `"llext-hex"`); an unregistered name is refused when the lab file is validated.  Optional — omit it on a target that never loads binaries, and `host.load()`/`unload()` then fail loud.  Projects register their own via `register_binary_loader`. |
 
 File transfer for embedded hosts uses `"console"` or `"tftp"` — see
 {doc}`../cli/host/embedded`.
@@ -407,6 +407,8 @@ declared-link endpoint — otto assumes it. A host with more than one entry
 requires each declared-link endpoint on it to name which one; see
 {ref}`lab-links` below.
 
+(lab-power-control)=
+
 ### Power control
 
 The optional `power_control` block configures a pluggable power controller for
@@ -415,8 +417,8 @@ a *controller* host in the lab:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `power_control` | object or string | Power controller spec.  A string selects a registered controller by type name; an object takes the fields below.  Omit to leave the host without power control. |
-| `power_control.type` | string | Controller type name (e.g. `"command"`).  Selects the registered `PowerController` implementation. |
+| `power_control` | object or string | Power controller spec.  A string selects a registered controller by type name, and its config model parses an empty table; an object takes the fields below.  Omit to leave the host without power control.  An unregistered name is refused as `type` is below. |
+| `power_control.type` | string | Controller type name (e.g. `"command"`).  Selects the registered `PowerController` implementation; must name a registered controller. An unregistered name, or a table without `type`, is refused when the lab file is validated. |
 | `power_control.controller` | string | Host id of the lab host that runs the on/off/status commands.  `null` or absent runs commands on the local otto machine. |
 | `power_control.on_cmd` | string | Shell command to power the host on.  Templated with `{name}`, `{ip}`, `{id}`. |
 | `power_control.off_cmd` | string | Shell command to power the host off.  Same template variables. |
@@ -436,10 +438,14 @@ a *controller* host in the lab:
 }
 ```
 
-The controller's config model parses the table, without its `type`, when
-otto constructs the host. An unknown key or a value of the wrong type is a
-parse error ({class}`~otto.host.PowerConstructionError`) naming the field and
-the host (`power_control of host '<id>'`); it never quotes the rejected value.
+The controller's config model parses the table, without its `type`, when the
+host is validated — so `otto init`'s doctor, host listings and the load all
+report a table its controller cannot parse, naming the host and never quoting
+the value. A table with no `type`, or an unregistered one, is refused when the
+lab file is validated. The
+controller itself is built only when the host is; a controller that fails to
+build fails that host's construction with
+{class}`~otto.host.PowerConstructionError`, naming the stage and the host.
 
 See {doc}`../cli/host/capabilities/power` for the runtime API (`host.power()`,
 `host.reboot(hard=True)`), and {ref}`power-controllers` for registering a
@@ -989,8 +995,9 @@ it:
 
 `docker_priority` is lab **intent** — which machine this lab prefers to run
 containers on — not a fact about the machine: it is a lab-file field, and the
-inventory never supplies it.  It defaults to `0` and is refused on a host that
-is not `docker_capable`.  Which host the docker verbs default to, and what a tie
+inventory never supplies it.  It defaults to `0`, and the key is allowed only on a
+docker-capable host, even as `0`. A host is docker-capable when `docker_capable`
+is set, or when the host class's own default says so.  Which host the docker verbs default to, and what a tie
 does, is {ref}`Which host <docker-which-host>`.
 
 ## Declaring toolchain tools in lab data

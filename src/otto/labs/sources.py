@@ -51,7 +51,8 @@ class LabSourceEnv:
     A backend that builds hosts passes them on to the host factory
     (``profiles=`` on :func:`~otto.host.factory.create_host_from_dict`,
     :func:`~otto.host.factory.host_identity` and
-    :func:`~otto.host.factory.validate_host_dict`), so a host's ``os_type``
+    :func:`~otto.host.factory.validate_host_dict`, each called with the host's
+    ``element=`` as well), so a host's ``os_type``
     may name a table another selected repo declares."""
 
 

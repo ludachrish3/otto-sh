@@ -17,11 +17,14 @@ import contextlib
 import inspect
 from abc import abstractmethod
 from dataclasses import dataclass, replace
+from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import Field
 
 from otto.context import try_get_context
+from otto.host import Resolve
 from otto.host.capability_grid import UserSupport, shipped_host_families
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
@@ -35,7 +38,7 @@ from otto.host.transfer import TRANSFER_BACKENDS
 from otto.host.transfer.base import BaseFileTransfer, ProgressGranularity
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
-from otto.models.host import UnixHostSpec
+from otto.models.host import HostSpec, _menu, _selection
 from otto.result import CommandNotRunError, Result
 from otto.testing import (
     assert_host_conforms,
@@ -546,9 +549,17 @@ class _AddsAField(RemoteHost):
     widget: str = "sprocket"
 
 
-class _AddsAFieldSpec(UnixHostSpec):
-    """The boundary spec that declares ``_AddsAField``'s extra field."""
+class _AddsAFieldSpec(HostSpec):
+    """The boundary spec that declares ``_AddsAField``'s fields: RemoteHost's menus plus its own."""
 
+    valid_terms: Annotated[list[str], Resolve(_menu("valid_terms"))] = Field(
+        default_factory=lambda: ["ssh"]
+    )
+    valid_transfers: Annotated[list[str], Resolve(_menu("valid_transfers"))] = Field(
+        default_factory=lambda: ["scp"]
+    )
+    term: Annotated[str | None, Resolve(_selection("term"))] = None
+    transfer: Annotated[str | None, Resolve(_selection("transfer"))] = None
     widget: str = "sprocket"
 
 

@@ -703,15 +703,10 @@ A host then selects it in lab data:
 }
 ```
 
-Otto prepares and builds a host's controller when it constructs the host. The
-config model receives a {class}`~otto.host.PowerEnv` whose `host_id` names
-that host, and so does the factory, as `c.env`. A table that does not parse,
-a factory that raises, or a factory that returns something other than a
-`PowerController` fails with {class}`~otto.host.PowerConstructionError`,
-naming the stage, the controller, the module that registered it and
-`power_control of host '<id>'`; a parse failure never quotes the rejected
-value. A bare string, `"power_control": "pdu"`, builds from an empty table,
-so it suits a controller whose config model needs no keys.
+The config model parses a host's table when otto validates the host, and the
+factory runs only when otto builds it; both receive a
+{class}`~otto.host.PowerEnv` naming that host (the factory as `c.env`).
+{ref}`lab-power-control` says when each runs and how a failure is reported.
 
 The host to act on is passed to every call (`on(host)`, `off(host)`,
 `status(host)`, `cycle(host)`), so a controller holds only its configuration.

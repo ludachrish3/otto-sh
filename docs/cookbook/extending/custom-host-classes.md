@@ -93,49 +93,151 @@ defaults and is registered under `"zephyr"` at module load.
 ### Fields of your own need a `HostSpec`
 
 A `lab.json` entry reaches your class through a boundary spec, a
-{class}`~otto.models.host.HostSpec` subclass that validates the entry and
+{class}`~otto.host.HostSpec` subclass that validates the entry and
 refuses any key it does not declare.  `register_host_class` takes it as
 `spec=`.  Left out, it is the spec registered for the nearest registered
 ancestor — {class}`~otto.host.UnixHostSpec` under `UnixHost`,
-{class}`~otto.models.host.EmbeddedHostSpec` under `EmbeddedHost` and
+{class}`~otto.host.EmbeddedHostSpec` under `EmbeddedHost` and
 `ZephyrHost` — so a class that only re-declares inherited fields, like
 `MyRtosHost` above, needs none.
 
-A class that **adds** a field needs its own spec: subclass the inherited one,
-declare the field, and hand it on in `to_host`.  Without that, registration
-succeeds but every lab entry that sets the field is refused at load:
+A class that **adds** a field needs its own spec: subclass the inherited one
+and declare the field there too.  The class and its spec must cover each
+other: `register_host_class` refuses a class field the spec lacks, and a spec
+field the class lacks, naming each — at registration (with `spec=` left out,
+the inherited spec is checked then too), or at the first lookup for a class
+given by `Ref`.  It also refuses a constructor parameter with no default that
+nothing supplies: make it a required spec field, or give it a default.  How
+each spec field reaches the constructor is its field kind, declared beside it;
+{mod}`otto.host.construction` lists the kinds.
 
 ```python
 from dataclasses import dataclass
+from typing import Annotated
 
-from otto.host import UnixHost, UnixHostSpec, register_host_class
+from pydantic import PositiveInt
+
+from otto.host import Convert, UnixHost, UnixHostSpec, register_host_class
 
 
 @dataclass(slots=True, kw_only=True)
 class GadgetHost(UnixHost):
     widget: str = "sprocket"
+    buffer_bytes: int = 1024
 
 
-class GadgetHostSpec(UnixHostSpec):
+class GadgetSpec(UnixHostSpec):
     widget: str = "sprocket"
-
-    def to_host(self, cls=GadgetHost, *, element, preferences=None):
-        host = super().to_host(cls, element=element, preferences=preferences)
-        host.widget = self.widget
-        return host
+    buffer_bytes: Annotated[PositiveInt, Convert(lambda kib, build: kib * 1024)] = 1
 
 
-register_host_class("gadget", GadgetHost, spec=GadgetHostSpec)
+register_host_class("gadget", GadgetHost, spec=GadgetSpec)
 ```
 
-If the field you add is a runtime object rather than a JSON scalar, convert it
-in `to_host` the way `UnixHostSpec.to_host` converts its option tables
-(`getattr(self, n).to_runtime()`, in `otto.models.host`).
+The spec has no `to_host`.  The stock builder,
+{meth}`~otto.host.HostSpec.build_kwargs`, walks its fields by kind: `widget`
+reaches `GadgetHost` as the entry wrote it, and `buffer_bytes`, written in
+KiB, reaches it in bytes.  A field the entry leaves out is not passed, so the
+class's own default applies.
+
+- A plain field needs a class field and a spec field of the same name.
+- A converted field adds `Convert(fn)`: `fn(value, build)` returns the
+  constructor argument, or {data}`~otto.host.Omit` to pass none.  The
+  field's type constrains its input — here `PositiveInt` refuses `0` before
+  the conversion runs — so the conversion never checks it, and `otto init`'s
+  doctor reports a bad value like any other.
+- A check that needs the entry's context overrides `check_in` (below).
+- Override `to_host` for construction that is not keyword arguments, or to
+  act on the built host before it leaves the factory; build through
+  `build_kwargs` either way.
+
+Here a bench variant marks each host it builds with the address it was built
+for:
+
+```python
+class BenchGadgetSpec(GadgetSpec):
+    def to_host(self, *, ready):
+        kw = self.build_kwargs(ready)
+        host = ready.cls(**kw)
+        host.metadata["bench"] = kw["ip"]
+        return host
+```
+
+`ready` is the readiness record {meth}`~otto.host.HostSpec.validate_in`
+issued for this spec, and it names the class to build.  `build_kwargs`
+consumes it, so an override builds once per record and reads what it needs
+from the arguments `build_kwargs` returned, never from `self` afterwards.
+Under `create_host_from_dict` the factory scopes the build, so an override
+keeps the data profile's console prompts; a host built by hand through
+`host_context` gets them only from the stock `to_host`.
+
+A constructor field that no lab entry supplies — your code fills it in after
+construction — stays off the spec and says why on the class, with
+{class}`~otto.host.construction.RuntimeOnly` (from `otto.host`). Here a
+subclass of `GadgetHost` above adds one:
+
+```python
+from dataclasses import dataclass, field
+
+from otto.host import RuntimeOnly
+
+
+@dataclass(slots=True, kw_only=True)
+class LoggedGadgetHost(GadgetHost):
+    readings: list = field(
+        default_factory=list, metadata={"otto": RuntimeOnly(reason="filled by our tests")}
+    )
+```
+
+A class that sets an inherited field itself, as `field(init=False)` filled in
+`__post_init__`, takes no constructor argument for it, so its spec re-declares
+that field {class}`~otto.host.construction.Consume`: an entry may still carry
+it, and it is validated but never passed on:
+
+```python
+from typing import Annotated
+
+from pydantic import Field
+
+from otto.host import Consume, UnixHostSpec
+from otto.models import CredSpec
+
+
+class SelfCredHostSpec(UnixHostSpec):
+    creds: Annotated[list[CredSpec], Consume("the class sets its own creds")] = Field(
+        default_factory=list
+    )
+```
 
 A class with no registered ancestor — a direct
 {class}`~otto.host.remote_host.RemoteHost` subclass — has no spec to inherit,
 so `register_host_class` refuses it unless you pass `spec=`, whatever its
 fields.
+
+### Checking an entry in its context: `check_in`
+
+A field validator sees the entry alone. A check that needs the entry's context
+— its element, its resolved profile, its host id, its preferences — goes in
+`check_in(self, ctx)`, where `ctx` is a {class}`~otto.host.HostContext`.
+Here a subclass of `GadgetSpec` above adds one:
+
+```python
+class GuardedGadgetSpec(GadgetSpec):
+    def check_in(self, ctx):
+        allowed = ctx.element.metadata.get("widgets")
+        if allowed is not None and self.widget not in allowed:
+            raise ValueError(f"widget {self.widget!r} is not one of {allowed}")
+```
+
+{meth}`~otto.host.HostSpec.validate_in` calls `check_in` once, after the
+spec's structural checks and otto's own contextual checks pass. Raise any
+exception to refuse the entry: `validate_in` raises it as a
+{class}`~otto.host.HostValidationError` naming the host
+(`host 'lab1': check_in failed: ValueError: …`), and a
+`HostValidationError` you raise yourself passes through unchanged. `otto
+init`'s doctor, host listing and lab loading report that message, naming the
+host: the doctor as a problem, host listing as a recorded drop, and lab
+loading inside its own error.
 
 ### What you inherit, and what you may re-declare
 
@@ -193,6 +295,24 @@ def test_my_rtos_host_registers():
     assert_host_registrable(MyRtosHost)
 ```
 
+To build a host in a test without the factory, validate the entry in its
+context with {func}`~otto.host.host_context` and build from the record
+that issues; `create_host_from_dict` is the same route plus the product
+providers:
+
+```python
+from otto.host import Element, host_context
+
+
+def test_a_gadget_converts_its_buffer():
+    hc = host_context(
+        {"ip": "192.0.2.1", "os_type": "gadget", "buffer_bytes": 2},
+        element=Element("dev"),
+    )
+    host = hc.spec.to_host(ready=hc.spec.validate_in(hc.context))
+    assert host.buffer_bytes == 2048
+```
+
 {func}`~otto.testing.assert_host_conforms` checks the call shapes production
 depends on — read off the `Host` protocol itself, so a parameter added there is
 asked of your class rather than silently skipped — and, given an `instance`,
@@ -218,8 +338,8 @@ keeps the `Host` contract, and any {class}`~otto.host.host.BaseHost` can:
 `RemoteHost` subclass declaring `capabilities`, with a spec it can resolve.
 {func}`~otto.testing.assert_host_registrable` runs `register_host_class`'s own
 checks and registers nothing; pass it the `spec=` you pass to
-`register_host_class`.  It cannot tell whether that spec declares your added
-fields — only a lab entry that sets one can.
+`register_host_class`.  Those checks include the coverage rule above, so a
+field your class adds and your spec forgets fails here, not at load.
 
 ## Composition
 

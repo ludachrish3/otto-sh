@@ -227,6 +227,12 @@ _SHORT_TYPE_ALIASES = {
     # class of misqualification as ``types.Annotated`` above; both resolve to
     # the one real symbol rather than being silenced.
     "pathlib.Annotated": "typing.Annotated",
+    # The same misqualification for a pydantic field whose default is a model
+    # instance: a spec field's field-kind marker makes its annotation
+    # ``Annotated[TelnetOptionsSpec, Convert(...)]``, rendered with the module of
+    # the first argument (otto.models.options) or of the spec (otto.models.host).
+    "otto.models.options.Annotated": "typing.Annotated",
+    "otto.models.host.Annotated": "typing.Annotated",
     # rich
     "Panel": "rich.panel.Panel",
     "Tree": "rich.tree.Tree",
@@ -289,6 +295,9 @@ def _resolve_short_types(app, env, node, contnode):
 _INTERNAL_ALIASES = {
     # otto.host.remote_host
     "OsType": "otto.host.remote_host.OsType",
+    # otto.host.construction: HostContext.preferences names the alias in a
+    # string annotation, which autodoc renders bare.
+    "FlatPreferences": "otto.host.construction.FlatPreferences",
     # otto.host.transfer.base (requires transfer_base.rst to be documented)
     "NcPortStrategy": "otto.host.transfer.base.NcPortStrategy",
     "NcListenerCheck": "otto.host.transfer.base.NcListenerCheck",
@@ -815,6 +824,36 @@ class _ReexportedDataDocumenter(_DataDocumenter):
         return [comment] if comment else []
 
 
+def _drop_private_bases(
+    app,  # noqa: ARG001 — required by Sphinx autodoc-process-bases event handler signature
+    name,  # noqa: ARG001 — required by Sphinx autodoc-process-bases event handler signature
+    obj,  # noqa: ARG001 — required by Sphinx autodoc-process-bases event handler signature
+    options,  # noqa: ARG001 — required by Sphinx autodoc-process-bases event handler signature
+    bases,
+):
+    """Show an otto-private base class as the bases it has itself.
+
+    ``otto.host.construction``'s four field kinds share a private ``_Marker``
+    base (it gives them one repr and one isinstance test). ``show-inheritance``
+    would print ``Bases: _Marker``, a class autodoc never documents and the
+    zero-``nitpick_ignore`` policy will not let us silence -- the same
+    reasoning as :func:`_drop_privately_typed_params`. The private base is
+    replaced by its own bases, recursively, so the line still names a real
+    class (``object`` at the root). Scoped to ``otto.*``: a private
+    third-party base is a different problem and must still fail loudly.
+    """
+
+    def private(cls):
+        return getattr(cls, "__module__", "").startswith("otto.") and getattr(
+            cls, "__name__", ""
+        ).startswith("_")
+
+    def public(cls):
+        return [cls] if not private(cls) else [b for p in cls.__bases__ for b in public(p)]
+
+    bases[:] = [b for base in bases for b in public(base)]
+
+
 def setup(app):
     app.add_autodocumenter(_DataDocumenter, override=True)
     app.add_autodocumenter(_AttributeDocumenter, override=True)
@@ -829,6 +868,7 @@ def setup(app):
     app.connect("autodoc-process-docstring", _api_docstring)
     app.connect("missing-reference", _resolve_external_doc_links)
     app.connect("autodoc-process-signature", _process_signature)
+    app.connect("autodoc-process-bases", _drop_private_bases)
 
 
 # -- napoleon -----------------------------------------------------------------
