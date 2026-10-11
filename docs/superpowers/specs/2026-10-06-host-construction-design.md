@@ -494,7 +494,7 @@ builder raise for a contextual failure.
 
   Preparation resolves each power config model once per process. From 3b-5 it parses once per
   entry per route. Between 3b-3 and 3b-5 the loader's interim `validate_host_dict` call and the
-  factory each prepare, so power is parsed twice per loaded host. These paths are measured (§8). Warm completion reads never prepare (R §4.3).
+  factory each prepare, so power is parsed twice per loaded host (the interim call landed in 3b-3 and was removed in 3b-5). These paths are measured (§8). Warm completion reads never prepare (R §4.3).
 - **`host_context(d, *, element, profiles=, preferences=None) -> tuple[HostSpec, HostContext]`**
   (public, 3b-3) runs steps 1–5 and returns the validated spec and its context. It is the
   supported route for library code and tests that want a host without the factory:
@@ -754,7 +754,7 @@ becomes an intra-package check once the spec lives in `otto.host`.
 | 3b-2 | `feat(host)!`: `otto.host.construction` with the field-kind markers and `RuntimeOnly`; the coverage rule on `HostClassEntry` (name coverage and markers); profile-eligible inputs (amends 3a 5.9's data-profile check); docs: `os-profiles.md`, and a `make docs` build proving the markers render | 3a 5.9 |
 | 3b-3 | `feat(host)!`: the pipeline, `HostContext`, `HostReadiness`, `HostBuild`, `FlatPreferences`, `HostValidationError`, final `validate_in`, `check_in`, `host_context`, `to_host(self, *, ready)`, the §3.3 migration with both modes, `PowerControlSpec` with `prepare` in `validate_in` and `build` in construction, `validate_host_dict(element=, profiles=)` (and the loader's interim call), `host_identity` on the pipeline, the doctor on it. The per-family builders consume the record and perform the refusals. Docs: `lab-config.md` (`power_control`), `data-boundary.md`, `custom-host-classes.md` (`check_in`, the override rule); a nitpicky `make docs` build proving `HostContext`'s quoted annotations render | 3b-2, 3a 5.12 |
 | 3b-4 | `feat(host)!`: the stock `build_kwargs` replaces `_common_host_kwargs`, `_COMMON_PLAIN_FIELDS` and the per-family loops; custom plain fields forward; the coverage rule's argument-availability clause turns on; docs: `custom-host-classes.md` (a paired spec with one plain and one converted field) | 3b-3 |
-| 3b-5 | `refactor(labs)`: the loader drops its separate `validate_host_dict` call, once a test shows the factory reports the same errors with the same file/element/index attribution, for entries outside no-preference mode's difference (§3.3) | 3b-3 |
+| 3b-5 | `refactor(labs)`: the loader drops its separate `validate_host_dict` call, once a test shows the factory reports the same errors with the same file/element/index attribution, for entries outside no-preference mode's difference (§3.3) (done) | 3b-3 |
 
 **3b-3 test migration:**
 - 52 `to_host` call lines in five test files, plus `host/factory.py:221`;
