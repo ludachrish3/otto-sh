@@ -1302,6 +1302,41 @@ each landing's own tree, never copied from today's: on today's tree there are 46
 
 P1a reads each site to confirm its class; each later landing re-reads the sites it moves.
 
+**Amended by P1a, 2026-10-11 (accepted by the owner with the P1a plan).** Building the audit
+against the code changed this section in four places. Where this block and the text above
+disagree, this block holds:
+- **Computed sites are keyed by file and enclosing scope, not line,** so an edit elsewhere in
+  the file does not fail the audit. One scope may hold two sites (`logger/__init__.py`'s
+  `__getattr__`), so the listing is a multiset; every diagnostic still names the line.
+- **Five sites change class on reading.** `host/product.py:908` and `host/dev_tool.py:345` loop
+  over otto's own literal kind tables, so they are registry `Ref`s over a literal table, not
+  user-supplied. `params.py:413` and `:495` (strings an init module passes to
+  `register_options`) and `host/shell_kind.py:342` (a product's `class` from settings) are
+  user-supplied. The split on today's tree is 31 facade resolvers, 5 user-supplied, 3 CLI command
+  tables, 5 `Ref`s over literal tables, the `Ref` engine (`registry.py:156`) and one
+  loaded-module lookup (`host/shell_kind.py:203`): 46.
+- **Rule 2 finds no upward string edge at P1a, not 7.** The seven host → specs sites join two
+  cycle members, which are unlayered at P1a, so the layers the landing declares do not make them
+  upward. The "7 upward from P1a to P2" count above came from the end-state map, which rule 2
+  forbids using. The seven stay grandfathered because rule 4 applies to them, and they become
+  upward-relevant once `otto.host` and `otto.models` take layers.
+- **Rules 2 and 3 skip a file no tach module owns.** Such a file (the root `otto/__init__.py`,
+  `otto/lab`, `otto/env`, `otto/declared.py`, `otto/_shim.py`, `otto/__main__.py`) is owned,
+  for listing, by its top-level package, and its string edges are listed (rule 1). It has no
+  layer and no node in tach's graph. Until P9b declares the last of these files, the audit is
+  therefore not a whole-tree cycle guarantee, exactly as tach is not (§1.1's two hidden loops).
+
+The final reviews added guards the rules above imply:
+- The audit also reads `register_cli_command`'s literal loaders. It refuses what it cannot
+  read: `__import__` and the other by-name importers, an aliased import, `Ref` or an importer
+  passed as a value, and a lazy table written outside its literal.
+- The grandfathered rows and the unowned-file list are pinned shrink-only. An added row, or an
+  expiry moved later, fails, because it needs a spec amendment.
+- `CURRENT_LANDING` is tied to the tree. Between its landing's row of §5.2's layered count and
+  §6's cycle size and the next differing row, the tree may stand anywhere, as it does
+  mid-landing. Reaching the next row demands the bump, and the last landing's row is exact. No
+  module inside the cycle may have a layer.
+
 ### 5.4 Ratchet
 
 The ratchet stays. Each landing edits `BASELINE` in the same commit: it deletes what it removes
