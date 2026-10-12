@@ -1,8 +1,14 @@
 id: no-tuple-return
 language: python
 severity: error
-message: Public function returns a bare tuple. Multiple return values belong in a frozen dataclass (or a Result-family value) — adding a field to a dataclass is non-breaking, adding a tuple element breaks every unpacking site, and callers end up indexing `[0]`.
+message: Public function returns a bare tuple. A group of different values belongs in a small class with named fields, either a frozen dataclass or a NamedTuple (or a Result-family value). A collection of similar items that callers iterate or act on as a group belongs in a list. Adding a named field is non-breaking; adding a tuple element breaks every unpacking site, and callers end up indexing `[0]`.
 note: >
+  The owner's preference (2026-10-12): a group of different values is a small
+  class with named fields, either a frozen dataclass or a NamedTuple; a list is
+  only for a collection of similar items that callers iterate or act on as a
+  group; a bare tuple is neither. A NamedTuple is the fix when the value must
+  stay hashable or ordered, such as a dict key, a dedup key or a sort key.
+
   The house rule ("callables return dataclasses") converted from prose into a
   gate, and the sibling of no-bare-status-return. The prose version failed the
   way this repo's prose always fails: `refactor(docker)!: build results are
@@ -28,15 +34,15 @@ note: >
   trap for a third party.
 
   BASELINE IS NOT ZERO, unlike its sibling. 18 public sites existed when this
-  landed on 2026-08-05 (16 remain as of 2026-09-03); each carries an inline
+  landed on 2026-08-05; each carries an inline
   `# ast-grep-ignore: no-tuple-return` with a one-line reason, and
   tests/unit/test_tuple_return_debt.py holds the enumerated list so the set can
   only SHRINK — adding a site fails the gate, and fixing one without removing
-  its entry fails the test. 6 are argued as permanent (a version sort key, a
-  composite dict key, an immutable id sequence, a dedup key, a sqlite parameter
-  row, and the pytest hook); the rest are debt, tracked in
-  todo/churn-review-remaining-work-2026-08-05.md — that test's DEBT table is
-  the live count, this note is not.
+  its entry fails the test. Only a contract otto does not own is permanent: the
+  pytest hook pytest dictates and the sqlite DB-API parameter row. Every other
+  site is debt and names its fix: a named-field class, a NamedTuple where it
+  must stay hashable or ordered, or a list for similar items. That test's
+  tables are the live count, this note is not.
 
   The regex admits ONE optional leading quote, and that is not cosmetic: this
   repo bans `from __future__ import annotations` (it trips Sphinx `-W`), so a

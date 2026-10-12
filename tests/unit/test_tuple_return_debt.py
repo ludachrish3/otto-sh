@@ -34,19 +34,22 @@ _OUTERMOST_TUPLE = re.compile(r"^(tuple|Tuple)\[")
 _IGNORE = "# ast-grep-ignore: no-tuple-return"
 
 # (module path relative to src/otto, function name) -> why it is still here.
-# PERMANENT entries are argued exemptions and are not expected to shrink.
-# DEBT entries convert to frozen dataclasses; delete the entry with the fix.
+# PERMANENT entries are contracts otto does not own and are not expected to shrink.
+# DEBT entries name their fix: a small class with named fields (a frozen
+# dataclass or a NamedTuple, the latter where the value must stay hashable or
+# ordered), or a list for a collection of similar items. Delete the entry with
+# the fix.
 PERMANENT: dict[tuple[str, str], str] = {
-    ("config/version.py", "key"): "the tuple IS the value — lexicographic (major, minor, patch)",
-    ("coverage/store/model.py", "branch_id"): "composite dict key; hashable by construction",
-    ("host/builtin_hosts.py", "builtin_host_ids"): "immutable homogeneous sequence, not a list",
-    ("link/params.py", "canonical_key"): "dedup/equality key; homogeneous variadic",
     ("monitor/db.py", "event_insert_params"): "sqlite DB-API parameter row — the driver's contract",
     ("suite/plugin.py", "pytest_report_teststatus"): "pytest dictates this hook's return shape",
 }
 
 DEBT: dict[tuple[str, str], str] = {
+    ("config/version.py", "key"): "sort key (major, minor, patch) — a NamedTuple keeps the order",
     ("coverage/attribution.py", "attribute_tickets"): "three unrelated maps",
+    ("coverage/store/model.py", "branch_id"): "composite dict key — a hashable NamedTuple",
+    ("host/builtin_hosts.py", "builtin_host_ids"): "similar ids iterated as a group — a list",
+    ("link/params.py", "canonical_key"): "seven named slots — a hashable NamedTuple",
     ("host/binary_loader.py", "check_loaded"): "(ok, detail) — a Result in disguise",
     ("host/connections.py", "credentials"): "(user, password) pair",
     ("host/login_proxy.py", "resolve_chain"): "target credential plus hop chain",

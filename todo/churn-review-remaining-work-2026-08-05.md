@@ -43,34 +43,11 @@ mechanical afterwards. Effort M once decided.
 
 ---
 
-## 1b. Convert the 11 baselined tuple returns
+## 1b. Tuple tech debt — moved to issue #633
 
-`.ast-grep/rules/no-tuple-return.yml` landed 2026-08-05 with a **labelled,
-shrink-only baseline** of 18 public functions whose outermost return type is a
-bare tuple. Six are argued permanent exemptions; the other 11 keys (12 sites)
-are debt and convert to frozen dataclasses.
-
-The two gates pin each other, so this cannot rot: deleting a baseline entry
-without fixing the code fails `make lint-arch`, and fixing the code without
-deleting the entry fails `tests/unit/test_tuple_return_debt.py`. Every site
-carries an inline `# DEBT(no-tuple-return): <reason>` naming what it crams.
-
-| Site | Crams |
-| --- | --- |
-| `coverage/attribution.py` `attribute_tickets` | three unrelated maps — the worst in the tree |
-| `config/completion_cache.py` `collect_current_commands` | two command lists |
-| `host/binary_loader.py` `check_loaded` (×2, one ABC) | `(ok, detail)` — a `Result` in disguise |
-| `host/connections.py` `credentials` | `(user, password)` |
-| `host/login_proxy.py` `resolve_chain` | target credential + hop chain |
-| `link/derive.py` `addressing_from_dict` | resolved id + addressing |
-| `link/manage.py` `repair_all` | reports + skipped ids |
-| `link/sentinel.py` `parse_impair_sentinel` | three parsed fields |
-| `monitor/event_ops.py` `resolve_create` | `(start, end)` |
-| `tunnel/discovery.py` `scan` | observations + error string |
-| `tunnel/discovery.py` `discover_observations` | observations + error list |
-
-Do them in small batches — each is independent, and `check_loaded`'s two
-implementations must convert together. Effort S each, M in total.
+Tracked in https://github.com/ludachrish3/otto-sh/issues/633. It covers the
+baselined tuple returns, which `tests/unit/test_tuple_return_debt.py` counts,
+and the tuple-typed fields that `no-tuple-return` cannot see.
 
 ---
 

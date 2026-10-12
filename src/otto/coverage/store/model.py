@@ -144,7 +144,7 @@ class BranchHits:
     reachable: dict[str, bool] = field(default_factory=dict)
 
     @property
-    # PERMANENT(no-tuple-return): composite dict key; hashable by construction.
+    # DEBT(no-tuple-return): composite dict key; wants a hashable NamedTuple.
     # ast-grep-ignore: no-tuple-return
     def branch_id(self) -> tuple[int, int]:
         """``(block, branch)`` tuple that uniquely identifies this branch within a line."""

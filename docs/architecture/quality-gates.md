@@ -173,15 +173,16 @@ inside a container is the `dict.items()` idiom and not a crammed return.
 Eighteen suppression sites existed when it landed, each carrying an inline
 `# ast-grep-ignore: no-tuple-return` beside a `# DEBT(no-tuple-return)` or
 `# PERMANENT(no-tuple-return)` marker and a one-line reason — twelve debt,
-six permanent. `tests/unit/test_tuple_return_debt.py` is the other half, and
-it enumerates **seventeen** `(module, function)` keys, not eighteen: six
-permanent and eleven debt. The two counts differ by one because
-`host/binary_loader.py::check_loaded` is two implementations of the same ABC
-method, so its two sites share a single key. Sites and entries are different
-questions here, and the test asks the second. The two gates pin each other:
-adding a site fails ast-grep, and fixing a site without deleting its entry
-fails the test. That second half is what a count-based
-ratchet cannot do — it makes the list keep *describing the tree*, rather
+six permanent. `tests/unit/test_tuple_return_debt.py` is the other half; its
+PERMANENT and DEBT tables are the live count, keyed by `(module, function)`,
+so the two ABC implementations of `host/binary_loader.py::check_loaded` share
+one key. Only a contract otto does not own is permanent: the pytest hook and
+the sqlite parameter row. Every other entry is debt and names its fix: a small
+class with named fields (a frozen dataclass, or a NamedTuple where the value
+must stay hashable or ordered), or a list for a collection of similar items.
+The two gates pin each other: adding a site fails ast-grep, and fixing a site
+without deleting its entry fails the test. That second half is what a
+count-based ratchet cannot do — it makes the list keep *describing the tree*, rather
 than merely bounding it.
 
 The ast-grep half matches *text* on the annotation, which bounds it two
