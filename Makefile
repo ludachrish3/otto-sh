@@ -239,9 +239,12 @@ M_HOSTLESS := not integration and not embedded and not stability and not browser
 # It sat at 360s over a coverage-python leg measured at 273-296s on a quiet
 # box — inside the leg's own spread — and on 2026-08-25 a second session's
 # suite on the same VM halved the leg's speed and `timeout` killed it at 65%:
-# exit 124, zero FAILED lines, a red build with no defect behind it. 900s is
-# 3x the quiet-box leg, still catches a genuine hang inside fifteen minutes,
-# and is floored at 600s by tests/unit/test_declared_harness_bounds.py.
+# exit 124, zero FAILED lines, a red build with no defect behind it. 900s was
+# then 3x the quiet-box leg. The leg has since grown to 800-900s on the dev VM,
+# and a second session's load pushed it past 900s on 2026-10-02 and 2026-10-12:
+# killed with zero FAILED lines again (#566). 2400s is about 2.7x the leg, still
+# catches a genuine hang inside forty minutes, and is floored at 1800s by
+# tests/unit/test_declared_harness_bounds.py.
 # The same test pins that every CI job invoking a wrapped lane sets its
 # `timeout-minutes` above this cap plus its setup: a job limit at or under
 # the wrap cancels the job before `timeout` can report exit 124, which is the
@@ -254,7 +257,7 @@ M_HOSTLESS := not integration and not embedded and not stability and not browser
 # stability/soak tests are excluded from `coverage` (the `stability` marker)
 # and run only via `make stability` / `stability-embedded`.
 # --kill-after escalates SIGTERM → SIGKILL if xdist workers don't drain.
-PYTEST_TIMEOUT := 900s
+PYTEST_TIMEOUT := 2400s
 TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 
 # Arms the asyncio transport-leak detector (tests/conftest.py +

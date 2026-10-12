@@ -77,7 +77,7 @@ _TS_TIMEOUT_FLOOR_MS = 30_000
 _BROWSER_TIMEOUT_FLOOR_MS = 30_000
 _PYTEST_TIMEOUT_FLOOR_S = 60
 # The fourth: the Makefile's session-wide wrap. Derived below, next to its test.
-_MAKE_SESSION_CAP_FLOOR_S = 600
+_MAKE_SESSION_CAP_FLOOR_S = 1800
 # A CI job that invokes a wrapped lane must outlast the wrap AND the setup
 # steps ahead of it, or GitHub cancels the job before `timeout` reports.
 _CI_SETUP_MARGIN_S = 300
@@ -342,9 +342,11 @@ def test_python_lane_declares_its_per_test_timeout() -> None:
 # 273-296s on a quiet box (2026-08-25/26, after a 30s network-dial test was
 # removed), and a second session's suite on the same VM halved the leg's speed
 # and killed it at 65% — exit 124, zero FAILED lines, a red build with no
-# defect behind it. The floor (`_MAKE_SESSION_CAP_FLOOR_S`, above) is 2x the
-# measured leg: a cap under it is inside the leg's own spread and converts
-# machine load into red builds.
+# defect behind it. The leg has since grown to 800-900s on the dev VM, and two
+# more runs (2026-10-02, 2026-10-12, #566) were killed at 900s under load. The
+# floor (`_MAKE_SESSION_CAP_FLOOR_S`, above) is 2x the leg's 900s upper edge: a
+# cap under it is inside the leg's own spread and converts machine load into
+# red builds.
 
 
 def makefile_session_cap(text: str) -> int:
@@ -371,7 +373,7 @@ def test_make_declares_a_session_cap_far_above_the_leg() -> None:
     cap = makefile_session_cap((PROJECT_ROOT / "Makefile").read_text())
     assert cap >= _MAKE_SESSION_CAP_FLOOR_S, (
         f"PYTEST_TIMEOUT is {cap}s, below the {_MAKE_SESSION_CAP_FLOOR_S}s floor. "
-        f"The coverage-python leg runs ~275-300s on a quiet box; a cap inside that band is "
+        f"The coverage-python leg runs 800-900s on the dev VM; a cap inside that band is "
         f"a runaway guard turned discriminator, and it reddens builds on machine load alone"
     )
 

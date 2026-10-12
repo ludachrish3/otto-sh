@@ -299,13 +299,13 @@ jobs:
   busybox:
     name: busybox-artifacts (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    # ABOVE the Makefile's PYTEST_TIMEOUT wrap (900s), plus the minutes of
+    # ABOVE the Makefile's PYTEST_TIMEOUT wrap (2400s), plus the minutes of
     # checkout / uv / apt / binfmt setup that precede `make busybox`. A job
     # limit at or under the wrap cancels the job before `timeout` can report
     # exit 124 and the fixture's `make busybox-cache` diagnostic — the
     # attribution this lane exists to deliver on a busybox.net stall.
     # tests/unit/test_declared_harness_bounds.py pins the relation.
-    timeout-minutes: 25
+    timeout-minutes: 45
     # THIS JOB READS THE MIRROR, like every other lane. It pins no source.
     #
     # It used to force `OTTO_BUSYBOX_SOURCE=upstream`, to notice busybox.net
