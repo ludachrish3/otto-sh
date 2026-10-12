@@ -405,6 +405,52 @@ library caller that never bootstrapped still sees otto's six instructions.
 `project/orchestrator.py:50`, `project/plan.py:17`, and `cli/run.py:10` (its names,
 `INSTRUCTIONS`, `InstructionEntry` and `ProjectInstruction`, all move to the catalog).
 
+**Amended by P2, 2026-10-12.** Building P2 changed this section, and §2.1, §4.2 and §4.3, in
+these places:
+- **The catalog takes the measured 800 body lines, not 740.** The difference is the slot's code
+  (`FIRST_PARTY_ACTIONS`, `declare_first_party_actions` and its validator).
+- **`cli/run.py` also re-points its historic `instruction` re-export** to the catalog. No otto
+  module then imports the face at module scope, so `run`, `help`, `test` and `monitor` load the
+  catalog in place of the face. Measured on `run`: the face's 3 file operations swap for the
+  catalog's 3, total +0.
+- **Three internal importers the list above missed are re-pointed** under the facade rule:
+  - `cli/invoke.py:220`, split so `InstructionEntry` comes from the catalog and
+    `bind_handler_kwargs` from the face;
+  - `cli/invoke.py:1156` (`INSTRUCTIONS`);
+  - `cli/registry.py:308` (`INSTRUCTIONS`).
+- **The acceptance test drops its last clause** ("a repo body declared for one of the six before
+  initialization does not keep the spec"). With the slot empty, the nominal check refuses every
+  repo actions class, so no such body can exist before initialization.
+  `test_first_party_actions.py::test_an_empty_slot_refuses_every_repo_actions_class` pins that
+  refusal instead.
+- **Install runs as otto in any context.** `declare_first_party_actions` registers inside
+  `otto.registry._registering_for_otto()`, a private context manager beside the public
+  `registering_repo`. It sets the registry's marker to `None` and restores it, so the row is otto's
+  even when the first import of `otto.project.actions` happens inside a repo's init. The public
+  `registering_repo` is unchanged (S5-6).
+- **Reset.** A per-test restore can empty a slot filled after the snapshot while
+  `otto.project.actions` stays imported. `tests/conftest.py` gains a session-scoped fixture,
+  `_first_party_actions_declared`, that declares once before any per-test snapshot;
+  `_isolate_registries` is unchanged.
+- **`FIRST_PARTY_BODIES` is deleted** (hard cutover; it was never public).
+- **§2.1: `tests/unit/test_slot_installers.py` exists from P2,** with one slot (first-party
+  actions). Its scan resolves every reference to the slot's home rather than matching names:
+  - it follows absolute and relative imports, aliases, star imports, `import_module`,
+    `sys.modules[...]`, re-exports across modules (only module-scope bindings export), and every
+    binding form (assignment and unpacking, `:=`, `with ... as`, `for`, parameter defaults);
+  - strings count when qualified with the home (`"<module>:<name>"`, `"<module>.<name>"`) or
+    passed to `getattr`-family calls on the home; a bare name string does not;
+  - it flags a raw `register`/`unregister` on the table outside its home;
+  - a same-named object of another module is not flagged, so later slots can privilege a common
+    name such as `install`.
+- **§4.2, row P2: the swap is disproved** (owner ruling D-P2-1, §7). See §4.2 for the measured
+  result.
+- **§4.3: the contract table is `IMPORT_CONTRACTS`** (with `IMPORT_MUST_LOAD`), not
+  `IMPORT_MUST_NOT_LOAD`. The catalog's row uses its allowlist form, `IMPORT_ONLY_DECLARED`:
+  importing a module may load, of otto's own modules, only itself and its declared dependencies.
+  Dependencies a module imports only inside functions are named on the row as lazy, and must not
+  load at import; every other declared dependency must.
+
 ### 3.3 Host specs into otto.host; the impairer contract into otto.link.params (P3)
 
 This carries out spec 3b §6 (`2026-10-06-host-construction-design.md:691-736`).
@@ -1204,6 +1250,16 @@ measured delta, and only when two runs agree. A landing never re-records every s
 would absorb unrelated drift (amended by P1b, 2026-10-11). P1b's declines were `monitor` and
 `test`, −7 on every minor.
 
+**P2, measured (amended by P2, 2026-10-12).** Row P2's swap does not happen: a repo whose init
+imports `otto.instructions` loads both the face and the catalog. Every surface that loads a repo's
+init therefore grows by the catalog's exact footprint, +4 file operations on every minor (+1
+`otto:*`, +2 `otto:instruction_catalog`, +1 its bytecode). That is 24 of the 38 surfaces: the
+protected `completion_repo_handover` and 23 non-protected surfaces (`bootstrap_repo`, the two
+warm dispatch surfaces, `help_repo`, the five `host_local`/`host_ssh` surfaces, `test_repo`, and
+13 tracked surfaces). Owner ruling D-P2-1 approved exactly that footprint on exactly those
+surfaces; any other growth, or a listed surface that did not grow, would have stopped the landing.
+No surface declined.
+
 ### 4.3 Package ancestors
 
 Importing a carved module runs every ancestor `__init__`, so every ancestor of a carved module
@@ -1449,6 +1505,7 @@ shrink artifact. No other phase had been bent to stay shrink-only, so none chang
 | S5-5 | **Owner, 2026-10-11:** no named exceptions. The facade rule (§3.11) and the bootstrap split (§3.9). | §3.9, §3.11, §5.3 |
 | S5-6 | **Owner, 2026-10-11, on the S5-5 review:** no public behavior change beyond S5-4 and D2. The draft decision D3 (composing reads raise when the root was never loaded) is withdrawn; the composing entry points load the root when resolved instead. | §3.12 |
 | D2 | **Owner, 2026-10-11: (a) admit.** With `otto.bootstrap` never imported, `scope_for_repo` admits. The alternative, a by-name import of `otto.bootstrap` from foundation, would have been an upward exception. | §3.5 |
+| D-P2-1 | **Owner, 2026-10-12, re-confirmed the same day:** approve the catalog's exact +4 footprint on `completion_repo_handover` and the 23 named non-protected surfaces; any other growth, or a listed surface that does not grow, stops the landing. | §4.2 |
 
 **Decided in the design by evidence, not by the owner**
 - `CredSpec` lives in `models.base` (§3.3).
