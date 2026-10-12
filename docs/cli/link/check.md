@@ -160,15 +160,15 @@ sandbox's probe traffic and are never changed.
 | Feature | What otto applies and measures | Passes when |
 | --- | --- | --- |
 | `read-back` | A 100 ms delay on the whole link, then the same delay on TCP destination ports 5200–5210 only. After each, otto reads the tree back with the same reader `otto link list` uses. | Both trees read back as written, allowing for the kernel's rounding. If `tc` rejects the port-scoped tree, the row keeps the whole-link tree's verdict with the detail `port-scoped tree not applied: tc rejected it (see port range)`, and `port range` and `side` report the rejection as `unsupported`. |
-| `delay` | 100 ms delay; 10 pings. | The added round-trip time is 100 ms, give or take 10 ms + 3σ, where σ is the baseline's standard deviation. |
+| `delay` | 100 ms delay; 10 pings. | The added round-trip time is 100 ms, give or take 50 ms (half the target, or 3σ if that is larger, where σ is the baseline's standard deviation). Test VMs drift, so the check asks whether the delay applied, not how precisely. |
 | `jitter` | 100 ms delay with 20 ms jitter; 20 pings. | The spread of the round-trip times grows by at least 5 ms over the baseline's. |
 | `loss` | 30% loss; 200 pings, 10 ms apart. | Observed loss is within a band that allows for chance, about ±12 points at 200 pings. |
 | `duplicate` | 50% duplication; 50 pings. | At least a quarter of the expected duplicate replies arrive. |
 | `reorder` | 50 ms delay with 50% reordering; 100 pings. | At least one reply arrives out of order. |
 | `corrupt` | 50% corruption; 100 pings. | At least 25% of pings are lost. A corrupted ping fails its checksum and is dropped, so corruption shows up as loss. |
-| `rate` | A 1 mbit rate limit; 256 KiB sent through an echo listener on TCP port 5299 and timed. | Throughput is within 25% of 1000 kbit/s. |
-| `port range` | 100 ms delay on TCP destination ports 5200–5210 only. otto times a connection to port 5211 first, then to 5205 (inside the range) and 5211 (outside it). | The connection to 5205 slows by two to three times the delay, since a connection crosses the delayed direction twice. The one to 5211 slows by less than 25 ms. |
-| `side` | 100 ms delay on TCP *source* port 5205 (`--side src`). otto times a connection to destination port 5205 before and after. | The connection does not slow down (by less than 25 ms): a source-port selector must not match traffic to that destination port. |
+| `rate` | A 1 mbit rate limit; 256 KiB sent through an echo listener on TCP port 5299 and timed. | Throughput is within a factor of two of 1000 kbit/s (500 to 2000 kbit/s). |
+| `port range` | 100 ms delay on TCP destination ports 5200–5210 only. otto times a connection to port 5211 first, then to 5205 (inside the range) and 5211 (outside it). | A connection crosses the delayed direction twice, so delayed traffic slows by about twice the delay and clean traffic by about nothing; one delay is the midpoint. The connection to 5205 slows by at least one delay and under four delays; the cap catches gross over-application, and a delay applied twice rises about four delays, right at it. The one to 5211 slows by less than one delay (100 ms). |
+| `side` | 100 ms delay on TCP *source* port 5205 (`--side src`). otto times a connection to destination port 5205 before and after. | The connection does not slow down (by less than one delay, 100 ms): a source-port selector must not match traffic to that destination port. |
 | `expire` | 100 ms delay with a 3-second expire timer; otto waits 6 seconds. | The delay is gone. |
 
 The `rate`, `port range` and `side` rows use three echo listeners inside the
@@ -269,7 +269,7 @@ loss        pass     pass
 duplicate   pass     n/a
 reorder     pass     n/a
 corrupt     pass     n/a
-rate        pass     fail  measured 612 kbit/s, want 1000 kbit/s ±25%
+rate        pass     fail  measured 380 kbit/s, want 500-2000 kbit/s
                            live ran: impair_link edge from test1: rate 1mbit, expire 60s
                            live ran: bash -c 's=$EPOCHREALTIME; n=$(head -c 262144 /dev/zero | socat
                            -T 15 -t 15 - TCP:10.10.202.12:5299,connect-timeout=5 | wc -c);
@@ -322,7 +322,7 @@ Each host gets one block:
 `-v` adds an `output:` block after each cell that printed anything, passing
 cells included: the raw ping replies, the tree `tc` read back, and each
 timed probe's clock readings. In the sample above, `live output:` under
-`rate` would show the two clock readings behind the 612 kbit/s.
+`rate` would show the two clock readings behind the 380 kbit/s.
 
 ## Previewing: `--dry-run`
 
@@ -449,8 +449,8 @@ an interface on each endpoint (see {ref}`lab-links` in
 **`rate` passes in the sandbox but fails live.** Real NICs segment traffic
 in hardware (TSO and GSO), so netem sees fewer, larger packets than the
 wire carries, and a multi-queue interface can spread traffic in ways a veth
-never does. Both can move the shaped rate outside the ±25% band. Try again
-with segmentation offload off on that interface
+never does. Both can move the shaped rate outside the factor-of-two band.
+Try again with segmentation offload off on that interface
 (`ethtool -K <interface> tso off gso off`), and include `--report` when you
 tell otto's developers about it.
 

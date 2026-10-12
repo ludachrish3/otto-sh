@@ -38,7 +38,7 @@ SECTION = CheckSection(
                     "rate",
                     Verdict.FAIL,
                     measured="48 kbit/s",
-                    wanted="1 mbit/s ±25%",
+                    wanted="500-2000 kbit/s",
                     commands=["tc qdisc replace dev ock1a2b3c root netem rate 1mbit"],
                     hint="see docs/cli/link/check#rate",
                 ),
@@ -98,7 +98,7 @@ def test_failing_row_shows_measured_want_command_and_hint_in_order() -> None:
     # the column-name prefix even though this row's "live" cell is n/a.
     lines = _text([SECTION]).splitlines()
     i = next(n for n, line in enumerate(lines) if line.startswith("rate"))
-    assert "measured 48 kbit/s, want 1 mbit/s ±25%" in lines[i]
+    assert "measured 48 kbit/s, want 500-2000 kbit/s" in lines[i]
     line = "sandbox ran: tc qdisc replace dev ock1a2b3c root netem rate 1mbit"
     assert lines[i + 1].strip() == line
     assert lines[i + 2].strip() == "sandbox hint: see docs/cli/link/check#rate"

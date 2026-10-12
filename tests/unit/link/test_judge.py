@@ -76,12 +76,32 @@ class TestDelay:
     def test_on_target(self) -> None:
         assert judge_delay(QUIET, _stats([100.2, 100.1, 99.9]), 100.0).verdict is Verdict.PASS
 
+    def test_vm_drift_within_half_the_target_passes(self) -> None:
+        # tol = max(10, 0.5*100, 3*sd) = 50: a VM's clock and scheduler drift
+        # moves the measured delay a long way without the option being wrong.
+        assert judge_delay(QUIET, _stats([140.0, 140.0, 140.0]), 100.0).verdict is Verdict.PASS
+
+    def test_just_inside_tolerance_passes(self) -> None:
+        # delta = 150.0 - 0.1075 ≈ 149.9, inside +-50 of 100.
+        assert judge_delay(QUIET, _stats([150.0, 150.0, 150.0]), 100.0).verdict is Verdict.PASS
+
     def test_just_outside_tolerance(self) -> None:
-        # tol = max(10, 0.1*100 + 3*sd) ≈ 10.03 for QUIET
-        result = judge_delay(QUIET, _stats([111.0, 111.0, 111.0]), 100.0)
+        result = judge_delay(QUIET, _stats([151.0, 151.0, 151.0]), 100.0)
         assert result.verdict is Verdict.FAIL
-        assert result.measured == "+110.9ms"
+        assert result.measured == "+150.9ms"
+        assert result.wanted == "100 ±50"
         assert result.feature == "delay"
+
+    def test_a_delay_that_was_not_applied_fails(self) -> None:
+        assert judge_delay(QUIET, _stats([0.2, 0.2, 0.2]), 100.0).verdict is Verdict.FAIL
+
+    def test_a_delay_applied_twice_fails(self) -> None:
+        assert judge_delay(QUIET, _stats([200.0, 200.0, 200.0]), 100.0).verdict is Verdict.FAIL
+
+    def test_small_targets_keep_a_10ms_floor(self) -> None:
+        # want 10: 0.5*10 = 5 < 10, so the floor holds: +19.9 passes, +20.9 fails.
+        assert judge_delay(QUIET, _stats([20.0]), 10.0).verdict is Verdict.PASS
+        assert judge_delay(QUIET, _stats([21.0]), 10.0).verdict is Verdict.FAIL
 
     def test_no_reply_under_impairment_fails(self) -> None:
         # avg is None with no rtts at all -- silence is always a failure,
@@ -200,6 +220,25 @@ class TestRate:
         result = judge_rate(40.0, 262144, 1000.0)
         assert result.verdict is Verdict.FAIL
         assert result.feature == "rate"
+        assert result.wanted == "500-2000 kbit/s"
+
+    def test_half_the_target_passes(self) -> None:
+        # 262144 bytes at 500 kbit/s = 4194.304 ms: the band's lower edge.
+        assert judge_rate(4194.304, 262144, 1000.0).verdict is Verdict.PASS
+
+    def test_just_under_half_the_target_fails(self) -> None:
+        assert judge_rate(4200.0, 262144, 1000.0).verdict is Verdict.FAIL
+
+    def test_twice_the_target_passes(self) -> None:
+        # 262144 bytes at 2000 kbit/s = 1048.576 ms: the band's upper edge.
+        assert judge_rate(1048.576, 262144, 1000.0).verdict is Verdict.PASS
+
+    def test_just_over_twice_the_target_fails(self) -> None:
+        assert judge_rate(1040.0, 262144, 1000.0).verdict is Verdict.FAIL
+
+    def test_a_kbit_kbyte_mixup_fails(self) -> None:
+        # 8x the requested rate: the unit was misapplied, not drifted.
+        assert judge_rate(2097.152 / 8, 262144, 1000.0).verdict is Verdict.FAIL
 
     def test_no_clock(self) -> None:
         result = judge_rate(None, 262144, 1000.0)
@@ -208,44 +247,80 @@ class TestRate:
 
 
 class TestPortRange:
-    # delay_ms=100 -> tol = max(20, 25) = 25; in-range window is
-    # [2*100-25, 3*100) = [175, 300); out-of-range must stay < 25.
+    # A delayed connect-and-echo crosses the filter twice, so impaired traffic
+    # rises by about 2*delay and clean traffic by about 0. delay_ms=100: a
+    # probe counts as impaired from +100 (the midpoint); the in-range window is
+    # [100, 400), whose upper edge catches gross over-application (a delay applied twice
+    # rises about 4*delay, right at the cap).
     def test_both_halves_pass(self) -> None:
         result = judge_port_range(in_ms=250.0, out_ms=60.0, base_ms=50.0, delay_ms=100.0)
         assert result.verdict is Verdict.PASS
         assert result.feature == "port range"
 
+    def test_in_range_half_passes_at_the_midpoint(self) -> None:
+        result = judge_port_range(in_ms=150.0, out_ms=60.0, base_ms=50.0, delay_ms=100.0)
+        assert result.verdict is Verdict.PASS
+
+    def test_in_range_half_fails_just_under_the_midpoint(self) -> None:
+        # in_delta = 99: nearer clean than impaired, so the delay did not apply.
+        result = judge_port_range(in_ms=149.0, out_ms=60.0, base_ms=50.0, delay_ms=100.0)
+        assert result.verdict is Verdict.FAIL
+        assert result.detail == "in-range delta +99ms not in [100, 400)ms"
+
     def test_in_range_half_fails_at_exclusive_upper_bound(self) -> None:
-        # in_delta = 300 hits the upper bound exactly, which is EXCLUSIVE
-        # ("< 3*delay_ms"), so it fails even though 299.9 would pass.
-        # out_delta = 10 stays comfortably under tol (25) and passes.
-        result = judge_port_range(in_ms=350.0, out_ms=60.0, base_ms=50.0, delay_ms=100.0)
+        # in_delta = 400 is 4*delay, the EXCLUSIVE upper edge.
+        result = judge_port_range(in_ms=450.0, out_ms=60.0, base_ms=50.0, delay_ms=100.0)
         assert result.verdict is Verdict.FAIL
         assert result.detail is not None
         assert "in-range" in result.detail
         assert "out-of-range" not in result.detail
 
-    def test_out_of_range_half_fails_at_tolerance(self) -> None:
-        # out_delta = 25 == tol, which fails ("< tol" is strict).
-        # in_delta = 200 is inside [175, 300) and passes.
-        result = judge_port_range(in_ms=250.0, out_ms=75.0, base_ms=50.0, delay_ms=100.0)
+    def test_out_of_range_half_passes_just_under_the_midpoint(self) -> None:
+        result = judge_port_range(in_ms=250.0, out_ms=149.0, base_ms=50.0, delay_ms=100.0)
+        assert result.verdict is Verdict.PASS
+
+    def test_out_of_range_half_fails_at_the_midpoint(self) -> None:
+        result = judge_port_range(in_ms=250.0, out_ms=150.0, base_ms=50.0, delay_ms=100.0)
         assert result.verdict is Verdict.FAIL
-        assert result.detail is not None
-        assert "out-of-range" in result.detail
-        assert "in-range" not in result.detail
+        assert result.detail == "out-of-range delta +100ms >= 100ms (1x the delay)"
+
+    def test_out_of_range_traffic_delayed_like_in_range_fails(self) -> None:
+        # The selector matched everything: both probes rose by about 2*delay.
+        result = judge_port_range(in_ms=250.0, out_ms=250.0, base_ms=50.0, delay_ms=100.0)
+        assert result.verdict is Verdict.FAIL
+
+    def test_recorded_vm_drift_passes(self) -> None:
+        # #514, 2026-10-12: base 2.6 ms, in-range 104.0 ms, out-of-range 29.0 ms
+        # under a 50 ms delay. The clean probe drifted +26 ms, still nearer clean.
+        result = judge_port_range(in_ms=104.0, out_ms=29.0, base_ms=2.6, delay_ms=50.0)
+        assert result.verdict is Verdict.PASS
 
 
 class TestSide:
-    # delay_ms=100 -> tol = max(20, 25) = 25.
-    def test_just_under_tolerance_passes(self) -> None:
-        result = judge_side(src_ms=74.0, base_ms=50.0, delay_ms=100.0)  # delta=24 < 25
+    # The src-side probe is clean traffic; it is impaired from +delay (the
+    # midpoint between clean, about 0, and impaired, about 2*delay).
+    def test_just_under_the_midpoint_passes(self) -> None:
+        result = judge_side(src_ms=149.0, base_ms=50.0, delay_ms=100.0)  # delta=99
         assert result.verdict is Verdict.PASS
 
-    def test_at_tolerance_fails(self) -> None:
-        result = judge_side(src_ms=75.0, base_ms=50.0, delay_ms=100.0)  # delta=25, not <25
+    def test_at_the_midpoint_fails(self) -> None:
+        result = judge_side(src_ms=150.0, base_ms=50.0, delay_ms=100.0)  # delta=100
         assert result.verdict is Verdict.FAIL
         assert result.detail == "a src-side selector delayed destination-port traffic"
         assert result.feature == "side"
+
+    def test_a_selector_applied_to_the_wrong_side_fails(self) -> None:
+        # Destination-port traffic delayed like impaired traffic: about +2*delay.
+        assert judge_side(src_ms=250.0, base_ms=50.0, delay_ms=100.0).verdict is Verdict.FAIL
+
+    @pytest.mark.parametrize(
+        ("base_ms", "src_ms"),
+        [(10.3, 34.8), (2.9, 32.7)],
+        ids=["2026-09-29", "2026-10-12"],
+    )
+    def test_recorded_vm_drift_passes(self, base_ms: float, src_ms: float) -> None:
+        # #514: clean traffic rose +24.5 and +29.7 ms under a 50 ms src-side delay.
+        assert judge_side(src_ms=src_ms, base_ms=base_ms, delay_ms=50.0).verdict is Verdict.PASS
 
 
 class TestReadback:

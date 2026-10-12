@@ -8,6 +8,11 @@ read-back/expire probes, the plain numbers or
 returning ``None`` when the baseline is quiet enough to trust the rest of the
 run, or an ``unmeasured`` result naming why it isn't.
 
+The timing judges (delay, rate, port range, side) judge the ballpark, not the
+precision: test VMs' CPUs and clocks drift, and otto's job is to pass the
+options to netem. A live check only has to show each option took effect, so a
+wrong or missing option is caught.
+
 A ping-based judge that gets ``None`` stats, or stats with no replies at all
 (``avg is None``), always fails with ``detail="no ping replies"`` rather than
 running its own formula: by the time any of these run, ``judge_control`` has
@@ -61,14 +66,18 @@ def judge_delay(
     *,
     feature: str = "delay",
 ) -> FeatureResult:
-    """PASS when the measured extra RTT matches *want_ms* within tolerance."""
+    """PASS when the measured extra RTT is within half of *want_ms*.
+
+    "Within" is at least 10 ms, or 3 standard deviations of the baseline if larger: the option
+    applied, in the right ballpark.
+    """
     if baseline is None or impaired is None:
         return _no_reply(feature)
     b_avg, i_avg, b_sd = baseline.avg, impaired.avg, baseline.sd
     if b_avg is None or i_avg is None or b_sd is None:
         return _no_reply(feature)
     delta = i_avg - b_avg
-    tol = max(10.0, 0.1 * want_ms + 3 * b_sd)
+    tol = max(10.0, 0.5 * want_ms, 3 * b_sd)
     if abs(delta - want_ms) <= tol:
         return FeatureResult(feature, Verdict.PASS)
     return FeatureResult(
@@ -158,48 +167,71 @@ def judge_corrupt(stats: PingStats | None, corrupt_pct: float) -> FeatureResult:
 
 
 def judge_rate(elapsed_ms: float | None, nbytes: int, want_kbit: float) -> FeatureResult:
-    """PASS when the observed transfer rate is within 25% of *want_kbit*."""
+    """PASS when the observed transfer rate is within a factor of two of *want_kbit*.
+
+    The option applied, in the right ballpark.
+    """
     feature = "rate"
     if elapsed_ms is None:
         return FeatureResult(feature, Verdict.UNMEASURED, reason=UnmeasuredReason.NO_CLOCK)
     kbit = nbytes * 8 / elapsed_ms
-    tol = 0.25 * want_kbit
-    if abs(kbit - want_kbit) <= tol:
+    if want_kbit / 2 <= kbit <= 2 * want_kbit:
         return FeatureResult(feature, Verdict.PASS)
     return FeatureResult(
-        feature, Verdict.FAIL, measured=f"{kbit:.0f} kbit/s", wanted=f"{want_kbit:g} kbit/s ±25%"
+        feature,
+        Verdict.FAIL,
+        measured=f"{kbit:.0f} kbit/s",
+        wanted=f"{want_kbit / 2:g}-{want_kbit * 2:g} kbit/s",
     )
 
 
+def _looks_impaired(delta_ms: float, delay_ms: float) -> bool:
+    """Return True when a connect probe's rise is nearer the impaired level than the clean one.
+
+    A delayed connect-and-echo crosses the filter twice, so impaired traffic
+    rises by about ``2 * delay_ms`` and clean traffic by about ``0``. The
+    midpoint, one delay, splits them, and VM clock and scheduler drift of tens
+    of milliseconds stays on the right side of it. The check asks whether the
+    selector applied the delay, not how precisely netem carried it out.
+    """
+    return delta_ms >= delay_ms
+
+
 def judge_port_range(in_ms: float, out_ms: float, base_ms: float, delay_ms: float) -> FeatureResult:
-    """PASS when in-range traffic is delayed and out-of-range traffic is not.
+    """PASS when in-range traffic looks delayed and out-of-range traffic does not.
 
     ``in_ms``/``out_ms``/``base_ms`` are connect times for a probe inside the
     impaired range, outside it, and against the unimpaired baseline
-    respectively; deltas are taken against ``base_ms``.
+    respectively. Each probe is classed by ``_looks_impaired``; the
+    in-range rise must also stay under ``4 * delay_ms``, which catches gross
+    over-application (a delay applied twice rises about ``4 * delay_ms``,
+    right at the cap).
     """
     feature = "port range"
-    tol = max(20.0, 0.25 * delay_ms)
     in_delta = in_ms - base_ms
     out_delta = out_ms - base_ms
-    lo, hi = 2 * delay_ms - tol, 3 * delay_ms
-    in_ok = lo <= in_delta < hi
-    out_ok = out_delta < tol
+    in_ok = _looks_impaired(in_delta, delay_ms) and in_delta < 4 * delay_ms
+    out_ok = not _looks_impaired(out_delta, delay_ms)
     if in_ok and out_ok:
         return FeatureResult(feature, Verdict.PASS)
     problems: list[str] = []
     if not in_ok:
-        problems.append(f"in-range delta +{in_delta:.0f}ms not in [{lo:.0f}, {hi:.0f})ms")
+        problems.append(
+            f"in-range delta +{in_delta:.0f}ms not in [{delay_ms:.0f}, {4 * delay_ms:.0f})ms"
+        )
     if not out_ok:
-        problems.append(f"out-of-range delta +{out_delta:.0f}ms >= tol {tol:.0f}ms")
+        problems.append(f"out-of-range delta +{out_delta:.0f}ms >= {delay_ms:.0f}ms (1x the delay)")
     return FeatureResult(feature, Verdict.FAIL, detail="; ".join(problems))
 
 
 def judge_side(src_ms: float, base_ms: float, delay_ms: float) -> FeatureResult:
-    """PASS when a ``--side`` selector left source-port traffic on this egress undelayed."""
+    """PASS when a ``--side`` selector left source-port traffic on this egress undelayed.
+
+    The src-side probe is clean traffic, so it passes while it rose by less
+    than one delay (see ``_looks_impaired``).
+    """
     feature = "side"
-    tol = max(20.0, 0.25 * delay_ms)
-    if src_ms - base_ms < tol:
+    if not _looks_impaired(src_ms - base_ms, delay_ms):
         return FeatureResult(feature, Verdict.PASS)
     return FeatureResult(
         feature,
