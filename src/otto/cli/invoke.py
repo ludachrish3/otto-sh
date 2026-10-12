@@ -217,7 +217,8 @@ def _bind_run_leaf(
     bad value becomes a usage error.
     """
     from ..context import get_context
-    from ..instructions import InstructionEntry, bind_handler_kwargs
+    from ..instruction_catalog import InstructionEntry
+    from ..instructions import bind_handler_kwargs
 
     entry = InstructionEntry(
         name=getattr(func, "__name__", repr(func)),
@@ -1153,7 +1154,7 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
     if node.parent is None:
         return  # not dispatched through `otto run`
 
-    from ..instructions import INSTRUCTIONS
+    from ..instruction_catalog import INSTRUCTIONS
 
     # `or ""`: click types `info_name` as `str | None`, and an unnamed node owns
     # nothing -- "" is never a registered instruction, so the one lookup below

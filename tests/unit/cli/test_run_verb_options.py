@@ -215,7 +215,7 @@ def test_registering_and_publishing_resolve_no_run_class():
     visible: decorating and publishing survive it, building the app does not.
     """
     from otto.cli.run import build_instruction_app
-    from otto.instructions import INSTRUCTIONS
+    from otto.instruction_catalog import INSTRUCTIONS
 
     register_options("tests_unit_cli_absent_verb_options:Missing", verbs=["run"])
 
@@ -832,7 +832,7 @@ def _built_callback(name: str):
     read is the one ``build_instruction_app`` prepares.
     """
     from otto.cli.run import build_instruction_app
-    from otto.instructions import INSTRUCTIONS
+    from otto.instruction_catalog import INSTRUCTIONS
 
     (command,) = build_instruction_app(INSTRUCTIONS.get(name)).registered_commands
     return command.callback

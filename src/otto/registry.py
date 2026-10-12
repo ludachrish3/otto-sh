@@ -261,6 +261,20 @@ def registering_repo(name: str) -> "Iterator[None]":
         _REGISTERING_REPO.reset(token)
 
 
+@contextlib.contextmanager
+def _registering_for_otto() -> "Iterator[None]":
+    """Attribute registrations inside this block to otto itself, whatever block encloses it.
+
+    Private, for otto's own slots: the first-party actions are otto's even when
+    a repo's init import is what first imports their installer.
+    """
+    token = _REGISTERING_REPO.set(None)
+    try:
+        yield
+    finally:
+        _REGISTERING_REPO.reset(token)
+
+
 # ── Engine-wide state ───────────────────────────────────────────────────
 
 _CHECKING: "contextvars.ContextVar[bool]" = contextvars.ContextVar(

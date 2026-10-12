@@ -318,8 +318,10 @@ do:
 
 ## Where the code lives
 
-- {mod}`otto.instructions` — the `@instruction` decorator, the `INSTRUCTIONS`
-  registry, `run_instruction` and the handler-binding rule
+- {mod}`otto.instructions` — `run_instruction`, the handler-binding rule and
+  the `@instruction` decorator's public path
+- {mod}`otto.instruction_catalog` — the `@instruction` decorator itself, the
+  tables it fills and the `INSTRUCTIONS` view
 - {mod}`otto.cli.run` — `build_instruction_app`: the Typer projection of an
   entry, built when `otto run` resolves it; context injection lives in
   {mod}`otto.cli.invoke`

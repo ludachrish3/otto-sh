@@ -35,6 +35,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import render_module_graph as rmg
 from tests._fixtures.paths import PROJECT_ROOT
 
 # Nothing a verb's `--help` needs, and so nothing its command module may load
@@ -181,6 +182,10 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     # Forbidding the exact name "otto.cli" is enough -- importing a submodule
     # always loads the parent package first, so it lands in sys.modules too.
     "import otto.instructions": ["typer", "otto.cli"],
+    # The instruction catalog sits in the foundation layer and every layer
+    # reads it. Of otto's own modules it loads only what tach declares it
+    # depends on (IMPORT_ONLY_DECLARED below); this row bans the rest.
+    "import otto.instruction_catalog": ["typer"],
     "import otto.project.commands": ["typer", "otto.cli"],
     # otto.project.orchestrator and otto.project.actions legitimately load
     # typer: their first-party Options classes (otto.project.options) build
@@ -209,6 +214,26 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
 IMPORT_MUST_LOAD: dict[str, list[str]] = {
     "from otto.host import LocalHost": ["otto.host.local_host"],
     "from otto.lab import fleet_of_interest": ["otto.config.fleet"],
+    "import otto.instruction_catalog": ["otto.errors", "otto.registry"],
+}
+
+# The allowlist form, for a module every layer reads: importing it loads, of
+# otto's own modules, only itself, what tach.toml declares it depends on
+# (transitively), and the packages above those. Anything else fails, named
+# with the chain that loaded it, so a new import cannot slip past a list of
+# what was forbidden when the row was written (spec 2026-10-11
+# placement-and-phases §4.3).
+#
+# tach's depends_on says what a module MAY IMPORT, anywhere in it; this row is
+# about what it LOADS AT IMPORT. The two differ for a dependency the module
+# imports only inside a function. So each row lists its module's lazy direct
+# dependencies (declared in tach.toml, imported only function-locally): those
+# must not load at import, and every other direct dependency must. A newly
+# declared dependency that does not load therefore fails until its row names
+# it lazy, and a lazy one imported at module scope fails as well. A lazy
+# dependency of a dependency is that dependency's business, not this row's.
+IMPORT_ONLY_DECLARED: dict[str, list[str]] = {
+    "otto.instruction_catalog": [],
 }
 
 # Runs in the child. It records, for each watched module, the frames that
@@ -333,6 +358,103 @@ def test_an_entry_loads_what_it_exists_to_load(entry, required):
     report = run_contract(entry, required)
     assert report["preloaded"] == [], report
     assert sorted(report["loaded"]) == sorted(required), report
+
+
+def declared_closure(module: str, graph: rmg.ModuleGraph, lazy: "list[str]") -> "list[str]":
+    """*module* and every tach module it declares a dependency on, transitively.
+
+    *module*'s own edges to the modules in *lazy* are left out: those load
+    only when a function runs, never at import.
+    """
+    seen = {module}
+    pending = [module]
+    while pending:
+        current = pending.pop()
+        for dep in graph.depends_on.get(current, []):
+            if dep not in seen and not (current == module and dep in lazy):
+                seen.add(dep)
+                pending.append(dep)
+    return sorted(seen)
+
+
+def undeclared_loads(
+    module: str, loaded: "list[str]", graph: rmg.ModuleGraph, lazy: "list[str]"
+) -> "list[str]":
+    """The otto modules in *loaded* that importing *module* may not load.
+
+    One is allowed when the tach module that owns it is *module* or one of its
+    declared dependencies loaded at import (not in *lazy*), or when it is a
+    package above an allowed one (a submodule's import loads its parents first).
+    """
+    allowed = declared_closure(module, graph, lazy)
+    return [
+        name
+        for name in loaded
+        if rmg.declared_owner(name, graph.modules) not in allowed
+        and not any(a.startswith(name + ".") for a in allowed)
+    ]
+
+
+def unloaded_eager_dependencies(
+    module: str, loaded: "list[str]", graph: rmg.ModuleGraph, lazy: "list[str]"
+) -> "list[str]":
+    """*module*'s declared direct dependencies, not named lazy, that its import did not load."""
+    owners = {rmg.declared_owner(name, graph.modules) for name in loaded}
+    return [
+        dep for dep in graph.depends_on.get(module, []) if dep not in lazy and dep not in owners
+    ]
+
+
+def otto_modules() -> "list[str]":
+    """Every module a file under ``src/otto`` defines."""
+    src = PROJECT_ROOT / "src"
+    return sorted(
+        rmg.module_of(path.relative_to(src).as_posix())
+        for path in src.joinpath("otto").rglob("*.py")
+    )
+
+
+@pytest.mark.parametrize(("module", "lazy"), list(IMPORT_ONLY_DECLARED.items()))
+def test_an_entry_loads_only_its_declared_dependencies(module, lazy):
+    graph = rmg.load_graph()
+    assert module in graph.depends_on, f"{module} is not a tach module"
+    assert set(lazy) <= set(graph.depends_on[module]), f"{module}: {lazy} are not all declared"
+    entry = f"import {module}"
+    report = run_contract(entry, otto_modules())
+    assert report["preloaded"] == [], report
+    assert module in report["loaded"], report
+    extra = undeclared_loads(module, sorted(report["loaded"]), graph, lazy)
+    assert not extra, _explain(
+        entry, {"preloaded": [], "loaded": {name: report["loaded"][name] for name in extra}}
+    )
+    unloaded = unloaded_eager_dependencies(module, sorted(report["loaded"]), graph, lazy)
+    assert not unloaded, (
+        f"`{entry}` does not load {unloaded}, which tach.toml declares as its dependencies: "
+        "if the module imports them only inside a function, name them lazy in its "
+        "IMPORT_ONLY_DECLARED row, so a module-scope import of them fails"
+    )
+
+
+def test_the_allowlist_admits_declared_dependencies_and_their_packages_only():
+    graph = rmg.ModuleGraph(
+        {"otto.low": ["otto.base"], "otto.base": [], "otto.pkg.mid": ["otto.low"], "otto.up": []}
+    )
+    loaded = ["otto", "otto.base", "otto.base.sub", "otto.low", "otto.pkg", "otto.up"]
+    assert undeclared_loads("otto.low", loaded, graph, []) == ["otto.pkg", "otto.up"]
+    assert undeclared_loads("otto.pkg.mid", loaded, graph, []) == ["otto.up"]
+
+
+def test_the_allowlist_holds_a_lazy_dependency_to_function_scope():
+    """tach's "may import" is not "loads at import": a lazy dependency must stay unloaded."""
+    graph = rmg.ModuleGraph(
+        {"otto.low": ["otto.base", "otto.lazy"], "otto.base": [], "otto.lazy": []}
+    )
+    eager = ["otto", "otto.base", "otto.low"]
+    assert undeclared_loads("otto.low", [*eager, "otto.lazy"], graph, ["otto.lazy"]) == [
+        "otto.lazy"
+    ]
+    assert unloaded_eager_dependencies("otto.low", eager, graph, []) == ["otto.lazy"]
+    assert unloaded_eager_dependencies("otto.low", eager, graph, ["otto.lazy"]) == []
 
 
 def test_a_broken_contract_names_the_chain_that_loaded_the_module(tmp_path):

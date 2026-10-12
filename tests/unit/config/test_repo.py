@@ -69,7 +69,7 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
     entries, evict the cached modules, and restore both afterwards.
     """
     from otto import bootstrap as bs
-    from otto.instructions import INSTRUCTIONS, PROJECT_ACTIONS, STANDALONE_INSTRUCTIONS
+    from otto.instruction_catalog import INSTRUCTIONS, PROJECT_ACTIONS, STANDALONE_INSTRUCTIONS
     from otto.params import OPTIONS
 
     repo1 = tests_root / "repo1"

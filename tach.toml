@@ -113,7 +113,7 @@ layer = "entry"
 # ensure_lab_context builds the context on it.
 # otto._shim_complete: cache.py's inspect verbs read the shim's own answer
 # (inspect_shim, inspect_tests).
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors"]
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors"]
 
 [[modules]]
 path = "otto.config"
@@ -124,7 +124,7 @@ depends_on = [
     "otto.errors",
     "otto.models",
     "otto.context",
-    "otto.instructions",
+    "otto.instruction_catalog",
     "otto.labs",
     # completion_cache resolves the process inventory function-locally, twice:
     # `_inventory_fingerprint` mixes its freshness signal into the digest and
@@ -301,14 +301,27 @@ depends_on = [
 ]
 
 [[modules]]
+path = "otto.instruction_catalog"
+layer = "foundation"
+# The instruction tables, the @instruction decorator and their checks: data and
+# rules, read by every layer above (Repo's panel, the completion cache, the
+# project layer, the CLI). Its first-party slot, FIRST_PARTY_ACTIONS, is filled
+# from above by otto.project.actions, its one installer (spec 2026-10-11
+# placement-and-phases §2.1, §3.2); the catalog never imports the project layer.
+depends_on = ["otto.errors", "otto.registry"]
+
+[[modules]]
 path = "otto.instructions"
+layer = "workflows"
+# The execution face: run_instruction and bind_handler_kwargs, over the catalog.
 # otto.context, otto.params and otto.project are all function-scope, inside
 # bind_handler_kwargs (context, params) and run_instruction (context, params,
-# project): the decorator and the registries stay cheap to import, and only
-# calling an instruction pulls the binding machinery and the orchestrator in.
+# project): importing the face stays cheap, and only calling an instruction
+# pulls the binding machinery and the orchestrator in. run_instruction also
+# declares otto's first-party actions (otto.project.actions) before its lookup.
 # otto.session: run_instruction asks check_instruction_active whether the owning
 # repo is active in the context. Function-scope, like the edges above.
-depends_on = ["otto.registry", "otto.errors", "otto.context", "otto.params", "otto.project", "otto.session"]
+depends_on = ["otto.instruction_catalog", "otto.context", "otto.params", "otto.project", "otto.session"]
 
 [[modules]]
 path = "otto.host"
@@ -566,6 +579,7 @@ depends_on = ["otto.errors", "otto.registry"]
 
 [[modules]]
 path = "otto.project"
+layer = "workflows"
 # The project layer sits ABOVE hosts and below the CLI: it drives host verbs
 # across the fleet on behalf of one repo. Every edge here points down.
 #
@@ -582,9 +596,15 @@ path = "otto.project"
 # otto.project` must stay cheap, and a module-scope import of either would join
 # the config<->context and host<->context cycles.
 #
-# otto.cli: no edge. The `@instruction` decorator lives in otto.instructions
-# since the thin-CLI series (item 1, 2026-09-28); the loop project -> cli ->
-# suite -> project that used to close through it is gone.
+# otto.cli: no edge. The `@instruction` decorator lives in
+# otto.instruction_catalog (since the thin-CLI series, 2026-09-28, in
+# otto.instructions; since spec 2026-10-11 placement-and-phases §3.2, in the
+# catalog below this layer); the loop project -> cli -> suite -> project that
+# used to close through it is gone.
+#
+# otto.instruction_catalog: the tables the project layer reads and the
+# first-party slot actions.py fills (declare_first_party_actions, its one
+# installer). The catalog sits in foundation and never imports this layer.
 #
 # otto.link and otto.tunnel are `cleanup`'s last two steps and `is_clean`'s
 # last two questions (2026-08-17): a netem impairment and a tunnel belong to
@@ -627,7 +647,7 @@ depends_on = [
     "otto.tunnel",
     "otto.errors",
     "otto.models",
-    "otto.instructions",
+    "otto.instruction_catalog",
     "otto.params",
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
@@ -711,6 +731,7 @@ depends_on = []
 
 [[modules]]
 path = "otto.tunnel"
+layer = "topology"
 # NOTE: no otto.link here (and none the other way) — see otto.link above.
 # otto.check IS allowed: it's the shared check core (otto tunnel check uses
 # it the same way otto link check does), and otto.check imports neither.

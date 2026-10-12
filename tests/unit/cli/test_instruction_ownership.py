@@ -40,7 +40,7 @@ from otto.cli.invoke import refuse_inactive_instruction
 from otto.cli.registry import CommandSpec
 from otto.config.lab import Lab
 from otto.context import OttoContext
-from otto.instructions import INSTRUCTIONS, STANDALONE_INSTRUCTIONS, InstructionEntry
+from otto.instruction_catalog import INSTRUCTIONS, STANDALONE_INSTRUCTIONS, InstructionEntry
 from otto.registry import registering_repo
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.bootstrapstub import bootstrap_stub

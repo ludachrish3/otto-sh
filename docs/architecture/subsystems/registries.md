@@ -98,7 +98,8 @@ that spans the sources lives in their `validate` hooks, which read the other
 source and refuse a registration the view could not derive, so a view never
 holds an entry that breaks it. `INSTRUCTIONS` is one: every `otto run`
 command, derived from `PROJECT_INSTRUCTIONS` (itself a view over
-`PROJECT_ACTIONS` and otto's own bodies) and `STANDALONE_INSTRUCTIONS`.
+`FIRST_PARTY_ACTIONS`, otto's own bodies, and `PROJECT_ACTIONS`) and
+`STANDALONE_INSTRUCTIONS`.
 
 ## The registry inventory
 
@@ -107,7 +108,8 @@ command, derived from `PROJECT_INSTRUCTIONS` (itself a view over
 | `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | the fourteen first-party verbs (`run`, `test`, `host`, …) |
 | `STANDALONE_INSTRUCTIONS` | `otto run` subcommand on a plain function | {func}`~otto.instructions.instruction` | — |
 | `PROJECT_ACTIONS` | a repo's `ProjectActions` subclass and the bodies it declares, keyed by the repo (only from that repo's init import) | `otto.project.actions.register_project_actions` | — |
-| `PROJECT_INSTRUCTIONS` (view) | project instruction (a `ProjectActions` method), derived from otto's own bodies and `PROJECT_ACTIONS` | {func}`~otto.instructions.instruction` on a `ProjectActions` method | `install`, `uninstall`, `status`, `cleanup`, `get-logs`, `install-tools` |
+| `FIRST_PARTY_ACTIONS` | otto's own `ProjectActions` class and its six bodies, one row keyed `otto`: a slot the instruction tables read and never import | only `otto.project.actions`, when it is imported and from its `declare()` | `otto` |
+| `PROJECT_INSTRUCTIONS` (view) | project instruction (a `ProjectActions` method), derived from `FIRST_PARTY_ACTIONS` and `PROJECT_ACTIONS` | {func}`~otto.instructions.instruction` on a `ProjectActions` method | `install`, `uninstall`, `status`, `cleanup`, `get-logs`, `install-tools` |
 | `INSTRUCTIONS` (view) | `otto run` subcommand, derived from `PROJECT_INSTRUCTIONS` and `STANDALONE_INSTRUCTIONS` | — | the six project instructions |
 | `OPTIONS` | options class, with the verbs (`run`, `test`) whose flags it joins | {func}`otto.params.register_options` / `@options(verbs=[...])` | — |
 | `HOST_CLASSES` | host class | `otto.host.os_profile.register_host_class` | `unix`, `embedded`, `zephyr` |
@@ -427,12 +429,16 @@ its result from the cache ({doc}`completion-cache`, "The test-names cache").
   inventory: loud duplicates, did-you-mean lookups, attribution
 - {mod}`otto.cli.registry` — `CommandSpec`, the CLI command registry, and
   lazy dispatch
-- {mod}`otto.instructions` — the `@instruction` decorator, the instruction
-  tables (`STANDALONE_INSTRUCTIONS`, `PROJECT_ACTIONS` and the two views
-  derived from them), and `run_instruction`, deliberately CLI-free
-  (`InstructionEntry` is plain data with no Typer field; the CLI builds the
-  command from it) so core readers — `Repo`'s instruction panel, the
-  completion cache — see the registered set without importing `otto.cli`
+- {mod}`otto.instruction_catalog` — the `@instruction` decorator, the
+  instruction tables (`STANDALONE_INSTRUCTIONS`, `PROJECT_ACTIONS`,
+  `FIRST_PARTY_ACTIONS` and the two views derived from them) and their checks,
+  deliberately CLI-free and in the foundation layer (`InstructionEntry` is
+  plain data with no Typer field; the CLI builds the command from it) so core
+  readers — `Repo`'s instruction panel, the completion cache, the project
+  layer — see the registered set without importing `otto.cli` or anything
+  that runs an instruction
+- {mod}`otto.instructions` — `run_instruction` and the handler-binding rule,
+  and `@instruction` at its public path
 - {mod}`otto.cli.run` — `build_instruction_app`: the Typer projection of an
   entry, built when `otto run` resolves it
 - {mod}`otto.params` — the `OPTIONS` registry, `register_options` and

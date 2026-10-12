@@ -5,7 +5,7 @@ import dataclasses
 import pytest
 import typer.main
 
-from otto.instructions import InstructionEntry, command_name, options_parameter
+from otto.instruction_catalog import InstructionEntry, command_name, options_parameter
 
 
 async def _handler(debug: bool = False) -> None: ...

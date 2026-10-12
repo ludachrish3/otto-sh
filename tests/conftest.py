@@ -2348,6 +2348,25 @@ def _drop_richs_cached_console():
     rich._console = None
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _first_party_actions_declared():
+    """Declare otto's first-party actions once, before any test's registry snapshot.
+
+    otto's six project instructions reach the instruction tables through a slot
+    that ``otto.project.actions`` fills when it is imported, as every otto
+    command's bootstrap does (spec 2026-10-11 placement-and-phases §2.1, §3.2).
+    Without this, a test process fills the slot only when some test first
+    imports that module, after that test's snapshot: its restore empties the
+    slot again while the module stays loaded, and every later reader in the
+    process sees no first-party instruction. Declared here, the filled slot is
+    inside every per-test snapshot. A test that needs the slot empty empties it
+    itself, and ``_isolate_registries`` puts it back.
+    """
+    from otto.project.actions import declare
+
+    declare()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_registries():
     """Snapshot every engine table before each test; restore after.

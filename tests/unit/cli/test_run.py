@@ -20,7 +20,7 @@ from typer.testing import CliRunner
 
 from otto.cli.run import INSTRUCTIONS, instruction, run_app
 from otto.host.unix_host import UnixHost
-from otto.instructions import InstructionEntry
+from otto.instruction_catalog import InstructionEntry
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.dispatch import DispatchRunner
@@ -618,7 +618,7 @@ class TestInstructionSeamGuard:
         """A stand-in for `run_app`: same group class, same async-leaf lane."""
         from otto.cli.invoke import make_registry_group
         from otto.cli.run import build_instruction_app
-        from otto.instructions import INSTRUCTIONS as REGISTRY
+        from otto.instruction_catalog import INSTRUCTIONS as REGISTRY
 
         app = typer.Typer(
             name="run", cls=make_registry_group(REGISTRY, app_of=build_instruction_app)
@@ -697,7 +697,7 @@ class TestInstructionSeamGuard:
         assert "'leaf'" in str(result.exception)
 
     def test_a_sync_entry_registered_directly_is_refused(self):
-        from otto.instructions import STANDALONE_INSTRUCTIONS
+        from otto.instruction_catalog import STANDALONE_INSTRUCTIONS
 
         def _seam_registered():  # pragma: no cover — never invoked
             pass
@@ -757,7 +757,7 @@ class TestInstructionOnAMethod:
 
         from otto import options
         from otto.cli.run import instruction
-        from otto.instructions import INSTRUCTIONS, MARK_ATTR, PROJECT_INSTRUCTIONS
+        from otto.instruction_catalog import INSTRUCTIONS, MARK_ATTR, PROJECT_INSTRUCTIONS
 
         @options
         class Opts:
@@ -790,7 +790,7 @@ class TestInstructionOnAMethod:
         rewrite the docstring, which is still what a reader of the class sees.
         """
         from otto.cli.run import instruction
-        from otto.instructions import MARK_ATTR
+        from otto.instruction_catalog import MARK_ATTR
 
         class Actions:
             @instruction(help="Lab-wide.")
@@ -802,7 +802,7 @@ class TestInstructionOnAMethod:
 
     def test_explicit_name_wins_and_underscores_dash(self) -> None:
         from otto.cli.run import instruction
-        from otto.instructions import MARK_ATTR
+        from otto.instruction_catalog import MARK_ATTR
 
         class Actions:
             @instruction()
@@ -872,7 +872,7 @@ class TestInstructionOnAMethod:
 
         from otto import options
         from otto.cli.run import instruction
-        from otto.instructions import MARK_ATTR
+        from otto.instruction_catalog import MARK_ATTR
 
         @options
         class Opts:

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..host.host import BaseHost
 from ..host.product import ProductPlan
-from ..instructions import PREVIEWABLE_INSTRUCTIONS
+from ..instruction_catalog import PREVIEWABLE_INSTRUCTIONS
 from ..params import OptionsSource
 from .actions import ProjectActions, _owned
 from .options import InstallOptions, InstallToolsOptions, UninstallOptions
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from ..host.dev_tool import DevTool
     from ..host.host import Host
     from ..host.product import Product
-    from ..instructions import ProjectInstructionBody
+    from ..instruction_catalog import ProjectInstructionBody
 
 
 @dataclass

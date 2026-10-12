@@ -13,13 +13,8 @@ from otto.context import (
     set_context,
     try_get_context,
 )
-from otto.instructions import (
-    STANDALONE_INSTRUCTIONS,
-    InstructionEntry,
-    bind_handler_kwargs,
-    instruction,
-    run_instruction,
-)
+from otto.instruction_catalog import STANDALONE_INSTRUCTIONS, InstructionEntry
+from otto.instructions import bind_handler_kwargs, instruction, run_instruction
 from otto.params import (
     OPTIONS,
     OptionsRegistrationError,

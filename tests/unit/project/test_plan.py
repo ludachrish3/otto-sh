@@ -374,7 +374,7 @@ def test_no_dev_does_not_name_a_host_override_that_will_not_run(monkeypatch):
 
 
 def test_the_previewable_names_are_exactly_the_ones_the_planner_walks():
-    from otto.instructions import PREVIEWABLE_INSTRUCTIONS
+    from otto.instruction_catalog import PREVIEWABLE_INSTRUCTIONS
     from otto.project.plan import _HOST_VERBS
 
     assert sorted(PREVIEWABLE_INSTRUCTIONS) == sorted(_HOST_VERBS)

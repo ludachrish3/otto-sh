@@ -294,7 +294,7 @@ PREDATES_THE_RULE: dict[str, list[str]] = {
         "register_cli_command loader: Any",
         "cli_command return: Callable[..., Any]",
     ],
-    "otto.instructions": [
+    "otto.instruction_catalog": [
         "instruction args: Any",
     ],
     "otto.params": [

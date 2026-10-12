@@ -411,7 +411,7 @@ async def test_cleanup_refuses_an_uninstall_override_with_a_required_field():
 
     from otto import options
     from otto.cli.run import instruction
-    from otto.instructions import ProjectInstructionError
+    from otto.instruction_catalog import ProjectInstructionError
 
     ran = []
 
@@ -822,7 +822,7 @@ async def test_is_uninstalled_refuses_a_status_override_with_a_required_field():
 
     from otto import options
     from otto.cli.run import instruction
-    from otto.instructions import ProjectInstructionError
+    from otto.instruction_catalog import ProjectInstructionError
 
     ran = []
 
@@ -1055,10 +1055,10 @@ def test_project_status_defaults_to_an_empty_per_repo_map():
 
 
 class TestBodyRegistration:
-    """Otto's six are a constant the tables derive from; registering a subclass adds its bodies."""
+    """Otto's six are declared when the module loads; registering a subclass adds its bodies."""
 
     def test_the_base_class_registered_all_six(self) -> None:
-        from otto.instructions import PROJECT_INSTRUCTIONS
+        from otto.instruction_catalog import PROJECT_INSTRUCTIONS
 
         names = {"install", "uninstall", "cleanup", "get-logs", "install-tools", "status"}
         assert names <= set(PROJECT_INSTRUCTIONS.names())
@@ -1067,12 +1067,12 @@ class TestBodyRegistration:
             assert body is not None
             assert body.repo is None
 
-    def test_a_fresh_process_derives_the_six_from_the_constant(self) -> None:
-        """Pins ``FIRST_PARTY_BODIES``: importing the module is all the six need.
+    def test_a_fresh_process_declares_the_six_at_import(self) -> None:
+        """Pins ``declare()`` at import: importing the module is all the six need.
 
         A fresh subprocess import is how production meets the tables -- nothing
         else in this process has touched them -- so it is the one witness that
-        the constant alone yields otto's six, with no registration call.
+        the import alone declares otto's six, with no other call.
 
         A subprocess rather than ``importlib.reload``: reloading this module
         in-process rebinds its ``ProjectActions`` to a NEW class object that
@@ -1085,7 +1085,7 @@ class TestBodyRegistration:
 
         script = (
             "import otto.project.actions as mod\n"
-            "from otto.instructions import PROJECT_INSTRUCTIONS\n"
+            "from otto.instruction_catalog import PROJECT_INSTRUCTIONS\n"
             "names = ['install', 'uninstall', 'cleanup', 'get-logs', 'install-tools', 'status']\n"
             "ok = all(\n"
             "    (b := PROJECT_INSTRUCTIONS.get(n).body_for(mod.ProjectActions)) is not None\n"
@@ -1111,7 +1111,7 @@ class TestBodyRegistration:
 
         from otto import options
         from otto.cli.run import instruction
-        from otto.instructions import PROJECT_INSTRUCTIONS
+        from otto.instruction_catalog import PROJECT_INSTRUCTIONS
         from otto.project import InstallOptions
         from otto.registry import registering_repo
 
@@ -1149,7 +1149,7 @@ class TestBodyRegistration:
 
         from otto import options
         from otto.cli.run import instruction
-        from otto.instructions import ProjectInstructionError
+        from otto.instruction_catalog import ProjectInstructionError
         from otto.registry import registering_repo
 
         @options
@@ -1183,7 +1183,7 @@ class TestBodyRegistration:
 
         from otto import options
         from otto.cli.run import instruction
-        from otto.instructions import ProjectInstructionError
+        from otto.instruction_catalog import ProjectInstructionError
         from otto.registry import registering_repo
 
         @options
@@ -1218,7 +1218,7 @@ class TestBodyRegistration:
 
         from otto import options
         from otto.cli.run import instruction
-        from otto.instructions import PROJECT_INSTRUCTIONS, ProjectInstructionError
+        from otto.instruction_catalog import PROJECT_INSTRUCTIONS, ProjectInstructionError
         from otto.registry import registering_repo
 
         @options

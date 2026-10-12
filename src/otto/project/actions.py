@@ -36,13 +36,13 @@ import dataclasses
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from .. import layout
-from ..instructions import (
+from ..instruction_catalog import (
     PROJECT_ACTIONS,
     PROJECT_INSTRUCTIONS,
     ProjectActionsEntry,
-    ProjectInstructionBody,
     ProjectInstructionError,
     _bodies_of,
+    declare_first_party_actions,
     instruction,
 )
 from ..params import OptionsSource, shared_field_values
@@ -609,16 +609,20 @@ class ProjectActions:
         return True
 
 
-FIRST_PARTY_BODIES: "tuple[ProjectInstructionBody, ...]" = _bodies_of(ProjectActions, None)
-"""Otto's own project-instruction bodies, one per marked method of :class:`ProjectActions`.
+def declare() -> None:
+    """Declare :class:`ProjectActions` as otto's own actions in the instruction tables.
 
-A constant, not a registration. The instruction tables derive the six
-first-party instructions from it, first, and nothing registers it. Built from
-the class alone, reading no table, so the tables and this constant have no
-initialization order between them.
+    The tables sit below this module and never import it, so this module
+    fills their first-party slot (``FIRST_PARTY_ACTIONS``). It runs when the
+    module is imported, and again from any caller that must not rely on that
+    import: ``run_instruction`` before its lookup, and ``bootstrap()`` before
+    any repo's init runs, so a table a test emptied is filled again.
+    Declaring again does nothing.
+    """
+    declare_first_party_actions(ProjectActions)
 
-:meta hide-value:
-"""
+
+declare()
 
 
 @registration_boundary
@@ -638,12 +642,12 @@ def register_project_actions(
 
     *cls*'s ``@instruction``-marked methods (those declared on *cls* itself)
     become this repo's project-instruction bodies, in the same
-    :class:`~otto.instructions.ProjectActionsEntry` -- a repo that overrides
+    :class:`~otto.instruction_catalog.ProjectActionsEntry` -- a repo that overrides
     ``install`` or declares a new project instruction of its own gets both from
     one decorator. The table's own rules apply: a walk shape is fixed by
     whichever repo declares the name first, and an override of a first-party
     instruction must carry an options class that inherits the first-party one
-    -- either raises :exc:`~otto.instructions.ProjectInstructionError`, and
+    -- either raises :exc:`~otto.instruction_catalog.ProjectInstructionError`, and
     nothing is registered.
 
     Returns *cls* unchanged so it can be used as a decorator.
@@ -653,12 +657,12 @@ def register_project_actions(
             import (nothing to attribute the class to); a ``ValueError``.
         otto.registry.DuplicateRegistration: If this repo already registered
             actions and *overwrite* is false.
-        otto.instructions.ProjectInstructionError: If the bodies break a
+        otto.instruction_catalog.ProjectInstructionError: If the bodies break a
             table rule, or two methods of *cls* claim one name.
     """
     repo = get_registering_repo()
-    # otto's own class carries otto's bodies (FIRST_PARTY_BODIES); a repo that
-    # registers it unchanged declares none of its own.
+    # otto's own class carries otto's bodies (declared in FIRST_PARTY_ACTIONS);
+    # a repo that registers it unchanged declares none of its own.
     bodies = () if cls is ProjectActions else _bodies_of(cls, repo)
     entry = ProjectActionsEntry(cls, bodies)
     # Outside an init import the key is the class name, which the refusal names.

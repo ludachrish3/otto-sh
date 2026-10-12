@@ -13,7 +13,7 @@ APPROVED: dict[str, list[tuple[str, str]]] = {
     "otto.docker.adapter:COMPOSE_ADAPTERS": [
         ("RequireRepo", "one adapter per (repo, use case); the repo is half the key")
     ],
-    "otto.instructions:PROJECT_ACTIONS": [
+    "otto.instruction_catalog:PROJECT_ACTIONS": [
         ("RequireRepo", "one actions class per repo; the repo is the key")
     ],
 }

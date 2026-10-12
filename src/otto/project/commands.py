@@ -1,6 +1,6 @@
 """Project instructions as ``otto run`` commands: one merged command per name.
 
-``otto.instructions.INSTRUCTIONS`` derives one command per project instruction
+``otto.instruction_catalog.INSTRUCTIONS`` derives one command per project instruction
 from the declared bodies; ``otto.cli.run`` builds it when ``otto run`` resolves
 it. Its flags are the union of every body's options and every class
 registered for the ``run`` verb, deduplicated by declaring class, and each
@@ -13,7 +13,7 @@ every repo's init has run (bootstrap), so a clash is a startup error.
 import inspect
 from typing import TYPE_CHECKING
 
-from ..instructions import PROJECT_INSTRUCTIONS, ProjectInstruction
+from ..instruction_catalog import PROJECT_INSTRUCTIONS, ProjectInstruction
 
 if TYPE_CHECKING:
     from ..params import OptionsOrigin

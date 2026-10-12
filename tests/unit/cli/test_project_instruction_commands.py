@@ -1,8 +1,8 @@
 """Project-instruction commands: the derivation, the merge, the dispatch, the panel.
 
 ``otto run install`` and its five siblings are not hand-written wrappers.
-:data:`~otto.instructions.INSTRUCTIONS` derives ONE command per name in
-:data:`~otto.instructions.PROJECT_INSTRUCTIONS`, whose flags are the union of
+:data:`~otto.instruction_catalog.INSTRUCTIONS` derives ONE command per name in
+:data:`~otto.instruction_catalog.PROJECT_INSTRUCTIONS`, whose flags are the union of
 every declared body's options class, and whose body forwards to
 :func:`otto.project.orchestrator.run_project_instruction`. This file covers the
 derivation (what ``INSTRUCTIONS`` holds), the merge (whose flags land on the
@@ -10,8 +10,9 @@ command, and what a cross-repo field collision does), the dispatch (every flag
 reaching the orchestrator as an options instance), ``status``' rendering and its
 three exit codes, and the ``otto defaults`` panel.
 
-Otto's six come from a constant (``FIRST_PARTY_BODIES``), so they are present
-in every process; the ``registered`` fixture only says a test relies on them.
+Otto's six are declared when ``otto.project.actions`` loads, which this module
+imports, and the root conftest fills their table again after each test's
+restore; the ``registered`` fixture only says a test relies on them.
 The flag set is only known once every repo's init has spoken, so bootstrap
 checks the merged options (``check_project_instruction_options``) AFTER the
 repo loop.
@@ -41,15 +42,15 @@ from otto import options
 from otto.cli.run import build_instruction_app, instruction, run_app
 from otto.config.lab import Lab
 from otto.context import OttoContext
-from otto.instructions import (
+from otto.instruction_catalog import (
     FIRST_PARTY_INSTRUCTIONS,
     INSTRUCTIONS,
     PROJECT_INSTRUCTIONS,
     STANDALONE_INSTRUCTIONS,
     InstructionEntry,
     ProjectInstructionError,
-    run_instruction,
 )
+from otto.instructions import run_instruction
 from otto.params import OptionsCollisionError
 from otto.project import (
     Cleanliness,
@@ -98,7 +99,7 @@ async def _noop() -> None: ...
 
 @pytest.fixture
 def registered():
-    """The six, derived from otto's constant: present whatever ran before."""
+    """The six, declared by ``otto.project.actions``: present whatever ran before."""
     assert set(SIX) <= set(INSTRUCTIONS.names())
 
 

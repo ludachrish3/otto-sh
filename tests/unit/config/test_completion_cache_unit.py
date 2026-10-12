@@ -406,7 +406,7 @@ def test_clear_cache_returns_false_when_missing(tmp_path: Path, monkeypatch) -> 
 
 
 # ---------------------------------------------------------------------------
-# collect_current_commands — reads otto.instructions.INSTRUCTIONS
+# collect_current_commands — reads otto.instruction_catalog.INSTRUCTIONS
 # ---------------------------------------------------------------------------
 
 
@@ -417,7 +417,8 @@ class TestCollectCurrentCommands:
         """A run where no init module registered anything reports [], never an error.
 
         THE EMPTINESS IS INJECTED, not inherited: otto's six project
-        instructions derive from a constant, so the live table is never empty.
+        instructions are declared when otto.project.actions loads, so the live table
+        is not empty once anything has imported it.
 
         Replacing the registry with an empty one states the condition the test
         is actually about and holds under every seed.
@@ -435,7 +436,7 @@ class TestCollectCurrentCommands:
         cli_registry.collect_current_commands()
         before = set(sys.modules)
         monkeypatch.setattr(
-            "otto.instructions.INSTRUCTIONS",
+            "otto.instruction_catalog.INSTRUCTIONS",
             Registry(
                 "instruction", entry=ClassEntry, register_hint="@otto.instructions.instruction()"
             ),
@@ -448,7 +449,7 @@ class TestCollectCurrentCommands:
         )
 
     def test_collects_registered_instruction_with_options(self) -> None:
-        from otto.instructions import STANDALONE_INSTRUCTIONS, InstructionEntry
+        from otto.instruction_catalog import STANDALONE_INSTRUCTIONS, InstructionEntry
 
         async def _probe_instr(name: Annotated[str, typer.Option("--name")] = "x") -> None: ...
 
@@ -466,7 +467,7 @@ class TestCollectCurrentCommands:
         """A command whose options can't be serialized still completes by name."""
         from decimal import Decimal
 
-        from otto.instructions import STANDALONE_INSTRUCTIONS, InstructionEntry
+        from otto.instruction_catalog import STANDALONE_INSTRUCTIONS, InstructionEntry
 
         async def _probe_bad(
             bad: Annotated[Decimal, typer.Option("--bad")] = Decimal(0),

@@ -82,7 +82,7 @@ from otto.host.transfer.nc import NcPortSharedError
 from otto.host.transfer.registry import TransferBackendError, TransferConstructionError
 from otto.host.transport import HopTransportTornDownError
 from otto.init.errors import InitInputError
-from otto.instructions import ProjectInstructionError
+from otto.instruction_catalog import ProjectInstructionError
 from otto.inventory import InventoryConstructionError, InventoryError, InventoryKeyError
 from otto.labs.errors import LabNotFoundError, LabRepositoryError, LabSourceConstructionError
 from otto.lifecycle import SyncPhaseInterrupt

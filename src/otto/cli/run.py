@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 import typer
 from rich import print as rprint
 
-from ..instructions import INSTRUCTIONS, InstructionEntry, ProjectInstruction
+from ..instruction_catalog import INSTRUCTIONS, InstructionEntry, ProjectInstruction
 
-# Re-export: the documented import moved to otto.instructions.
-from ..instructions import instruction as instruction  # noqa: PLC0414 — explicit re-export
+# Re-export: the documented import is otto.instructions; this spelling predates it.
+from ..instruction_catalog import instruction as instruction  # noqa: PLC0414 — explicit re-export
 from .invoke import make_registry_group, prepare_command_target
 
 if TYPE_CHECKING:

@@ -1,42 +1,12 @@
 instructions internals
 ======================
 
-The names ``otto.instructions`` defines outside its ``__all__``. They are not
-public and carry no stability promise; they are documented so the guides
-and the reference can link them. The public names are on :doc:`/api/instructions`.
+The name ``otto.instructions`` defines outside its ``__all__``. It is not
+public and carries no stability promise; it is documented so the guides and
+the reference can link it. The public names are on :doc:`/api/instructions`,
+and the instruction tables, the decorator's machinery and their checks are on
+:doc:`instruction_catalog`.
 
 .. currentmodule:: otto.instructions
-
-.. autoclass:: otto.instructions.InstructionEntry
-
-.. autodata:: otto.instructions.INSTRUCTIONS
-
-.. autodata:: otto.instructions.FIRST_PARTY_INSTRUCTIONS
-
-.. autodata:: otto.instructions.MARK_ATTR
-
-.. autodata:: otto.instructions.PREVIEWABLE_INSTRUCTIONS
-
-.. autoexception:: otto.instructions.ProjectInstructionError
-
-.. autoclass:: otto.instructions.ProjectInstructionMark
-
-.. autoclass:: otto.instructions.ProjectInstructionSpec
-
-.. autoclass:: otto.instructions.ProjectInstructionBody
-
-.. autoclass:: otto.instructions.ProjectInstruction
-
-.. autofunction:: otto.instructions.command_name
-
-.. autofunction:: otto.instructions.options_parameter
-
-.. autodata:: otto.instructions.PROJECT_INSTRUCTIONS
-
-.. autodata:: otto.instructions.STANDALONE_INSTRUCTIONS
-
-.. autoclass:: otto.instructions.ProjectActionsEntry
-
-.. autodata:: otto.instructions.P
 
 .. autofunction:: otto.instructions.bind_handler_kwargs

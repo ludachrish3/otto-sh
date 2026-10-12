@@ -11,7 +11,7 @@ instance (or :class:`~otto.params.OptionsSource`) its flags arrived on, which
 ``_source`` normalises so every body downstream sees the same thing.
 
 THREE RULES DECIDE EVERY WALK BELOW, AND THE FIRST TWO ARE THE INSTRUCTION
-TABLE'S -- :data:`otto.instructions.PROJECT_INSTRUCTIONS` holds one spec per
+TABLE'S -- :data:`otto.instruction_catalog.PROJECT_INSTRUCTIONS` holds one spec per
 name (``walk``, ``continue_on_failure``, ``require_dependencies``,
 ``combine_results``, ``render``), fixed by whoever declared the name first, so
 a repo that adds a project instruction gets the same machinery otto's six use.
@@ -47,7 +47,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ..errors import OttoError
-from ..instructions import PROJECT_INSTRUCTIONS
+from ..instruction_catalog import PROJECT_INSTRUCTIONS
 from ..params import OptionsSource
 from ..result import Result
 from ..utils import Status
@@ -85,7 +85,7 @@ if TYPE_CHECKING:
     from ..config.scope import ProjectScope
     from ..context import OttoContext
     from ..host.host import Host
-    from ..instructions import ProjectInstructionBody
+    from ..instruction_catalog import ProjectInstructionBody
 
 logger = logging.getLogger(__name__)
 

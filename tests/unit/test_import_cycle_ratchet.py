@@ -45,6 +45,9 @@ pytestmark = pytest.mark.interpreter_agnostic
 # when the completion cache stopped importing the CLI (its walkers of the command tree moved into
 # otto.cli.registry) and otto.monitor.live folded into otto.monitor (spec 2026-10-11
 # placement-and-phases §3.1, §3.11).
+# otto.instructions, otto.project and otto.tunnel left it when the instruction tables moved into
+# otto.instruction_catalog, below the layers that read them, and otto.config stopped importing
+# the execution face (spec 2026-10-11 placement-and-phases §3.2).
 BASELINE: dict[str, list[str]] = {
     "otto.bootstrap": ["otto.config", "otto.host"],
     "otto.check": ["otto.host"],
@@ -52,7 +55,6 @@ BASELINE: dict[str, list[str]] = {
         "otto.bootstrap",
         "otto.context",
         "otto.host",
-        "otto.instructions",
         "otto.inventory",
         "otto.labs",
         "otto.link",
@@ -73,20 +75,10 @@ BASELINE: dict[str, list[str]] = {
         "otto.docker",
         "otto.models",
     ],
-    "otto.instructions": ["otto.context", "otto.project", "otto.session"],
     "otto.inventory": ["otto.config", "otto.creds", "otto.host", "otto.models"],
     "otto.labs": ["otto.config", "otto.host", "otto.inventory", "otto.link", "otto.models"],
     "otto.link": ["otto.check", "otto.host", "otto.models"],
     "otto.models": ["otto.config", "otto.host", "otto.link"],
-    "otto.project": [
-        "otto.config",
-        "otto.context",
-        "otto.host",
-        "otto.instructions",
-        "otto.link",
-        "otto.models",
-        "otto.tunnel",
-    ],
     "otto.reservations": ["otto.config", "otto.models"],
     "otto.session": [
         "otto.bootstrap",
@@ -97,7 +89,6 @@ BASELINE: dict[str, list[str]] = {
         "otto.labs",
         "otto.models",
     ],
-    "otto.tunnel": ["otto.check", "otto.host", "otto.models"],
 }
 
 _HOW_TO_FIX = (

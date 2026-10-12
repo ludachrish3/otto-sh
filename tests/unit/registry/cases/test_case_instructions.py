@@ -1,10 +1,12 @@
-"""Conformance cases for the instruction tables: two sources and the two views over them."""
+"""Conformance cases for the instruction tables: three sources and the two views over them."""
 
 import functools
 
 import pytest
 
-from otto.instructions import (
+from otto.instruction_catalog import (
+    FIRST_PARTY_ACTIONS,
+    FIRST_PARTY_INSTRUCTIONS,
     INSTRUCTIONS,
     PROJECT_ACTIONS,
     PROJECT_INSTRUCTIONS,
@@ -13,17 +15,18 @@ from otto.instructions import (
     ProjectActionsEntry,
     ProjectInstructionError,
     _bodies_of,
-    instruction,
 )
+from otto.instructions import instruction
 from otto.project import ProjectActions, register_project_actions
 from otto.registry import registering_repo, registration_boundary
 from tests.unit.registry import conformance
 
 COVERS = [
-    "otto.instructions:STANDALONE_INSTRUCTIONS",
-    "otto.instructions:PROJECT_ACTIONS",
-    "otto.instructions:PROJECT_INSTRUCTIONS",
-    "otto.instructions:INSTRUCTIONS",
+    "otto.instruction_catalog:STANDALONE_INSTRUCTIONS",
+    "otto.instruction_catalog:PROJECT_ACTIONS",
+    "otto.instruction_catalog:FIRST_PARTY_ACTIONS",
+    "otto.instruction_catalog:PROJECT_INSTRUCTIONS",
+    "otto.instruction_catalog:INSTRUCTIONS",
 ]
 
 _REPO = "case-repo"
@@ -97,6 +100,39 @@ def test_project_actions_raw_case():
     )
 
 
+def _first_party_class(i: int) -> "type[ProjectActions]":
+    """A ``ProjectActions`` subclass that marks otto's six names itself, as otto's class does."""
+    body = {}
+    for name in sorted(FIRST_PARTY_INSTRUCTIONS):
+
+        @instruction(name=name)
+        async def run(self) -> None: ...
+
+        body[name.replace("-", "_")] = run
+    return type(f"CaseFirstParty{i}", (ProjectActions,), body)
+
+
+_FIRST_PARTY = {i: _first_party_class(i) for i in range(12)}
+
+
+def _first_party(i: int) -> ProjectActionsEntry:
+    return ProjectActionsEntry(_FIRST_PARTY[i], _bodies_of(_FIRST_PARTY[i], None))
+
+
+def test_first_party_actions_raw_case():
+    """The one-row table, emptied first: the case registers its own row under ``"otto"``."""
+    state = FIRST_PARTY_ACTIONS._snapshot()
+    FIRST_PARTY_ACTIONS.unregister("otto")
+    try:
+        conformance.assert_raw_registry(
+            FIRST_PARTY_ACTIONS,
+            make=lambda i: ("otto", _first_party(i)),
+            invalid=("case-not-otto", _first_party(4)),
+        )
+    finally:
+        FIRST_PARTY_ACTIONS._restore(state)
+
+
 def test_project_actions_wrapper_case():
     cls = _actions_class(20, "__c-body")
     with registering_repo(_REPO):
@@ -149,7 +185,7 @@ def test_the_project_instructions_view_case():
 
     conformance.assert_view(
         PROJECT_INSTRUCTIONS,
-        sources=[PROJECT_ACTIONS],
+        sources=[FIRST_PARTY_ACTIONS, PROJECT_ACTIONS],
         contribute=contribute,
         clash=clash,
         refusal=ProjectInstructionError,

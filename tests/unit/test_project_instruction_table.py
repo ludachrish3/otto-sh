@@ -1,7 +1,7 @@
 """The project-instruction table: one spec per name, one body per repo, loud rules.
 
-Declaration order is bootstrap's: otto's own bodies first (repo ``None``, the
-constant ``FIRST_PARTY_BODIES``), then each repo's actions in registration
+Declaration order is bootstrap's: otto's own bodies first (repo ``None``,
+declared in ``FIRST_PARTY_ACTIONS``), then each repo's actions in registration
 (dependency) order. The FIRST declaration of a name fixes its walk shape; a
 later declaration may restate a keyword identically but never differently. An
 override of a first-party name must inherit that name's first-party options
@@ -10,7 +10,7 @@ root conftest's ``_isolate_registries`` rolls back after each test.
 
 The repo-declared synthetic names are ``provision`` and ``deploy``, never one
 of otto's six; the first-party rules use ``install`` itself, since otto's
-bodies are a constant every test sees.
+bodies are declared when ``otto.project.actions`` loads, which this module imports.
 """
 
 from typing import Annotated
@@ -19,12 +19,8 @@ import pytest
 import typer
 
 from otto import options
-from otto.instructions import (
-    INSTRUCTIONS,
-    PROJECT_INSTRUCTIONS,
-    ProjectInstructionError,
-    instruction,
-)
+from otto.instruction_catalog import INSTRUCTIONS, PROJECT_INSTRUCTIONS, ProjectInstructionError
+from otto.instructions import instruction
 from otto.project import InstallOptions, ProjectActions, register_project_actions
 from otto.registry import registering_repo
 

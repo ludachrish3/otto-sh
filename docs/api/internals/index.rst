@@ -24,6 +24,7 @@ of these pages.
    examples
    host/index
    init/index
+   instruction_catalog
    instructions
    inventory
    invocation

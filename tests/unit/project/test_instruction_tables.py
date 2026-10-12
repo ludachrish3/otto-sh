@@ -1,11 +1,12 @@
-"""Two writable sources, one constraint, two derived views.
+"""Three writable sources, one constraint, two derived views.
 
-``STANDALONE_INSTRUCTIONS`` (``@instruction()`` on a plain function) and
+``STANDALONE_INSTRUCTIONS`` (``@instruction()`` on a plain function),
 ``PROJECT_ACTIONS`` (one ``ProjectActions`` class per repo, carrying its
-bodies) are the only tables anything writes. ``PROJECT_INSTRUCTIONS`` and
-``INSTRUCTIONS`` are derived from them, with otto's own bodies
-(``FIRST_PARTY_BODIES``, a constant) first, and one check over both sources
-refuses a registration that would leave them inconsistent.
+bodies) and ``FIRST_PARTY_ACTIONS`` (otto's own class, which
+``otto.project.actions`` declares) are the only tables anything writes.
+``PROJECT_INSTRUCTIONS`` and ``INSTRUCTIONS`` are derived from them, with
+otto's own bodies first, and one check over the sources refuses a
+registration that would leave them inconsistent.
 """
 
 import subprocess
@@ -17,15 +18,15 @@ import pytest
 import typer
 
 from otto import options
-from otto.instructions import (
+from otto.instruction_catalog import (
     INSTRUCTIONS,
     PROJECT_ACTIONS,
     PROJECT_INSTRUCTIONS,
     STANDALONE_INSTRUCTIONS,
     ProjectActionsEntry,
     ProjectInstructionError,
-    instruction,
 )
+from otto.instructions import instruction
 from otto.project import InstallOptions, ProjectActions, register_project_actions
 from otto.registry import DuplicateRegistration, registering_repo
 from tests._fixtures.sutrepo import make_sut_repo
@@ -43,9 +44,9 @@ def _bare(name: str):
     return type(name, (ProjectActions,), {})
 
 
-def test_otto_s_bodies_are_a_constant_not_a_registration():
-    assert PROJECT_ACTIONS.names() == []  # nothing registered at import
-    assert "install" in PROJECT_INSTRUCTIONS  # derived from FIRST_PARTY_BODIES
+def test_otto_s_bodies_come_from_their_own_table_not_a_repo_s():
+    assert PROJECT_ACTIONS.names() == []  # no repo registered anything
+    assert "install" in PROJECT_INSTRUCTIONS  # derived from FIRST_PARTY_ACTIONS
 
 
 def test_the_views_have_no_mutation_method():
@@ -386,21 +387,21 @@ def test_actions_for_returns_the_registered_class():
     assert type(actions_for(fake_repo("other"), ctx)) is ProjectActions
 
 
-def test_a_registry_check_imports_otto_s_bodies_in_a_fresh_process():
-    """A standalone registration's check reads otto's bodies before anything imported them.
+def test_a_registry_check_imports_nothing_from_the_project_layer_in_a_fresh_process():
+    """A standalone registration's check reads only the tables, never ``otto.project``.
 
-    The import happens inside a registry check, so it must register nothing:
-    a registration made there would be refused for being made during a check.
+    The six names are refused from the static ``FIRST_PARTY_INSTRUCTIONS``, so
+    the check needs nothing ``otto.project.actions`` declares.
     """
     script = (
         "import sys\n"
-        "from otto.instructions import STANDALONE_INSTRUCTIONS, instruction\n"
+        "from otto.instruction_catalog import STANDALONE_INSTRUCTIONS, instruction\n"
         "from otto.registry import registering_repo\n"
         "assert 'otto.project.actions' not in sys.modules\n"
         "async def deploy(): ...\n"
         "with registering_repo('acme'):\n"
         "    instruction()(deploy)\n"
-        "assert 'otto.project.actions' in sys.modules, 'the check never read the bodies'\n"
+        "assert 'otto.project.actions' not in sys.modules, 'the check imported the project layer'\n"
         "print(STANDALONE_INSTRUCTIONS.repo('deploy'))\n"
     )
     out = subprocess.run(
@@ -411,23 +412,30 @@ def test_a_registry_check_imports_otto_s_bodies_in_a_fresh_process():
 
 
 @pytest.mark.parametrize(
-    "script",
+    ("script", "declared"),
     [
         (
-            "import otto.project.actions, otto.instructions as i; "
-            "print(sorted(i.PROJECT_INSTRUCTIONS.names()))"
+            (
+                "import otto.project.actions, otto.instruction_catalog as i; "
+                "print(sorted(i.PROJECT_INSTRUCTIONS.names()))"
+            ),
+            True,
         ),
         (
-            "import sys, otto.instructions as i; "
-            "assert 'otto.project.actions' not in sys.modules; "
-            "print(sorted(i.INSTRUCTIONS.names()))"
+            (
+                "import sys, otto.instruction_catalog as i; "
+                "print(sorted(i.INSTRUCTIONS.names())); "
+                "assert 'otto.project.actions' not in sys.modules"
+            ),
+            False,
         ),
     ],
     ids=["actions-first", "instructions-first"],
 )
-def test_importing_the_tables_in_a_fresh_process(script):
+def test_importing_the_tables_in_a_fresh_process(script, declared):
+    """The six are there once ``otto.project.actions`` is imported, and not before."""
     out = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, check=False, timeout=120
     )
     assert out.returncode == 0, out.stderr
-    assert "'install'" in out.stdout
+    assert ("'install'" in out.stdout) is declared

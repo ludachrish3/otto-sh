@@ -1164,7 +1164,13 @@ layers name an edge that regrows:
   loaded the module, ending at the line that imported it; the last otto frame
   in that chain is the edge to cut. `IMPORT_MUST_LOAD` in the same file is
   the positive control: what an entry must load, so that a row cannot pass
-  by loading nothing at all.
+  by loading nothing at all. `IMPORT_ONLY_DECLARED` is the allowlist form,
+  for a module every layer reads: importing it may load, of otto's own
+  modules, only itself and what `tach.toml` declares it depends on, so a new
+  import fails without anyone having thought to forbid it. tach's list says
+  what a module may import anywhere, so a row names the dependencies its
+  module imports only inside a function; those must not load at import, and
+  every other declared dependency must.
 
 ## AI-Assisted Contributions
 

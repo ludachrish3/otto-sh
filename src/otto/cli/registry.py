@@ -290,7 +290,7 @@ def collect_current_commands() -> list[dict[str, Any]]:
     """Read the currently-registered instructions with their options.
 
     Must be called after :func:`otto.bootstrap.bootstrap` has finished
-    populating ``otto.instructions.INSTRUCTIONS``. A source that never
+    populating ``otto.instruction_catalog.INSTRUCTIONS``. A source that never
     loaded simply has an empty registry (no init modules → no
     ``@instruction()`` ran → no entries). Test files are never read here:
     ``otto test`` has no per-test subcommands, and its flags (the run flags
@@ -305,7 +305,7 @@ def collect_current_commands() -> list[dict[str, Any]]:
 
     from ..config.completion_cache import serialize_options
     from ..errors import OttoError
-    from ..instructions import INSTRUCTIONS
+    from ..instruction_catalog import INSTRUCTIONS
     from .run import build_instruction_app
 
     log = logging.getLogger(__name__)

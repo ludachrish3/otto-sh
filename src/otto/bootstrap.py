@@ -341,13 +341,14 @@ def bootstrap() -> BootstrapResult:
     resolution = resolve_dependencies(repos)
     errors.extend(resolution.errors)
     # otto's six project instructions (install/uninstall/cleanup/get-logs/
-    # install-tools/status) are a constant in `otto.project.actions`
-    # (FIRST_PARTY_BODIES), which the instruction tables read when they check
-    # a registration or derive a view. Imported here, before any repo's init
-    # runs, so that import never happens inside a registry check; the tables
-    # derive the six whenever it lands. The merged flags are checked after the
-    # loop instead (see below), because they are only known once every repo
-    # has declared its own bodies.
+    # install-tools/status) are declared by `otto.project.actions` into the
+    # instruction tables' first-party slot (FIRST_PARTY_ACTIONS), which the
+    # tables read when they check a registration or derive a view. Declared
+    # here, before any repo's init runs, so every repo's actions class is
+    # checked against otto's own; `declare()` rather than the import alone, so
+    # a slot emptied since the module was first imported is filled again. The
+    # merged flags are checked after the loop instead (see below), because they
+    # are only known once every repo has declared its own bodies.
     #
     # Not contained like the per-repo imports below: this is otto's own module,
     # so a failure here is a bug in otto, not a repo's, and framing it as one
@@ -360,7 +361,7 @@ def bootstrap() -> BootstrapResult:
         ordered_repos=resolution.ordered,
     )
     try:
-        importlib.import_module("otto.project.actions")
+        importlib.import_module("otto.project.actions").declare()
         for repo in resolution.ordered:
             repo.add_libs_to_pythonpath()
             with registering_repo(repo.name):

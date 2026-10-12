@@ -115,8 +115,10 @@ Each seam's user-facing how-to lives in the guide:
 ## Where the code lives
 
 - {mod}`otto.instructions` — the `@instruction` decorator behind an `otto run`
-  subcommand, the `STANDALONE_INSTRUCTIONS` table it fills, and the
-  `INSTRUCTIONS` view every `otto run` command is read from
+  subcommand, at its public path
+- {mod}`otto.instruction_catalog` — the `STANDALONE_INSTRUCTIONS` table the
+  decorator fills, and the `INSTRUCTIONS` view every `otto run` command is
+  read from
 - {mod}`otto.params` — `register_options` and `@options(verbs=[...])`, the
   options registry behind `otto run`'s and `otto test`'s verb-wide flags
 - {mod}`otto.cli.registry` — `register_cli_command` / `cli_command` for a

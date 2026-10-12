@@ -4,7 +4,8 @@ import pytest
 
 from otto.config.lab import Lab
 from otto.context import OttoContext, try_get_context
-from otto.instructions import STANDALONE_INSTRUCTIONS, InstructionEntry, run_instruction
+from otto.instruction_catalog import STANDALONE_INSTRUCTIONS, InstructionEntry
+from otto.instructions import run_instruction
 from otto.registry import registering_repo
 from otto.session import InstructionInactiveError
 from tests._fixtures.bootstrap_seam import seed_scope_verdicts

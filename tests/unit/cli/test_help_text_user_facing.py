@@ -135,7 +135,7 @@ def test_built_in_help_has_no_rst_markup():
     # verb of every first-party host class was actually reached.
     for name in builtin_command_names():
         assert f"otto {name}" in paths, name
-    from otto.instructions import PROJECT_INSTRUCTIONS
+    from otto.instruction_catalog import PROJECT_INSTRUCTIONS
 
     shipped = PROJECT_INSTRUCTIONS.names()
     assert "install" in shipped, shipped

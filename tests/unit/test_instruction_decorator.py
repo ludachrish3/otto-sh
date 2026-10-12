@@ -4,7 +4,8 @@ import dataclasses
 
 import pytest
 
-from otto.instructions import INSTRUCTIONS, STANDALONE_INSTRUCTIONS, instruction
+from otto.instruction_catalog import INSTRUCTIONS, STANDALONE_INSTRUCTIONS
+from otto.instructions import instruction
 from otto.registry import registering_repo
 
 

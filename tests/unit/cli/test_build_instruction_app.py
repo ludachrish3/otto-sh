@@ -5,7 +5,7 @@ import dataclasses
 from typer.testing import CliRunner
 
 from otto.cli.run import build_instruction_app
-from otto.instructions import STANDALONE_INSTRUCTIONS, InstructionEntry
+from otto.instruction_catalog import STANDALONE_INSTRUCTIONS, InstructionEntry
 
 # Invoked on the Typer app itself, never on `typer.main.get_command(app)`'s
 # result: `typer.testing.CliRunner.invoke` resolves the command from the

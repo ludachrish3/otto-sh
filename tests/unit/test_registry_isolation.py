@@ -346,3 +346,14 @@ def test_host_classes_present_before_the_test_survive_the_restore() -> None:
         assert os_profile.build_host_spec("unix") is UnixHostSpec
     finally:
         _guard_restore(pristine)
+
+
+def test_the_process_starts_with_otto_s_first_party_actions_declared() -> None:
+    """The root conftest declares them before any snapshot (``_first_party_actions_declared``).
+
+    This module imports nothing from ``otto.project``, so run on its own it is
+    the witness: without the session fixture the slot is empty here.
+    """
+    from otto.instruction_catalog import FIRST_PARTY_ACTIONS
+
+    assert "otto" in FIRST_PARTY_ACTIONS

@@ -591,7 +591,7 @@ class Repo:
         """
         from rich.text import Text
 
-        from ..instructions import INSTRUCTIONS  # lazy import — keeps repo import-light
+        from ..instruction_catalog import INSTRUCTIONS  # lazy import — keeps repo import-light
 
         instruction_names: list[str] = [
             entry.name
