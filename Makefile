@@ -1369,7 +1369,7 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 #
 # The import rules are the one architecture rule ast-grep cannot express: a
 # name's lazy-export status lives in its package's `_LAZY_ATTRS` /
-# `_LAZY_EXPORTS` table, which a pattern cannot read. Two parse-only tests
+# `_LAZY_EXPORTS` table, which a pattern cannot read. Four parse-only tests
 # enforce them (docs/contributing.md, "Patching lazily exported names"). They
 # also run in every pytest lane; this leg puts them in the per-change gate,
 # where a targeted test run would never select them. Plain `uv run`, not
@@ -1381,19 +1381,26 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 # shrink-only (#522), until forbid_circular_dependencies can be turned on.
 # The layer test and the import-string audit ride with it: tach cannot see a
 # module left unlayered, a file no module owns, or an import made by string.
-lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts and layers) + the tach layer canary + the import-cycle ratchet + the layer and import-string audits + ast-grep (pattern rules) + the lazy-export import rules + check-breaking (public-API golden marking)
+# So does the monitor boundary: tach cannot tell live.py from the other files
+# of the otto.monitor module, and only live.py may read the lab. Its claim to
+# count every import tach counts is about tach's behaviour, so
+# scripts/monitor_boundary_tach_canary.py re-checks it against the installed
+# tach beside the layer canary.
+lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts and layers) + the tach layer and monitor boundary canaries + the import-cycle ratchet + the layer and import-string audits + ast-grep (pattern rules) + the lazy-export import rules + check-breaking (public-API golden marking)
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
 	@uv run --group lint tach check --exact
 	@$(SAY) "tach: the installed tach still enforces the layer switch"
 	@uv run --group lint python scripts/tach_layer_canary.py
+	@$(SAY) "tach: the monitor boundary test still counts every import the installed tach counts"
+	@uv run --group lint python scripts/monitor_boundary_tach_canary.py
 	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
 	@uv run --group lint ast-grep scan src/otto web/src tests
 	@$(SAY) "ast-grep: rule tests (.ast-grep/rule-tests/)"
 	@uv run --group lint ast-grep test --skip-snapshot-tests
-	@$(SAY) "import rules: lazy exports patched where defined, read at call time, moved names spelled once"
-	@uv run pytest tests/unit/test_patch_targets.py tests/unit/test_no_import_time_lazy_exports.py tests/unit/test_moved_name_spellings.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
-	@$(SAY) "import cycle, layers and import strings: shrink-only ratchet, layer coverage, string audit"
-	@uv run pytest tests/unit/test_import_cycle_ratchet.py tests/unit/test_tach_layers.py tests/unit/test_dynamic_import_audit.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
+	@$(SAY) "import rules: lazy exports patched where defined, read at call time, moved names spelled once, imported from their defining module"
+	@uv run pytest tests/unit/test_patch_targets.py tests/unit/test_no_import_time_lazy_exports.py tests/unit/test_moved_name_spellings.py tests/unit/test_internal_imports_skip_facades.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
+	@$(SAY) "import cycle, layers and import strings: shrink-only ratchet, layer coverage, string audit, monitor boundary"
+	@uv run pytest tests/unit/test_import_cycle_ratchet.py tests/unit/test_tach_layers.py tests/unit/test_dynamic_import_audit.py tests/unit/test_monitor_service_reads_no_lab.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
 
 # `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
 # `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports

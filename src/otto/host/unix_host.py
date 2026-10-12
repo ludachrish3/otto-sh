@@ -106,11 +106,8 @@ from .session import (
     SessionManager,
 )
 from .telnet import TelnetClient
-from .transfer import (
-    TransferContext,
-    UnixFileTransfer,
-    build_transfer_backend,
-)
+from .transfer import TransferContext, build_transfer_backend
+from .transfer.unix_base import UnixFileTransfer
 from .userland import (
     APPLET_ABSENT,
     APPLET_PRESENT,

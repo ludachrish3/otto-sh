@@ -76,7 +76,7 @@ it was generated, and a taint flag::
     }
 
 Each ``options`` entry is a ``{"name", "flags", "kind", "default", "help"}``
-dict built by ``_serialize_options``; a third-party GROUP entry under
+dict built by ``serialize_options``; a third-party GROUP entry under
 ``commands`` also carries recursive ``"commands"`` child metadata, and a
 flattening single-command app carries ``"options"`` instead (both keys
 omitted when empty). A tainted section — written while bootstrap reported
@@ -139,7 +139,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
-from ..errors import OttoError, is_containable
 from . import corpus_snapshot
 
 if TYPE_CHECKING:
@@ -148,8 +147,8 @@ if TYPE_CHECKING:
 
     from ..host.os_profile import ProfileContext
     from ..inventory.protocol import Inventory
-    from ..labs import HostSummary
     from ..labs.drops import HostDrop
+    from ..labs.protocol import HostSummary
     from .cache_sections import Section
     from .repo import Repo
 
@@ -655,7 +654,7 @@ def _inventory_fingerprint(repos: list["Repo"]) -> "_InventoryDigest":
     ordinary, and every one of them would append a dead entry per invocation,
     which is the growth :func:`_fingerprint_is_ephemeral` exists to stop.
     """
-    from ..inventory import build_inventory
+    from ..inventory.config import build_inventory
 
     try:
         inventory = build_inventory(repos)
@@ -766,7 +765,7 @@ def _json_safe_default(default: Any) -> Any:
     return None
 
 
-def _serialize_options(
+def serialize_options(
     callback: Any,
     *,
     command_name: str,
@@ -776,6 +775,9 @@ def _serialize_options(
     Returns ``None`` (not an empty list) when any parameter uses an
     annotation form we don't know how to round-trip — that causes the
     command to be skipped entirely rather than cached with a half-signature.
+    The CLI's command-tree walkers in ``otto.cli.registry`` call it: the walk
+    lives with the CLI, which ``otto.config`` never imports, and the cache's
+    shape lives here.
     """
     log = logging.getLogger(__name__)
     try:
@@ -1411,69 +1413,6 @@ def discard_own_temporary_files() -> None:
 # ---------------------------------------------------------------------------
 
 
-def collect_current_commands() -> list[dict[str, Any]]:
-    """Read the currently-registered instructions with their options.
-
-    Must be called after :func:`otto.bootstrap.bootstrap` has finished
-    populating ``otto.instructions.INSTRUCTIONS``. A source that never
-    loaded simply has an empty registry (no init modules → no
-    ``@instruction()`` ran → no entries). Test files are never read here:
-    ``otto test`` has no per-test subcommands, and its flags (the run flags
-    and the ``test`` verb's registered options) are served from the command
-    tree like any other leaf's.
-
-    Each item is ``{"name": str, "options": list[dict]}``; a command whose
-    options can't be fully serialized is cached with ``options: []`` so
-    the name still completes even though the per-option flags don't.
-    """
-    from ..cli.run import build_instruction_app
-    from ..instructions import INSTRUCTIONS
-
-    log = logging.getLogger(__name__)
-    out: list[dict[str, Any]] = []
-    for name, entry in INSTRUCTIONS.items():
-        # Building an instruction's app resolves the `run` verb's options
-        # classes, which a rebuild pays for so that their flags complete.
-        try:
-            app = build_instruction_app(entry)
-        except OttoError as e:
-            # A command that cannot be built (its flags clash with the
-            # verb's) still completes by name; `otto run <name>` is where
-            # the clash is reported.
-            log.debug(f"completion-cache: {name!r} has no options, its command failed: {e}")
-            app = None
-        callback = None
-        if app is not None and app.registered_commands:
-            callback = app.registered_commands[0].callback
-        options = _serialize_options(callback, command_name=name) if callback else None
-        out.append({"name": name, "options": options if options is not None else []})
-    return out
-
-
-def collect_test_verb_options() -> list[dict[str, Any]]:
-    """Serialise the ``test`` verb's registered options, the flags ``otto test`` gains.
-
-    The completion fast path builds ``otto test`` without the options
-    registry, so it reads these instead
-    (:func:`otto.cli.test.build_test_app`). A verb whose flags cannot be
-    built (a collision) or serialised caches ``[]``: ``otto test`` is where
-    the collision is reported.
-    """
-    from ..cli.test import test_verb_params
-
-    try:
-        params = test_verb_params()
-    except OttoError as e:
-        logging.getLogger(__name__).debug(f"completion-cache: no otto test options: {e}")
-        return []
-
-    def verb_flags() -> None:  # pragma: no cover — only its signature is read
-        """Carry the verb's parameters for :func:`_serialize_options`."""
-
-    verb_flags.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
-    return _serialize_options(verb_flags, command_name="test") or []
-
-
 def collect_backend_names() -> dict[str, Any]:
     """Snapshot the registered term + transfer backend names for completion.
 
@@ -1495,112 +1434,6 @@ def collect_backend_names() -> dict[str, Any]:
     }
 
 
-def _serialize_cli_children(app: Any) -> list[dict[str, Any]]:
-    """Serialize a third-party Typer group's children for the cache.
-
-    Children reuse the instruction/suite option schema (rebuilt by
-    :func:`otto.config.completion_stubs.build_stub_command` on the fast
-    path). A child whose options don't round-trip degrades to name+help —
-    the name still tab-completes, only ``--<TAB>`` falls back. Nested groups
-    recurse; a nested single-command app serializes as the flattened leaf it
-    would natively become (see ``_typer_app_flattens``).
-    """
-    from typer.main import get_command_name
-
-    from ..cli.registry import _typer_app_flattens
-
-    children: list[dict[str, Any]] = []
-    for cmd_info in app.registered_commands:
-        cname = cmd_info.name or get_command_name(cmd_info.callback.__name__)
-        children.append(
-            {
-                "name": cname,
-                "help": cmd_info.help or inspect.getdoc(cmd_info.callback) or "",
-                "options": _serialize_options(cmd_info.callback, command_name=cname) or [],
-            }
-        )
-    for grp_info in app.registered_groups:
-        sub = grp_info.typer_instance
-        if sub is None:
-            continue
-        if _typer_app_flattens(sub):
-            children.extend(_serialize_cli_children(sub))
-            continue
-        gname = next(
-            (n for n in (grp_info.name, sub.info.name) if isinstance(n, str) and n),
-            None,
-        )
-        if gname is None:
-            continue
-        ghelp = next((h for h in (grp_info.help, sub.info.help) if isinstance(h, str)), "")
-        children.append({"name": gname, "help": ghelp, "commands": _serialize_cli_children(sub)})
-    return children
-
-
-def collect_cli_commands() -> list[dict[str, Any]]:
-    """Snapshot third-party top-level CLI commands for the completion cache.
-
-    Reads the live :data:`otto.cli.registry.CLI_COMMANDS` registry and
-    returns one ``{"name", "help", "lab_free"}`` dict per entry whose
-    registering module (``CLI_COMMANDS.origin(name)``) is *not* under
-    ``otto.`` — built-in commands re-register
-    on every real invocation (bootstrap always runs), so caching them would
-    be redundant and risks masking a genuine removal. Third-party commands,
-    by contrast, only exist in the registry after a plugin's init module has
-    executed, which the completion fast path deliberately skips; caching
-    their name/help/``lab_free`` here is what lets them still tab-complete.
-
-    A GROUP entry additionally carries ``"commands"`` (recursive child
-    metadata) and a flattening single-command app carries ``"options"`` —
-    both omitted when empty. Serializing children may import a lazy
-    ``"pkg.mod:attr"`` loader's module: a slow-path-only, once-per-cache-
-    refresh cost, contained per command (a broken loader degrades that entry
-    to name+help and real dispatch still reports the import error loudly).
-    """
-    import importlib
-
-    import typer
-
-    from ..cli.registry import CLI_COMMANDS, _typer_app_flattens
-
-    log = logging.getLogger(__name__)
-    out: list[dict[str, Any]] = []
-    for name, spec in CLI_COMMANDS.items():
-        if CLI_COMMANDS.origin(name).startswith("otto."):
-            continue
-        entry: dict[str, Any] = {"name": name, "help": spec.help, "lab_free": spec.lab_free}
-        try:
-            loader = spec.loader
-            if isinstance(loader, str):
-                mod_name, _, attr = loader.partition(":")
-                loader = getattr(importlib.import_module(mod_name), attr)
-            if isinstance(loader, typer.Typer):
-                if _typer_app_flattens(loader):
-                    cmd_info = loader.registered_commands[0]
-                    options = _serialize_options(cmd_info.callback, command_name=spec.name)
-                    if options:
-                        entry["options"] = options
-                else:
-                    commands = _serialize_cli_children(loader)
-                    if commands:
-                        entry["commands"] = commands
-        # Containment seam: the cache stays name-only, dispatch reports loudly.
-        #
-        # BaseException, not Exception: this imports a THIRD-PARTY loader module,
-        # so a module-level `pytest.importorskip` there raises `Skipped` — not an
-        # `Exception` — straight past this seam and out of `entry()`, which
-        # reaches `collect_cli_commands()` as a call ARGUMENT, so the
-        # `suppress(OSError)` around the cache write never sees it. That
-        # tracebacks out of every cache rebuild — root `otto --help` included —
-        # and into the shell mid-TAB. See `otto.errors.UNCONTAINABLE`.
-        except BaseException as e:
-            if not is_containable(e):
-                raise
-            log.debug(f"completion-cache: no child metadata for {spec.name!r}: {e!r}")
-        out.append(entry)
-    return out
-
-
 def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:
     """Best-effort usernames for ``--holder`` completion (cached).
 
@@ -1611,7 +1444,7 @@ def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:
     configured, build error, enumeration error, missing capability) yields
     ``[]`` so completion degrades gracefully and never blocks real work.
     """
-    from ..reservations import build_backend
+    from ..reservations.factory import build_backend
     from ..reservations.protocol import SupportsUsernameCompletion
 
     for repo in repos:
@@ -1758,7 +1591,7 @@ def resolve_process_inventory(repos: "Sequence[Repo]") -> InventoryResolution:
     result, so :func:`repo_host_summaries` answers empty for every repo without
     each of them repeating the warning.
     """
-    from ..inventory import build_inventory
+    from ..inventory.config import build_inventory
 
     try:
         return InventoryResolution(inventory=build_inventory(list(repos)))
@@ -1858,8 +1691,9 @@ def _enumerate_host_summaries(
     profiles: "ProfileContext",
     abandoned: "threading.Event | None" = None,
 ) -> RepoEnumeration:
-    from ..labs import build_lab_sources, host_summaries
     from ..labs.drops import HostDrop, collecting_drops
+    from ..labs.sources import build_lab_sources
+    from ..labs.summaries import host_summaries
 
     # The sink is opened HERE, on the enumerating thread (`_bounded` runs this
     # on a worker), so every skip the backends record lands in this list.
@@ -2264,7 +2098,7 @@ def collect_lab_names(repos: list["Repo"]) -> list[str]:
     completion fast path as well as the cache writer. A backend that fails is
     skipped; any unexpected error yields ``[]`` so completion never crashes.
     """
-    from ..labs import build_lab_sources
+    from ..labs.sources import build_lab_sources
 
     names: set[str] = set()
     profiles = _profiles(repos)
@@ -2379,17 +2213,15 @@ def collect_logins_by_host(repos: list["Repo"]) -> dict[str, list[dict[str, Any]
     return dict(sorted(by_host.items()))
 
 
-def collect_project_names() -> list[str]:
+def collect_project_names(repos: list["Repo"]) -> list[str]:
     """Return the discovered repo names, in discovery order — what ``-I``/``-E`` complete.
 
-    Phase 1 only (:func:`otto.bootstrap.discover`), for the reason
-    ``otto.cli.main._project_completer`` gives: ``get_repos`` is phase 2 and
-    runs user code. The payload and the completer read the same list so the
-    warm and cold answers cannot differ.
+    *repos* is every repo phase 1 discovered: :func:`otto.bootstrap.discover`'s
+    ``repos``, which a bootstrap result carries unchanged, never the init-ordered
+    subset. ``otto.cli.main._project_completer`` reads the same discovered list,
+    so the warm and cold answers cannot differ.
     """
-    from ..bootstrap import discover
-
-    return [repo.name for repo in discover().repos]
+    return [repo.name for repo in repos]
 
 
 # ---------------------------------------------------------------------------
@@ -3046,7 +2878,7 @@ def describe_inventory(repos: list["Repo"]) -> InventoryDescription:
     and a backend that cannot report freshness are both named, because each
     is why nothing is ever written for the workspace and every TAB reloads.
     """
-    from ..inventory import build_inventory
+    from ..inventory.config import build_inventory
 
     try:
         inventory = build_inventory(list(repos))

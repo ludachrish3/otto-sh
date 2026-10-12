@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from ipaddress import ip_address
 from typing import Any
 
-from ..check import CheckHostUnreachableError
+from ..check.errors import CheckHostUnreachableError
 from ..check.fingerprint import check_read
 from ..host.daemon import kill_command, parse_ps_output
 from .check_probes import (

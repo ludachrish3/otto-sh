@@ -583,7 +583,7 @@ def test_help_states_the_interval_floor_as_the_errors_do(otto_test_cli, monkeypa
 def test_the_cache_serialises_the_test_verbs_flags_and_the_fast_path_rebuilds_them():
     """`names.test_options` round-trips: serialised at rebuild, a flag again on the fast path."""
     from otto.cli import test as cli_test
-    from otto.config.completion_cache import collect_test_verb_options
+    from otto.cli.registry import collect_test_verb_options
 
     @options
     class Firmware:
@@ -608,7 +608,7 @@ def test_the_cache_serialises_the_test_verbs_flags_and_the_fast_path_rebuilds_th
 
 
 def test_a_colliding_test_verb_caches_no_flags():
-    from otto.config.completion_cache import collect_test_verb_options
+    from otto.cli.registry import collect_test_verb_options
 
     @options
     class Clash:
@@ -660,7 +660,7 @@ def test_no_sensitive_default_reaches_the_cache_or_the_help(otto_test_cli):
     """A repr=False or secret default is never written to the cache file, nor shown by --help."""
     import json
 
-    from otto.config.completion_cache import collect_test_verb_options
+    from otto.cli.registry import collect_test_verb_options
 
     register_options(_probe_options(), verbs=["test"])
     cached = collect_test_verb_options()
@@ -672,7 +672,7 @@ def test_no_sensitive_default_reaches_the_cache_or_the_help(otto_test_cli):
 
 def test_a_secret_flag_keeps_every_other_flag_cached():
     """One SecretStr field (an explicit click_type) used to drop the verb's whole flag list."""
-    from otto.config.completion_cache import collect_test_verb_options
+    from otto.cli.registry import collect_test_verb_options
 
     register_options(_probe_options(), verbs=["test"])
     cached = {opt["name"]: opt for opt in collect_test_verb_options()}

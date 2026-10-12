@@ -22,7 +22,7 @@ from typing import Annotated
 
 import typer
 
-from ..models import MIN_INTERVAL_SECONDS
+from ..utils import MIN_INTERVAL_SECONDS
 
 # The monitor library (otto.monitor.*: the collector, aiosqlite, uvicorn) is
 # deliberately NOT imported here, matching this module's deferred-import

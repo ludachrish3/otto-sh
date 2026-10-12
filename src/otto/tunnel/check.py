@@ -51,17 +51,12 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import override
 
-from ..check import (
-    CheckHostUnreachableError,
-    CheckSection,
-    FeatureResult,
-    HostFingerprint,
-    ReportVerdicts,
-    Verdict,
-    range_labels,
-)
-from ..check.fingerprint import TUNNEL_TOOLS, TUNNEL_VERSIONS, probe_fingerprint
+from ..check.errors import CheckHostUnreachableError
+from ..check.fingerprint import TUNNEL_TOOLS, TUNNEL_VERSIONS, HostFingerprint, probe_fingerprint
+from ..check.proven import range_labels
+from ..check.render import CheckSection
 from ..check.sweep import left_line, run_age, sweepable, swept_note
+from ..check.verdict import FeatureResult, ReportVerdicts, Verdict
 from ..host.errors import HostUnreachableError
 from ..host.host import is_dry_run
 from . import _tunnel_echoes as tagged

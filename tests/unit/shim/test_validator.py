@@ -9,6 +9,7 @@ import pytest
 
 from otto import _shim_complete as sc
 from otto import bootstrap
+from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
 from otto.config import completion_cache as cc
 from otto.config.completion_tree import build_shim_payload
 from tests._fixtures.generated_repo import generate_repo
@@ -32,7 +33,12 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(home))
     bootstrap.invalidate()
     repos = bootstrap.discover().repos
-    cc.write_cache(repos, [], ["local"], shim=build_shim_payload(repos))
+    cc.write_cache(
+        repos,
+        [],
+        ["local"],
+        shim=build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
+    )
     cache = Path(sc.locate_cache(dict(os.environ)))
     assert cache == cc._cache_path()
     yield repo, cache

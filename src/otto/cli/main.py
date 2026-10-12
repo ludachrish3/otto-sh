@@ -32,6 +32,7 @@ from .completers import completion_source
 
 if TYPE_CHECKING:
     from ..bootstrap import BootstrapResult
+    from ..config.cache_sections import CliCollectors
     from ..config.repo import Repo
     from .registry import CommandSpec
 
@@ -244,7 +245,8 @@ def _refuse_contradictory_switches(
     include: "list[str] | None", exclude: "list[str] | None"
 ) -> None:
     """Exit 2 when a name appears in both -I and -E — a contradictory line is a typo."""
-    from ..session import ProjectSelectionError, check_project_overlap
+    from ..session.errors import ProjectSelectionError
+    from ..session.projects import check_project_overlap
     from .invoke import report_project_selection_error
 
     try:
@@ -1019,6 +1021,26 @@ def print_traceback_if_debug() -> None:
         traceback.print_exc()
 
 
+def _completion_collectors() -> "CliCollectors":
+    """Return the CLI's walks of its own command tree, for a completion-cache rebuild.
+
+    ``otto.config`` writes the cache but never imports the CLI, so :func:`entry`,
+    the cache's writer, takes the walkers, the root app and the dispatch key from
+    here, as do the cache's sections (``otto.config.cache_sections.SECTIONS``),
+    its parity reference.
+    """
+    from ..config.cache_sections import CliCollectors
+    from .registry import collect_cli_commands, collect_current_commands, collect_test_verb_options
+
+    return CliCollectors(
+        instructions=collect_current_commands,
+        test_options=collect_test_verb_options,
+        commands=collect_cli_commands,
+        app=app,
+        pending_key=PENDING_SUBCMD_ARGS_KEY,
+    )
+
+
 def entry(cache_stale: bool = False) -> None:
     """Console-script entry: composition root, then the Typer app.
 
@@ -1156,8 +1178,6 @@ def entry(cache_stale: bool = False) -> None:
                 if cache_is_stale(result.repos, digests=section_digests):
                     from ..config.completion_cache import (
                         collect_backend_names,
-                        collect_cli_commands,
-                        collect_current_commands,
                         collect_docker_capable_host_ids,
                         collect_docker_default_parent_by_lab,
                         collect_docker_image_names,
@@ -1173,19 +1193,19 @@ def entry(cache_stale: bool = False) -> None:
                         collect_project_names,
                         collect_repo_names,
                         collect_reservation_usernames,
-                        collect_test_verb_options,
                         write_cache,
                     )
                     from ..config.completion_tree import build_shim_payload
 
-                    instructions = collect_current_commands()
+                    cli = _completion_collectors()
+                    instructions = cli.instructions()
                     backends = collect_backend_names()
                     with contextlib.suppress(OSError):
                         write_cache(
                             result.repos,
                             instructions,
                             collect_host_ids(result.repos),
-                            test_options=collect_test_verb_options(),
+                            test_options=cli.test_options(),
                             docker_hosts=collect_docker_capable_host_ids(result.repos),
                             docker_use_cases=collect_docker_use_case_names(result.repos),
                             docker_images=collect_docker_image_names(result.repos),
@@ -1196,21 +1216,23 @@ def entry(cache_stale: bool = False) -> None:
                             term_backends=backends["term_backends"],
                             transfer_backends=backends["transfer_backends"],
                             usernames=collect_reservation_usernames(result.repos),
-                            commands=collect_cli_commands(),
+                            commands=cli.commands(),
                             labs=collect_lab_names(result.repos),
                             hosts_by_lab=collect_host_ids_by_lab(result.repos),
                             host_drops=collect_host_drops(result.repos),
                             host_classes_by_id=collect_host_classes_by_id(result.repos),
-                            projects=collect_project_names(),
+                            projects=collect_project_names(result.repos),
                             links=collect_links(result.repos),
                             logins_by_host=collect_logins_by_host(result.repos),
                             docker_default_parent_by_lab=collect_docker_default_parent_by_lab(
                                 result.repos
                             ),
-                            # No explicit `app`: the Section's `_collect_shim` and this
-                            # call both default to `otto.cli.main.app`, so the tree
-                            # has one source and cannot drift between the two.
-                            shim=build_shim_payload(result.repos),
+                            # The shim section's collector, this write's parity
+                            # reference, reads the same _completion_collectors(), so
+                            # the tree has one source and the two cannot drift.
+                            shim=build_shim_payload(
+                                result.repos, app=cli.app, pending_key=cli.pending_key
+                            ),
                             digests=section_digests,
                             # A contained bootstrap error means registration did not
                             # finish, so what was just collected is a PARTIAL picture

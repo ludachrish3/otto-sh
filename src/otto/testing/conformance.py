@@ -38,16 +38,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..config.lab import Lab
-from ..creds import CredsStore
+from ..creds.protocol import CredsStore
 from ..host.remote_host import RemoteHost
-from ..inventory import Inventory, InventoryKeyError
-from ..labs import (
-    HostSummary,
-    LabNotFoundError,
-    LabRepository,
-    SupportsHostSummaries,
-    logins_of_creds,
-)
+from ..inventory.errors import InventoryKeyError
+from ..inventory.protocol import Inventory
+from ..labs.errors import LabNotFoundError
+from ..labs.protocol import HostSummary, LabRepository, SupportsHostSummaries, logins_of_creds
 from ..models.host import CredSpec
 from ..models.inventory import (
     FILLABLE_INVENTORY_FIELDS,
@@ -55,10 +51,10 @@ from ..models.inventory import (
     SUPPLIES_EXEMPT_FIELDS,
     InventoryRecord,
 )
-from ..reservations import (
+from ..reservations.check import ReservationBackendError
+from ..reservations.protocol import (
     Reservation,
     ReservationBackend,
-    ReservationBackendError,
     SupportsResourceHolders,
     SupportsUsernameCompletion,
 )

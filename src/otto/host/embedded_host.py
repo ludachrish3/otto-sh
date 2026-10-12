@@ -77,13 +77,9 @@ from .remote_host import OsType, RemoteHost
 from .session import (
     SessionManager,
 )
-from .transfer import (
-    EmbeddedFileTransfer,
-    TransferContext,
-    _acquire_shared_progress,
-    build_transfer_backend,
-    make_rich_progress_handler,
-)
+from .transfer import TransferContext, build_transfer_backend
+from .transfer.embedded_base import EmbeddedFileTransfer
+from .transfer.progress import _acquire_shared_progress, make_rich_progress_handler
 from .userland import UserlandHost
 
 logger = logging.getLogger(__name__)

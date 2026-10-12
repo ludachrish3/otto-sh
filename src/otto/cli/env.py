@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 if TYPE_CHECKING:
-    from ..env import EnvBuild
+    from ..env.manage import EnvBuild
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def create(
     installer_args: _INSTALLER_ARGS = None,
 ) -> None:
     """Build this workspace's orchestration environment from scratch."""
-    from ..env import create_env
+    from ..env.manage import create_env
 
     build = create_env(force=force, backend_flag=backend, passthrough=list(installer_args or []))
     _report(build, verb="created")
@@ -75,7 +75,7 @@ def sync(
     installer_args: _INSTALLER_ARGS = None,
 ) -> None:
     """Bring this workspace's orchestration environment up to date."""
-    from ..env import sync_env
+    from ..env.manage import sync_env
 
     build = sync_env(backend_flag=backend, passthrough=list(installer_args or []))
     _report(build, verb="synced")
@@ -88,7 +88,7 @@ def show() -> None:
     from rich.console import Console
     from rich.table import Table
 
-    from ..env import env_status
+    from ..env.manage import env_status
 
     status = env_status()
     console = Console()

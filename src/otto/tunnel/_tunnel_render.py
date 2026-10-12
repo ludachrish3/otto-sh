@@ -23,8 +23,9 @@ B`` for udp); those two display as ``fwd bulk`` / ``rev bulk`` instead, and a
 
 from typing import TYPE_CHECKING
 
-from ..check import CheckRow, CheckSection, FeatureResult, HostFingerprint
-from ..check.render import proven_range_line
+from ..check.fingerprint import HostFingerprint
+from ..check.render import CheckRow, CheckSection, proven_range_line
+from ..check.verdict import FeatureResult
 from . import _tunnel_rows as rows
 
 if TYPE_CHECKING:

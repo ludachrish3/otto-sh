@@ -14,21 +14,18 @@ from rich import print as rprint
 from rich.markup import escape
 
 from ..config.completion_cache import read_tunnel_ids, record_tunnel_ids
-from ..tunnel import (
-    DEFAULT_CARRIER,
-    add_tunnel,
-    discover_tunnels,
-    remove_all_tunnels,
-    remove_tunnel,
-)
+from ..tunnel.carrier import DEFAULT_CARRIER
+from ..tunnel.discovery import discover_tunnels
+from ..tunnel.manage import add_tunnel, remove_all_tunnels, remove_tunnel
 from ..utils import complete_separated_list
 from .completers import completion_source
 from .invoke import fail, print_error
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
-    from ..tunnel import DryRunPlan, Tunnel
     from ..tunnel.check import TunnelCheckReport
+    from ..tunnel.manage import DryRunPlan
+    from ..tunnel.model import Tunnel
 
 tunnel_app = typer.Typer(
     name="tunnel",
@@ -305,11 +302,11 @@ async def check(
     # `otto.cli.link`'s `check` command. `requested_protocols`/`tunnel_sections`
     # live in the same module as `check_tunnel`, so they are deferred for the
     # same reason.
-    from ..check import render_sections, report_to_json
+    from ..check.render import render_sections
+    from ..check.report import report_to_json
     from ..config.fleet import get_lab
     from ..host.host import is_dry_run
-    from ..tunnel import check_tunnel
-    from ..tunnel.check import requested_protocols, tunnel_sections
+    from ..tunnel.check import check_tunnel, requested_protocols, tunnel_sections
 
     def write_report(result_: "TunnelCheckReport") -> None:
         """``--report PATH`` → write the JSON *result_* there, or do nothing.

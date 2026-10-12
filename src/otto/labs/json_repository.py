@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     # time instead, by which point both modules are fully initialized.
     from ..config.lab import Lab
     from ..host.element import Element
-    from ..inventory import Inventory
+    from ..inventory.protocol import Inventory
     from ..registry import Configured
     from .sources import LabSourceEnv
 
@@ -365,7 +365,7 @@ class JsonFileLabRepository:
             references an inventory key that cannot be resolved.
         """
         from ..config.lab import Lab
-        from ..inventory import resolve_host_entry  # lazy: see the note above
+        from ..inventory.resolve import resolve_host_entry  # lazy: see the note above
 
         try:
             docs = self._load_documents()
@@ -512,7 +512,8 @@ class JsonFileLabRepository:
         an id the lab refuses to load; the refusal, which names both
         declarations, is the honest answer at load.
         """
-        from ..inventory import InventoryError, resolve_host_entry  # lazy: see the note above
+        from ..inventory.errors import InventoryError  # lazy: see the note above
+        from ..inventory.resolve import resolve_host_entry
         from .drops import record_drop
 
         by_id: dict[str, HostSummary] = {}
@@ -774,7 +775,9 @@ def _add_host(
     :class:`~otto.inventory.errors.InventoryError` included, which is what
     puts the file, the element and the index in front of "key not found".
     """
-    from ..inventory import resolve_host_entry  # lazy: see the note at the top of this module
+    from ..inventory.resolve import (
+        resolve_host_entry,  # lazy: see the note at the top of this module
+    )
 
     try:
         entry = resolve_host_entry(host_data, inventory, element)

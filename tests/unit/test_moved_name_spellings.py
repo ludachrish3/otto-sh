@@ -28,7 +28,9 @@ are never imported by a unit lane. So this scan reads every ``.py`` file under
 - a string that names a moved name at its old home: a patch target
   (``"otto.config.get_repos"``) or generated code (``"from otto.config import get_repos"``);
 - in otto's own code (not the shipped examples, which are taught code), any import of the
-  ``otto.lab`` facade or a lazy-table entry naming it.
+  ``otto.lab`` facade or a lazy-table entry naming it. This is the broader form, for that one
+  facade, of ``tests/unit/test_internal_imports_skip_facades.py``'s rule, whose
+  ``scripts/facade_sweep.py --apply`` re-points a ``from otto.lab import``.
 """
 
 import ast
@@ -209,7 +211,9 @@ def test_no_otto_code_or_test_names_a_moved_name_at_its_old_home():
     assert not offenders, (
         f"{len(offenders)} old spelling(s) of a moved name; import each from its new home "
         "(otto.bootstrap for the repo accessors; otto.config.fleet / otto.config.lab inside otto, "
-        "otto.lab in tests and docs, for the lab and fleet names):\n  " + "\n  ".join(offenders)
+        "otto.lab in tests and docs, for the lab and fleet names). A line marked (a facade) "
+        "is re-pointed by scripts/facade_sweep.py --apply when it is a from-import "
+        "(tests/unit/test_internal_imports_skip_facades.py):\n  " + "\n  ".join(offenders)
     )
 
 

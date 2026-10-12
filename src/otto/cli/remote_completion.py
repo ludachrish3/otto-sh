@@ -292,7 +292,7 @@ def _load_host(chain: _ChainParams) -> "tuple[Any, Any]":
     from ..bootstrap import get_repos
     from ..config.fleet import _apply_option_overrides, get_host
     from ..context import OttoContext, set_context
-    from ..session import build_lab
+    from ..session.lab import build_lab
 
     repos = get_repos()
     lab = build_lab(repos, chain.labs)
@@ -440,7 +440,7 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     from ..context import OttoContext, reset_context, set_context
     from ..host.builtin_hosts import is_builtin_host
     from ..reservations.check import required_resources
-    from ..session import build_lab
+    from ..session.lab import build_lab
 
     lab = build_lab(get_repos(), chain.labs)
     ctx = OttoContext(
@@ -478,8 +478,10 @@ def _reservation_allows(chain: _ChainParams) -> bool:
     """
     from ..bootstrap import get_repos
     from ..config.remote_completion_cache import cached_reservation_ok, store_reservations
-    from ..reservations import active_reservations, build_reservation_gate, is_null_backend
+    from ..reservations.check import active_reservations
+    from ..reservations.factory import build_reservation_gate
     from ..reservations.identity import resolve_username
+    from ..reservations.null_backend import is_null_backend
 
     repos = get_repos()
     if not any(getattr(r, "reservation_settings", None) for r in repos):

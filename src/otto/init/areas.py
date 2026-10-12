@@ -413,7 +413,7 @@ def _scaffold_kmodcov(config: InitConfig, areas: list[str]) -> AreaWrite:  # noq
     ``settings.toml`` is never edited: when it exists and declares no kmodcov
     entry, the notice carries the commented ``[[dev_tools]]`` entry to paste.
     """
-    from ..kmodcov import SHIPPED_FILES, VERSION_HEADER, export_tree
+    from ..kmodcov.library import SHIPPED_FILES, VERSION_HEADER, export_tree
 
     vendored = config.kmodcov_path
     library = [vendored / name for name in (*SHIPPED_FILES, VERSION_HEADER)]

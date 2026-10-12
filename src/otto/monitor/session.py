@@ -18,7 +18,7 @@ from ..host.connections import teardown_step
 from ..host.remote_host import RemoteHost
 from ..link.derive import implicit_links
 from ..link.model import Link, Provenance
-from ..models import HostSnapshot, LabSnapshot, LinkEndpointSnapshot, LinkSnapshot
+from ..models.monitor import HostSnapshot, LabSnapshot, LinkEndpointSnapshot, LinkSnapshot
 
 if TYPE_CHECKING:
     from ..models.monitor import MonitorExport, TunnelRecord

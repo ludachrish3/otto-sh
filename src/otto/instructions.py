@@ -839,7 +839,7 @@ async def run_instruction(ctx: "OttoContext", name: str, opts: list[object] | No
     from .params import flatten_option_instances
 
     entry = INSTRUCTIONS.get(name)
-    from .session import check_instruction_active
+    from .session.activation import check_instruction_active
 
     # Before any option is flattened or validated: an inactive repo's
     # instruction is refused for the reason it is inactive, not for a value

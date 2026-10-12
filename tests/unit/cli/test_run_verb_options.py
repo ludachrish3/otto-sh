@@ -234,7 +234,7 @@ def test_the_completion_payload_lists_run_flags():
     @instruction()
     async def smoke() -> None: ...
 
-    from otto.config.completion_cache import collect_current_commands
+    from otto.cli.registry import collect_current_commands
 
     instructions = collect_current_commands()
     (entry,) = [e for e in instructions if e["name"] == "smoke"]
@@ -331,7 +331,7 @@ def test_no_sensitive_default_reaches_the_run_cache_or_help(run_cli):
 
     import pydantic
 
-    from otto.config.completion_cache import collect_current_commands
+    from otto.cli.registry import collect_current_commands
 
     @options
     class Hidden:
@@ -353,10 +353,10 @@ def test_no_sensitive_default_reaches_the_run_cache_or_help(run_cli):
 
 
 def _serialized_cli() -> dict:
-    from otto.cli.main import app
+    from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
     from otto.config.completion_tree import serialize_tree
 
-    return serialize_tree(typer.main.get_command(app)).tree
+    return serialize_tree(typer.main.get_command(app), pending_key=PENDING_SUBCMD_ARGS_KEY).tree
 
 
 def test_the_completion_tree_survives_a_colliding_instruction():
@@ -380,7 +380,7 @@ def test_the_completion_tree_survives_a_colliding_instruction():
 @pytest.mark.parametrize("broken", ["missing", "syntax error"])
 def test_a_broken_run_ref_leaves_the_rebuild_standing(broken, tmp_path, monkeypatch):
     """An unimportable ``run`` class is contained by both rebuild readers, however it breaks."""
-    from otto.config.completion_cache import collect_current_commands
+    from otto.cli.registry import collect_current_commands
 
     module = "tests_unit_cli_absent_verb_options"
     if broken == "syntax error":

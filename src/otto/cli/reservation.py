@@ -19,13 +19,13 @@ import typer
 from rich import print as rprint
 from rich.markup import escape
 
-from ..reservations import (
+from ..reservations.check import (
     MissingReservationError,
     ReservationBackendError,
     ReservationGate,
     announce_expiring,
-    build_reservation_gate,
 )
+from ..reservations.factory import build_reservation_gate
 from .invoke import fail
 
 reservation_app = typer.Typer(

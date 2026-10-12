@@ -7,7 +7,7 @@ quirk in add_event is deliberately preserved (see test_store.py).
 
 from collections import deque
 
-from ..models import MetricPoint
+from ..models.monitor import MetricPoint
 from .events import MonitorEvent
 from .parsers import LogEvent
 

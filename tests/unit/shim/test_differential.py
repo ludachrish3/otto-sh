@@ -16,6 +16,7 @@ import pytest
 
 from otto import _shim_complete as sc
 from otto import bootstrap as bs
+from otto.cli.main import _completion_collectors
 from otto.config import completion_cache as cc
 from otto.config.completion_tree import build_shim_payload
 from otto.config.repo import PYTEST_CONFIG_NAMES
@@ -76,7 +77,8 @@ def _write_cache_like_entry(repos) -> None:
     does not call it, so write_cache recomputes — same entry), and ``tainted=`` is
     ``bool(result.errors)``, which the ``world`` fixture asserts empty, i.e. the default.
     """
-    instructions = cc.collect_current_commands()
+    cli = _completion_collectors()
+    instructions = cli.instructions()
     backends = cc.collect_backend_names()
     cc.write_cache(
         repos,
@@ -90,16 +92,16 @@ def _write_cache_like_entry(repos) -> None:
         term_backends=backends["term_backends"],
         transfer_backends=backends["transfer_backends"],
         usernames=cc.collect_reservation_usernames(repos),
-        commands=cc.collect_cli_commands(),
+        commands=cli.commands(),
         labs=cc.collect_lab_names(repos),
         hosts_by_lab=cc.collect_host_ids_by_lab(repos),
         host_drops=cc.collect_host_drops(repos),
         host_classes_by_id=cc.collect_host_classes_by_id(repos),
-        projects=cc.collect_project_names(),
+        projects=cc.collect_project_names(repos),
         links=cc.collect_links(repos),
         logins_by_host=cc.collect_logins_by_host(repos),
         docker_default_parent_by_lab=cc.collect_docker_default_parent_by_lab(repos),
-        shim=build_shim_payload(repos),
+        shim=build_shim_payload(repos, app=cli.app, pending_key=cli.pending_key),
     )
 
 

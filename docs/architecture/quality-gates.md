@@ -82,6 +82,24 @@ floor floats, so `scripts/tach_layer_canary.py`, a `lint-arch` and
 `nox -s lint` leg, runs the installed tach on a throwaway project and fails if
 an undeclared downward import stops being refused.
 
+tach checks the imports between modules, not between the files of one.
+`otto.monitor` holds both the monitor service and `live.py`, the lab-aware
+runner its facade exports, and only the runner may read the run's lab, repos
+and tunnels. `tests/unit/test_monitor_service_reads_no_lab.py`, a `lint-arch`
+leg, keeps `otto.config`, `otto.context`, `otto.tunnel`, `otto.lab` (where the
+lab is moving) and the runner itself out of every other file under
+`otto/monitor`, at any depth. It counts every import tach counts, in every
+spelling, and skips only the body of an `if TYPE_CHECKING:` or
+`if typing.TYPE_CHECKING:` block, never an `elif`. It also reads the literal
+import strings below with the string audit's reader, because the audit judges
+only a string that crosses tach modules. Where tach skips code that runs, such
+as that block's `else` branch or a literal import string, the test is
+stricter; its docstring lists each such case. That claim is about the
+installed tach, so `scripts/monitor_boundary_tach_canary.py`, a `lint-arch`
+and `nox -s lint` leg beside the layer canary, runs every one of the test's
+fixtures through it and fails if tach counts one the test skips, or skips one
+the test says it counts.
+
 tach reads `import` statements only, and otto also imports by string: a
 package facade's lazy table, a registry's `Ref("pkg.module:attr")`, a CLI
 command's `register_cli_command` loader, and `importlib.import_module`.
@@ -129,7 +147,7 @@ fixture SUT repos (`tests/repo1..repo3`, `repo_broken`, `repo_e2e`) and
 | `no-bare-runtimeerror-in-libraries` | `src/otto/link/**`, `src/otto/tunnel/**`, `src/otto/docker/**`, `src/otto/host/transfer/**` — four packages signalled unreachable-host, command-failed and structural-refusal through one stdlib type, so no consumer could tell them apart; 37 sites converted to `otto.host.errors`' pair, package domain classes, or `ValueError` in the wave that landed the rule |
 | `no-bare-status-return` | `src/otto/**` |
 | `no-branching-on-import-state` | `src/otto/**/*.py` — no read of `sys.modules` (`in`, `.get`, a read subscript, a view method, iteration) decides behaviour; writes that install or evict a module pass; see [Never branch on import state](../contributing.md#never-branch-on-import-state) and [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/no-branching-on-import-state.yml) |
-| `no-cli-import-outside-cli` | `src/otto/**` minus `src/otto/cli/**`, `src/otto/__init__.py`, `src/otto/_shim.py`, `src/otto/config/completion_cache.py` and `src/otto/config/completion_tree.py` — an import ban: the CLI projects the libraries, and no library reaches up into it; see [Import bans](../contributing.md#import-bans) |
+| `no-cli-import-outside-cli` | `src/otto/**` minus `src/otto/cli/**`, `src/otto/__init__.py` and `src/otto/_shim.py` — an import ban: the CLI projects the libraries, and no library reaches up into it; see [Import bans](../contributing.md#import-bans) |
 | `no-handrolled-deadline-poll` | `src/otto/**` + `tests/**` minus fixture repos — poll-until-deadline grew 21 copies in three incompatible shapes with divergent expiry behavior; `otto.utils.wait_for` / `wait_for_async` is the one spelling, and expiry always raises (silent expiry is the defect class); `src/otto/host/shell_liveness.py` is ignored as the sanctioned fused probe-response primitive |
 | `no-hidden-cli-options` | `src/otto/**` — no `hidden=`: a removed option or command is deleted, never hidden from `--help` |
 | `no-parents-arithmetic-in-tests` | `tests/**` minus fixture repos — `Path(__file__).parents[N]` encodes the file's own depth, so moving the file silently re-anchors every path built from it; import `TESTS_ROOT`/`PROJECT_ROOT` from `tests/_fixtures/paths.py` (the one sanctioned derivation point) |
@@ -235,7 +253,7 @@ job that enforces it on push.
 | --- | --- | --- | --- |
 | ruff (lint + format) | `lint-python` | `lint` | `lint-python` |
 | tach + ast-grep | `lint-arch`, and pulled in by `lint-python` | `lint` | `lint-python` |
-| lazy-export import rules (three parse-only tests; see {doc}`../contributing`) | `lint-arch`, and every pytest lane | via `tests_hostless` | `tests` |
+| lazy-export import rules (four parse-only tests: `test_patch_targets`, `test_no_import_time_lazy_exports`, `test_moved_name_spellings` and `test_internal_imports_skip_facades`, under `tests/unit/`; see {doc}`../contributing`) | `lint-arch`, and every pytest lane | via `tests_hostless` | `tests` |
 | ty | `typecheck-python` | `typecheck` | `typecheck-python` |
 | Biome + knip | `lint-ts` | — | `check-ts` |
 | tsc | `typecheck-ts` | — | `check-ts` |

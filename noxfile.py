@@ -635,8 +635,10 @@ def lint(session: nox.Session) -> None:
     the pinned snippets in .ast-grep/rule-tests/ (a rule that stops matching
     its own motivating example is a silent gate loss).
     The tach layer canary runs the installed tach on a throwaway project and
-    fails if tach.toml's layer switch stops meaning what tach.toml assumes; it
-    needs tach, so it rides here and in lint-arch, not in a pytest lane.
+    fails if tach.toml's layer switch stops meaning what tach.toml assumes; the
+    monitor boundary canary runs the monitor boundary test's fixtures through
+    it and fails if the test no longer counts every import tach counts. Both
+    need tach, so they ride here and in lint-arch, not in a pytest lane.
     `make lint-arch`'s `check-breaking` leg (scripts/check_breaking_marks.py)
     is deliberately NOT run here — it needs a resolved commit range, which
     this session has no opinion about; CI's lint-python job runs it as its
@@ -650,6 +652,7 @@ def lint(session: nox.Session) -> None:
     session.run("ruff", "format", "--check", ".")
     session.run("tach", "check", "--exact")
     session.run("python", "scripts/tach_layer_canary.py")
+    session.run("python", "scripts/monitor_boundary_tach_canary.py")
     session.run("ast-grep", "scan", "src/otto", "web/src", "tests")
     session.run("ast-grep", "test", "--skip-snapshot-tests")
 

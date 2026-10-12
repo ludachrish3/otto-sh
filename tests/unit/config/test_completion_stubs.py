@@ -6,7 +6,7 @@ carries the expected flags, kinds, defaults, and help text.
 
 Note: this module intentionally does NOT use ``from __future__ import
 annotations`` — the tests rely on runtime-evaluated ``Annotated[...]`` forms
-so ``_serialize_options`` can introspect them. PEP 563 would stringify the
+so ``serialize_options`` can introspect them. PEP 563 would stringify the
 annotations and every test would silently fail by returning ``None``.
 """
 
@@ -17,7 +17,7 @@ from typing import Annotated, Any, get_args, get_origin
 import pytest
 import typer
 
-from otto.config.completion_cache import _serialize_options
+from otto.config.completion_cache import serialize_options
 from otto.config.completion_stubs import build_stub_command
 
 
@@ -40,7 +40,7 @@ def test_roundtrip_preserves_flags_and_kind() -> None:
         where: Annotated[Path, typer.Option("--where", help="dest dir")] = Path("/tmp"),
     ) -> None: ...
 
-    schema = _serialize_options(source, command_name="source")
+    schema = serialize_options(source, command_name="source")
     assert schema is not None
     stub_app = build_stub_command("source", schema)
 
@@ -74,7 +74,7 @@ def test_roundtrip_str_list() -> None:
         tags: Annotated[list[str] | None, typer.Option("--tag", help="repeat me")] = None,
     ) -> None: ...
 
-    schema = _serialize_options(source, command_name="source")
+    schema = serialize_options(source, command_name="source")
     assert schema is not None
     assert schema[0]["kind"] == "str_list"
 
@@ -92,7 +92,7 @@ def test_unsupported_annotation_drops_command() -> None:
         amount: Annotated[Decimal, typer.Option("--amount")] = Decimal(0),
     ) -> None: ...
 
-    assert _serialize_options(source, command_name="source") is None
+    assert serialize_options(source, command_name="source") is None
 
 
 def test_stub_callback_raises_if_invoked() -> None:

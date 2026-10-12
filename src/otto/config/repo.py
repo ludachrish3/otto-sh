@@ -531,7 +531,8 @@ class Repo:
         from rich.panel import Panel
         from rich.text import Text
 
-        from ..labs import LabRepositoryError, build_lab_sources
+        from ..labs.errors import LabRepositoryError
+        from ..labs.sources import build_lab_sources
 
         if not self.lab_sources:
             lab_name_text = Text("no [[lab.sources]] declared", style="dim")

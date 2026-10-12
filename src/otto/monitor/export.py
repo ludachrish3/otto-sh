@@ -7,7 +7,8 @@ guards police this module for free.
 import json
 from datetime import datetime
 
-from ..models import (
+from ..models.formats import MONITOR_EXPORT_WRITE_VERSIONS
+from ..models.monitor import (
     ChartSpecRecord,
     EventRecord,
     LabSnapshot,
@@ -19,7 +20,6 @@ from ..models import (
     TabSpecRecord,
     TunnelRecord,
 )
-from ..models.formats import MONITOR_EXPORT_WRITE_VERSIONS
 from .collector import MetricCollector
 from .db import MetricDB, SessionRow, read_sessions
 from .session import SessionFrame

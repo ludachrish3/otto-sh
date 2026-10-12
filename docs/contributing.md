@@ -291,10 +291,10 @@ the recommended "Biome" and "Vitest" VS Code extensions (see
 One asymmetry inside that shape, because it is the kind that bites: `make
 lint-python` also runs the architecture gates (`lint-arch` — tach, ast-grep,
 `ast-grep test`, which runs each rule's own valid/invalid snippets from
-`.ast-grep/rule-tests/`, and the three parse-only tests behind
+`.ast-grep/rule-tests/`, and the four parse-only tests behind
 [Patching lazily exported names](#patching-lazily-exported-names)), so it
 matches CI's `lint-python` job, which is `nox -s lint` and has always run
-them; CI runs the three import-rule tests in its `tests` job. It ran ruff only until 2026-08-10, and the difference
+them; CI runs the four import-rule tests in its `tests` job. It ran ruff only until 2026-08-10, and the difference
 was invisible: a file could pass `make lint`, `make format` and every
 coverage lane while still violating an architecture rule. Those rules mostly
 police *test* code — deadline polls, `parents[N]` path arithmetic,
@@ -645,7 +645,7 @@ and `make stability-tunnel CYCLES=N`.
 Every otto package exports its public names lazily (PEP 562):
 `otto.lab.get_lab` and `otto.config.load_user_settings` are resolved by the
 package's `__getattr__` from its lazy table (`_LAZY_ATTRS` or `_LAZY_EXPORTS`),
-and the package `__dict__` never holds them. Three rules follow, each with a
+and the package `__dict__` never holds them. Four rules follow, each with a
 static check; the first also has a run-time backstop.
 
 **Tests patch a name where it is defined, never on its package.**
@@ -689,12 +689,31 @@ decorator applied at import), each with its reason.
 is refused in every spelling — import, attribute, patch-target string,
 generated code — across `src/otto` and every test tree, by
 `tests/unit/test_moved_name_spellings.py`, which imports nothing it reads. A
-stale import inside a broad `except` would otherwise degrade silently. The same
-test keeps otto's own code off the `otto.lab` facade: code inside otto imports
-from the defining module, and only the shipped examples, which are taught code,
-use the public path.
+stale import inside a broad `except` would otherwise degrade silently. For the
+`otto.lab` facade it also holds the broader form of the next rule: otto's own
+code may not import it in any spelling or name it in a lazy table.
 
-All three static checks run in `make lint-arch` as well as in every pytest
+**Source imports a lazily exported name from its defining module.** Code
+under `src/otto` never reaches a name in a package's lazy table through that
+package: `from otto.result import CommandResult`, not
+`from otto.host import CommandResult`;
+`from ..inventory.config import build_inventory`, not
+`from ..inventory import build_inventory`, nor `inventory.build_inventory`
+after `import otto.inventory as inventory`. tach maps an import to the module
+it names, so a facade import declares the facade as the dependency, and the
+layers and the cycle ratchet judge an edge that is not the real one.
+`tests/unit/test_internal_imports_skip_facades.py` fails on each offender and
+names the module to import from, following a binding through further facades
+as the first rule describes.
+`uv run python scripts/facade_sweep.py --apply` re-points every `from` import,
+and `uv run ruff check --select I001 --fix src/otto` and
+`uv run ruff format src/otto` then sort and format what it rewrote; an
+attribute read is re-pointed by hand. The rule reads lazy tables only: a name a
+package's `__init__` imports eagerly and re-exports is not checked. A facade's
+own `TYPE_CHECKING` block, which mirrors its lazy table for type checkers, and
+the shipped examples, which are taught code, are exempt.
+
+All four static checks run in `make lint-arch` as well as in every pytest
 lane, so the per-change gate catches a violation that a targeted test run would
 never select.
 

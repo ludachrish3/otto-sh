@@ -57,7 +57,8 @@ def build_lab(repos: "list[Repo]", labs: list[str]) -> "Lab":
     if not labs:
         raise LabBuildError("no lab selected: name one or more labs", field="labs", kind="no_labs")
     from ..config.lab import load_lab
-    from ..labs import LabNotFoundError, LabRepositoryError, build_lab_sources
+    from ..labs.errors import LabNotFoundError, LabRepositoryError
+    from ..labs.sources import build_lab_sources
 
     try:
         repository = build_lab_sources(repos)
@@ -68,7 +69,8 @@ def build_lab(repos: "list[Repo]", labs: list[str]) -> "Lab":
 
     # Function-local: `otto.inventory` pulls ~77 otto modules onto every
     # caller, and a Lab-object open_context never builds a lab at all.
-    from ..inventory import InventoryError, build_inventory
+    from ..inventory.config import build_inventory
+    from ..inventory.errors import InventoryError
 
     try:
         inventory = build_inventory(repos)

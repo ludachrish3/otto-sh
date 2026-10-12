@@ -28,7 +28,7 @@ from typing import Any
 
 from ..check.fingerprint import check_exec, check_root_run
 from ..check.sweep import left_line, sweepable, swept_note
-from ..host import CommandResult
+from ..result import CommandResult
 
 NETNS_DIR = "/var/run/netns"
 """Where ``ip netns add`` puts each namespace's file (a symlink into ``/run`` on

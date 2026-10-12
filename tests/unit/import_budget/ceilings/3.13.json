@@ -1073,7 +1073,7 @@
       "by_bucket": {
         "fd": 63,
         "other": 241,
-        "otto:*": 12,
+        "otto:*": 11,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-313-aarch64-linux-gnu.so": 1,
@@ -1085,7 +1085,6 @@
         "otto:config": 17,
         "otto:errors": 2,
         "otto:errors.cpython-313.pyc": 1,
-        "otto:models": 6,
         "otto:params": 2,
         "otto:params.cpython-313.pyc": 1,
         "otto:registry": 2,
@@ -1107,9 +1106,9 @@
         "stdlib": 532
       },
       "by_process": {
-        "python": 1248
+        "python": 1241
       },
-      "file_ops": 1248,
+      "file_ops": 1241,
       "workspace": 0
     },
     "reservation": {
@@ -1303,7 +1302,7 @@
       "by_bucket": {
         "fd": 63,
         "other": 237,
-        "otto:*": 12,
+        "otto:*": 11,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-313-aarch64-linux-gnu.so": 1,
@@ -1315,7 +1314,6 @@
         "otto:config": 17,
         "otto:errors": 2,
         "otto:errors.cpython-313.pyc": 1,
-        "otto:models": 6,
         "otto:params": 2,
         "otto:params.cpython-313.pyc": 1,
         "otto:registry": 2,
@@ -1337,9 +1335,9 @@
         "stdlib": 524
       },
       "by_process": {
-        "python": 1236
+        "python": 1229
       },
-      "file_ops": 1236,
+      "file_ops": 1229,
       "workspace": 0
     },
     "test_repo": {

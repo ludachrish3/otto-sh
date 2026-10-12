@@ -99,9 +99,9 @@ _LAZY_ATTRS: dict[str, str] = {
     "build_monitor_collector": "otto.monitor.factory",
     "is_monitorable": "otto.monitor.factory",
     "monitorable": "otto.monitor.factory",
-    # These three resolve into otto.monitor.live, the lab-aware nested tach
-    # module. tach does not see a string-keyed lazy import, so engine code
-    # (otto.monitor.*, apart from live itself) must never import these names.
+    # These three resolve into live.py, the lab-aware runner. No other file
+    # under otto/monitor imports it (tests/unit/test_monitor_service_reads_no_lab.py):
+    # the runner reads the lab and hands it to the collector, never the reverse.
     "LiveReport": "otto.monitor.live",
     "run_live": "otto.monitor.live",
     "select_monitor_hosts": "otto.monitor.live",

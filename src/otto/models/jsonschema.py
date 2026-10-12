@@ -57,7 +57,7 @@ from pydantic.json_schema import models_json_schema
 from ..host.connections import TERM_BACKENDS
 from ..host.os_profile import registered_host_specs
 from ..host.transfer import TRANSFER_BACKENDS
-from ..link import IMPAIRERS, build_impairer
+from ..link.impairer import IMPAIRERS, build_impairer
 from ..version import get_version
 from .host import CredSpec, HostSpec
 from .inventory import FILLABLE_INVENTORY_FIELDS, InventoryRecord

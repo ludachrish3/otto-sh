@@ -169,7 +169,7 @@ from rich import print as rprint
 from typer.core import TyperCommand
 from typing_extensions import override
 
-from ..models import MIN_INTERVAL_SECONDS
+from ..utils import MIN_INTERVAL_SECONDS
 from .completers import completion_source
 
 if TYPE_CHECKING:

@@ -93,6 +93,7 @@ depends_on = ["otto.host", "otto.logger", "otto.version", "otto.errors", "otto.r
 
 [[modules]]
 path = "otto.cli"
+layer = "entry"
 # otto.session: the root callback and invoke.py render the library's typed
 # refusals and call its project, repo, lab, dependency and logging decisions.
 # otto.inventory: inventory.py's `otto inventory` verbs build, query and cache
@@ -112,7 +113,7 @@ path = "otto.cli"
 # ensure_lab_context builds the context on it.
 # otto._shim_complete: cache.py's inspect verbs read the shim's own answer
 # (inspect_shim, inspect_tests).
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.monitor.live", "otto.init", "otto.session"]
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors"]
 
 [[modules]]
 path = "otto.config"
@@ -124,12 +125,6 @@ depends_on = [
     "otto.models",
     "otto.context",
     "otto.instructions",
-    # DEBT: the last core->cli backward edge — completion_cache.py imports
-    # CLI_COMMANDS + the private _typer_app_flattens (:682/:735) to serialize
-    # the command tree. Remove with the completion-cache snapshot() redesign
-    # (Tier 2.10). (INSTRUCTIONS moved to otto.instructions 2026-08-03,
-    # retiring repo.py's backward import and the sys.modules dodge.)
-    "otto.cli",
     "otto.labs",
     # completion_cache resolves the process inventory function-locally, twice:
     # `_inventory_fingerprint` mixes its freshness signal into the digest and
@@ -189,6 +184,7 @@ depends_on = [
 
 [[modules]]
 path = "otto.coverage"
+layer = "root"
 # otto.models: the capture artifact's models subclass otto.models.base.OttoModel
 # so their schema builds on first use, not at import. otto.models does not
 # depend on otto.coverage, so this adds no cycle.
@@ -261,7 +257,8 @@ layer = "entry"
 # otto.models: the sample lab source's config model subclasses OttoModel, as
 # every otto pydantic model does (defer_build), so the copyable sample shows
 # the public base a backend's config model uses.
-depends_on = ["otto.reservations", "otto.host", "otto.monitor", "otto.labs", "otto.inventory", "otto.models"]
+# otto.monitor.parsers: the sample metric parser subclasses MetricParser.
+depends_on = ["otto.reservations", "otto.host", "otto.monitor.parsers", "otto.labs", "otto.inventory", "otto.models"]
 
 [[modules]]
 path = "otto.filesystem"
@@ -270,6 +267,7 @@ depends_on = []
 
 [[modules]]
 path = "otto.init"
+layer = "workflows"
 # The `otto init` doctor and scaffolder (NOT settings.toml's `init` key, which
 # names init modules). Every edge is a real import, added with the code that
 # introduced it.
@@ -435,7 +433,7 @@ depends_on = ["otto.invocation", "otto.logger"]
 path = "otto.link"
 # NOTE: no otto.tunnel here — the packages are fully decoupled via
 # otto.host.daemon (July finding a1/a3, FIXED). Keep it that way.
-depends_on = ["otto.lifecycle", "otto.logger", "otto.registry", "otto.models", "otto.host", "otto.errors", "otto.check"]
+depends_on = ["otto.lifecycle", "otto.logger", "otto.registry", "otto.models", "otto.host", "otto.errors", "otto.check", "otto.result"]
 
 [[modules]]
 path = "otto.logger"
@@ -475,19 +473,89 @@ depends_on = [
 
 [[modules]]
 path = "otto.monitor"
-# NOTE: no otto.tunnel here — tunnel discovery is INJECTED via the
-# tunnel_source callable (collector.py:150). Keep it that way.
+layer = "workflows"
+# The monitor facade (otto/monitor/__init__.py) and the monitor service: the
+# collector runtime (collector, db, export, factory, session, which import
+# each other in a loop), the files that use it (archive_edit, review, server)
+# and live.py, the lab-aware runner the facade exports. The facade exports
+# live.py's names, so the module that owns it sits at or above live.py's
+# layer (spec 2026-10-11 placement-and-phases §3.11), and live.py stays in it:
+# as a module of its own it would import factory and session from here while
+# the facade's lazy binding imports it back, a loop through a string.
+# otto.config, otto.context, otto.tunnel: live.py only. It reads the active
+# lab, the repos, the driving repo's scope and full-lab tunnel discovery and
+# hands them to the collector, whose tunnel discovery is INJECTED through the
+# tunnel_source callable (collector.py). tach cannot tell live.py from the
+# rest of this module, so tests/unit/test_monitor_service_reads_no_lab.py
+# keeps those three, otto.lab and live.py itself out of every other file under
+# otto/monitor, by import or by literal string.
 # otto.utils: server.py's internal uvicorn wait runs through wait_for_async
-# (gate G6 — the one sanctioned poll spelling); utils is a foundational leaf
-# monitor already reached transitively via otto.host.
-depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.snmp", "otto.link", "otto.filesystem", "otto.registry", "otto.logger", "otto.console", "otto.errors", "otto.utils"]
+# (gate G6, the one sanctioned poll spelling).
+# otto.monitor.*: the lower files this module imports, each a module of its own
+# (below).
+depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.link", "otto.filesystem", "otto.logger", "otto.console", "otto.errors", "otto.utils", "otto.config", "otto.context", "otto.tunnel", "otto.monitor.broadcast", "otto.monitor.errors", "otto.monitor.event_ops", "otto.monitor.events", "otto.monitor.formats", "otto.monitor.parsers", "otto.monitor.snmp", "otto.monitor.store", "otto.monitor.tls"]
+
+# The monitor's eleven lower files, one tach module each, at topology (spec
+# 2026-10-11 placement-and-phases §3.11). They are not one subpackage module:
+# that would move the public paths otto.monitor.parsers, otto.monitor.snmp and
+# otto.monitor.log_sourced, and the collector runtime's import loop has to stay
+# inside otto.monitor. None of them imports otto.monitor's files; tach refuses
+# it, since otto.monitor sits a layer above them.
 
 [[modules]]
-path = "otto.monitor.live"
-# The lab-aware layer above the monitor engine: it reads the active lab, the
-# repos, the driving repo's scope and full-lab tunnel discovery, and hands them
-# to the engine, which keeps its injected-dependencies rule (see otto.monitor).
-depends_on = ["otto.monitor", "otto.config", "otto.context", "otto.tunnel", "otto.utils"]
+path = "otto.monitor.broadcast"
+layer = "topology"
+depends_on = []
+
+[[modules]]
+path = "otto.monitor.errors"
+layer = "topology"
+depends_on = ["otto.errors"]
+
+[[modules]]
+path = "otto.monitor.event_ops"
+layer = "topology"
+depends_on = ["otto.errors", "otto.models"]
+
+[[modules]]
+path = "otto.monitor.events"
+layer = "topology"
+depends_on = ["otto.models"]
+
+[[modules]]
+path = "otto.monitor.formats"
+layer = "topology"
+depends_on = []
+
+[[modules]]
+path = "otto.monitor.log_sourced"
+layer = "topology"
+depends_on = ["otto.monitor.parsers"]
+
+[[modules]]
+path = "otto.monitor.parsers"
+layer = "topology"
+depends_on = ["otto.models", "otto.monitor.rates", "otto.registry"]
+
+[[modules]]
+path = "otto.monitor.rates"
+layer = "topology"
+depends_on = []
+
+[[modules]]
+path = "otto.monitor.snmp"
+layer = "topology"
+depends_on = ["otto.models", "otto.monitor.parsers", "otto.monitor.rates", "otto.registry", "otto.snmp"]
+
+[[modules]]
+path = "otto.monitor.store"
+layer = "topology"
+depends_on = ["otto.models", "otto.monitor.events", "otto.monitor.parsers"]
+
+[[modules]]
+path = "otto.monitor.tls"
+layer = "topology"
+depends_on = ["otto.monitor.errors"]
 
 [[modules]]
 path = "otto.params"
@@ -599,6 +667,7 @@ depends_on = ["otto.utils", "otto.errors"]
 
 [[modules]]
 path = "otto.suite"
+layer = "root"
 # otto.project is the `ensure` marker's converge steps (`_converge` in
 # pytest_plugin.py resolves the otto.project function at call time). The edge
 # points DOWN — project drives hosts on behalf of a repo, a suite consumes
@@ -608,7 +677,7 @@ path = "otto.suite"
 #
 # No loop: otto.project no longer imports otto.cli (thin-CLI item 1).
 # otto.invocation: the runner sweep (suite/loops.py) reads the run policy's teardown deadline.
-depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.monitor.live", "otto.utils"]
+depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors"]
 
 [[modules]]
 path = "otto.testing"

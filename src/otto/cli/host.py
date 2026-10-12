@@ -195,7 +195,7 @@ def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]"
     if gate is None:
         return
     from ..config.fleet import get_lab
-    from ..reservations import MissingReservationError
+    from ..reservations.check import MissingReservationError
 
     try:
         gate.check_hosts(get_lab(), named)

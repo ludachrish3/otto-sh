@@ -55,7 +55,7 @@ def install_logging(
     ``verbose.log`` keeps every host's output.
     """
     from ..bootstrap import get_repos
-    from ..host import HostFilter
+    from ..host.host import HostFilter
     from ..logger import management
 
     levels = merge_logging_levels(get_repos())

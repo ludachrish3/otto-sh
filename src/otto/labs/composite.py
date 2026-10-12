@@ -33,7 +33,7 @@ from .protocol import HostSummary
 
 if TYPE_CHECKING:
     from ..config.lab import Lab
-    from ..inventory import Inventory
+    from ..inventory.protocol import Inventory
     from .protocol import LabRepository
 
 logger = logging.getLogger(__name__)

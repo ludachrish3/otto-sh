@@ -192,11 +192,14 @@ def test_info_reports_the_shim_standing(tmp_path, monkeypatch):
     assert "  shim: handing over — no cache file" in out  # no entry yet
     # entry() writes the entry on any real invocation; write one the way it does.
     from otto import bootstrap as bs
+    from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
     from otto.config import completion_cache as cc
     from otto.config.completion_tree import build_shim_payload
 
     repos = bs.discover().repos
-    cc.write_cache(repos, [], [], shim=build_shim_payload(repos))
+    cc.write_cache(
+        repos, [], [], shim=build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
+    )
     out = runner.invoke(cache_app, ["info"]).output
     assert "  shim: served (validated now)" in out
     out = runner.invoke(cache_app, ["info"]).output
@@ -208,6 +211,7 @@ def test_info_reports_the_shim_standing(tmp_path, monkeypatch):
 def _tests_workspace(tmp_path, monkeypatch):
     """A repo with one test file, its names/shim entry written as a rebuild writes it."""
     from otto import bootstrap as bs
+    from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
     from otto.config.completion_tree import build_shim_payload
 
     home = tmp_path / "home"
@@ -222,7 +226,9 @@ def _tests_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
     bs.invalidate()
     repos = bs.discover().repos
-    cc.write_cache(repos, [], [], shim=build_shim_payload(repos))
+    cc.write_cache(
+        repos, [], [], shim=build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
+    )
     return repo, repos
 
 

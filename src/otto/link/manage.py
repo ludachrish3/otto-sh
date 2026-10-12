@@ -25,12 +25,12 @@ from dataclasses import field as dc_field
 from typing import TYPE_CHECKING, Any
 
 from ..errors import OttoError
-from ..host import CommandResult
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.daemon import kill_command, launch_command, refuse_if_launch_wrapper_needs_bash
 from ..host.errors import exec_or_raise
 from ..host.host import is_dry_run
 from ..logger.mode import LogMode
+from ..result import CommandResult
 from .impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, LinkImpairer, ScopedState, build_impairer
 from .model import Link
 from .params import ImpairmentParams, Selector, collides, equivalent

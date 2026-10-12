@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from ..config.repo import Repo
     from ..host.element import Element
     from ..host.os_profile import ProfileContext
-    from ..inventory import Inventory
+    from ..inventory.protocol import Inventory
 
 VerdictState = Literal["ok", "failed", "absent", "blocked"]
 
@@ -248,7 +248,8 @@ def _inventory_for(
         return cached
 
     from ..config.user_settings import load_user_settings
-    from ..inventory import InventoryDeclaration, InventoryError, build_inventory_from_declarations
+    from ..inventory.config import InventoryDeclaration, build_inventory_from_declarations
+    from ..inventory.errors import InventoryError
 
     data = settings_data(root) or {}
     table = data.get("inventory") or {}
@@ -283,7 +284,8 @@ def _labels(root: Path, cache: "dict[Path, Inventory | Exception | None]") -> li
     lab verdict via :func:`_validate_lab`, and repeating it would be noise.
     The creds label names the store when one resolves (spec 2026-09-06 §7.1).
     """
-    from ..inventory import CredsOverlay, InventoryError
+    from ..inventory.creds import CredsOverlay
+    from ..inventory.errors import InventoryError
 
     try:
         inventory = _inventory_for(root, cache)
@@ -385,7 +387,7 @@ def _item_problem(validate: Callable[[Any], object], item: Any, prefix: str) -> 
     """
     from pydantic import ValidationError
 
-    from ..inventory import InventoryError
+    from ..inventory.errors import InventoryError
     from ..models.base import compact_validation_error
 
     try:
@@ -428,8 +430,9 @@ def _validate_lab(
     on mere key PRESENCE would swallow both.
     """
     from ..host.factory import validate_host_dict
-    from ..inventory import InventoryError, resolve_host_entry
     from ..inventory.doctor import references_inventory
+    from ..inventory.errors import InventoryError
+    from ..inventory.resolve import resolve_host_entry
     from ..models.link import LinkSpec
 
     problems, documents = _parse_lab_documents(root)
@@ -498,13 +501,14 @@ def _lab_warnings(
     gate to run in CI, and a green report against a days-old snapshot is
     exactly what that gate must not give.
     """
-    from ..inventory import InventoryError, snapshot_cache_of
+    from ..inventory.cache import snapshot_cache_of
     from ..inventory.doctor import (
         creds_mode_warnings,
         orphan_creds_warning,
         orphan_warning,
         referenced_keys,
     )
+    from ..inventory.errors import InventoryError
     from ..labs.doctor import lab_warnings
 
     _, documents = _parse_lab_documents(root)
@@ -621,7 +625,7 @@ def _validate_kmodcov(root: Path) -> list[str]:
     Drift from the installed otto is advisory, never a failure — see
     :func:`_kmodcov_warnings`.
     """
-    from ..kmodcov import check_tree
+    from ..kmodcov.library import check_tree
 
     problems: list[str] = []
     for source in _kmodcov_anchored(root):
@@ -637,7 +641,7 @@ def _validate_kmodcov(root: Path) -> list[str]:
 
 def _kmodcov_warnings(root: Path) -> list[str]:
     """Vendored copies that differ from the installed otto — reported, never a failure."""
-    from ..kmodcov import check_tree
+    from ..kmodcov.library import check_tree
 
     warnings: list[str] = []
     for source in _kmodcov_sources(root):

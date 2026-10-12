@@ -2,6 +2,7 @@
 
 import typer
 
+from otto.cli.main import PENDING_SUBCMD_ARGS_KEY
 from otto.config.completion_tree import serialize_tree
 
 
@@ -13,13 +14,13 @@ def _cli():
 
 def test_every_completer_in_the_cli_is_registered():
     """Spec §3.3: an unregistered completer would go live without anyone noticing."""
-    result = serialize_tree(_cli())
+    result = serialize_tree(_cli(), pending_key=PENDING_SUBCMD_ARGS_KEY)
     assert result.unregistered == []
 
 
 def test_root_options_and_commands_are_serialised_in_menu_order():
     cli = _cli()
-    tree = serialize_tree(cli).tree
+    tree = serialize_tree(cli, pending_key=PENDING_SUBCMD_ARGS_KEY).tree
     ctx = type(cli).context_class(cli, info_name="otto", resilient_parsing=True)
     assert list(tree["commands"]) == [
         n for n in cli.list_commands(ctx) if not getattr(cli.get_command(ctx, n), "hidden", False)
@@ -55,7 +56,7 @@ def test_host_node_carries_per_class_verb_views():
     from otto.host.embedded_host import ZephyrHost
     from otto.host.unix_host import UnixHost
 
-    tree = serialize_tree(_cli()).tree
+    tree = serialize_tree(_cli(), pending_key=PENDING_SUBCMD_ARGS_KEY).tree
     host = tree["commands"]["host"]
     assert host["scoped_by"] == "host_id"
     host_id = host["params"][0]
@@ -87,7 +88,7 @@ def test_the_serialiser_sees_typers_vendored_click():
 
 
 def test_tests_and_markers_sites_are_classified():
-    tree = serialize_tree(_cli()).tree
+    tree = serialize_tree(_cli(), pending_key=PENDING_SUBCMD_ARGS_KEY).tree
     test_node = tree["commands"]["test"]
     by_flag = {f: p for p in test_node["params"] for f in p["flags"]}
     (names,) = [p for p in test_node["params"] if p["name"] == "names"]
@@ -102,7 +103,7 @@ def test_tests_and_markers_sites_are_classified():
 
 def test_user_options_are_host_scoped_login_sources_per_verb_and_family():
     """Spec 2026-09-22 host-user-completion §3.3: the override's marker decides."""
-    tree = serialize_tree(_cli()).tree
+    tree = serialize_tree(_cli(), pending_key=PENDING_SUBCMD_ARGS_KEY).tree
     views = tree["host_classes"]
 
     def source(view, verb):

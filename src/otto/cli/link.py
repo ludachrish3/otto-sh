@@ -16,23 +16,19 @@ from rich import print as rprint
 from rich.markup import escape
 
 from ..config.completion_cache import collect_link_ids
-from ..link import (
+from ..link.manage import (
     DirectionState,
     DryRunPlan,
-    FlowDirection,
-    ImpairmentParams,
     ImpairReport,
     LinkState,
     RepairReport,
-    Selector,
     impair_link,
-    parse_percent,
-    parse_rate,
-    parse_time_ms,
     read_link_states,
     repair_all,
     repair_link,
 )
+from ..link.params import ImpairmentParams, Selector, parse_percent, parse_rate, parse_time_ms
+from ..link.placement import FlowDirection
 from .completers import completion_source, lab_scoped_host_ids, selected_lab_names
 from .invoke import fail, print_error
 
@@ -545,11 +541,11 @@ async def check(
     # tree on every invocation, not just on `otto link check`. Same pattern
     # as `otto.cli.monitor`'s command bodies. `requested_features` lives in
     # the same module as `check_link`, so it is deferred for the same reason.
-    from ..check import render_sections, report_to_json
+    from ..check.render import render_sections
+    from ..check.report import report_to_json
     from ..config.fleet import get_lab
     from ..host.host import is_dry_run
-    from ..link import check_link
-    from ..link.check import link_sections, requested_features
+    from ..link.check import check_link, link_sections, requested_features
 
     def write_report(result_: "LinkCheckReport") -> None:
         """``--report PATH`` → write the JSON *result_* there, or do nothing.

@@ -602,10 +602,20 @@ ceilings are. The counters are described in {doc}`../startup-performance`
 
 - `otto.config.completion_cache` — the file: location, schema, TTLs,
   `hash_file`, `read_sections` / `write_sections`,
-  `cache_is_writable` / `cache_is_stale`, the collectors, the reserved
-  namespaces, and the collect child's lock, cooldown and spawn.
+  `cache_is_writable` / `cache_is_stale`, the collectors that read the
+  repos and the registries, the reserved namespaces, and the collect
+  child's lock, cooldown and spawn.
+- `otto.cli.registry` — the collectors that walk the CLI's own command
+  tree (`collect_current_commands`, `collect_test_verb_options`,
+  `collect_cli_commands`). `otto.config` sits below the CLI and never
+  imports it: `otto.cli.main._completion_collectors` hands these walkers,
+  the root app and the dispatch key as a `CliCollectors` to the one
+  writer, `otto.cli.main.entry`, and to the sections' collectors, which
+  nothing in `src` calls: they are the parity reference that
+  `tests/unit/cli/test_cache_writer_parity.py` holds the writer to.
 - `otto.config.cache_sections` — the `Section` registry (`names`, `shim`),
-  the key-set functions, the shared tail and the composed digest.
+  `CliCollectors`, the key-set functions, the shared tail and the composed
+  digest.
 - `otto.config.collected_tests` — the test-names cache: `classify`,
   `updated_table`, `completion_view` and `collect_child_main`.
 - `otto.suite.run` — `_run_pytest_session`, the one collection path that

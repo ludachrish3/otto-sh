@@ -79,8 +79,7 @@ from ..host.power import POWER_CONTROLLERS, PowerConstructionError, PowerEnv
 from ..host.remote_host import RemoteHost, make_host_id
 from ..host.toolchain import Toolchain, ToolchainTool
 from ..host.transfer import TRANSFER_BACKENDS
-from ..link import IMPAIRERS, build_impairer
-from ..link.impairer import _is_unresolved_stock
+from ..link.impairer import IMPAIRERS, _is_unresolved_stock, build_impairer
 from ..logger.mode import LogMode
 from .base import OttoModel
 from .lab import resources_nonempty

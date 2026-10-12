@@ -1260,18 +1260,18 @@ class TestMergedFlags:
     def test_the_published_command_serialises_for_the_completion_cache(self, registered) -> None:
         """TAB completion reads the command's SIGNATURE, which this one builds by hand.
 
-        ``_serialize_options`` refuses a parameter whose annotation is not
+        ``serialize_options`` refuses a parameter whose annotation is not
         ``Annotated[..., typer.Option(...)]`` and skips the whole command, so a
         leaf that carried only ``**kwargs`` — or annotations that did not match
         its signature — would silently lose its flags from every completion.
         """
         import typer.main
 
-        from otto.config.completion_cache import _serialize_options
+        from otto.config.completion_cache import serialize_options
 
         cmd = typer.main.get_command(build_instruction_app(INSTRUCTIONS.get("install")))
         leaf = cmd.commands["install"] if hasattr(cmd, "commands") else cmd
-        serialised = _serialize_options(leaf.callback, command_name="install")
+        serialised = serialize_options(leaf.callback, command_name="install")
 
         assert serialised is not None
         assert {o["name"] for o in serialised} >= {"ensure", "recover_partial"}

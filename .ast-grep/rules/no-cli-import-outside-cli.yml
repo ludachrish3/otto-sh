@@ -3,15 +3,12 @@ language: python
 severity: error
 message: A library module imports otto.cli. The CLI projects the libraries; nothing below it may reach up. Move the logic into the library and let otto.cli call it.
 note: >
-  ZERO baseline as of the thin-CLI series item 1 (2026-09-28): instruction
-  registration left otto.cli, which retired the otto.project edge. The
-  ignores below are NOT all the same kind: the package's own CLI entry
-  points are permanent, and the completion-cache pair is RECORDED debt,
-  retired by thin-CLI item 7. src/otto/config/completion_stubs.py and
-  src/otto/reservations/factory.py were pruned from this list 2026-09-29
-  (thin-CLI item 1 review) because neither actually imports otto.cli -- an
-  ignore earns its place by naming a real import and, for debt, the item
-  that retires it; do not add one on the strength of "it might someday."
+  No debt: the completion cache's walkers of the command tree moved into
+  otto.cli.registry, and the CLI hands them, its root app and its dispatch
+  key to otto.config (spec 2026-10-11 placement-and-phases §3.1). The ignores
+  below are the package's own CLI entry points, which are permanent. An
+  ignore earns its place by naming a real import; do not add one on the
+  strength of "it might someday."
 files:
 - src/otto/**
 ignores:
@@ -19,9 +16,6 @@ ignores:
 # The package's own CLI entry points: permanent.
 - src/otto/__init__.py
 - src/otto/_shim.py
-# Completion-cache placement debt, retired by thin-CLI item 7.
-- src/otto/config/completion_cache.py
-- src/otto/config/completion_tree.py
 rule:
   any:
   - pattern: from otto.cli import $$$X

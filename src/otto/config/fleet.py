@@ -15,7 +15,6 @@ from ..host.host import DEFAULT_COMMAND_TIMEOUT
 from .lab import Lab
 
 if TYPE_CHECKING:
-    from ..host import Results, UnixHost
     from ..host.options import (
         FtpOptions,
         NcOptions,
@@ -26,6 +25,8 @@ if TYPE_CHECKING:
         UserlandOptions,
     )
     from ..host.remote_host import RemoteHost
+    from ..host.unix_host import UnixHost
+    from ..result import Results
     from .repo import Repo
 
 T = TypeVar("T")

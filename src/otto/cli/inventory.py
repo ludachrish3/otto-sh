@@ -34,7 +34,7 @@ from rich.markup import escape
 from .invoke import fail
 
 if TYPE_CHECKING:
-    from ..inventory import Inventory
+    from ..inventory.protocol import Inventory
     from ..models.inventory import InventoryRecord
 
 inventory_app = typer.Typer(
@@ -110,7 +110,8 @@ def _inventory(code: int = 1) -> "Inventory":
     passes :data:`_CANNOT_ANSWER`.
     """
     from ..bootstrap import get_repos
-    from ..inventory import InventoryError, build_inventory
+    from ..inventory.config import build_inventory
+    from ..inventory.errors import InventoryError
 
     try:
         inventory = build_inventory(get_repos())
@@ -134,7 +135,7 @@ def _records(inventory: "Inventory", code: int = 1) -> "dict[str, InventoryRecor
     report belongs where the records come from rather than at three call sites
     one of which will eventually forget.
     """
-    from ..inventory import InventoryError
+    from ..inventory.errors import InventoryError
 
     try:
         records = {key: inventory.lookup(key) for key in inventory.list_keys()}
@@ -154,7 +155,7 @@ def _stale_row(inventory: "Inventory") -> None:
     table, ``export`` writes an artefact and ``diff`` reports "no differences",
     all from a snapshot that may be days old, all exiting 0.
     """
-    from ..inventory import snapshot_cache_of
+    from ..inventory.cache import snapshot_cache_of
 
     cache = snapshot_cache_of(inventory)
     if cache is not None and cache.stale_notice is not None:
@@ -168,7 +169,7 @@ def _unwrapped(inventory: "Inventory") -> "Inventory":
     overlay OUTERMOST (a snapshot must never hold credentials), so the cache —
     when there is one — is exactly one layer in.
     """
-    from ..inventory import CredsOverlay
+    from ..inventory.creds import CredsOverlay
 
     while isinstance(inventory, CredsOverlay):
         inventory = inventory.inner
@@ -180,7 +181,7 @@ def _creds_row(inventory: "Inventory") -> None:
 
     Spec 2026-09-06 creds-store §7.3.
     """
-    from ..inventory import CredsOverlay
+    from ..inventory.creds import CredsOverlay
 
     if isinstance(inventory, CredsOverlay):
         _row(f"creds:    {inventory.store.label}")
@@ -188,7 +189,7 @@ def _creds_row(inventory: "Inventory") -> None:
 
 def _backend_of(inventory: "Inventory") -> "Inventory":
     """Return the innermost object — the backend itself, past both core wrappers."""
-    from ..inventory import SnapshotCache
+    from ..inventory.cache import SnapshotCache
 
     inner = _unwrapped(inventory)
     return inner.inner if isinstance(inner, SnapshotCache) else inner
@@ -196,7 +197,7 @@ def _backend_of(inventory: "Inventory") -> "Inventory":
 
 def _not_cached_reason(inventory: "Inventory") -> str:
     """Why this inventory has no snapshot to refresh (spec §9.5)."""
-    from ..inventory import JsonInventory
+    from ..inventory.json_backend import JsonInventory
 
     if isinstance(_backend_of(inventory), JsonInventory):
         return (
@@ -228,7 +229,7 @@ def lookup(
     from rich.table import Table
 
     inventory = _inventory()
-    from ..inventory import InventoryError
+    from ..inventory.errors import InventoryError
 
     try:
         record = inventory.lookup(key)
@@ -332,8 +333,7 @@ def export(
     # find out.
     if path.exists() and not force:
         fail(f"{escape(str(path))} exists; pass --force to overwrite it", soft_wrap=True)
-    from ..inventory import records_to_document
-    from ..inventory.snapshot import write_document_atomically
+    from ..inventory.snapshot import records_to_document, write_document_atomically
 
     doc = records_to_document(_records(inventory))
     # The same writer the snapshot cache uses: write-then-rename, so a reader
@@ -358,7 +358,8 @@ def _document_records(path: Path) -> "dict[str, InventoryRecord]":
     :data:`_CANNOT_ANSWER` — an unreadable file is "I could not compare", never
     "the two sides differ".
     """
-    from ..inventory import InventoryError, document_to_records
+    from ..inventory.errors import InventoryError
+    from ..inventory.snapshot import document_to_records
     from ..models.inventory import FILLABLE_INVENTORY_FIELDS
 
     try:
@@ -417,7 +418,7 @@ def diff(
     # Developer note: the "could not answer" exit status is `_CANNOT_ANSWER`.
     from rich.table import Table
 
-    from ..inventory import diff_records
+    from ..inventory.snapshot import diff_records
 
     if other is not None:
         left_label, left = str(path), _document_records(path)
@@ -457,8 +458,8 @@ def refresh() -> None:
     """Force a fetch of a cached remote inventory and rewrite its snapshot."""
     from datetime import datetime, timezone
 
-    from ..inventory import InventoryError, snapshot_cache_of
-    from ..inventory.cache import format_age
+    from ..inventory.cache import format_age, snapshot_cache_of
+    from ..inventory.errors import InventoryError
 
     inventory = _inventory()
     cache = snapshot_cache_of(inventory)

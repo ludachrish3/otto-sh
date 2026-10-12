@@ -277,6 +277,191 @@ def resolve_spec_command(spec: CommandSpec) -> Any:
     )
 
 
+# ---------------------------------------------------------------------------
+# Completion-cache walkers: the CLI's own command tree, serialised for the cache
+# ---------------------------------------------------------------------------
+#
+# otto.config writes the completion cache but sits below the CLI and never
+# imports it, so the CLI hands these walkers in (otto.cli.main's
+# _completion_collectors). They are not public and stay out of __all__.
+
+
+def collect_current_commands() -> list[dict[str, Any]]:
+    """Read the currently-registered instructions with their options.
+
+    Must be called after :func:`otto.bootstrap.bootstrap` has finished
+    populating ``otto.instructions.INSTRUCTIONS``. A source that never
+    loaded simply has an empty registry (no init modules → no
+    ``@instruction()`` ran → no entries). Test files are never read here:
+    ``otto test`` has no per-test subcommands, and its flags (the run flags
+    and the ``test`` verb's registered options) are served from the command
+    tree like any other leaf's.
+
+    Each item is ``{"name": str, "options": list[dict]}``; a command whose
+    options can't be fully serialized is cached with ``options: []`` so
+    the name still completes even though the per-option flags don't.
+    """
+    import logging
+
+    from ..config.completion_cache import serialize_options
+    from ..errors import OttoError
+    from ..instructions import INSTRUCTIONS
+    from .run import build_instruction_app
+
+    log = logging.getLogger(__name__)
+    out: list[dict[str, Any]] = []
+    for name, entry in INSTRUCTIONS.items():
+        # Building an instruction's app resolves the `run` verb's options
+        # classes, which a rebuild pays for so that their flags complete.
+        try:
+            app = build_instruction_app(entry)
+        except OttoError as e:
+            # A command that cannot be built (its flags clash with the
+            # verb's) still completes by name; `otto run <name>` is where
+            # the clash is reported.
+            log.debug(f"completion-cache: {name!r} has no options, its command failed: {e}")
+            app = None
+        callback = None
+        if app is not None and app.registered_commands:
+            callback = app.registered_commands[0].callback
+        options = serialize_options(callback, command_name=name) if callback else None
+        out.append({"name": name, "options": options if options is not None else []})
+    return out
+
+
+def collect_test_verb_options() -> list[dict[str, Any]]:
+    """Serialise the ``test`` verb's registered options, the flags ``otto test`` gains.
+
+    The completion fast path builds ``otto test`` without the options
+    registry, so it reads these instead
+    (:func:`otto.cli.test.build_test_app`). A verb whose flags cannot be
+    built (a collision) or serialised caches ``[]``: ``otto test`` is where
+    the collision is reported.
+    """
+    import logging
+
+    from ..config.completion_cache import serialize_options
+    from ..errors import OttoError
+    from .test import test_verb_params
+
+    try:
+        params = test_verb_params()
+    except OttoError as e:
+        logging.getLogger(__name__).debug(f"completion-cache: no otto test options: {e}")
+        return []
+
+    def verb_flags() -> None:  # pragma: no cover — only its signature is read
+        """Carry the verb's parameters for :func:`serialize_options`."""
+
+    verb_flags.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
+    return serialize_options(verb_flags, command_name="test") or []
+
+
+def _serialize_cli_children(app: Any) -> list[dict[str, Any]]:
+    """Serialize a third-party Typer group's children for the cache.
+
+    Children reuse the instruction/suite option schema (rebuilt by
+    :func:`otto.config.completion_stubs.build_stub_command` on the fast
+    path). A child whose options don't round-trip degrades to name+help —
+    the name still tab-completes, only ``--<TAB>`` falls back. Nested groups
+    recurse; a nested single-command app serializes as the flattened leaf it
+    would natively become (see ``_typer_app_flattens``).
+    """
+    from typer.main import get_command_name
+
+    from ..config.completion_cache import serialize_options
+
+    children: list[dict[str, Any]] = []
+    for cmd_info in app.registered_commands:
+        cname = cmd_info.name or get_command_name(cmd_info.callback.__name__)
+        children.append(
+            {
+                "name": cname,
+                "help": cmd_info.help or inspect.getdoc(cmd_info.callback) or "",
+                "options": serialize_options(cmd_info.callback, command_name=cname) or [],
+            }
+        )
+    for grp_info in app.registered_groups:
+        sub = grp_info.typer_instance
+        if sub is None:
+            continue
+        if _typer_app_flattens(sub):
+            children.extend(_serialize_cli_children(sub))
+            continue
+        gname = next(
+            (n for n in (grp_info.name, sub.info.name) if isinstance(n, str) and n),
+            None,
+        )
+        if gname is None:
+            continue
+        ghelp = next((h for h in (grp_info.help, sub.info.help) if isinstance(h, str)), "")
+        children.append({"name": gname, "help": ghelp, "commands": _serialize_cli_children(sub)})
+    return children
+
+
+def collect_cli_commands() -> list[dict[str, Any]]:
+    """Snapshot third-party top-level CLI commands for the completion cache.
+
+    Reads the live :data:`otto.cli.registry.CLI_COMMANDS` registry and
+    returns one ``{"name", "help", "lab_free"}`` dict per entry whose
+    registering module (``CLI_COMMANDS.origin(name)``) is *not* under
+    ``otto.`` — built-in commands re-register
+    on every real invocation (bootstrap always runs), so caching them would
+    be redundant and risks masking a genuine removal. Third-party commands,
+    by contrast, only exist in the registry after a plugin's init module has
+    executed, which the completion fast path deliberately skips; caching
+    their name/help/``lab_free`` here is what lets them still tab-complete.
+
+    A GROUP entry additionally carries ``"commands"`` (recursive child
+    metadata) and a flattening single-command app carries ``"options"`` —
+    both omitted when empty. Serializing children may import a lazy
+    ``"pkg.mod:attr"`` loader's module: a slow-path-only, once-per-cache-
+    refresh cost, contained per command (a broken loader degrades that entry
+    to name+help and real dispatch still reports the import error loudly).
+    """
+    import logging
+
+    from ..config.completion_cache import serialize_options
+    from ..errors import is_containable
+
+    log = logging.getLogger(__name__)
+    out: list[dict[str, Any]] = []
+    for name, spec in CLI_COMMANDS.items():
+        if CLI_COMMANDS.origin(name).startswith("otto."):
+            continue
+        entry: dict[str, Any] = {"name": name, "help": spec.help, "lab_free": spec.lab_free}
+        try:
+            loader = spec.loader
+            if isinstance(loader, str):
+                mod_name, _, attr = loader.partition(":")
+                loader = getattr(importlib.import_module(mod_name), attr)
+            if isinstance(loader, typer.Typer):
+                if _typer_app_flattens(loader):
+                    cmd_info = loader.registered_commands[0]
+                    options = serialize_options(cmd_info.callback, command_name=spec.name)
+                    if options:
+                        entry["options"] = options
+                else:
+                    commands = _serialize_cli_children(loader)
+                    if commands:
+                        entry["commands"] = commands
+        # Containment seam: the cache stays name-only, dispatch reports loudly.
+        #
+        # BaseException, not Exception: this imports a THIRD-PARTY loader module,
+        # so a module-level `pytest.importorskip` there raises `Skipped` — not an
+        # `Exception` — straight past this seam and out of `entry()`, which
+        # reaches `collect_cli_commands()` as a call ARGUMENT, so the
+        # `suppress(OSError)` around the cache write never sees it. That
+        # tracebacks out of every cache rebuild — root `otto --help` included —
+        # and into the shell mid-TAB. See `otto.errors.UNCONTAINABLE`.
+        except BaseException as e:
+            if not is_containable(e):
+                raise
+            log.debug(f"completion-cache: no child metadata for {spec.name!r}: {e!r}")
+        out.append(entry)
+    return out
+
+
 # otto's own top-level commands, registered beside the registry that holds them
 # like every registry's built-ins: importing this module lists all fourteen,
 # whether or not anything has imported the command tree (otto.cli.main). Each

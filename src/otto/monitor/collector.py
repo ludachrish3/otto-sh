@@ -23,9 +23,15 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..logger.mode import LogMode
-from ..models import ChartSpec, MetricPoint, MonitorMeta, TabSpec, TunnelRecord
 from ..models.formats import MONITOR_STREAM_WRITE_VERSIONS
-from ..models.monitor import DEFAULT_MAX_SERIES_PER_CHART
+from ..models.monitor import (
+    DEFAULT_MAX_SERIES_PER_CHART,
+    ChartSpec,
+    MetricPoint,
+    MonitorMeta,
+    TabSpec,
+    TunnelRecord,
+)
 from ..result import CommandResult, Results
 from .broadcast import Broadcaster
 from .db import MetricDB

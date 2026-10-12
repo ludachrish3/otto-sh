@@ -18,7 +18,7 @@ never a legitimate "no evidence" case (spec 2026-09-24 §3.1's ``fail`` vs
 
 import math
 
-from ..check import FeatureResult, UnmeasuredReason, Verdict
+from ..check.verdict import FeatureResult, UnmeasuredReason, Verdict
 from .impairer import ScopedState
 from .params import ImpairmentParams, Selector, equivalent
 from .probes import PingStats

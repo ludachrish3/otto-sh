@@ -27,26 +27,19 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import override
 
-from ..check import (
-    CheckRow,
-    CheckSection,
-    FeatureResult,
-    HostFingerprint,
-    ReportVerdicts,
-    Verdict,
-    range_labels,
-)
 from ..check.fingerprint import (
     ELEVATION_TIMEOUT_S,
     LINK_TOOLS,
     LINK_VERSIONS,
     Elevation,
+    HostFingerprint,
     check_read,
     check_root_run,
     probe_elevation,
     probe_fingerprint,
 )
-from ..check.render import proven_range_line
+from ..check.proven import range_labels
+from ..check.render import CheckRow, CheckSection, proven_range_line
 from ..check.sweep import (
     COMMAND_ALLOWANCE_S,
     SWEEP_MIN_AGE_S,
@@ -54,9 +47,10 @@ from ..check.sweep import (
     probe_worst_s,
     run_end_worst_s,
 )
-from ..host import CommandResult
+from ..check.verdict import FeatureResult, ReportVerdicts, Verdict
 from ..host.errors import UnsupportedOnUserlandError
 from ..host.host import is_dry_run
+from ..result import CommandResult
 from . import _check_rows as rows
 from ._check_rows import ProbeCtx, far_end, origin_end
 from .check_live import (

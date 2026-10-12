@@ -40,11 +40,17 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from typing_extensions import override
 
-from .. import _webassets
+from .._webassets.artifacts import MONITOR
 from ..console import CONSOLE
 from ..logger.formatters import NO_LOCALS_ATTR
-from ..models import LabSnapshot, MonitorExport
-from ..models.monitor import EventCreateBody, EventRecord, EventUpdateBody, SessionRecord
+from ..models.monitor import (
+    EventCreateBody,
+    EventRecord,
+    EventUpdateBody,
+    LabSnapshot,
+    MonitorExport,
+    SessionRecord,
+)
 from ..utils import wait_for_async
 from . import archive_edit
 from .broadcast import LAPSED
@@ -54,7 +60,7 @@ from .events import MonitorEvent
 from .export import build_live_export, document_json
 from .session import SessionFrame
 
-_STATIC_DIR = _webassets.MONITOR
+_STATIC_DIR = MONITOR
 
 logger = logging.getLogger(__name__)
 

@@ -18,7 +18,9 @@ if TYPE_CHECKING:
     # function-local import.
     from rich.console import RenderableType
 
-    from ..init import DoctorReport, InitConfig, ScaffoldReport
+    from ..init.config import InitConfig
+    from ..init.doctor import DoctorReport
+    from ..init.scaffolder import ScaffoldReport
 
 _FLAGS = {"root": "--path", "kmodcov_dir": "--kmodcov-dir"}
 """Field-to-flag spelling for usage_error_from. No "areas": every area flag names a fixed area."""
@@ -93,7 +95,9 @@ async def init_command(
     leaf-invoke wrapper's coroutine bridge (``cli/invoke._wrap_invoke``) —
     registration is the only opt-in.
     """
-    from ..init import InitInputError, check_repo, scaffold, scaffold_candidates
+    from ..init.doctor import check_repo
+    from ..init.errors import InitInputError
+    from ..init.scaffolder import scaffold, scaffold_candidates
     from .invoke import usage_error_from
 
     requested = [
@@ -134,7 +138,7 @@ async def init_command(
 
 
 def _config(path: Path, **kwargs: str) -> "InitConfig":
-    from ..init import InitConfig
+    from ..init.config import InitConfig
 
     return InitConfig.for_repo(path, **kwargs)
 
@@ -154,7 +158,7 @@ def _ask(config: "InitConfig", candidates: list[str], *, name_given: bool) -> _A
     one confirmation per candidate, skipping an area a chosen one already
     pulls in (the library scaffolds it as a prerequisite).
     """
-    from ..init import scaffold_prerequisites
+    from ..init.scaffolder import scaffold_prerequisites
 
     if "settings" in candidates:
         # str() pins what click already guarantees: with a str default and no

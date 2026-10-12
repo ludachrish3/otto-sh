@@ -330,6 +330,7 @@ def test_write_cache_keys_match_the_names_collector(repos):
     one and not the other, a consumer reading the section payload would
     silently lose it.
     """
+    from otto.cli.main import _completion_collectors
     from otto.config import completion_cache as cc
     from otto.config.cache_sections import section_by_name
 
@@ -337,7 +338,9 @@ def test_write_cache_keys_match_the_names_collector(repos):
     cc.write_cache(discovered, [], [])
     data = json.loads(cc._cache_path().read_text())
     stored_keys = set(data["sections"]["names"]["payload"])
-    assert stored_keys == set(section_by_name("names").collect(discovered))
+    assert stored_keys == set(
+        section_by_name("names").collect(discovered, _completion_collectors())
+    )
     assert set(cc.read_cache(discovered) or {}) == stored_keys
 
 
@@ -352,12 +355,16 @@ def test_names_payload_keys_are_all_checked_or_delegated(repos):
     which bucket it belongs in — checked or delegated — rather than the
     contract staying prose nobody re-reads.
     """
-    from otto.cli.main import DELEGATED_NAMES_KEYS, RAW_ITERATED_NAMES_KEYS
+    from otto.cli.main import (
+        DELEGATED_NAMES_KEYS,
+        RAW_ITERATED_NAMES_KEYS,
+        _completion_collectors,
+    )
     from otto.config.cache_sections import section_by_name
 
     _, discovered = repos
     assert (
-        set(section_by_name("names").collect(discovered))
+        set(section_by_name("names").collect(discovered, _completion_collectors()))
         == set(RAW_ITERATED_NAMES_KEYS) | DELEGATED_NAMES_KEYS
     )
     # Union alone lets a key sit in BOTH buckets and still satisfy the equality.

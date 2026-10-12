@@ -42,14 +42,10 @@ if TYPE_CHECKING:
     from ..context import OttoContext
     from ..coverage.config import DestinationError
     from ..errors import FieldError
-    from ..reservations import ReservationBackendError
+    from ..reservations.check import ReservationBackendError
     from ..result import Result
-    from ..session import (
-        DemotedRepo,
-        InstructionInactiveError,
-        LabBuildError,
-        ProjectSelectionError,
-    )
+    from ..session.errors import InstructionInactiveError, LabBuildError, ProjectSelectionError
+    from ..session.projects import DemotedRepo
     from .registry import CommandSpec
 
 
@@ -610,8 +606,8 @@ def lab_context_refusals() -> "Iterator[None]":
     the CLI's budgeted import surface (``scripts/import_budget.py``), which a
     bare ``otto --help`` must not pay for.
     """
-    from ..reservations import ReservationBackendError
-    from ..session import LabBuildError
+    from ..reservations.check import ReservationBackendError
+    from ..session.errors import LabBuildError
 
     try:
         yield
@@ -630,8 +626,8 @@ def report_lab_context_error(err: "LabBuildError | ReservationBackendError") -> 
     """
     from rich import print as rprint
 
-    from ..reservations import ReservationBackendError
-    from ..session import LabBuildError
+    from ..reservations.check import ReservationBackendError
+    from ..session.errors import LabBuildError
 
     if isinstance(err, LabBuildError):
         # Bound once so the type checker narrows the literal across the arms
@@ -824,7 +820,7 @@ def ensure_cli_session(ctx: typer.Context) -> None:
     # HostFilter on the console. After the dry-run notice, which stays the
     # first line of a dry run. init_cli_logging above owns the CLI-only file
     # sinks; this re-affirms the console it installed with the same level.
-    from ..session import install_logging
+    from ..session.logs import install_logging
 
     install_logging(log_level=opts.log_level, show_time=opts.show_time)
 
@@ -858,7 +854,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
 
     from ..bootstrap import bootstrap
     from ..invocation import RunPolicy, install_policy, installed_policy, reset_binding
-    from ..session import build_lab
+    from ..session.lab import build_lab
 
     # The lab build reads the run policy (ingest picks each product's variant
     # entry by it), so the policy is installed before it. The root callback
@@ -884,7 +880,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     # section wins). With -R the backend is NOT constructed at all, so a broken
     # or hanging scheduler can never block lab access (break-glass). A broken
     # backend's ReservationBackendError propagates to the loud callers.
-    from ..reservations import build_reservation_gate
+    from ..reservations.factory import build_reservation_gate
 
     reservation_gate = build_reservation_gate(
         repos,
@@ -967,7 +963,8 @@ def validate_project_switches(ctx: typer.Context) -> None:
     if opts is None or not (opts.include_projects or opts.exclude_projects):
         return
     from ..bootstrap import bootstrap
-    from ..session import ProjectSelectionError, select_projects
+    from ..session.errors import ProjectSelectionError
+    from ..session.projects import select_projects
 
     try:
         select_projects(bootstrap().repos, list(opts.include_projects), list(opts.exclude_projects))
@@ -1001,7 +998,8 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     :func:`~otto.context.open_context` applies; this function only renders its verdict.
     """
     from ..bootstrap import bootstrap
-    from ..session import ProjectSelection, RepoLoadError, check_repos
+    from ..session.errors import RepoLoadError
+    from ..session.projects import ProjectSelection, check_repos
 
     result = bootstrap()
     if not result.errors:
@@ -1166,7 +1164,8 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
     owner = INSTRUCTIONS.repo(name)
 
     from ..context import get_context
-    from ..session import InstructionInactiveError, check_instruction_active
+    from ..session.activation import check_instruction_active
+    from ..session.errors import InstructionInactiveError
 
     try:
         check_instruction_active(name, owner, get_context())
@@ -1248,7 +1247,8 @@ def refuse_unsatisfied_dependencies() -> None:
     the gate that would otherwise refuse to let you run the fix.
     """
     from ..context import get_context
-    from ..session import DependencyRefusedError, check_dependencies
+    from ..session.dependencies import check_dependencies
+    from ..session.errors import DependencyRefusedError
 
     # PRINTED to stderr, not logged and not through rich -- the same call and
     # the same reasons as the demotion warning in

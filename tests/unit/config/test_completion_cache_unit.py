@@ -5,7 +5,7 @@ subprocess coverage in ``test_completion_cache.py`` exercises the full stack
 but is heavy; these tests run in milliseconds and pinpoint regressions.
 
 Note: this module intentionally does NOT use ``from __future__ import
-annotations`` — ``_serialize_options`` introspects ``Annotated[...]`` forms
+annotations`` — ``serialize_options`` introspects ``Annotated[...]`` forms
 at runtime, and PEP 563 would stringify them, making the serializer skip the
 option entirely.
 """
@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 import pytest
 import typer
 
+import otto.cli.registry as cli_registry
 from otto.config import completion_cache as cc
 from otto.host.os_profile import ProfileContext
 from otto.labs.json_repository import LAB_FILENAME
@@ -380,7 +381,7 @@ def test_serialize_options_handles_supported_kinds() -> None:
         l: Annotated[list[str] | None, typer.Option("--l")] = None,  # noqa: E741 — deliberate single-char CLI option name in type-map test
     ) -> None: ...
 
-    schema = cc._serialize_options(source, command_name="source")
+    schema = cc.serialize_options(source, command_name="source")
     assert schema is not None
     kinds = [entry["kind"] for entry in schema]
     assert kinds == ["str", "int", "float", "bool", "path", "str_list"]
@@ -395,7 +396,7 @@ def test_serialize_options_returns_none_on_unsupported() -> None:
         bad: Annotated[Decimal, typer.Option("--bad")] = Decimal(0),
     ) -> None: ...
 
-    assert cc._serialize_options(source, command_name="source") is None
+    assert cc.serialize_options(source, command_name="source") is None
 
 
 def test_clear_cache_returns_false_when_missing(tmp_path: Path, monkeypatch) -> None:
@@ -431,7 +432,7 @@ class TestCollectCurrentCommands:
         # instruction app would find no instruction at all. So the call runs
         # once unpatched first, importing everything it needs, and the patched
         # call must import nothing new.
-        cc.collect_current_commands()
+        cli_registry.collect_current_commands()
         before = set(sys.modules)
         monkeypatch.setattr(
             "otto.instructions.INSTRUCTIONS",
@@ -439,7 +440,7 @@ class TestCollectCurrentCommands:
                 "instruction", entry=ClassEntry, register_hint="@otto.instructions.instruction()"
             ),
         )
-        assert cc.collect_current_commands() == []
+        assert cli_registry.collect_current_commands() == []
         first_imported = sorted(set(sys.modules) - before)
         assert first_imported == [], (
             f"{first_imported} first imported under the patched INSTRUCTIONS; a module "
@@ -455,7 +456,7 @@ class TestCollectCurrentCommands:
             "_cc_probe_instr",
             InstructionEntry(name="_cc_probe_instr", module=__name__, handler=_probe_instr),
         )
-        instructions = cc.collect_current_commands()
+        instructions = cli_registry.collect_current_commands()
 
         entry = next(e for e in instructions if e["name"] == "_cc_probe_instr")
         assert entry["options"]
@@ -475,7 +476,7 @@ class TestCollectCurrentCommands:
             "_cc_probe_bad",
             InstructionEntry(name="_cc_probe_bad", module=__name__, handler=_probe_bad),
         )
-        instructions = cc.collect_current_commands()
+        instructions = cli_registry.collect_current_commands()
 
         entry = next(e for e in instructions if e["name"] == "_cc_probe_bad")
         assert entry["options"] == []
@@ -554,7 +555,7 @@ def test_json_safe_default(value: object, expected: object) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _serialize_options — skip-gate tests
+# serialize_options — skip-gate tests
 # ---------------------------------------------------------------------------
 
 
@@ -563,7 +564,7 @@ def test_serialize_options_non_annotated_returns_none() -> None:
 
     def cb(x: int) -> None: ...
 
-    assert cc._serialize_options(cb, command_name="cb") is None
+    assert cc.serialize_options(cb, command_name="cb") is None
 
 
 def test_serialize_options_annotated_without_option_returns_none() -> None:
@@ -571,7 +572,7 @@ def test_serialize_options_annotated_without_option_returns_none() -> None:
 
     def cb(x: Annotated[int, "meta-but-not-typer-Option"]) -> None: ...
 
-    assert cc._serialize_options(cb, command_name="cb") is None
+    assert cc.serialize_options(cb, command_name="cb") is None
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +587,7 @@ def test_cache_round_trips_third_party_commands(tmp_path: Path, monkeypatch) -> 
 
     register_cli_command("e2etool", typer.Typer(name="e2etool"), help="Tool.")
     try:
-        from otto.config.completion_cache import collect_cli_commands
+        from otto.cli.registry import collect_cli_commands
 
         commands = collect_cli_commands()
         assert {"name": "e2etool", "help": "Tool.", "lab_free": False} in commands
@@ -605,8 +606,7 @@ def test_collect_cli_commands_includes_decorator_registered_leaves() -> None:
     The registered origin must therefore be the module that APPLIED the
     decorator, and the leaf must survive collection.
     """
-    from otto.cli.registry import CLI_COMMANDS, cli_command
-    from otto.config.completion_cache import collect_cli_commands
+    from otto.cli.registry import CLI_COMMANDS, cli_command, collect_cli_commands
 
     @cli_command(name="_cc_probe_leaf", help="Probe leaf.", lab_free=True)
     async def _probe() -> None: ...
@@ -632,8 +632,7 @@ def test_a_decorated_third_party_command_is_not_classified_built_in() -> None:
     """
     import types
 
-    from otto.cli.registry import CLI_COMMANDS
-    from otto.config.completion_cache import collect_cli_commands
+    from otto.cli.registry import CLI_COMMANDS, collect_cli_commands
 
     acme = types.ModuleType("acme_cli")
     source = (
@@ -654,7 +653,7 @@ def test_a_decorated_third_party_command_is_not_classified_built_in() -> None:
 
 def test_collect_cli_commands_skips_otto_builtins() -> None:
     """Builtin commands (origin starting with 'otto.') are never cached."""
-    from otto.config.completion_cache import collect_cli_commands
+    from otto.cli.registry import collect_cli_commands
 
     names = {c["name"] for c in collect_cli_commands()}
     # 'run' is a builtin top-level command registered from otto.* — must be
@@ -667,7 +666,7 @@ class TestCollectCliCommandChildren:
     completion of `otto <plugin-group> <TAB>` rebuilds stubs from them)."""
 
     def _collect_entry(self, name: str) -> dict:
-        from otto.config.completion_cache import collect_cli_commands
+        from otto.cli.registry import collect_cli_commands
 
         return next(c for c in collect_cli_commands() if c["name"] == name)
 
@@ -1328,7 +1327,7 @@ def test_declining_loader_module_does_not_escape_collect_cli_commands(monkeypatc
     assert CLI_COMMANDS.origin("probecmd") == "thirdparty.pkg"
 
     try:
-        out = cc.collect_cli_commands()
+        out = cli_registry.collect_cli_commands()
     except BaseException as exc:  # the escape IS the defect under test
         raise AssertionError(
             f"collect_cli_commands() let {type(exc).__name__} escape: {exc!r}"

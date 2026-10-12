@@ -162,8 +162,35 @@ def writer_key_paths(section: "Section", repos: list[Repo]) -> list[Path]:
     return [*own, *lab_key_paths(repos)] if section.lab_keyed else own
 
 
-def _collect_names(repos: list[Repo]) -> dict[str, Any]:
-    """Assemble the ``names`` payload from the live registries and *repos*.
+@dataclass(frozen=True)
+class CliCollectors:
+    """What only the CLI can supply to a cache rebuild: walks of its own command tree.
+
+    ``otto.config`` sits below ``otto.cli`` and never imports it, so the CLI
+    hands these in. ``otto.cli.main._completion_collectors`` builds the one
+    instance that ``otto.cli.main.entry``, the cache's writer, uses, and that
+    the :data:`SECTIONS` collectors take as the writer's parity reference
+    (``tests/unit/cli/test_cache_writer_parity.py``), so the two cannot drift.
+    """
+
+    instructions: Callable[[], list[dict[str, Any]]]
+    """Each registered instruction with its ``run`` options."""
+
+    test_options: Callable[[], list[dict[str, Any]]]
+    """The ``test`` verb's registered options."""
+
+    commands: Callable[[], list[dict[str, Any]]]
+    """The third-party top-level commands."""
+
+    app: Any
+    """The root Typer app the ``shim`` section's tree is serialised from."""
+
+    pending_key: str
+    """The ``ctx.meta`` key the root group's dispatch protocol reads."""
+
+
+def _collect_names(repos: list[Repo], cli: CliCollectors) -> dict[str, Any]:
+    """Assemble the ``names`` payload from the live registries, *repos* and the CLI's walks.
 
     Key-for-key the view :func:`completion_cache.read_cache` serves — the
     writer's keywords must match this key set (pinned by
@@ -171,8 +198,8 @@ def _collect_names(repos: list[Repo]) -> dict[str, Any]:
     """
     backends = _cc.collect_backend_names()
     return {
-        "instructions": _cc.collect_current_commands(),
-        "test_options": _cc.collect_test_verb_options(),
+        "instructions": cli.instructions(),
+        "test_options": cli.test_options(),
         "hosts": _cc.collect_host_ids(repos),
         "hosts_by_lab": _cc.collect_host_ids_by_lab(repos),
         "host_drops": _cc.collect_host_drops(repos),
@@ -184,20 +211,20 @@ def _collect_names(repos: list[Repo]) -> dict[str, Any]:
         "term_backends": backends["term_backends"],
         "transfer_backends": backends["transfer_backends"],
         "usernames": _cc.collect_reservation_usernames(repos),
-        "commands": _cc.collect_cli_commands(),
+        "commands": cli.commands(),
         "labs": _cc.collect_lab_names(repos),
         "host_classes_by_id": _cc.collect_host_classes_by_id(repos),
-        "projects": _cc.collect_project_names(),
+        "projects": _cc.collect_project_names(repos),
         "links": _cc.collect_links(repos),
         "logins_by_host": _cc.collect_logins_by_host(repos),
         "docker_default_parent_by_lab": _cc.collect_docker_default_parent_by_lab(repos),
     }
 
 
-def _collect_shim(repos: list[Repo]) -> dict[str, Any]:
-    from .completion_tree import build_shim_payload  # lazy: imports the CLI
+def _collect_shim(repos: list[Repo], cli: CliCollectors) -> dict[str, Any]:
+    from .completion_tree import build_shim_payload  # lazy: the cold write path only
 
-    return build_shim_payload(repos)
+    return build_shim_payload(repos, app=cli.app, pending_key=cli.pending_key)
 
 
 @dataclass(frozen=True)
@@ -213,8 +240,13 @@ class Section:
     name: str
     """Storage key under ``"sections"`` in the cache file."""
 
-    collect: Callable[[list[Repo]], dict[str, Any]]
-    """Build this section's payload from live state (slow path only)."""
+    collect: Callable[[list[Repo], CliCollectors], dict[str, Any]]
+    """Build this section's payload from live state and the CLI's walks.
+
+    ``otto.cli.main.entry`` writes the cache without calling this; it is the
+    parity reference ``tests/unit/cli/test_cache_writer_parity.py`` holds that
+    write to.
+    """
 
     key_paths: Callable[[list[Repo]], list[Path]] | None = None
     """Every path whose edit must move this section's digest, besides its lab

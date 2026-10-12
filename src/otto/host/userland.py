@@ -1542,7 +1542,8 @@ class UserlandHost:
         if is_dry_run():
             return Result(Status.Skipped, value=_dry_run_report())
         from .capability_grid import SessionIdentity
-        from .survey import run_survey, survey_report
+        from .survey.engine import run_survey
+        from .survey.report import survey_report
         from .survey.sweep import parse_scan_ports
 
         try:

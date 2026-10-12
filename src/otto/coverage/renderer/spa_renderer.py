@@ -14,13 +14,13 @@ import logging
 import shutil
 from pathlib import Path
 
-from ... import _webassets
+from ..._webassets.artifacts import COVAPP
 from ..store.model import CoverageStore
 from .spa_data import emit_chunks, make_stamp
 
 logger = logging.getLogger(__name__)
 
-STATIC_DIR = _webassets.COVAPP
+STATIC_DIR = COVAPP
 """The built covapp bundle (``make web`` -> ``vite build --config vite.covapp.config.ts``).
 
 Not committed — a hostless unit-test checkout that skipped ``make web`` has

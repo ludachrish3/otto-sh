@@ -41,33 +41,15 @@ pytestmark = pytest.mark.interpreter_agnostic
 # (ctx.repos) or, with no context object in hand, from otto.config.fleet.current_repos().
 # otto.lifecycle has since left the cycle: the host layer and the lifecycle stopped importing
 # the context once each event loop's host registry moved to otto.invocation.
+# otto.cli, otto.coverage, otto.init, otto.monitor, otto.monitor.live and otto.suite left it
+# when the completion cache stopped importing the CLI (its walkers of the command tree moved into
+# otto.cli.registry) and otto.monitor.live folded into otto.monitor (spec 2026-10-11
+# placement-and-phases §3.1, §3.11).
 BASELINE: dict[str, list[str]] = {
     "otto.bootstrap": ["otto.config", "otto.host"],
     "otto.check": ["otto.host"],
-    "otto.cli": [
-        "otto.bootstrap",
-        "otto.check",
-        "otto.config",
-        "otto.context",
-        "otto.coverage",
-        "otto.docker",
-        "otto.host",
-        "otto.init",
-        "otto.instructions",
-        "otto.inventory",
-        "otto.link",
-        "otto.models",
-        "otto.monitor",
-        "otto.monitor.live",
-        "otto.project",
-        "otto.reservations",
-        "otto.session",
-        "otto.suite",
-        "otto.tunnel",
-    ],
     "otto.config": [
         "otto.bootstrap",
-        "otto.cli",
         "otto.context",
         "otto.host",
         "otto.instructions",
@@ -84,7 +66,6 @@ BASELINE: dict[str, list[str]] = {
         "otto.reservations",
         "otto.session",
     ],
-    "otto.coverage": ["otto.config", "otto.context", "otto.host", "otto.models"],
     "otto.creds": ["otto.models"],
     "otto.docker": ["otto.config", "otto.host", "otto.models"],
     "otto.host": [
@@ -92,19 +73,11 @@ BASELINE: dict[str, list[str]] = {
         "otto.docker",
         "otto.models",
     ],
-    "otto.init": ["otto.config", "otto.host", "otto.inventory", "otto.labs", "otto.models"],
     "otto.instructions": ["otto.context", "otto.project", "otto.session"],
     "otto.inventory": ["otto.config", "otto.creds", "otto.host", "otto.models"],
     "otto.labs": ["otto.config", "otto.host", "otto.inventory", "otto.link", "otto.models"],
     "otto.link": ["otto.check", "otto.host", "otto.models"],
     "otto.models": ["otto.config", "otto.host", "otto.link"],
-    "otto.monitor": ["otto.host", "otto.link", "otto.models"],
-    "otto.monitor.live": [
-        "otto.config",
-        "otto.context",
-        "otto.monitor",
-        "otto.tunnel",
-    ],
     "otto.project": [
         "otto.config",
         "otto.context",
@@ -123,16 +96,6 @@ BASELINE: dict[str, list[str]] = {
         "otto.inventory",
         "otto.labs",
         "otto.models",
-    ],
-    "otto.suite": [
-        "otto.config",
-        "otto.context",
-        "otto.coverage",
-        "otto.host",
-        "otto.models",
-        "otto.monitor",
-        "otto.monitor.live",
-        "otto.project",
     ],
     "otto.tunnel": ["otto.check", "otto.host", "otto.models"],
 }

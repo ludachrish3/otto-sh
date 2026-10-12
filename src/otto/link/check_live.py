@@ -39,8 +39,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..check import FeatureResult, HostFingerprint, Verdict
-from ..check.fingerprint import LINK_TOOLS, LINK_VERSIONS, check_root_run, probe_fingerprint
+from ..check.fingerprint import (
+    LINK_TOOLS,
+    LINK_VERSIONS,
+    HostFingerprint,
+    check_root_run,
+    probe_fingerprint,
+)
 from ..check.sweep import (
     COMMAND_ALLOWANCE_S,
     age_text,
@@ -49,6 +54,7 @@ from ..check.sweep import (
     sweepable,
     swept_note,
 )
+from ..check.verdict import FeatureResult, Verdict
 from ..host.daemon import etime_seconds, kill_command
 from ..host.errors import UnsupportedOnUserlandError
 from . import _check_rows as rows

@@ -120,9 +120,10 @@ def test_the_flat_collector_agrees_with_the_per_lab_one(repos_two_labs):
 
 
 def test_the_key_rides_the_names_section_and_read_cache_serves_it(repos_two_labs):
+    from otto.cli.main import _completion_collectors
     from otto.config.cache_sections import _collect_names
 
-    payload = _collect_names(repos_two_labs)
+    payload = _collect_names(repos_two_labs, _completion_collectors())
     assert payload["docker_default_parent_by_lab"] == {"east": "test3"}
     cc.write_cache(
         repos_two_labs,

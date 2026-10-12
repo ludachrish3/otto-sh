@@ -120,10 +120,11 @@ def test_a_repo_without_docker_contributes_nothing(tmp_path, monkeypatch):
 
 
 def test_the_names_section_carries_the_three_keys_and_read_cache_serves_them(tmp_path, monkeypatch):
+    from otto.cli.main import _completion_collectors
     from otto.config.cache_sections import _collect_names
 
     repos = _repos(tmp_path, monkeypatch)
-    payload = _collect_names(repos)
+    payload = _collect_names(repos, _completion_collectors())
     assert payload["docker_images"] == ["api", "ghcr.io/me/db"]
     assert payload["docker_services_by_use_case"]["smoke"] == ["api", "db"]
     assert payload["repos"] == ["one"]

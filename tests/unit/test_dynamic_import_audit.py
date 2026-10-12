@@ -89,9 +89,9 @@ COMPUTED_SITES: list[tuple[str, str, str]] = [
     ("otto/check/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/cli/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/cli/main.py", "_OttoGroup._real", CLI_COMMAND_TABLE),
+    ("otto/cli/registry.py", "collect_cli_commands", CLI_COMMAND_TABLE),
     ("otto/cli/registry.py", "resolve_spec_command", CLI_COMMAND_TABLE),
     ("otto/config/__init__.py", "__getattr__", FACADE_RESOLVER),
-    ("otto/config/completion_cache.py", "collect_cli_commands", CLI_COMMAND_TABLE),
     ("otto/config/repo.py", "Repo.import_init_modules", USER_SUPPLIED),
     ("otto/coverage/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/coverage/fetcher/__init__.py", "__getattr__", FACADE_RESOLVER),
@@ -381,12 +381,23 @@ class _Collector(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def strings_in(text: str, path: str, found: "Extraction | None" = None) -> Extraction:
+    """Parse one file's *text* for its import strings, adding them to *found*.
+
+    *path* is the file under ``src/`` (``otto/monitor/collector.py``); each
+    site found carries it. ``tests/unit/test_monitor_service_reads_no_lab.py``
+    reads the monitor's files through this too, so both guards see the same strings.
+    """
+    found = found if found is not None else Extraction([], [], [])
+    _Collector(path, found).visit(ast.parse(text, path))
+    return found
+
+
 def extract(src_root: Path = SRC_ROOT) -> Extraction:
     """Parse every ``.py`` file under *src_root*/otto for its import strings."""
     found = Extraction([], [], [])
     for file in sorted((src_root / "otto").rglob("*.py")):
-        path = file.relative_to(src_root).as_posix()
-        _Collector(path, found).visit(ast.parse(file.read_text(encoding="utf-8"), str(file)))
+        strings_in(file.read_text(encoding="utf-8"), file.relative_to(src_root).as_posix(), found)
     return found
 
 
@@ -928,7 +939,7 @@ COMPOSITION_ROOT = "otto/bootstrap.py"
 # The landings of spec 2026-10-11 placement-and-phases §6, in order. Each
 # landing sets CURRENT_LANDING to its own name in its commit.
 LANDINGS = ["P1a", "P1b", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9a", "P9b"]
-CURRENT_LANDING = "P1a"
+CURRENT_LANDING = "P1b"
 
 # What the declared graph shows once each landing is in: the modules with a
 # layer (spec 2026-10-11 placement-and-phases §5.2, "modules layered") and the
@@ -1030,9 +1041,14 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/lab/__init__.py", "otto.config.scope:EmptySelectionError", FACADE_BINDING),
     ("otto/models/__init__.py", "otto.utils:MIN_INTERVAL_SECONDS", FACADE_BINDING),
     ("otto/models/__init__.py", "otto.utils:validate_interval", FACADE_BINDING),
-    ("otto/monitor/__init__.py", "otto.monitor.live:LiveReport", FACADE_BINDING),
-    ("otto/monitor/__init__.py", "otto.monitor.live:run_live", FACADE_BINDING),
-    ("otto/monitor/__init__.py", "otto.monitor.live:select_monitor_hosts", FACADE_BINDING),
+    ("otto/monitor/__init__.py", "otto.monitor.errors:MonitorInputError", FACADE_BINDING),
+    ("otto/monitor/__init__.py", "otto.monitor.errors:MonitorTlsError", FACADE_BINDING),
+    ("otto/monitor/__init__.py", "otto.monitor.errors:NoMonitorableHostsError", FACADE_BINDING),
+    ("otto/monitor/__init__.py", "otto.monitor.errors:ReviewSourceError", FACADE_BINDING),
+    ("otto/monitor/__init__.py", "otto.monitor.events:MonitorEvent", FACADE_BINDING),
+    ("otto/monitor/__init__.py", "otto.monitor.parsers:DEFAULT_PARSERS", FACADE_BINDING),
+    ("otto/monitor/__init__.py", "otto.monitor.parsers:MetricParser", FACADE_BINDING),
+    ("otto/monitor/__init__.py", "otto.monitor.tls:resolve_monitor_tls", FACADE_BINDING),
 ]
 
 # Transitional exceptions: (file under src/, target, the landing that removes it).

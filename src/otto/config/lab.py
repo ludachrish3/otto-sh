@@ -14,7 +14,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from ..host.host import Host
-    from ..inventory import Inventory
+    from ..inventory.protocol import Inventory
     from ..labs.protocol import LabRepository
     from ..link.model import Link
 

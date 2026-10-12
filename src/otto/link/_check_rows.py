@@ -23,11 +23,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..check import FeatureResult, HostFingerprint, UnmeasuredReason, Verdict
 from ..check.clock import SOCAT_CONNECT_S
-from ..check.fingerprint import check_read, check_root_run
+from ..check.fingerprint import HostFingerprint, check_read, check_root_run
 from ..check.sweep import COMMAND_ALLOWANCE_S, probe_worst_s
-from ..host import CommandResult
+from ..check.verdict import FeatureResult, UnmeasuredReason, Verdict
+from ..result import CommandResult
 from .judge import judge_control, judge_delay, judge_loss, judge_port_range, judge_rate, judge_side
 from .model import Link, LinkEndpoint
 from .params import ImpairmentParams, Selector

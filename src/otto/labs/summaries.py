@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from .protocol import HostSummary, LabRepository, SupportsHostSummaries, logins_of_creds
 
 if TYPE_CHECKING:
-    from ..inventory import Inventory
+    from ..inventory.protocol import Inventory
 
 logger = logging.getLogger(__name__)
 

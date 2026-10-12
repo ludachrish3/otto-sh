@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from .host import Host
+    from .host.host import Host
 
 T = TypeVar("T")
 

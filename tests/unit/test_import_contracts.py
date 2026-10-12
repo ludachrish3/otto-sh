@@ -123,6 +123,24 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     "import otto.host.interact": ["otto.host.session_setup"],
     # Classifying a survey login failure loads asyncssh only for an SSH error.
     "from otto.host.survey.login import classify_login_error": ["asyncssh"],
+    # The monitor's lower files are topology modules beneath the monitor service:
+    # importing all eleven loads none of the service, and not the lab-aware runner.
+    (
+        "import otto.monitor.broadcast, otto.monitor.errors, otto.monitor.event_ops, "
+        "otto.monitor.events, otto.monitor.formats, otto.monitor.log_sourced, "
+        "otto.monitor.parsers, otto.monitor.rates, otto.monitor.snmp, otto.monitor.store, "
+        "otto.monitor.tls"
+    ): [
+        "otto.monitor.archive_edit",
+        "otto.monitor.collector",
+        "otto.monitor.db",
+        "otto.monitor.export",
+        "otto.monitor.factory",
+        "otto.monitor.live",
+        "otto.monitor.review",
+        "otto.monitor.server",
+        "otto.monitor.session",
+    ],
     # Host-spec validation reads IMPAIRERS; the built-in resolves by reference.
     "from otto.link import IMPAIRERS": [
         "otto.link.manage",

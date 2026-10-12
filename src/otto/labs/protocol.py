@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     # constructs a Lab from this module, so the string annotation below is
     # never resolved outside of static type-checking.
     from ..config.lab import Lab
-    from ..inventory import Inventory
+    from ..inventory.protocol import Inventory
 
 
 @runtime_checkable

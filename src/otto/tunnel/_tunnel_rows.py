@@ -14,13 +14,8 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..check import (
-    FeatureResult,
-    HostFingerprint,
-    UnmeasuredReason,
-    Verdict,
-)
-from ..check.fingerprint import TUNNEL_TOOLS, check_read
+from ..check.fingerprint import TUNNEL_TOOLS, HostFingerprint, check_read
+from ..check.verdict import FeatureResult, UnmeasuredReason, Verdict
 from ._tunnel_echoes import EchoStart, kill_matching, listen_command, start_echo
 from .check_probes import (
     BULK_SIZE,

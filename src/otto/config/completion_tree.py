@@ -141,19 +141,21 @@ def _param(param: "Parameter", where: str, unregistered: list[str]) -> dict[str,
     }
 
 
-def _child(group: TyperGroup, ctx: "Context", name: str) -> "Command | None":
+def _child(group: TyperGroup, ctx: "Context", name: str, pending_key: str) -> "Command | None":
     # otto's root group resolves only the pending dispatch target real
     # (everything else is a stub, whose parameters would be wrong here).
-    # Imported lazily: a module-scope import of otto.cli.main from otto.config
-    # would be circular/heavy (otto.cli.main pulls in the whole CLI registry).
-    from ..cli.main import PENDING_SUBCMD_ARGS_KEY
-
-    ctx.meta[PENDING_SUBCMD_ARGS_KEY] = [name]
+    # *pending_key* is the ctx.meta key its dispatch reads; the CLI supplies it.
+    ctx.meta[pending_key] = [name]
     return group.get_command(ctx, name)
 
 
 def _node(
-    cmd: "Command", ctx: "Context", name: str, where: str, unregistered: list[str]
+    cmd: "Command",
+    ctx: "Context",
+    name: str,
+    where: str,
+    unregistered: list[str],
+    pending_key: str,
 ) -> dict[str, Any]:
     """Serialise one command as a Node.
 
@@ -167,7 +169,7 @@ def _node(
     if isinstance(cmd, TyperGroup):  # the test typer._click's _resolve_context descends by
         for sub_name in cmd.list_commands(ctx):
             try:
-                sub = _child(cmd, ctx, sub_name)
+                sub = _child(cmd, ctx, sub_name, pending_key)
             except OttoError as e:
                 # A child that cannot be built (an instruction whose flags
                 # clash with the `run` verb's, a `run` options class that does
@@ -185,7 +187,9 @@ def _node(
             if sub is None or getattr(sub, "hidden", False):
                 continue
             sub_ctx = _context(sub, sub_name, ctx)
-            commands[sub_name] = _node(sub, sub_ctx, sub_name, f"{where}/{sub_name}", unregistered)
+            commands[sub_name] = _node(
+                sub, sub_ctx, sub_name, f"{where}/{sub_name}", unregistered, pending_key
+            )
     # "group" is the PARSER's shape, not "has subcommands": TyperGroup sets
     # allow_interspersed_args = False (typer/core.py:999) where a leaf TyperCommand
     # inherits click's True (typer/_click/core.py:517), and that one flag decides
@@ -203,12 +207,12 @@ def _node(
 
 
 def _host_class_views(
-    root: TyperGroup, root_ctx: "Context", unregistered: list[str]
+    root: TyperGroup, root_ctx: "Context", unregistered: list[str], pending_key: str
 ) -> dict[str, Any]:
     from ..host.os_profile import HOST_CLASSES
     from ..registry import resolved
 
-    host = _child(root, root_ctx, "host")
+    host = _child(root, root_ctx, "host", pending_key)
     if host is None or not isinstance(host, _ScopedGroup):
         return {}
     host_ctx = _context(host, "host", root_ctx)
@@ -221,20 +225,28 @@ def _host_class_views(
             if cmd is None or getattr(cmd, "hidden", False):
                 continue
             where = f"host<{class_name}>/{verb}"
-            verbs[verb] = _node(cmd, _context(cmd, verb, host_ctx), verb, where, unregistered)
+            verb_ctx = _context(cmd, verb, host_ctx)
+            verbs[verb] = _node(cmd, verb_ctx, verb, where, unregistered, pending_key)
         views[class_name] = verbs
     return views
 
 
-def serialize_tree(cli: "Command") -> TreeSerialisation:
+def serialize_tree(cli: "Command", *, pending_key: str) -> TreeSerialisation:
     """Serialise the CLI as Nodes plus per-host-class verb views, every completer classified.
 
     *cli* is ``typer.main.get_command(app)``, a ``TyperGroup`` for otto.
+    *pending_key* is the ``ctx.meta`` key the root group's dispatch reads
+    (``otto.cli.main.PENDING_SUBCMD_ARGS_KEY``): set to a child's name, it
+    makes the group resolve that child for real instead of as a stub.
     """
     unregistered: list[str] = []
     ctx = _context(cli, "otto", None)
-    tree = _node(cli, ctx, "otto", "otto", unregistered)
-    views = _host_class_views(cli, ctx, unregistered) if isinstance(cli, TyperGroup) else {}
+    tree = _node(cli, ctx, "otto", "otto", unregistered, pending_key)
+    views = (
+        _host_class_views(cli, ctx, unregistered, pending_key)
+        if isinstance(cli, TyperGroup)
+        else {}
+    )
     tree["host_classes"] = views
     return TreeSerialisation(tree=tree, unregistered=unregistered)
 
@@ -252,7 +264,7 @@ def stat_triple(path: "Path") -> list[Any]:
 
 
 def _build_inventory(repos: "list[Repo]") -> Any:
-    from ..inventory import build_inventory
+    from ..inventory.config import build_inventory
 
     return build_inventory(repos)
 
@@ -275,25 +287,24 @@ def inventory_block(repos: "list[Repo]") -> dict[str, Any]:
     return {"kind": "stat", "files": [stat_triple(p) for p in paths]}
 
 
-def build_shim_payload(repos: "list[Repo]", app: Any | None = None) -> dict[str, Any]:
+def build_shim_payload(repos: "list[Repo]", *, app: Any, pending_key: str) -> dict[str, Any]:
     """Everything the shim needs to validate and answer, from the bootstrapped app (spec §3).
 
-    ``keys`` are the ``names`` section's key paths as stat triples, its lab
-    key paths included (computed here, after init); ``tables``
-    are the repos whose per-file test tables a test-name TAB reads (their
-    ``sut_dir``, the key each table is stored under), in order. The tables
-    themselves are not read here: only a pytest collection writes them.
+    *app* is the root Typer app and *pending_key* the ``ctx.meta`` key its
+    dispatch reads. The CLI supplies both (``otto.cli.main._completion_collectors``),
+    because ``otto.config`` never imports the CLI. ``keys`` are the ``names``
+    section's key paths as stat triples, its lab key paths included (computed
+    here, after init); ``tables`` are the repos whose per-file test tables a
+    test-name TAB reads (their ``sut_dir``, the key each table is stored
+    under), in order. The tables themselves are not read here: only a pytest
+    collection writes them.
     """
     import typer
 
     from .cache_sections import section_by_name, writer_key_paths
     from .completion_cache import _cache_ttl_seconds
 
-    if app is None:
-        from ..cli.main import app as root_app
-
-        app = root_app
-    tree = serialize_tree(typer.main.get_command(app)).tree
+    tree = serialize_tree(typer.main.get_command(app), pending_key=pending_key).tree
     names = section_by_name("names")
     return {
         "ttl_seconds": _cache_ttl_seconds(repos),

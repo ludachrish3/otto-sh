@@ -8,7 +8,7 @@ from .errors import ReviewSourceError
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
-    from ..models import MonitorExport
+    from ..models.monitor import MonitorExport
 
 
 def load_review_document(path: Path) -> "MonitorExport":
@@ -25,7 +25,7 @@ def load_review_document(path: Path) -> "MonitorExport":
     """
     from pydantic import ValidationError
 
-    from ..models import MonitorExport
+    from ..models.monitor import MonitorExport
 
     suffix = path.suffix.lower()
     if suffix == ".json":

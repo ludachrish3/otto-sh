@@ -632,7 +632,7 @@ def kmodcov_export(
     ],
 ) -> None:
     """Write the otto_kmodcov sources this otto ships into DIRECTORY."""
-    from ..kmodcov import export_tree
+    from ..kmodcov.library import export_tree
 
     result = export_tree(directory)
     if result.changed:
@@ -653,7 +653,7 @@ def kmodcov_check(
     directory: Annotated[Path, typer.Argument(help="The vendored copy to compare.")],
 ) -> None:
     """Compare DIRECTORY with the library this otto ships; exit 0 current, 1 differs, 2 absent."""
-    from ..kmodcov import check_tree
+    from ..kmodcov.library import check_tree
 
     result = check_tree(directory)
     if result.state == "absent":

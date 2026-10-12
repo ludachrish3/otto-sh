@@ -6,10 +6,10 @@ and have a neutralized consumer registered in tests/_fixtures/webassets.py —
 otherwise the next artifact silently re-creates the #175 class.
 """
 
+import ast
 import importlib
 import importlib.util
 import inspect
-import re
 from pathlib import Path
 
 import pytest
@@ -52,6 +52,61 @@ def _webassets_attr_name(path: Path) -> str:
         if attr.isupper() and value == path:
             return attr
     raise AssertionError(f"no otto._webassets module-level constant equals {path!r}")
+
+
+_ARTIFACT_MODULES = ["_webassets", "_webassets.artifacts"]
+"""The modules an artifact constant is imported from, relative (``..``) or under ``otto.``."""
+
+
+def referenced_artifacts(source: str) -> "set[str]":
+    """Every ``otto._webassets`` constant name *source* reads, in any spelling.
+
+    ``_webassets.MONITOR`` (an attribute of the package, however it was
+    bound), and ``from .._webassets.artifacts import MONITOR`` or
+    ``from otto._webassets import MONITOR`` (relative or absolute, aliased or
+    not). Only the code counts: a name in a comment or a string claims nothing.
+    """
+    names = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Attribute) and ast.unparse(node.value).endswith("_webassets"):
+            names.add(node.attr)
+        elif isinstance(node, ast.ImportFrom):
+            module = (
+                (node.module or "").removeprefix("otto.")
+                if node.level or (node.module or "").startswith("otto.")
+                else None
+            )
+            if module in _ARTIFACT_MODULES:
+                names.update(alias.name for alias in node.names)
+    return names
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from .. import _webassets\nX = _webassets.MONITOR\n",
+        "import otto._webassets\nX = otto._webassets.MONITOR\n",
+        "from .._webassets.artifacts import MONITOR\n",
+        "from ..._webassets.artifacts import MONITOR as STATIC\n",
+        "from otto._webassets.artifacts import MONITOR\n",
+        "from otto._webassets import MONITOR\n",
+    ],
+)
+def test_every_spelling_of_a_consumer_claims_its_artifact(source: str) -> None:
+    assert "MONITOR" in referenced_artifacts(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "X = 1\n",
+        "# _webassets.MONITOR\nNOTE = '_webassets.MONITOR'\n",
+        "from .artifacts import MONITOR\n",
+        "from otherpkg._webassets.artifacts import MONITOR\n",
+    ],
+)
+def test_a_consumer_that_reads_no_artifact_claims_none(source: str) -> None:
+    assert "MONITOR" not in referenced_artifacts(source)
 
 
 def test_gitignore_in_package_entries_are_exactly_the_webassets_glob():
@@ -99,20 +154,23 @@ def test_every_consumer_is_neutralized_by_default():
 def test_every_artifact_has_a_registered_consumer():
     """Every otto._webassets.ALL entry is claimed by a CONSUMERS module's source.
 
-    Reads each consumer module's UNPATCHED source text rather than its live
+    Parses each consumer module's UNPATCHED source rather than reading its live
     (neutralized, under this test lane) attribute value: a monkeypatch only
     overwrites the module's runtime attribute, never its source, so a
-    source-text check can't be fooled either way — not by the neutralizer
+    source check can't be fooled either way — not by the neutralizer
     masking a missing registration, and not by a coincidental resolved-value
     match with no real reference in code. This is what actually catches a new
     artifact added to ``otto._webassets.ALL`` without a matching consumer.
+    :func:`referenced_artifacts` reads every spelling of the constant: the
+    defining-module import ``tests/unit/test_internal_imports_skip_facades.py``
+    requires of otto's own code, and the ``_webassets.<NAME>`` attribute read.
     """
     claimed = set()
     for module_name, _attr in CONSUMERS:
         module = importlib.import_module(module_name)
-        source = inspect.getsource(module)
+        referenced = referenced_artifacts(inspect.getsource(module))
         for name, path in _webassets.ALL.items():
-            if re.search(rf"_webassets\.{_webassets_attr_name(path)}\b", source):
+            if _webassets_attr_name(path) in referenced:
                 claimed.add(name)
     assert claimed == set(_webassets.ALL)
 

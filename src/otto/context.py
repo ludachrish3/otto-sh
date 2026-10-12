@@ -28,9 +28,10 @@ if TYPE_CHECKING:
     from .config.lab import Lab
     from .config.repo import Repo
     from .config.scope import ProjectScope
-    from .host import Results, UnixHost
     from .host.remote_host import RemoteHost
+    from .host.unix_host import UnixHost
     from .params import OptionsSource
+    from .result import Results
 
 __all__ = [
     "ContextBinding",
@@ -1329,7 +1330,9 @@ async def open_context(
     try:
         from .bootstrap import bootstrap
         from .config.lab import Lab, split_lab_names
-        from .session import build_lab, check_dependencies, check_repos, select_projects
+        from .session.dependencies import check_dependencies
+        from .session.lab import build_lab
+        from .session.projects import check_repos, select_projects
 
         result = bootstrap()  # composition root — idempotent; registers user init components
         fill_teardown_deadline(policy)  # after discovery; bounds the closing sweep on exit
@@ -1350,7 +1353,7 @@ async def open_context(
         # context, so an unbuildable backend refuses with nothing to undo.
         from pathlib import Path
 
-        from .reservations import build_reservation_gate
+        from .reservations.factory import build_reservation_gate
 
         gate = build_reservation_gate(
             result.repos,
