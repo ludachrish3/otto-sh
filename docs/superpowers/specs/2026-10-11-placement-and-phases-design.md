@@ -865,6 +865,31 @@ Of these, 107 are at module scope, 100 function-local and 26 `TYPE_CHECKING`.
 - A rule test lands with the sweep: an otto-internal import of a facade's lazy-table name fails
   unless the importer is in `otto.examples`.
 
+**Amended by P1b, 2026-10-11.** Building P1b changed this section, and §3.1 and §3.11, in these
+places:
+- **The sweep counts 232 sites in 51 files, not 233 in 52.** The 233rd is `otto/__init__.py`'s
+  own `TYPE_CHECKING` copy of its lazy table, which `test_lazy_packages` requires. The rule test
+  exempts only that shape: an import directly under a top-level `if TYPE_CHECKING:` in the
+  facade's own `__init__`, whose table entry names the same module and attribute.
+- **The rule also reads attribute access on a facade package** (`import otto.x as x`, then
+  `x.Name`). That re-pointed two `otto._webassets` reads to `otto._webassets.artifacts`.
+- **The sweep is a permanent tool,** `scripts/facade_sweep.py`. The rule test's failure message
+  names it as the fix.
+- **The commits run in this order: sweep, collector move and fold, eleven declarations.**
+  Declaring the eleven first gives 26 modules and 115 edges, and folding first breaks audit rule 3.
+  The landing's message keeps §6's review order.
+- **The fold removes the tach boundary** that kept config, context and tunnel out of the monitor
+  service. `tests/unit/test_monitor_service_reads_no_lab.py` replaces it:
+  - it is at least as strict as tach and never skips an import tach counts;
+  - it is stricter where code runs at runtime;
+  - it also reads literal import strings, and it bans `otto.lab` ahead of P7 and P9a;
+  - `scripts/monitor_boundary_tach_canary.py` holds it to the installed tach.
+- **The collector move (§3.1) changes four details:**
+  - `serialize_tree` takes `pending_key` as a keyword-only argument;
+  - the supplier `_completion_collectors` is private;
+  - `otto.examples` depends on `otto.monitor.parsers`;
+  - two tests that called `_collect_names(repos)` were migrated with the callers §3.1 lists.
+
 **P1's two landings.** P1a carries the tach switches and the string audit; P1b carries the
 sweep with its rule test, the monitor facade rule and the collector move, in ordered review
 sections (§6).
@@ -1174,7 +1199,10 @@ dispatch harness. Each statement below is a hypothesis; the measurement decides.
 | P9a | +1 (`otto/lab/__init__`) wherever `fleet` loads and `otto.lab` did not: the dispatch surfaces, none protected. The accessor move is neutral: its pieces land in `otto.declared`, already loaded wherever `otto.bootstrap` is. The suite and coverage routing adds nothing on a CLI path. | A protected-surface growth goes to the owner. |
 | P9b | +1 (`otto/context/__init__`) on `help_repo` and the dispatch surfaces, none protected (§3.12). Discovery lands in `otto.config.repo`, already loaded wherever `otto.bootstrap` is; the `otto.project` imports stay inside `bootstrap()`, where the by-name imports already load the same modules. A surface that loaded `otto.bootstrap` only through a lower reader may decline. `import_otto`, `version_repo` and `completion_repo_warm` load none of it before or after. | A protected-surface growth goes to the owner. |
 
-Declines are locked in with `make import-snapshot` on 3.10–3.14.
+Declines are locked in on 3.10–3.14 by lowering each declined surface's ceiling by exactly its
+measured delta, and only when two runs agree. A landing never re-records every surface, which
+would absorb unrelated drift (amended by P1b, 2026-10-11). P1b's declines were `monitor` and
+`test`, −7 on every minor.
 
 ### 4.3 Package ancestors
 
