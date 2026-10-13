@@ -531,6 +531,39 @@ facade bindings. Every binding whose target moves in P3:
 - The registry `Ref`s at `host/os_profile.py:459`, `:466` and `:473` stop pointing upward. The
   deep path `otto.models.host:UnixHostSpec` was retired in P1b (spec 1 appendix G).
 
+**Amended by P3, 2026-10-12.** Building P3 changed this section, and §4.3 and §5.3, in these
+places:
+- **No Python module is added, but four tach modules are declared**, all `foundation`:
+  `otto.link.params`, `otto.link.impairer`, `otto.link.netem` and `otto.models.base`. The graph
+  ends at 56 modules, 271 edges, 43 layered.
+- **`models→link` was already a re-pointed import.** At P2, `models/host.py:82` and
+  `models/jsonschema.py:60` imported `otto.link.impairer`, not the facade. The tach edge existed
+  only because `otto.models` declared `otto.link`; P3 declares `otto.link.impairer` instead.
+- **More importers re-point than the list above names**, under the facade rule:
+  - `Cred`/`cred_identity` → `otto.models.base`: `host/{connections,interact,privilege,
+    remote_host,session,unix_host}.py`, `host/survey/{engine,login}.py`, `inventory/creds.py`;
+  - `CredSpec` → `otto.models.base`: `creds/{json_store,protocol}.py`, `testing/conformance.py`;
+  - `models/{inventory,jsonschema,snippets,settings}.py` read `otto.host.specs` and
+    `otto.host.option_specs` directly (`models/inventory.py` keeps re-exporting
+    `coerce_digit_string`).
+  - The line numbers in `link/check.py` differed at P2's tip.
+- **tach users of the leaf:** `config`, `creds`, `init`, `inventory`, `labs`, `reservations` and
+  `testing` declare `otto.models.base`; `coverage` and `monitor.snmp` replace `otto.models` with
+  it.
+- **`host/element.py` imports `resources_nonempty` at module scope.** `remote_host` loads the leaf
+  at module scope for `Cred`, so `element` already loads it, and a function-local import there
+  saved nothing.
+- **§4.3:** the leaf and the three link modules get `IMPORT_ONLY_DECLARED` rows (each `[]`), not
+  new `IMPORT_CONTRACTS` rows. The import-order row is
+  `import otto.host.login_proxy; import otto.models.base`. That is proxy first: the reverse
+  order cannot catch a leaf that back-imports the proxies at its tail.
+- **§5.3:** at the carve, STRING_EDGES gains the 13 `link/__init__.py` facade bindings and the
+  stock netem `Ref` (`REGISTRY_BUILTIN`). At the move, `models/__init__.py` gains 11 bindings
+  (`OttoModel` and `CredSpec` → `otto.models.base`, `ToolchainSpec` → `otto.host.specs`, the
+  eight option specs → `otto.host.option_specs`), and the seven host-spec rows go: 61 → 75 → 79.
+  GRANDFATHERED 9 → 2 (bootstrap's two stay until P9b). `CURRENT_LANDING` stays P2 after the
+  carve alone (13/46 is no landing's shape) and becomes P3 at the move.
+
 ### 3.4 Container auto-start removed (P4, S5-4)
 
 **Today.** `exec`, `run`, `put`, `get` and the session paths on a `DockerContainerHost` call
@@ -1259,6 +1292,14 @@ warm dispatch surfaces, `help_repo`, the five `host_local`/`host_ssh` surfaces, 
 13 tracked surfaces). Owner ruling D-P2-1 approved exactly that footprint on exactly those
 surfaces; any other growth, or a listed surface that did not grow, would have stopped the landing.
 No surface declined.
+
+**P3, measured (amended by P3, 2026-10-12).** Row P3 holds: neutral. All 38 surfaces are +0 on
+every minor, and none declined. Four runs reproduced base and tip exactly, totals and every
+bucket. At unchanged totals, the two moved files' opens are counted under `otto:host` instead of
+`otto:models` (4 or 8 operations per surface), and on 3.10 `host_local_exec` moves one operation
+from `other` to `fd`. A bucket move that every run reproduces exactly is the change itself, not
+noise; the stop rule for a bucket shuffle at an unchanged total applies to a run that does not
+reproduce its own base.
 
 ### 4.3 Package ancestors
 
