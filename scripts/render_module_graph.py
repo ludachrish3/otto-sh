@@ -19,6 +19,7 @@ import argparse
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 import tomli
 
@@ -207,11 +208,11 @@ def cycle_label(number: int, members: "list[str]") -> str:
     return f"cycle {number} ({len(members)} modules)"
 
 
-def condensed(graph: ModuleGraph) -> "dict[str, list[str]]":
-    """Collapse each cycle to one node and drop the edges another route covers.
+def node_edges(graph: ModuleGraph) -> "dict[str, set[str]]":
+    """Collapse each cycle to one node and map each node to every node it imports.
 
-    What is left is acyclic. An edge ``a -> c`` is dropped when ``a`` already
-    reaches ``c`` another way, so every arrow drawn is one the layering needs.
+    Nothing is dropped yet: this is every arrow between two nodes, before
+    :func:`condensed` leaves out the ones another route covers.
     """
     owner = {m: m for m in graph.modules}
     for number, members in enumerate(cycles(graph), start=1):
@@ -222,21 +223,62 @@ def condensed(graph: ModuleGraph) -> "dict[str, list[str]]":
         for dep in deps:
             if owner[module] != owner[dep]:
                 edges[owner[module]].add(owner[dep])
+    return edges
 
-    def reachable(start: str, skip: str) -> "set[str]":
-        seen: set[str] = set()
-        todo = [n for n in edges[start] if n != skip]
-        while todo:
-            node = todo.pop()
-            if node not in seen:
-                seen.add(node)
-                todo.extend(edges[node])
-        return seen
 
+def _reachable(edges: "dict[str, set[str]]", start: str, skip: str) -> "set[str]":
+    """Every node *start* reaches without taking its own arrow to *skip*."""
+    seen: set[str] = set()
+    todo = [n for n in edges[start] if n != skip]
+    while todo:
+        node = todo.pop()
+        if node not in seen:
+            seen.add(node)
+            todo.extend(edges[node])
+    return seen
+
+
+def condensed(graph: ModuleGraph) -> "dict[str, list[str]]":
+    """Collapse each cycle to one node and drop the edges another route covers.
+
+    What is left is acyclic. An edge ``a -> c`` is dropped when ``a`` already
+    reaches ``c`` another way, so every arrow drawn is one the layering needs.
+    """
+    edges = node_edges(graph)
     return {
-        node: sorted(dep for dep in targets if dep not in reachable(node, skip=dep))
+        node: sorted(dep for dep in targets if dep not in _reachable(edges, node, skip=dep))
         for node, targets in sorted(edges.items())
     }
+
+
+class OmittedArrow(NamedTuple):
+    """One arrow the overview leaves out, and a node that carries it instead."""
+
+    source: str
+    target: str
+    via: str
+    """A node *source* imports directly that reaches *target*."""
+
+
+def omitted_arrow(graph: ModuleGraph) -> "OmittedArrow | None":
+    """Name one arrow the overview leaves out, preferring one from ``otto.cli`` to a single module.
+
+    ``None`` when the overview leaves nothing out.
+    """
+    edges = node_edges(graph)
+    drawn = condensed(graph)
+    dropped = [
+        (source, target)
+        for source, targets in sorted(edges.items())
+        for target in sorted(targets)
+        if target not in drawn[source]
+    ]
+    dropped.sort(key=lambda arrow: (arrow[0] != "otto.cli", arrow[1].startswith("cycle ")))
+    for source, target in dropped:
+        for via in sorted(edges[source] - {target}):
+            if via in drawn[source] and target in _reachable(edges, via, skip=""):
+                return OmittedArrow(source, target, via)
+    return None
 
 
 def mutual_pairs(graph: ModuleGraph) -> "list[tuple[str, str]]":
@@ -323,6 +365,29 @@ def _cycle_section(graph: ModuleGraph, found: "list[list[str]]") -> "list[str]":
     return lines
 
 
+def _omission_caption(graph: ModuleGraph) -> "list[str]":
+    """Say which arrows the overview leaves out, how many, and where to see them all."""
+    total = sum(len(targets) for targets in node_edges(graph).values())
+    drawn = sum(len(targets) for targets in condensed(graph).values())
+    lines = [
+        "**Not every import is drawn.** An arrow from A to C is left out when A",
+        "already reaches C through arrows that are drawn, so what remains is the",
+        f"order the modules build on each other: {drawn} of the {total} arrows between",
+        "these nodes are drawn.",
+    ]
+    example = omitted_arrow(graph)
+    if example is not None:
+        lines += [
+            f"For example, {_short(example.source)} → {_short(example.target)} is not drawn,",
+            f"because {_short(example.source)} → {_short(example.via)} is, and",
+            f"{_short(example.via)} reaches {_short(example.target)}.",
+        ]
+    lines.append(
+        "To see every dependency a module declares, use [the table of every module](#every-module)."
+    )
+    return lines
+
+
 def render(graph: "ModuleGraph | None" = None) -> str:
     """Compose the whole page, as Markdown."""
     graph = graph if graph is not None else load_graph()
@@ -339,18 +404,18 @@ def render(graph: "ModuleGraph | None" = None) -> str:
         "unless `tach.toml` declares that edge, so this page shows the contract the",
         "code is held to. It is redrawn from `tach.toml` on every docs build.",
         "",
-        "It also refuses a declared edge that no import uses, so every edge drawn",
-        "here is an import in the code. Why each edge exists, and",
+        "It also refuses a declared edge that no import uses, so every declared edge",
+        "is an import in the code. Why each edge exists, and",
         "which ones are known debt, is written beside it in `tach.toml`; how the file",
         "is maintained is in [the quality gates](quality-gates.md).",
         "",
         "## The layering",
         "",
         "An arrow points from a module to a module it imports. Each cycle (a set of",
-        "modules that can all reach each other) is drawn as one bold node, and an",
-        "arrow is left out when the modules it joins are already connected another",
-        "way, so what remains is the order the modules build on each other.",
+        "modules that can all reach each other) is drawn as one bold node.",
         f"{in_cycles} of the {len(graph.modules)} modules are in a cycle.",
+        "",
+        *_omission_caption(graph),
         "",
         "```{graphviz}",
         overview_dot(graph),

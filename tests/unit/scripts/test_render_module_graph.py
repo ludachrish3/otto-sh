@@ -90,6 +90,26 @@ def test_the_condensed_graph_drops_the_edges_another_route_already_covers(tmp_pa
     }
 
 
+def test_the_overview_caption_counts_the_left_out_arrows_and_names_one(tmp_path) -> None:
+    graph = _graph(tmp_path, CYCLE)
+    cycle = rmg.cycle_label(1, ["a", "b", "c"])
+    assert rmg.omitted_arrow(graph) == rmg.OmittedArrow("top", "e", cycle)
+    page = rmg.render(graph)
+    assert "**Not every import is drawn.**" in page
+    # cycle -> d, d -> e, top -> cycle drawn; top -> e left out.
+    assert "3 of the 4 arrows between" in page
+    assert f"`top` → `e` is not drawn,\nbecause `top` → `{cycle}` is" in page
+    assert "[the table of every module](#every-module)" in page
+
+
+def test_a_graph_with_nothing_left_out_names_no_example(tmp_path) -> None:
+    graph = _graph(tmp_path, '[[modules]]\npath = "a"\ndepends_on = ["b"]\n')
+    assert rmg.omitted_arrow(graph) is None
+    page = rmg.render(graph)
+    assert "1 of the 1 arrows between" in page
+    assert "For example" not in page
+
+
 def test_an_acyclic_graph_says_the_flag_can_be_turned_on(tmp_path) -> None:
     graph = _graph(tmp_path, '[[modules]]\npath = "a"\ndepends_on = ["b"]\n')
     page = rmg.render(graph)
