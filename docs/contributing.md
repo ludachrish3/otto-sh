@@ -1109,6 +1109,41 @@ make import-snapshot                      # regenerate THIS interpreter's ceilin
 - **An advisory `NOTE` is an invitation, not a failure.** It says a counter
   now sits well under its ceiling; regenerate to pin the saving.
 
+### Where the test suite's time goes
+
+Every `make` test target writes JUnit XML under `reports/junit/<target>/`, so
+after a gate run the timings are already on disk. `scripts/junit_durations.py`
+reads them:
+
+```bash
+make unit-outliers                              # the unit tree's slow tests, last coverage-python leg
+make unit-outliers UNIT_OUTLIERS_THRESHOLD=0.5  # the same, at or above half a second
+make unit-outliers UNIT_OUTLIERS_XML="reports/junit/coverage-unit/coverage-unit.xml reports/junit/coverage-unit-serial/coverage-unit-serial.xml"  # hostless: after make coverage-unit
+uv run python scripts/junit_durations.py --by-file reports/junit/coverage-python/*.xml  # per module
+uv run python scripts/junit_durations.py --top 40 reports/junit/coverage-python/*.xml   # slowest cases
+```
+
+`make unit-outliers` reads the two reports `make coverage` (or `make
+coverage-python`) last wrote, one for the parallel leg and one for the
+`serial_timing` leg, and prints how the `tests/unit` time is spread (count, summed time, nearest-rank p50/p90/p95/p99, and the share held
+by tests at or above the threshold, 1 s by default), then every such test,
+grouped by file, slowest file first.
+A file whose source names `subprocess` or in-process pytest is marked so: a
+hint at the kind of cost, read from the text, never a measurement. `make
+coverage` prints the ten slowest files the same way after its Python leg, and
+only when that leg passes. On a machine without the lab VMs, run `make
+coverage-unit` and point `UNIT_OUTLIERS_XML` at its two reports, as above.
+
+It is a report, never a gate: it exits 0 whatever it finds, and what it
+cannot read is named and left out (a missing or malformed report, one in an
+encoding it cannot read, a test time that is not a number) or quietly dropped
+(the hint of a source it cannot read); a failure while reporting is logged
+with its traceback, never raised. A wall-clock assertion fails on a loaded
+machine with no defect behind it, so a slow test is something to read and act
+on, not something to fail a build over. A JUnit
+time is setup, call and teardown together; for the split, re-run the file
+with pytest's `--durations=N`.
+
 ### Register built-ins by reference
 
 A registry's built-in entries are registered in the module that defines the

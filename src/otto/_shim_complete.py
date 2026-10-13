@@ -1039,6 +1039,17 @@ def spawn_refresh(cache_dir: str, environ: dict[str, str], now: float | None = N
 # --- entry ---------------------------------------------------------------------
 
 
+def _load_cache(cache_path: str) -> dict[str, Any]:
+    """Read and decode the cache file: one open, one read, nothing else.
+
+    Its own function so the shim-versus-Typer differential can decode each
+    distinct cache text once across thousands of TABs; a real TAB is one
+    process and reads the file once whatever this is.
+    """
+    with open(cache_path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def _answer_items(environ: dict[str, str], now: float) -> tuple[list[str], str | None]:
     """Compute the candidates for this TAB and the cache dir to refresh, or raise :class:`Handover`.
 
@@ -1052,8 +1063,7 @@ def _answer_items(environ: dict[str, str], now: float) -> tuple[list[str], str |
     frag = words[cword] if cword < len(words) else ""
     cache_path = locate_cache(environ)
     try:
-        with open(cache_path, encoding="utf-8") as fh:
-            data = json.load(fh)
+        data = _load_cache(cache_path)
     except OSError:
         raise Handover("no cache file", stale=True) from None
     payload = servable_shim(data, now)

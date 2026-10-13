@@ -21,7 +21,11 @@ todo/churn-review-remaining-work-2026-08-05.md.
 """
 
 import ast
+import functools
+import os
 import re
+import sys
+from typing import NamedTuple
 
 import pytest
 
@@ -63,21 +67,41 @@ DEBT: dict[tuple[str, str], str] = {
 BASELINE = PERMANENT | DEBT
 
 
+class _Site(NamedTuple):
+    """One public def whose outermost return annotation is a tuple."""
+
+    name: str
+    lineno: int
+
+
 def _sites() -> dict[tuple[str, str], list[int]]:
-    """Every public function in src/otto whose OUTERMOST return type is a tuple."""
+    """Every public function in src/otto whose OUTERMOST return type is a tuple.
+
+    Every file is read on every call; each distinct file content is scanned
+    once (:func:`_file_sites`), so an edit is always seen and every test
+    that asks does not re-parse the whole tree again.
+    """
     found: dict[tuple[str, str], list[int]] = {}
     for path in sorted(_SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if node.name.startswith("_") or node.returns is None:
-                continue
-            annotation = ast.unparse(node.returns).strip().strip("\"'")
-            if _OUTERMOST_TUPLE.match(annotation):
-                key = (str(path.relative_to(_SRC)), node.name)
-                found.setdefault(key, []).append(node.lineno)
+        rel = str(path.relative_to(_SRC))
+        for name, lineno in _file_sites(path.read_text()):
+            found.setdefault((rel, name), []).append(lineno)
     return found
+
+
+@functools.cache
+def _file_sites(source: str) -> "list[_Site]":
+    """The public tuple-returning defs in *source*, in ``ast.walk`` order; shared, so read only."""
+    sites: list[_Site] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name.startswith("_") or node.returns is None:
+            continue
+        annotation = ast.unparse(node.returns).strip().strip("\"'")
+        if _OUTERMOST_TUPLE.match(annotation):
+            sites.append(_Site(node.name, node.lineno))
+    return sites
 
 
 def test_no_unbaselined_tuple_returns():
@@ -131,3 +155,38 @@ def test_no_orphan_suppressions():
                     f"{rel}:{index} suppresses no-tuple-return but the function below "
                     "it does not return a bare tuple. Delete the comment."
                 )
+
+
+def test_the_scan_sees_an_edit_that_keeps_the_size_and_the_mtime(tmp_path, monkeypatch):
+    """The scan is memoised per file TEXT, so no rewrite can be served stale sites.
+
+    The rewrite keeps the byte count and is stamped back to the first write's
+    mtime: exactly what a key on ``(mtime, size)``, or a cache on ``_sites``
+    itself, cannot tell apart.
+    """
+    monkeypatch.setattr(sys.modules[__name__], "_SRC", tmp_path)
+    path = tmp_path / "pairs.py"
+    path.write_text("def pair() -> tuple[int, int]: ...\n")
+    first = path.stat()
+    assert _sites() == {("pairs.py", "pair"): [1]}
+    path.write_text("def twin() -> tuple[int, int]: ...\n")
+    os.utime(path, ns=(first.st_atime_ns, first.st_mtime_ns))
+    assert (path.stat().st_size, path.stat().st_mtime_ns) == (first.st_size, first.st_mtime_ns)
+    assert _sites() == {("pairs.py", "twin"): [1]}
+
+
+def test_the_scan_parses_each_file_content_once(tmp_path, monkeypatch):
+    """Eighteen tests ask for the sites; unchanged text is parsed once, not once per test."""
+    monkeypatch.setattr(sys.modules[__name__], "_SRC", tmp_path)
+    # The cache is process-wide, so the text is unique to this run.
+    (tmp_path / "once.py").write_text(f"# {tmp_path}\ndef once() -> tuple[int, int]: ...\n")
+    parses: list[str] = []
+    real_parse = ast.parse
+
+    def counting_parse(source, *args, **kwargs):
+        parses.append(source)
+        return real_parse(source, *args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counting_parse)
+    assert _sites() == _sites() == {("once.py", "once"): [2]}
+    assert len(parses) == 1

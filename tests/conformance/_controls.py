@@ -58,6 +58,7 @@ pluggable BACKEND INTERFACES conform. This tree is about HOST CONTRACTS.
 """
 
 import ast
+import functools
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -170,6 +171,10 @@ def walk_test_functions(
     question ("is this a contract or a control?"), and two walkers that
     disagreed about what a test function is would put a test in both sets or
     neither.
+
+    The file is read on every call and parsed once per distinct content
+    (:func:`_parsed`), so an edit is always seen and an unchanged file is never
+    parsed twice: the support-matrix tests ask thousands of times.
     """
     rel = path.relative_to(PROJECT_ROOT).as_posix()
 
@@ -184,7 +189,17 @@ def walk_test_functions(
             ):
                 yield f"{rel}::{prefix}{node.name}", node
 
-    yield from visit(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)).body, "")
+    yield from visit(_parsed(path.read_text(encoding="utf-8"), str(path)).body, "")
+
+
+@functools.cache
+def _parsed(source: str, filename: str) -> ast.Module:
+    """*source* parsed once per distinct ``(source, filename)``; the tree is shared: read only.
+
+    Keyed on the text itself, never on a file's mtime or size: a rewrite within
+    one clock tick, or one that keeps the size, is still a different key.
+    """
+    return ast.parse(source, filename=filename)
 
 
 def discover_controls() -> "list[Control]":

@@ -11,6 +11,7 @@ import os
 import sys
 import time
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -517,12 +518,51 @@ def _generated_corpus(world) -> list[tuple[str, int]]:
     return _corpus(tree, classes)
 
 
+class _DecodeOnce:
+    """Stands in for ``sc._load_cache`` while a corpus is compared: every TAB still
+    reads the cache file, but each distinct text is decoded once.
+
+    A real TAB is one process that reads the cache once; the corpus is tens of
+    thousands of TABs in one process over the same bytes, and decoding them again
+    was a quarter of each slice's time. The read is the shim's own (same open,
+    same text), and the key is the TEXT, never the file's mtime or size, so a
+    rewritten cache is always decoded afresh. Every case still runs the real
+    ``answer_or_reason`` against Typer; only re-decoding identical text goes.
+    """
+
+    def __init__(self) -> None:
+        self.decoded: dict[str, dict] = {}
+        self.decodes = 0
+
+    def load(self, cache_path: str) -> dict:
+        text = Path(cache_path).read_text(encoding="utf-8")
+        data = self.decoded.get(text)
+        if data is None:
+            data = self.decoded[text] = json.loads(text)
+            self.decodes += 1
+        return data
+
+    def assert_unmutated(self) -> None:
+        """Every TAB got the same decoded object; one that wrote to it would leak into the next.
+
+        Compared serialized, never by equality: ``1 == True`` and dicts compare
+        without their order, and a TAB can change either.
+        """
+        for text, data in self.decoded.items():
+            assert json.dumps(data) == json.dumps(json.loads(text)), (
+                "a TAB mutated the decoded cache it was handed"
+            )
+
+
 def _compare(cli, cases, monkeypatch) -> tuple[int, dict[str, int]]:
     """Shim vs Typer over ``cases`` x ``ENVS``; asserts equality, returns the census.
 
     Returns how many cases actually COMPARED and the hand-over reasons bucketed by
     class, for the caller to hold against its own floor and expected classes.
+    The shim decodes each distinct cache text once (:class:`_DecodeOnce`).
     """
+    memo = _DecodeOnce()
+    monkeypatch.setattr(sc, "_load_cache", memo.load)
     answered = 0
     reasons: dict[str, int] = {}
     mismatches: list[str] = []
@@ -538,8 +578,60 @@ def _compare(cli, cases, monkeypatch) -> tuple[int, dict[str, int]]:
                 f"{words!r} cword={cword} env={env}\n  shim : {got!r}\n  typer: {expected!r}"
             )
         answered += 1
+    # A TAB that wrote to its cache can be what made later cases mismatch: say so first.
+    memo.assert_unmutated()
     assert not mismatches, "\n".join(mismatches[:40]) + f"\n… {len(mismatches)} mismatches"
+    assert memo.decodes > 0, "the shim never read its cache through sc._load_cache"
     return answered, reasons
+
+
+def test_the_decode_memo_sees_a_rewrite_that_keeps_the_size_and_the_mtime(tmp_path):
+    """The rewrite keeps the byte count and is stamped back to the first write's mtime:
+    exactly what a key on ``(mtime, size)`` cannot tell apart."""
+    memo = _DecodeOnce()
+    path = tmp_path / "cache.json"
+    path.write_text('{"k": 1}', encoding="utf-8")
+    first = path.stat()
+    assert memo.load(str(path)) == {"k": 1}
+    path.write_text('{"k": 2}', encoding="utf-8")
+    os.utime(path, ns=(first.st_atime_ns, first.st_mtime_ns))
+    assert (path.stat().st_size, path.stat().st_mtime_ns) == (first.st_size, first.st_mtime_ns)
+    assert memo.load(str(path)) == {"k": 2}
+
+
+def test_the_decode_memo_decodes_identical_text_once(tmp_path):
+    memo = _DecodeOnce()
+    path = tmp_path / "cache.json"
+    path.write_text('{"k": 1}', encoding="utf-8")
+    assert memo.load(str(path)) is memo.load(str(path))
+    assert memo.decodes == 1
+
+
+def _set_true(data: dict) -> None:
+    data["k"] = True
+
+
+def _reorder(data: dict) -> None:
+    data["a"] = data.pop("a")
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda data: data.update(k=3), id="a changed value"),
+        # Each of these still compares EQUAL to the fresh decode: 1 == True, and
+        # dicts compare without their order.
+        pytest.param(_set_true, id="1 made True"),
+        pytest.param(_reorder, id="keys reordered"),
+    ],
+)
+def test_the_decode_memo_refuses_a_tab_that_mutates_what_it_was_handed(tmp_path, mutate):
+    memo = _DecodeOnce()
+    path = tmp_path / "cache.json"
+    path.write_text('{"a": 0, "k": 1}', encoding="utf-8")
+    mutate(memo.load(str(path)))
+    with pytest.raises(AssertionError, match="mutated"):
+        memo.assert_unmutated()
 
 
 # Every ANSWERED case bootstraps Typer's completer, ~10 s per slice uncontended.

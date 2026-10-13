@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -745,6 +745,20 @@ coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Pytho
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not conformance and not kmodcov and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(COVERAGE_THRESHOLD)% lines+branches on the full fold)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser and not busybox and not conformance and not kmodcov" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-python-serial)
+	@$(SAY) "unit outliers, the ten slowest files (a report, never a gate; all of them: make unit-outliers)"
+	@-$(call unit_outliers,--top 10)
+
+# The unit tree's slow tests (docs/contributing.md, "Where the test suite's time
+# goes"), read from the last coverage-python leg's two JUnit XMLs (parallel and
+# serial_timing); override UNIT_OUTLIERS_XML to read others. Every call is
+# `-`-prefixed, so the report can never change a recipe's exit status.
+UNIT_OUTLIERS_THRESHOLD ?= 1
+UNIT_OUTLIERS_XML ?= $(JUNIT_DIR)/coverage-python/coverage-python.xml $(JUNIT_DIR)/coverage-python-serial/coverage-python-serial.xml
+unit_outliers = uv run python scripts/junit_durations.py --outliers --threshold $(UNIT_OUTLIERS_THRESHOLD) $(1) $(UNIT_OUTLIERS_XML)
+
+unit-outliers: ## (Quality) Report the unit tree's slow tests (>= UNIT_OUTLIERS_THRESHOLD s, default 1) from the last coverage-python JUnit XMLs, grouped by file, with the time distribution. A report, never a gate: it exits 0.
+	@$(SAY) "unit outliers from $(UNIT_OUTLIERS_XML) (a report, never a gate)"
+	@-$(call unit_outliers,)
 
 coverage: coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 95.5 floor over lines and branches) + coverage-ts (merged vitest+e2e floor). The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
 

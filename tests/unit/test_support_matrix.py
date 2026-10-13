@@ -1775,6 +1775,53 @@ def test_every_surface_has_exactly_one_positive_control():
     assert {s: ids for s, ids in by_surface.items() if len(ids) != 1} == {}
 
 
+def _walked(path: Path) -> list[str]:
+    from tests.conformance._controls import walk_test_functions
+
+    return [nodeid for nodeid, _node in walk_test_functions(path)]
+
+
+def test_the_conformance_walk_sees_an_edit_that_keeps_the_size_and_the_mtime(tmp_path, monkeypatch):
+    """The parse is memoised on the file's TEXT, so no rewrite can be served a stale tree.
+
+    The rewrite keeps the byte count and is stamped back to the first write's
+    mtime: exactly what a key on ``(mtime, size)`` cannot tell apart.
+    """
+    from tests.conformance import _controls
+
+    monkeypatch.setattr(_controls, "PROJECT_ROOT", tmp_path)
+    path = tmp_path / "test_walked.py"
+    path.write_text("def test_aa():\n    pass\n", encoding="utf-8")
+    first = path.stat()
+    assert _walked(path) == ["test_walked.py::test_aa"]
+    path.write_text("def test_bb():\n    pass\n", encoding="utf-8")
+    os.utime(path, ns=(first.st_atime_ns, first.st_mtime_ns))
+    assert (path.stat().st_size, path.stat().st_mtime_ns) == (first.st_size, first.st_mtime_ns)
+    assert _walked(path) == ["test_walked.py::test_bb"]
+
+
+def test_the_conformance_walk_parses_each_content_once(tmp_path, monkeypatch):
+    """``discover_controls`` runs thousands of times per file; unchanged text is parsed once."""
+    import ast
+
+    from tests.conformance import _controls
+
+    monkeypatch.setattr(_controls, "PROJECT_ROOT", tmp_path)
+    path = tmp_path / "test_walked_once.py"
+    # The cache is process-wide, so the text is unique to this run.
+    path.write_text(f"# {tmp_path}\ndef test_once():\n    pass\n", encoding="utf-8")
+    parses: list[str] = []
+    real_parse = ast.parse
+
+    def counting_parse(source, *args, **kwargs):
+        parses.append(kwargs.get("filename", ""))
+        return real_parse(source, *args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counting_parse)
+    assert _walked(path) == _walked(path) == ["test_walked_once.py::test_once"]
+    assert parses == [str(path)]
+
+
 def test_a_positive_control_is_never_counted_as_a_contract():
     """The exclusion that keeps a control out of the matrix's ROWS.
 

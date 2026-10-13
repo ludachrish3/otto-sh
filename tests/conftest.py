@@ -272,6 +272,7 @@ from tests._fixtures._coverage_preinit import (
     force_coverage_schema_init,
     preinit_failure_message,
 )
+from tests._fixtures._gc_freeze import install as install_frozen_heap_windows
 from tests._fixtures._lazy_exports import (
     evict_leaked_lazy_exports,
     raise_on_leaked_lazy_exports,
@@ -330,6 +331,11 @@ def pytest_configure(config):  # type: ignore[no-untyped-def]
     # pytester's sys.modules restore must not orphan an otto submodule first
     # imported inside an inner run (see tests/_fixtures/_pytester_snapshot.py).
     install_product_preserving_snapshot()
+    # Every in-process pytest session this session starts runs with the heap
+    # frozen, thawed and collected when it returns, so its full collections
+    # skip the collected tree; this config's cleanup takes the wrappers off
+    # (see tests/_fixtures/_gc_freeze.py: why a window, and what it delays).
+    install_frozen_heap_windows(config)
     # Registered as a PLUGIN, never re-exported as a conftest hook:
     # pytest_collectstart is dispatched through a PATH-FILTERED proxy that
     # strips conftest hookimpls for non-anchor directories — a conftest-hosted
