@@ -145,10 +145,10 @@ override (already in the allowlist), drop the three copies and the
 type-ignore, and amend spec §3.2 so its rule ("common to all five
 families") and §3.4's table agree. Non-breaking. **Land.**
 
-### 11. `log_stdout` — dead key, land now, needs a yes
+### 11. ✅ `log_stdout` — dead key, land now, needs a yes (done: removed in 22b983b7b)
 
 `log_stdout: bool = True` is declared on `RemoteHost` and
-`DockerContainerHost`, accepted from lab data (`models/host.py:196`) and
+`DockerContainerHost`, accepted from lab data (`models/host.py:196`, at the time) and
 documented in `docs/guide/configuration/lab-config.md` — and read by
 **nothing** in `src/otto` (the only non-declaration hit is the spec's
 field list). Removing it deletes a lab key (`HostSpec` is

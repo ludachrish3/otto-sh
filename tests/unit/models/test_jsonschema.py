@@ -3,8 +3,8 @@
 import pytest
 
 import otto.host.os_profile as op
+from otto.host.specs import UnixHostSpec
 from otto.host.unix_host import UnixHost
-from otto.models.host import UnixHostSpec
 from otto.models.jsonschema import build_schemas
 
 

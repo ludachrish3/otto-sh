@@ -34,11 +34,11 @@ from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.os_profile import HOST_CLASSES, OS_PROFILES, registered_host_specs
 from otto.host.remote_host import RemoteHost
+from otto.host.specs import HostSpec, _menu, _selection
 from otto.host.transfer import TRANSFER_BACKENDS
 from otto.host.transfer.base import BaseFileTransfer, ProgressGranularity
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
-from otto.models.host import HostSpec, _menu, _selection
 from otto.result import CommandNotRunError, Result
 from otto.testing import (
     assert_host_conforms,

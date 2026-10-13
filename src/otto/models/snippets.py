@@ -13,7 +13,7 @@ other or from what otto accepts.
 from typing import Any
 
 from ..host.os_profile import registered_host_specs
-from .host import HostSpec
+from ..host.specs import HostSpec
 from .jsonschema import _stem
 from .lab import HOISTED_HOST_KEYS
 

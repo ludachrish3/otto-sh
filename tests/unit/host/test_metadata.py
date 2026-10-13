@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
 from otto.host.lab_info import LabInfo
-from otto.models.host import UnixHostSpec
+from otto.host.specs import UnixHostSpec
 
 _CREDS = [{"login": "u", "password": "p"}]
 

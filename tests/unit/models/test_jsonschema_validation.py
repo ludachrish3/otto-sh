@@ -155,7 +155,7 @@ _ARM_SELECTOR = "docker_capable"
 
 def test_the_arm_selector_is_still_unix_only():
     """The premise every test in this block rests on, asserted rather than assumed."""
-    from otto.models.host import EmbeddedHostSpec, HostSpec, UnixHostSpec
+    from otto.host.specs import EmbeddedHostSpec, HostSpec, UnixHostSpec
 
     assert _ARM_SELECTOR in UnixHostSpec.model_fields
     assert _ARM_SELECTOR not in HostSpec.model_fields
@@ -206,7 +206,8 @@ def test_the_inline_arm_restores_every_required_field_not_just_ip():
     ``creds`` keeps the guard: an arm naming only ``ip`` would let its
     credential-less inline entry through.
     """
-    from otto.models.host import CredSpec, UnixHostSpec
+    from otto.host.specs import UnixHostSpec
+    from otto.models.base import CredSpec
     from otto.models.inventory import FILLABLE_INVENTORY_FIELDS
     from otto.models.jsonschema import _allow_inventory_reference
 

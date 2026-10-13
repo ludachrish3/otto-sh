@@ -230,9 +230,9 @@ _SHORT_TYPE_ALIASES = {
     # The same misqualification for a pydantic field whose default is a model
     # instance: a spec field's field-kind marker makes its annotation
     # ``Annotated[TelnetOptionsSpec, Convert(...)]``, rendered with the module of
-    # the first argument (otto.models.options) or of the spec (otto.models.host).
-    "otto.models.options.Annotated": "typing.Annotated",
-    "otto.models.host.Annotated": "typing.Annotated",
+    # the first argument (otto.host.option_specs) or of the spec (otto.host.specs).
+    "otto.host.option_specs.Annotated": "typing.Annotated",
+    "otto.host.specs.Annotated": "typing.Annotated",
     # rich
     "Panel": "rich.panel.Panel",
     "Tree": "rich.tree.Tree",
@@ -291,7 +291,7 @@ def _resolve_short_types(app, env, node, contnode):
 # py:data but referenced as py:class in annotations; re-dispatch through the
 # python domain's resolve_any_xref so the data target is matched.
 # Also covers module-alias refs (e.g. ``rt.LocalPortForward`` where ``rt``
-# is ``from ..host import options as rt`` in models/options.py).
+# is ``from . import options as rt`` in host/option_specs.py).
 _INTERNAL_ALIASES = {
     # otto.host.remote_host
     "OsType": "otto.host.remote_host.OsType",
@@ -317,7 +317,7 @@ _INTERNAL_ALIASES = {
     "scaffold": "otto.init.scaffolder.scaffold",
     # otto.coverage.reporter
     "TierSpec": "otto.coverage.reporter.TierSpec",
-    # otto.host.options (referenced via ``rt`` alias in models/options.py)
+    # otto.host.options (referenced via ``rt`` alias in host/option_specs.py)
     "rt.LocalPortForward": "otto.host.options.LocalPortForward",
     "rt.RemotePortForward": "otto.host.options.RemotePortForward",
     "rt.SocksForward": "otto.host.options.SocksForward",
@@ -337,13 +337,13 @@ _INTERNAL_ALIASES = {
     # re-dispatch through resolve_any_xref, which matches across object types
     # (same trick as ``asyncssh.connect`` in _SHORT_TYPE_ALIASES).
     "otto.models.settings.anchor_to_repo": "otto.models.settings.anchor_to_repo",
-    # models/host.py's IntOrStr is the same shape one alias down —
+    # host/specs.py's IntOrStr is the same shape one alias down —
     # ``Annotated[int | str, BeforeValidator(coerce_digit_string)]``, carried by
     # HostSpec.site/.rack and InventoryRecord.site/.rack — so the validator
     # function needs the identical re-dispatch. (The other half of that repr,
     # BeforeValidator's ``json_schema_input_type``, is fixed at the source: see
     # the comment on IntOrStr for why a sentinel default cannot be mapped here.)
-    "otto.models.host.coerce_digit_string": "otto.models.host.coerce_digit_string",
+    "otto.host.specs.coerce_digit_string": "otto.host.specs.coerce_digit_string",
 }
 
 
@@ -399,7 +399,7 @@ _EXTERNAL_DOC_LINKS = {
     # Same stringifier behavior for range constraints: CoverageReportSpec
     # (models/settings.py) uses ``Field(ge=0, le=100)``, rendering as
     # ``Annotated[float, Ge(0), Le(100)]``, and ConsoleOptionsSpec
-    # (models/options.py) ``login_timeout``'s ``Field(gt=0)`` as ``Gt(gt=0)``.
+    # (host/option_specs.py) ``login_timeout``'s ``Field(gt=0)`` as ``Gt(gt=0)``.
     # _typeshed.DataclassInstance is a stub-only protocol (it exists in
     # typeshed, never at runtime), so no inventory can serve it; it is the
     # annotation on ``otto.params.options_params``'s options-class parameter.

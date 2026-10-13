@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from otto.host import HostValidationError
 from otto.host.element import Element
 from otto.host.factory import validate_host_dict
-from otto.models.host import UnixHostSpec
+from otto.host.specs import UnixHostSpec
 from tests._fixtures.host_build import build_host
 
 BASE = {"ip": "10.0.0.1", "name": "dut1", "creds": [{"login": "u", "password": "p"}]}

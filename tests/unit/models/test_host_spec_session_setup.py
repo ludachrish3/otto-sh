@@ -7,8 +7,8 @@ from otto.host.command_frame import BashFrame, RawFrame, ZephyrFrame
 from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.session_setup import SESSION_SETUPS, SessionSetup, register_session_setup
+from otto.host.specs import UnixHostSpec
 from otto.host.unix_host import UnixHost
-from otto.models.host import UnixHostSpec
 from tests._fixtures.host_build import build_host
 
 _CREDS = [{"login": "admin", "password": "pw"}]

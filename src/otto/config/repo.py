@@ -276,9 +276,8 @@ def compile_settings(data: dict[str, Any], sut_dir: Path) -> CompiledSettings:
             base and defaults after init
             (:func:`otto.host.os_profile.check_data_profiles`).
     """
-    # ``otto.models``'s package __init__ boots otto.host first to avoid an
-    # import cycle (os_profile's eager registration <-> models.host); see the
-    # note in src/otto/models/__init__.py. So these imports are safe here.
+    # Function-local: the settings parsers load only when a repo's settings
+    # are read.
     from ..labs.sources import compile_lab_sources
     from ..models.dependencies import parse_dependency_entry
     from ..models.settings import SettingsModel

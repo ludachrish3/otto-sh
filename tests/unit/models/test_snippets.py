@@ -35,7 +35,7 @@ def test_snippets_cover_the_v2_shapes() -> None:
 
 
 def test_required_fields_come_from_the_live_model() -> None:
-    from otto.models.host import UnixHostSpec
+    from otto.host.specs import UnixHostSpec
     from otto.models.lab import HOISTED_HOST_KEYS
 
     body = "\n".join(build_snippets(builtins_only=True)["otto unix host"]["body"])
@@ -65,7 +65,7 @@ def test_host_body_is_valid_json_once_the_placeholders_are_filled() -> None:
 
 
 def test_valid_terms_default_comes_from_the_model_not_a_literal() -> None:
-    from otto.models.host import UnixHostSpec
+    from otto.host.specs import UnixHostSpec
 
     body = "\n".join(build_snippets(builtins_only=True)["otto unix host"]["body"])
     default = UnixHostSpec.model_fields["valid_terms"].get_default(call_default_factory=True)
@@ -88,7 +88,7 @@ def test_only_the_unix_skeleton_carries_creds_although_neither_spec_requires_the
     step — so the unix snippet keeps the credential pair and the embedded one
     stays without, neither of which ``is_required()`` could decide.
     """
-    from otto.models.host import EmbeddedHostSpec, UnixHostSpec
+    from otto.host.specs import EmbeddedHostSpec, UnixHostSpec
 
     assert not UnixHostSpec.model_fields["creds"].is_required()
     assert not EmbeddedHostSpec.model_fields["creds"].is_required()

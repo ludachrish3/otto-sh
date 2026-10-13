@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, field_validator, model_validator
 
-from .base import OttoModel
+from .base import OttoModel, resources_nonempty
 
 if TYPE_CHECKING:
     from ..host.element import Element
@@ -31,21 +31,6 @@ membership.
 ``resources`` left this set with spec 2026-08-28 three-level-reservations: a
 host entry may declare its own (a slot), beside the element's and the lab's.
 """
-
-
-def resources_nonempty(v: set[str]) -> set[str]:
-    """Reservation identifiers are opaque, non-empty strings.
-
-    Spec 2026-08-28 three-level-reservations §2, §10. Shared by all three
-    levels — :class:`LabEntrySpec`, :class:`ElementSpec`, and
-    :class:`~otto.models.host.HostSpec`, which imports it from here — so they
-    cannot drift into three different notions of a usable identifier. Public
-    precisely because it is imported across modules: a leading underscore on a
-    name another module depends on says "private" while meaning the opposite.
-    """
-    if any(not r.strip() for r in v):
-        raise ValueError("resources must be non-empty strings")
-    return v
 
 
 def _strip_comment_keys(data: object) -> object:

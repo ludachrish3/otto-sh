@@ -58,6 +58,7 @@ from typing import (
 from typing_extensions import override
 
 from ..logger.mode import LogMode
+from ..models.base import Cred, cred_identity
 from ..result import CommandResult, Result
 from ..utils import (
     Arg,
@@ -89,7 +90,7 @@ from .host import (
     is_dry_run,
 )
 from .interact import run_ssh_login, run_telnet_login
-from .login_proxy import Cred, LoginProxyError, cred_for, cred_identity, resolve_chain
+from .login_proxy import LoginProxyError, cred_for, resolve_chain
 from .options import (
     FtpOptions,
     NcOptions,

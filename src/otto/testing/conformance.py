@@ -44,7 +44,7 @@ from ..inventory.errors import InventoryKeyError
 from ..inventory.protocol import Inventory
 from ..labs.errors import LabNotFoundError
 from ..labs.protocol import HostSummary, LabRepository, SupportsHostSummaries, logins_of_creds
-from ..models.host import CredSpec
+from ..models.base import CredSpec
 from ..models.inventory import (
     FILLABLE_INVENTORY_FIELDS,
     INVENTORY_KEY_FIELDS,
@@ -1003,7 +1003,7 @@ def assert_creds_store_conforms(
     (never ``None``, never a raise), ``list_keys()`` a sorted ``list[str]`` or
     ``None``, ``fingerprint()`` ``str | None``. Every listed key must resolve
     to a non-empty ``list[CredSpec]`` that repeats no identity (login plus
-    ``protocols`` scope, :func:`~otto.host.login_proxy.cred_identity`),
+    ``protocols`` scope, :func:`~otto.models.base.cred_identity`),
     idempotently. With *known_key*, that key must resolve non-empty and — when
     the store enumerates — appear in ``list_keys()``.
     """

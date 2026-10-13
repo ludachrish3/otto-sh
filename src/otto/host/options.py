@@ -819,7 +819,7 @@ class UserlandOptions:
     than one ``dict`` for two reasons, and both are about a declaration that
     silently does nothing. A field name is checked by the dataclass here and by
     ``extra='forbid'`` on
-    :class:`~otto.models.options.UserlandOptionsSpec`, so ``applet_scpp`` fails
+    :class:`~otto.host.option_specs.UserlandOptionsSpec`, so ``applet_scpp`` fails
     at both boundaries — a dict of names could only be checked by a validator
     the runtime dataclass has no way to run. And a field can be declared ONE AT
     A TIME: ``resolve()`` asks the device only about the applets left

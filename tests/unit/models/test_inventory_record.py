@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from otto.models.host import HostSpec
+from otto.host.specs import HostSpec
 from otto.models.inventory import (
     FILLABLE_INVENTORY_FIELDS,
     INVENTORY_KEY_FIELDS,

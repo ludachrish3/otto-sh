@@ -6,7 +6,7 @@ runtime host from that record (``to_host``). One stock builder,
 ``HostSpec.build_kwargs``, walks a spec's fields by their kind
 (:mod:`otto.host.construction`) over the record, so every family, and every
 custom spec, builds through it with no ``to_host`` of its own. The specs nest
-the per-protocol ``*OptionsSpec``s from ``otto.models.options`` and convert
+the per-protocol ``*OptionsSpec``s from ``otto.host.option_specs`` and convert
 them with their ``to_runtime()`` builders; registry-name fields
 (``filesystem`` / ``command_frame`` / ``loader``) resolve through the host
 registries at build time.
@@ -35,8 +35,11 @@ if TYPE_CHECKING:
     from pydantic import GetCoreSchemaHandler
     from pydantic_core import CoreSchema
 
-from ..host.binary_loader import LOADER_CLASSES, build_binary_loader
-from ..host.capability import (
+from ..link.impairer import IMPAIRERS, _is_unresolved_stock, build_impairer
+from ..logger.mode import LogMode
+from ..models.base import Cred, CredSpec, OttoModel, resources_nonempty
+from .binary_loader import LOADER_CLASSES, build_binary_loader
+from .capability import (
     IMPAIRER_RESOLVER,
     TERM_RESOLVER,
     TRANSFER_RESOLVER,
@@ -44,9 +47,9 @@ from ..host.capability import (
     authenticating_protocols,
     console_transfer_menu,
 )
-from ..host.command_frame import FRAME_CLASSES, BashFrame, build_command_frame
-from ..host.connections import TERM_BACKENDS
-from ..host.construction import (
+from .command_frame import FRAME_CLASSES, BashFrame, build_command_frame
+from .connections import TERM_BACKENDS
+from .construction import (
     Consume,
     Convert,
     FlatPreferences,
@@ -64,26 +67,10 @@ from ..host.construction import (
     class_marker,
     field_kind,
 )
-from ..host.embedded_filesystem import FILESYSTEM_CLASSES, build_filesystem
-from ..host.interface import Interface
-from ..host.login_proxy import (
-    LOGIN_PROXIES,
-    Cred,
-    LoginProxyError,
-    cred_identity,
-    resolve_chain,
-    via_cred,
-)
-from ..host.os_profile import constructing_with
-from ..host.power import POWER_CONTROLLERS, PowerConstructionError, PowerEnv
-from ..host.remote_host import RemoteHost, make_host_id
-from ..host.toolchain import Toolchain, ToolchainTool
-from ..host.transfer import TRANSFER_BACKENDS
-from ..link.impairer import IMPAIRERS, _is_unresolved_stock, build_impairer
-from ..logger.mode import LogMode
-from .base import OttoModel
-from .lab import resources_nonempty
-from .options import (
+from .embedded_filesystem import FILESYSTEM_CLASSES, build_filesystem
+from .interface import Interface
+from .login_proxy import LOGIN_PROXIES, LoginProxyError, resolve_chain, via_cred
+from .option_specs import (
     ConsoleOptionsSpec,
     FtpOptionsSpec,
     NcOptionsSpec,
@@ -94,6 +81,11 @@ from .options import (
     TelnetOptionsSpec,
     UserlandOptionsSpec,
 )
+from .os_profile import constructing_with
+from .power import POWER_CONTROLLERS, PowerConstructionError, PowerEnv
+from .remote_host import RemoteHost, make_host_id
+from .toolchain import Toolchain, ToolchainTool
+from .transfer import TRANSFER_BACKENDS
 
 
 def coerce_digit_string(v: object) -> object:
@@ -295,44 +287,6 @@ def _validate_impairer_menu(v: list[str]) -> list[str]:
     return [_validate_impairer_name(entry) for entry in v]
 
 
-class CredSpec(OttoModel):
-    """One ``creds`` entry: a login plus (optionally) how to become it."""
-
-    login: str
-    password: str | None = None
-    proxy: str | None = None
-    via: str | None = None
-    params: dict[str, Any] = Field(default_factory=dict)
-    protocols: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _proxy_field_rules(self) -> "CredSpec":
-        if self.proxy is None and (self.via is not None or self.params):
-            raise ValueError(f"cred {self.login!r}: 'via' and 'params' require 'proxy'")
-        if self.via is not None and self.via == self.login:
-            raise ValueError(f"cred {self.login!r}: 'via' cannot reference itself")
-        return self
-
-    @property
-    def identity(self) -> str:
-        """``login``, or ``login [scope]`` when scoped.
-
-        See :func:`otto.host.login_proxy.cred_identity`.
-        """
-        return cred_identity(self.login, self.protocols)
-
-    def to_cred(self) -> Cred:
-        """Build the runtime ``Cred`` dataclass from the validated fields."""
-        return Cred(
-            login=self.login,
-            password=self.password,
-            proxy=self.proxy,
-            via=self.via,
-            params=dict(self.params),
-            protocols=list(self.protocols),
-        )
-
-
 class PowerControlSpec(OttoModel):
     """A ``power_control`` table: the controller's ``type`` and the keys its config model parses."""
 
@@ -494,7 +448,7 @@ def _message(exc: Exception) -> str | None:
     """Render a ValidationError without its input (its ``str()`` quotes it); else ``None``."""
     from pydantic import ValidationError
 
-    from .base import compact_validation_error
+    from ..models.base import compact_validation_error
 
     return compact_validation_error(exc) if isinstance(exc, ValidationError) else None
 
@@ -613,7 +567,7 @@ class HostSpec(OttoModel):
     )
     """The ``console`` term's address and login behaviour: the lab host that
     runs the telnet server, the port, the dial mode and the prompt
-    patterns. See :class:`~otto.models.options.ConsoleOptionsSpec`."""
+    patterns. See :class:`~otto.host.option_specs.ConsoleOptionsSpec`."""
 
     snmp: Annotated[SnmpOptionsSpec | None, Convert(_value_only(_to_snmp))] = None
     toolchain: Annotated[ToolchainSpec, Convert(_value_only(_to_runtime))] = ToolchainSpec()
@@ -704,7 +658,7 @@ class HostSpec(OttoModel):
         """
         if v is None:
             return v
-        from ..host.remote_host import slug
+        from .remote_host import slug
 
         if not slug(v):
             raise ValueError(f"{v!r} slugs to an empty id (needs at least one letter or digit)")
@@ -757,7 +711,7 @@ class HostSpec(OttoModel):
     ) -> dict[str, Any] | str | None:
         if v is None:
             return v
-        from ..host.session_setup import SESSION_SETUPS  # off the startup graph on purpose
+        from .session_setup import SESSION_SETUPS  # off the startup graph on purpose
 
         name = v if isinstance(v, str) else v.get("type")
         if not isinstance(name, str):

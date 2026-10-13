@@ -14,8 +14,8 @@ from otto.host.os_profile import (
     register_host_class,
     register_os_profile,
 )
+from otto.host.specs import UnixHostSpec
 from otto.host.unix_host import UnixHost
-from otto.models.host import UnixHostSpec
 from otto.registry import FrozenMap, Ref
 from tests.unit.registry import conformance
 
@@ -61,13 +61,13 @@ def test_host_classes_raw_case(scratch):
         lazy=(
             "case-host",
             HostClassEntry(
-                cls=Ref(f"{scratch}:CaseHost"), spec=Ref("otto.models.host:UnixHostSpec")
+                cls=Ref(f"{scratch}:CaseHost"), spec=Ref("otto.host.specs:UnixHostSpec")
             ),
         ),
         wrongly_typed_lazy=(
             "case-host",
             HostClassEntry(
-                cls=Ref(f"{scratch}:NotAHost"), spec=Ref("otto.models.host:UnixHostSpec")
+                cls=Ref(f"{scratch}:NotAHost"), spec=Ref("otto.host.specs:UnixHostSpec")
             ),
         ),
     )

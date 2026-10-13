@@ -12,9 +12,9 @@ from typing import Any, Literal
 
 from pydantic import Field, ValidationInfo, field_validator
 
-from ..host import options as rt
-from ..host.transfer import NcListenerCheck, NcPortStrategy
-from .base import OttoModel
+from ..models.base import OttoModel
+from . import options as rt
+from .transfer import NcListenerCheck, NcPortStrategy
 
 
 class SshOptionsSpec(OttoModel):

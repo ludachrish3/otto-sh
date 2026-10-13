@@ -8,11 +8,11 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from otto.link.impairer import LinkImpairer, register_impairer
+from otto.link.impairer import register_impairer
 from otto.link.manage import LinkNotMeasuredError, _exec, find_link, impair_link
 from otto.link.model import Link, LinkEndpoint
 from otto.link.netem import NetEmImpairer
-from otto.link.params import ImpairmentParams, Selector
+from otto.link.params import ImpairmentParams, LinkImpairer, Selector
 from otto.link.placement import FlowDirection
 from otto.link.sentinel import IMPAIR_PS_COMMAND, encode_impair_sentinel_v3
 from otto.result import CommandResult, Results, Status

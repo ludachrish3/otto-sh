@@ -100,9 +100,9 @@ def test_template_mentions_every_fixed_section_field() -> None:
 def test_lab_template_parses_through_the_runtime_parsers_and_joins_its_siblings(tmp_path) -> None:
     """The scaffolded files are accepted by the SAME parsers and join the loader uses."""
     from otto.creds import JsonCredsStore
+    from otto.host.specs import UnixHostSpec
     from otto.inventory import CredsOverlay, JsonInventory, resolve_host_entry
     from otto.labs.json_repository import parse_elements, parse_lab_entries, parse_lab_sections
-    from otto.models.host import UnixHostSpec
     from otto.models.lab import HOISTED_HOST_KEYS
 
     sections = parse_lab_sections(LAB_JSON_TEMPLATE, "lab.json")

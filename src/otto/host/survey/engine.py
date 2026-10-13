@@ -15,8 +15,9 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from ...logger.mode import LogMode
+from ...models.base import cred_identity
 from ..connections import TERM_BACKENDS, TermMetadata
-from ..login_proxy import cred_for, cred_identity
+from ..login_proxy import cred_for
 from ..transfer.registry import TRANSFER_BACKENDS
 from ..transfer.sftp import open_sftp_or_attribute
 from ..userland import APPLET_PRESENT, applet_capability

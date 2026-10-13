@@ -26,7 +26,7 @@ from tests._fixtures.dispatch import DispatchRunner
 def _entry(cls: type) -> object:
     """A host-class record for a test double the CLI reads, never registered."""
     from otto.host.os_profile import HostClassEntry
-    from otto.models.host import UnixHostSpec
+    from otto.host.specs import UnixHostSpec
 
     return HostClassEntry(cls, UnixHostSpec)  # type: ignore[arg-type] — a double, not a RemoteHost
 

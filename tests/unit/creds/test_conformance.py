@@ -5,7 +5,7 @@ import json
 import pytest
 
 from otto.creds import JsonCredsStore
-from otto.models.host import CredSpec
+from otto.models.base import CredSpec
 from otto.testing import assert_creds_store_conforms
 
 

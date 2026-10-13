@@ -94,8 +94,8 @@ def test_drift_does_not_report_a_directory_the_writer_cannot_prune(tmp_path: Pat
 
 def test_builtins_only_in_otto_schemas_prunes_a_custom_host_types_schema(tmp_path: Path) -> None:
     from otto.host.os_profile import register_host_class
+    from otto.host.specs import UnixHostSpec
     from otto.host.unix_host import UnixHost
-    from otto.models.host import UnixHostSpec
 
     class PinnedHost(UnixHost):
         pass

@@ -13,7 +13,7 @@ once instead of copy-pasting it into every ``lab.json`` entry.
 
 ``HOST_CLASSES`` / :func:`register_host_class` map a name to a concrete
 :class:`~otto.host.remote_host.RemoteHost` subclass, its boundary
-:class:`~otto.models.host.HostSpec`, and the class's own profile fields.
+:class:`~otto.host.specs.HostSpec`, and the class's own profile fields.
 Built-in classes (``unix`` → ``UnixHost``, ``embedded`` → ``EmbeddedHost``,
 ``zephyr`` → ``ZephyrHost``) are registered at module load, by
 :class:`~otto.registry.Ref`, so naming them imports no host class.
@@ -66,10 +66,10 @@ from ..registry import FrozenMap, Ref, Registry, registration_boundary, resolved
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
-    from ..models.host import HostSpec
     from ..models.settings import OsProfileSpec
     from .options import ConsoleOptions
     from .remote_host import RemoteHost
+    from .specs import HostSpec
 
 logger = logging.getLogger(__name__)
 
@@ -181,8 +181,8 @@ def _validate_host_class(name: str, cls: type) -> None:
 
 
 def _validate_host_spec(name: str, spec: object) -> None:
-    """Refuse a spec that is not a :class:`~otto.models.host.HostSpec` subclass."""
-    from ..models.host import HostSpec
+    """Refuse a spec that is not a :class:`~otto.host.specs.HostSpec` subclass."""
+    from .specs import HostSpec
 
     if not (isinstance(spec, type) and issubclass(spec, HostSpec)):
         raise ValueError(  # noqa: TRY004 — this registry refuses with ValueError uniformly (see _validate_host_class)
@@ -196,7 +196,7 @@ def _check_host_class_entry(name: str, entry: HostClassEntry) -> None:
     A field still holding a :class:`~otto.registry.Ref` is skipped (it is
     checked when it resolves): the class must be a capable
     :class:`~otto.host.remote_host.RemoteHost` subclass, the spec a
-    :class:`~otto.models.host.HostSpec` subclass, the profile's defaults
+    :class:`~otto.host.specs.HostSpec` subclass, the profile's defaults
     inputs the spec accepts from lab data
     (:func:`~otto.host.construction.profile_inputs`), and its prompts valid
     regexes. Once both are classes, the pair must cover each other
@@ -456,21 +456,21 @@ def _builtin_host_classes() -> "list[tuple[str, HostClassEntry]]":
         (
             "unix",
             HostClassEntry(
-                Ref("otto.host.unix_host:UnixHost"), Ref("otto.models.host:UnixHostSpec"), unix
+                Ref("otto.host.unix_host:UnixHost"), Ref("otto.host.specs:UnixHostSpec"), unix
             ),
         ),
         (
             "embedded",
             HostClassEntry(
                 Ref("otto.host.embedded_host:EmbeddedHost"),
-                Ref("otto.models.host:EmbeddedHostSpec"),
+                Ref("otto.host.specs:EmbeddedHostSpec"),
             ),
         ),
         (
             "zephyr",
             HostClassEntry(
                 Ref("otto.host.embedded_host:ZephyrHost"),
-                Ref("otto.models.host:EmbeddedHostSpec"),
+                Ref("otto.host.specs:EmbeddedHostSpec"),
             ),
         ),
     ]
@@ -505,7 +505,7 @@ def _resolve_host_spec(
 ) -> "type[HostSpec] | Ref":
     """Return the spec :func:`register_host_class` would store for *cls*, or raise its refusal.
 
-    An explicit *spec* class must be a :class:`~otto.models.host.HostSpec`
+    An explicit *spec* class must be a :class:`~otto.host.specs.HostSpec`
     subclass (a ``Ref`` is checked when it resolves); without one, the nearest
     base of *cls* with a registered spec supplies it. Registers nothing, so
     ``otto.testing.assert_host_registrable`` asks the same question without
@@ -552,7 +552,7 @@ def register_host_class(
         A :class:`~otto.host.remote_host.RemoteHost` subclass, or a
         :class:`~otto.registry.Ref` naming one (checked when first looked up).
     spec : type | Ref | None
-        The :class:`~otto.models.host.HostSpec` subclass that validates this
+        The :class:`~otto.host.specs.HostSpec` subclass that validates this
         class's lab-dict shape. When ``None``, defaults to the spec registered
         for the nearest base class in *cls*'s MRO — so a subclass that adds no
         fields needs none; add fields → register a ``HostSpec`` subclass. A
@@ -835,7 +835,7 @@ def registered_host_specs(*, builtins_only: bool = False) -> "dict[str, type[Hos
     """Return the ``os_type`` → ``HostSpec`` subclass map of every registered host class.
 
     Names are many-to-one (``embedded`` and ``zephyr`` both resolve to
-    :class:`~otto.models.host.EmbeddedHostSpec`). Used by the JSON Schema exporter;
+    :class:`~otto.host.specs.EmbeddedHostSpec`). Used by the JSON Schema exporter;
     also reflects custom classes loaded via init modules. With *builtins_only*, restrict the
     result to the in-tree built-in types (``unix`` / ``embedded`` / ``zephyr``),
     excluding anything registered via init modules.

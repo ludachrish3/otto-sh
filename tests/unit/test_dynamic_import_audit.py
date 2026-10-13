@@ -939,7 +939,7 @@ COMPOSITION_ROOT = "otto/bootstrap.py"
 # The landings of spec 2026-10-11 placement-and-phases §6, in order. Each
 # landing sets CURRENT_LANDING to its own name in its commit.
 LANDINGS = ["P1a", "P1b", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9a", "P9b"]
-CURRENT_LANDING = "P2"
+CURRENT_LANDING = "P3"
 
 # What the declared graph shows once each landing is in: the modules with a
 # layer (spec 2026-10-11 placement-and-phases §5.2, "modules layered") and the
@@ -1022,13 +1022,6 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ),
     ("otto/host/__init__.py", "otto.result:CommandResult", FACADE_BINDING),
     ("otto/host/__init__.py", "otto.result:Results", FACADE_BINDING),
-    ("otto/host/__init__.py", "otto.models.host:EmbeddedHostSpec", FACADE_BINDING),
-    ("otto/host/__init__.py", "otto.models.host:HostSpec", FACADE_BINDING),
-    ("otto/host/__init__.py", "otto.models.host:PowerControlSpec", FACADE_BINDING),
-    ("otto/host/__init__.py", "otto.models.host:UnixHostSpec", FACADE_BINDING),
-    ("otto/host/os_profile.py", "otto.models.host:UnixHostSpec", REGISTRY_BUILTIN),
-    ("otto/host/os_profile.py", "otto.models.host:EmbeddedHostSpec", REGISTRY_BUILTIN),
-    ("otto/host/os_profile.py", "otto.models.host:EmbeddedHostSpec", REGISTRY_BUILTIN),
     # The otto.lab facade. otto/lab/__init__.py is in no tach module until it is declared.
     ("otto/lab/__init__.py", "otto.config.lab:Lab", FACADE_BINDING),
     ("otto/lab/__init__.py", "otto.config.lab:load_lab", FACADE_BINDING),
@@ -1039,8 +1032,36 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/lab/__init__.py", "otto.config.fleet:run_on_all_hosts", FACADE_BINDING),
     ("otto/lab/__init__.py", "otto.config.fleet:fleet_of_interest", FACADE_BINDING),
     ("otto/lab/__init__.py", "otto.config.scope:EmptySelectionError", FACADE_BINDING),
+    # The otto.link facade's bindings into its three foundation modules.
+    ("otto/link/__init__.py", "otto.link.impairer:IMPAIRERS", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.impairer:build_impairer", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.impairer:register_impairer", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.netem:NetEmImpairer", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.params:ImpairmentParams", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.params:LinkImpairer", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.params:ScopedState", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.params:Selector", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.params:canonical_key", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.params:equivalent", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.params:parse_percent", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.params:parse_rate", FACADE_BINDING),
+    ("otto/link/__init__.py", "otto.link.params:parse_time_ms", FACADE_BINDING),
+    # The impairer registry names its built-in by reference, foundation to foundation.
+    ("otto/link/impairer.py", "otto.link.netem:NetEmImpairer", REGISTRY_BUILTIN),
+    ("otto/models/__init__.py", "otto.models.base:OttoModel", FACADE_BINDING),
+    ("otto/models/__init__.py", "otto.models.base:CredSpec", FACADE_BINDING),
     ("otto/models/__init__.py", "otto.utils:MIN_INTERVAL_SECONDS", FACADE_BINDING),
     ("otto/models/__init__.py", "otto.utils:validate_interval", FACADE_BINDING),
+    # The host specs the otto.models facade still exports, from their home in otto.host.
+    ("otto/models/__init__.py", "otto.host.specs:ToolchainSpec", FACADE_BINDING),
+    ("otto/models/__init__.py", "otto.host.option_specs:FtpOptionsSpec", FACADE_BINDING),
+    ("otto/models/__init__.py", "otto.host.option_specs:NcOptionsSpec", FACADE_BINDING),
+    ("otto/models/__init__.py", "otto.host.option_specs:ScpOptionsSpec", FACADE_BINDING),
+    ("otto/models/__init__.py", "otto.host.option_specs:SftpOptionsSpec", FACADE_BINDING),
+    ("otto/models/__init__.py", "otto.host.option_specs:SnmpOptionsSpec", FACADE_BINDING),
+    ("otto/models/__init__.py", "otto.host.option_specs:SshOptionsSpec", FACADE_BINDING),
+    ("otto/models/__init__.py", "otto.host.option_specs:TelnetOptionsSpec", FACADE_BINDING),
+    ("otto/models/__init__.py", "otto.host.option_specs:TftpOptionsSpec", FACADE_BINDING),
     ("otto/monitor/__init__.py", "otto.monitor.errors:MonitorInputError", FACADE_BINDING),
     ("otto/monitor/__init__.py", "otto.monitor.errors:MonitorTlsError", FACADE_BINDING),
     ("otto/monitor/__init__.py", "otto.monitor.errors:NoMonitorableHostsError", FACADE_BINDING),
@@ -1054,14 +1075,6 @@ STRING_EDGES: list[tuple[str, str, str]] = [
 # Transitional exceptions: (file under src/, target, the landing that removes it).
 # Shrink-only (spec 2026-10-11 placement-and-phases §5.3, "Grandfathered entries").
 GRANDFATHERED: list[tuple[str, str, str]] = [
-    # host -> specs, upward once both are layered; the host specs move into otto.host.
-    ("otto/host/__init__.py", "otto.models.host:EmbeddedHostSpec", "P3"),
-    ("otto/host/__init__.py", "otto.models.host:HostSpec", "P3"),
-    ("otto/host/__init__.py", "otto.models.host:PowerControlSpec", "P3"),
-    ("otto/host/__init__.py", "otto.models.host:UnixHostSpec", "P3"),
-    ("otto/host/os_profile.py", "otto.models.host:UnixHostSpec", "P3"),
-    ("otto/host/os_profile.py", "otto.models.host:EmbeddedHostSpec", "P3"),
-    ("otto/host/os_profile.py", "otto.models.host:EmbeddedHostSpec", "P3"),
     # The root's by-name imports of the project layer; they go when the root moves up.
     ("otto/bootstrap.py", "otto.project.actions", "P9b"),
     ("otto/bootstrap.py", "otto.project.commands", "P9b"),

@@ -660,7 +660,7 @@ in the triplicated `_repo(...)` at `test_dependencies_{resolution,ordering}.py` 
   lets a non-UTF-8 byte under a C locale escape as an uncaught `UnicodeDecodeError`;
   `overrides.py` opens binary with a 10-line comment explaining why — never propagated.
   `load_toml(path)` opening binary.
-- **`to_runtime()` field-by-field mirrors ×14** (`models/options.py`, `host.py`,
+- **`to_runtime()` field-by-field mirrors ×14** (`host/option_specs.py`, `host/specs.py`,
   `settings.py`): mutable-aliasing policy inconsistent *within one function*
   (`options.py:114` aliases `env` and copies `extra` on the same line) — a future
   in-place mutation corrupts the spec for some backends and not others.

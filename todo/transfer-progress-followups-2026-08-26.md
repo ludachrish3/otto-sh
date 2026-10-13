@@ -95,7 +95,7 @@ table, and in the registry guard — with a declaration that is true.
 
 Nothing to measure until the backend exists. When it does, its stride is the
 TFTP block size (512 by default; `TftpOptions.block_size` already exists at
-`src/otto/models/options.py:258` and `src/otto/host/options.py:525`), and the
+`src/otto/host/option_specs.py:339` and `src/otto/host/options.py:525`), and the
 `note` comes out.
 
 ## 4. An e2e pty test of the live bar
@@ -116,7 +116,7 @@ not an oversight.
 ## 5. `Field(gt=0)` on `ScpOptions.block_size`
 
 `block_size: int = 16384` carries no positivity constraint at either boundary —
-`src/otto/models/options.py:127` (the pydantic spec) and
+`src/otto/host/option_specs.py:143` (the pydantic spec) and
 `src/otto/host/options.py:328` (the runtime dataclass). So `block_size = 0`
 validates cleanly out of lab data.
 

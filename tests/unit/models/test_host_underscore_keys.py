@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from otto.models.host import UnixHostSpec
+from otto.host.specs import UnixHostSpec
 
 MINIMAL = {
     "ip": "192.0.2.1",

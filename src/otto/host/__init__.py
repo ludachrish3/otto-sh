@@ -23,10 +23,6 @@ The resolver does not write a resolved name back into the module dict; see
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..models.host import EmbeddedHostSpec as EmbeddedHostSpec
-    from ..models.host import HostSpec as HostSpec
-    from ..models.host import PowerControlSpec as PowerControlSpec
-    from ..models.host import UnixHostSpec as UnixHostSpec
     from ..result import CommandResult as CommandResult
     from ..result import Results as Results
     from .capability_grid import HostCapabilities as HostCapabilities
@@ -122,6 +118,10 @@ if TYPE_CHECKING:
     from .session import SessionManager as SessionManager
     from .session import ShellSession as ShellSession
     from .session import TelnetSession as TelnetSession
+    from .specs import EmbeddedHostSpec as EmbeddedHostSpec
+    from .specs import HostSpec as HostSpec
+    from .specs import PowerControlSpec as PowerControlSpec
+    from .specs import UnixHostSpec as UnixHostSpec
     from .toolchain import Toolchain as Toolchain
     from .toolchain import ToolchainTool as ToolchainTool
     from .transfer.base import NcListenerCheck as NcListenerCheck
@@ -254,12 +254,10 @@ _LAZY_ATTRS: dict[str, str] = {
     "Userland": "otto.host.userland",
     "CommandResult": "otto.result",
     "Results": "otto.result",
-    # The defining module stays otto.models.host until the host specs' module
-    # move (host construction spec §2.1).
-    "EmbeddedHostSpec": "otto.models.host",
-    "HostSpec": "otto.models.host",
-    "PowerControlSpec": "otto.models.host",
-    "UnixHostSpec": "otto.models.host",
+    "EmbeddedHostSpec": "otto.host.specs",
+    "HostSpec": "otto.host.specs",
+    "PowerControlSpec": "otto.host.specs",
+    "UnixHostSpec": "otto.host.specs",
 }
 
 

@@ -11,8 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from ..models.base import compact_validation_error
-from ..models.host import CredSpec
+from ..models.base import CredSpec, compact_validation_error
 from .errors import CredsError
 
 if TYPE_CHECKING:

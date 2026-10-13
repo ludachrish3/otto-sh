@@ -7,9 +7,9 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from otto.link.impairer import IMPAIRERS, ScopedState
+from otto.link.impairer import IMPAIRERS
 from otto.link.netem import NetEmImpairer, PortPrefix, netem_args, parse_qdisc_show, port_prefixes
-from otto.link.params import ImpairmentParams, Selector, collides, scope_contains
+from otto.link.params import ImpairmentParams, ScopedState, Selector, collides, scope_contains
 from otto.registry import resolved
 
 from ._tc_render import render_scoped_tree

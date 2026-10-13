@@ -1,13 +1,20 @@
-"""Typed impairment parameters: unit parsing, merge, and coupling rules.
+"""The impairment vocabulary: parameters, selectors, the read-back shape and the impairer contract.
 
 Spec §3.1/§3.3 (docs/superpowers/specs/2026-07-10-link-impairment-design.md):
 bare time = milliseconds, bare percent = percent, rate REQUIRES an explicit tc
 unit; re-impair merges per-param last-one-wins and an explicit zero clears just
 that param.
+
+The impairer contract (:class:`LinkImpairer`, the :class:`ScopedState` it parses
+back, and the selector band numbering) lives here too, beside the types it is
+written in, so a built-in impairer (``otto.link.netem``) imports only this
+module and the registry (``otto.link.impairer``) names it by reference without
+a loop. Standard library only.
 """
 
 import re
 from dataclasses import dataclass, field, fields
+from typing import ClassVar, Literal
 
 _TIME_RE = re.compile(r"^(?P<num>\d+(?:\.\d+)?)(?P<unit>us|ms|s)?$")
 _PERCENT_RE = re.compile(r"^(?P<num>\d+(?:\.\d+)?)%?$")
@@ -377,3 +384,110 @@ def equivalent(a: ImpairmentParams, b: ImpairmentParams) -> bool:
     delay_a, jitter_a, *rest_a = ka
     delay_b, jitter_b, *rest_b = kb
     return _time_close(delay_a, delay_b) and _time_close(jitter_a, jitter_b) and rest_a == rest_b
+
+
+# The impairer contract: what an impairer builds and parses back.
+
+FIRST_SELECTOR_BAND = 4
+"""prio bands 1-3 keep kernel-default priomap semantics; selectors start at band 4."""
+
+MAX_SELECTORS = 8
+"""Per-netdev selector cap (bands 4..11 inside the fixed 11-band prio root)."""
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedState:
+    """Discriminated read-back of one placement netdev's impairment shape.
+
+    Exactly one of four kinds (spec §1): ``clean`` (no otto state — including
+    kernel-default root qdiscs), ``whole`` (today's root netem,
+    :attr:`whole` set), ``scoped`` (:attr:`selectors` maps each
+    :class:`~otto.link.params.Selector` to its ``(band, params)``), or
+    ``foreign`` (a root qdisc otto did not generate: reported by ``list``,
+    loudly refused on mutate).
+    """
+
+    kind: Literal["clean", "whole", "scoped", "foreign"]
+    whole: ImpairmentParams | None = None
+    selectors: dict[Selector, tuple[int, ImpairmentParams]] = field(default_factory=dict)
+
+    @classmethod
+    def clean(cls) -> "ScopedState":
+        """No otto impairment state on the netdev."""
+        return cls("clean")
+
+    @classmethod
+    def whole_link(cls, params: ImpairmentParams) -> "ScopedState":
+        """Today's whole-link root netem."""
+        return cls("whole", whole=params)
+
+    @classmethod
+    def from_selectors(
+        cls, selectors: dict[Selector, tuple[int, ImpairmentParams]]
+    ) -> "ScopedState":
+        """Create a port-scoped tree: selector -> (band, params)."""
+        return cls("scoped", selectors=dict(selectors))
+
+    @classmethod
+    def foreign(cls) -> "ScopedState":
+        """Report a root qdisc otto did not generate — never mutated, only reported."""
+        return cls("foreign")
+
+
+class LinkImpairer:
+    """Builds the shell commands that apply/read/clear one placement's impairment.
+
+    Stateless: implementations build command strings and parse output; the
+    orchestration layer (``otto.link.manage``) runs them on hosts.
+    """
+
+    host_families: ClassVar[frozenset[str]] = frozenset[str]()
+    """Host families this impairer serves (e.g. ``frozenset({"unix"})``)."""
+
+    supports_selectors: ClassVar[bool] = False
+    """Whether this impairer implements the optional port-scoped surface
+    (the ``scoped_*`` builders + :meth:`parse_scoped`). Defaults off so
+    third-party impairers are unaffected; a ``--port`` request routed to a
+    non-supporting impairer is a loud capability error in orchestration."""
+
+    def apply_command(self, netdev: str, params: ImpairmentParams) -> str:
+        """Shell command applying *params* to *netdev* (idempotent replace)."""
+        raise NotImplementedError
+
+    def read_command(self, netdev: str) -> str:
+        """Shell command whose output :meth:`parse_read` understands."""
+        raise NotImplementedError
+
+    def clear_command(self, netdev: str) -> str:
+        """Shell command removing this impairer's state from *netdev*."""
+        raise NotImplementedError
+
+    def parse_read(self, output: str) -> ImpairmentParams | None:
+        """Parse :meth:`read_command` output; ``None`` = no impairment present."""
+        raise NotImplementedError
+
+    def scoped_root_command(self, netdev: str) -> str:
+        """Command creating the scoped classful root on *netdev* (idempotent)."""
+        raise NotImplementedError
+
+    def scoped_band_command(self, netdev: str, band: int, params: ImpairmentParams) -> str:
+        """Command applying *params* as band *band*'s per-selector leaf (idempotent)."""
+        raise NotImplementedError
+
+    def scoped_filter_commands(self, netdev: str, band: int, selector: Selector) -> list[str]:
+        """Commands steering *selector*'s traffic into band *band*."""
+        raise NotImplementedError
+
+    def scoped_clear_selector_commands(
+        self, netdev: str, band: int, selector: Selector
+    ) -> list[str]:
+        """Commands removing *selector*'s filters and its band leaf (root kept)."""
+        raise NotImplementedError
+
+    def scoped_read_commands(self, netdev: str) -> list[str]:
+        """Return the two read commands whose outputs :meth:`parse_scoped` understands."""
+        raise NotImplementedError
+
+    def parse_scoped(self, qdisc_output: str, filter_output: str) -> ScopedState:
+        """Parse :meth:`scoped_read_commands` outputs into a :class:`ScopedState`."""
+        raise NotImplementedError

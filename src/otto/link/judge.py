@@ -3,7 +3,7 @@
 Pure functions only: no host I/O, no orchestration. Each ``judge_*`` reads
 :class:`~otto.link.probes.PingStats` (or, for the rate/port range/side/
 read-back/expire probes, the plain numbers or
-:class:`~otto.link.impairer.ScopedState` a probe already parsed) and returns a
+:class:`~otto.link.params.ScopedState` a probe already parsed) and returns a
 :class:`~otto.check.FeatureResult`. ``judge_control`` is the one exception,
 returning ``None`` when the baseline is quiet enough to trust the rest of the
 run, or an ``unmeasured`` result naming why it isn't.
@@ -24,8 +24,7 @@ never a legitimate "no evidence" case (spec 2026-09-24 §3.1's ``fail`` vs
 import math
 
 from ..check.verdict import FeatureResult, UnmeasuredReason, Verdict
-from .impairer import ScopedState
-from .params import ImpairmentParams, Selector, equivalent
+from .params import ImpairmentParams, ScopedState, Selector, equivalent
 from .probes import PingStats
 
 _NOISY_BASELINE_SD_MS = 5.0

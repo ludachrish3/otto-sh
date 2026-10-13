@@ -97,9 +97,9 @@ def test_settings_scaffold_has_commented_dependencies_block(tmp_path: Path) -> N
 def test_lab_scaffold_writes_three_files_that_resolve_to_one_host(tmp_path: Path) -> None:
     """Spec 2026-09-06 §8.1: lab.json references; inventory.json/creds.json answer under one key."""
     from otto.host.factory import validate_host_dict
+    from otto.host.specs import UnixHostSpec
     from otto.init.doctor import _inventory_for
     from otto.inventory import resolve_host_entry
-    from otto.models.host import UnixHostSpec
     from otto.models.lab import ElementSpec
 
     _scaffold(tmp_path, "settings")

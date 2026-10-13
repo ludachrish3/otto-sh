@@ -16,11 +16,12 @@ import re
 import shlex
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, replace
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from dataclasses import dataclass, replace
+from typing import Protocol, TypeVar, runtime_checkable
 
 from ..errors import OttoError
 from ..logger.mode import LogMode
+from ..models.base import Cred, cred_identity
 from ..registry import Registry, registration_boundary
 from .command_frame import BashFrame, SessionMarkers
 from .host import DEFAULT_COMMAND_TIMEOUT
@@ -34,46 +35,6 @@ __all__ = [
     "register_login_proxy",
     "resolve_chain",
 ]
-
-
-@dataclass(frozen=True)
-class Cred:
-    """One credential entry: a login plus how to become it."""
-
-    login: str
-    """The account name."""
-
-    password: str | None = None
-    """Password, or None (key/agent auth on SSH; empty line on telnet; no
-    password exchange in the built-in su proxy)."""
-
-    proxy: str | None = None
-    """Login-proxy registry key; None means directly loginable (switch via
-    the built-in ``"su"``)."""
-
-    via: str | None = None
-    """Login of the account the proxy starts from. None defaults to the
-    first proxy-less cred entry."""
-
-    params: dict[str, Any] = field(default_factory=dict)
-    """Free-form data handed to the proxy callable (host-specific knobs).
-
-    Opaque to otto except for the one key the built-in ``"su"`` proxy reads:
-    ``login_shell`` (default True) chooses between ``su - <login>`` and the
-    environment-inheriting ``su <login>``. A custom proxy is free to give that
-    key its own meaning; nothing outside the proxy that receives these params
-    interprets them.
-    """
-
-    protocols: list[str] = field(default_factory=list)
-    """Protocols this cred is FOR (spec 2026-09-13 cred-scope §3.1).
-
-    Empty means unscoped: the cred applies to every protocol, which is every
-    cred written before scope existed. Non-empty names self-authenticating
-    backends (``ssh``, ``telnet``, ``ftp``); the host spec validates the names.
-    A scoped cred wins its protocol's default pick (:func:`default_login`)
-    and takes part in the cred's identity (:func:`cred_identity`).
-    """
 
 
 @runtime_checkable
@@ -292,19 +253,6 @@ async def _su_proxy(io: ProxyIO, ctx: ProxyContext) -> None:
 
 
 register_login_proxy("su", _su_proxy, prompt=_SU_PROMPT)
-
-
-def cred_identity(login: str, protocols: list[str]) -> str:
-    """Build the display identity of a cred: ``login``, or ``login [p1, p2]`` when scoped.
-
-    The key every duplicate check and the three-layer merge use (spec
-    2026-09-13 cred-scope §3.2), so an error names exactly the string the key
-    was built from. Scope is sorted: ``["telnet", "ssh"]`` and ``["ssh",
-    "telnet"]`` are one identity.
-    """
-    if not protocols:
-        return login
-    return f"{login} [{', '.join(sorted(protocols))}]"
 
 
 def _default_direct(creds: list[Cred], protocol: str | None) -> Cred | None:

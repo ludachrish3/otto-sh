@@ -24,7 +24,6 @@ from otto.link import check_live
 from otto.link._check_rows import RANGE_SELECTOR, origin_end
 from otto.link.check import LinkCheckReport, check_link, link_sections
 from otto.link.check_live import LIVE_DELAY_MS, LIVE_FEATURES, combine_directions
-from otto.link.impairer import FIRST_SELECTOR_BAND
 from otto.link.manage import (
     VERIFY_FAILED,
     DirectionState,
@@ -34,7 +33,7 @@ from otto.link.manage import (
 )
 from otto.link.model import Link
 from otto.link.netem import NetEmImpairer
-from otto.link.params import ImpairmentParams, Selector
+from otto.link.params import FIRST_SELECTOR_BAND, ImpairmentParams, Selector
 from otto.link.placement import FlowDirection
 from otto.link.sandbox import new_sandbox
 from tests.unit.check.test_fingerprint import MODERN

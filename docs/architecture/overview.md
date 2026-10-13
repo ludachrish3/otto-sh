@@ -93,7 +93,7 @@ declared dependency graph from `tach.toml`, cycle included.
 
 | Module | Responsibility |
 | --- | --- |
-| `otto.models` | Pydantic specs for lab.json, settings.toml, env vars, monitor records |
+| `otto.models` | The data-model facade: pydantic specs for lab.json, settings.toml, env vars, monitor records; the host specs live in `otto.host.specs` and are exported from `otto.host`; this package still exports `ToolchainSpec` and the eight option specs |
 | `otto.labs` | The lab-repository (host source) protocol and the default JSON backend |
 | `otto.config` | Parsing otto's inputs: the environment, each repo's `settings.toml`, lab data; the fleet implementation behind `otto.lab` |
 | {mod}`otto.lab` | The public lab and fleet API: load a lab, reach its hosts, walk the fleet of interest |
@@ -128,8 +128,9 @@ implementations, conformance-verified in otto's own suite).
   `import otto` resolves its public names lazily (PEP 562), so library users
   pay only for what they touch.
 - **The data edge is validated.** Everything that enters from JSON, TOML, or
-  the environment passes through a pydantic spec in `otto.models` exactly
-  once; see {doc}`subsystems/data-boundary`.
+  the environment passes through a pydantic spec exactly once (the host specs
+  in `otto.host.specs`, the lab, inventory and settings specs in
+  `otto.models`); see {doc}`subsystems/data-boundary`.
 - **User code is contained.** Bootstrap frames per-file failures;
   registries reject duplicate names loudly and attribute every entry to the
   module that registered it; see {doc}`subsystems/registries`.

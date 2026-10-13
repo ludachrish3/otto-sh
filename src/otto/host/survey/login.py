@@ -14,8 +14,9 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from ...logger.mode import LogMode
+from ...models.base import Cred, cred_identity
 from ..connections import teardown_step
-from ..login_proxy import Cred, LoginProxyError, cred_for, cred_identity, default_login
+from ..login_proxy import LoginProxyError, cred_for, default_login
 from ..os_profile import copy_host
 from .verdict import State
 

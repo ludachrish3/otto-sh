@@ -46,9 +46,10 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from ..logger.mode import LogMode
+from ..models.base import Cred
 from .command_frame import BashFrame, CommandFrame
 from .host import DEFAULT_COMMAND_TIMEOUT
-from .login_proxy import Cred, run_proxy
+from .login_proxy import run_proxy
 from .session import HostSession, ShellSession, _SessionProxyIO
 
 if TYPE_CHECKING:

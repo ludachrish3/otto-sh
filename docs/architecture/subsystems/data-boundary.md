@@ -3,9 +3,9 @@
 otto consumes data from three outside sources: lab files (`lab.json`),
 repo settings (`.otto/settings.toml`), and `OTTO_*` environment variables.
 The rule for all of them is the same: **pydantic at the boundary, plain
-objects inside**. External data is validated exactly once, by a spec model in
-`otto.models`, and what crosses into the rest of the codebase is an ordinary
-runtime object that is never re-validated.
+objects inside**. External data is validated exactly once, by a pydantic spec
+model, and what crosses into the rest of the codebase is an ordinary runtime
+object that is never re-validated.
 
 ## The spec → runtime pattern
 
@@ -87,15 +87,15 @@ unknown-section one.
 
 ## Host construction
 
-{class}`~otto.models.host.HostSpec` is the abstract boundary model for one
+{class}`~otto.host.specs.HostSpec` is the abstract boundary model for one
 lab-data host entry; `UnixHostSpec` and `EmbeddedHostSpec` extend it with
 family-specific fields (menus like `valid_transfers`, embedded strategy
 selectors like `filesystem` and `binary_loader`, per-protocol option tables
 like `ssh_options`):
 
-```{inheritance-diagram} otto.models.host.UnixHostSpec otto.models.host.EmbeddedHostSpec
+```{inheritance-diagram} otto.host.specs.UnixHostSpec otto.host.specs.EmbeddedHostSpec
 :parts: 1
-:top-classes: otto.models.host.HostSpec
+:top-classes: otto.host.specs.HostSpec
 ```
 
 Construction, driven by
@@ -124,9 +124,10 @@ lookup of a class given by `Ref`), not at load; see
 variables. Repo `settings.toml` files are parsed during bootstrap phase 1
 into `Repo` objects ({doc}`../lifecycle`); their tables (`[docker]`,
 `[reservations]`, `[coverage]`, `[[os_profiles]]`, `[host_preferences]`) each
-have spec models. `otto.models.settings` is deliberately a leaf module — it
-must not import the packages it configures, or validation would drag the app
-graph into every boundary crossing.
+have spec models. `otto.models.settings` must not import `otto.config` at
+module scope, or validation would drag the app bootstrap into every boundary
+crossing; it defers the config imports it needs to function bodies. The
+ast-grep rule `models-no-module-scope-config-import` enforces it.
 
 ## Where labs come from: the labs package
 
@@ -264,10 +265,10 @@ startup ({doc}`../utilities/logging`).
 
 - {mod}`otto.models.lab` — `LabEntrySpec`, `ElementSpec`: the
   `lab.json` wrapper layers above the host entry
-- {mod}`otto.models.host` — `HostSpec`, `UnixHostSpec`, `EmbeddedHostSpec`:
+- {mod}`otto.host.specs` — `HostSpec`, `UnixHostSpec`, `EmbeddedHostSpec`:
   the spec half of the spec → runtime pattern
 - {mod}`otto.models.settings` — settings-table spec models, including
-  `OttoEnvSettings`, kept a leaf module
+  `OttoEnvSettings`, which imports `otto.config` only lazily
 - {mod}`otto.host.factory` — `create_host_from_dict`, the fixed
   construction order
 - {mod}`otto.host.os_profile` — `OsProfile`, the base-family → host-class

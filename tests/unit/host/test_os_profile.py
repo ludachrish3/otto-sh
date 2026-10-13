@@ -186,7 +186,7 @@ class TestHostClassRegistry:
 class TestHostSpecRegistry:
     def test_builtins_carry_their_specs(self):
         from otto.host.os_profile import build_host_spec
-        from otto.models.host import EmbeddedHostSpec, UnixHostSpec
+        from otto.host.specs import EmbeddedHostSpec, UnixHostSpec
 
         assert build_host_spec("unix") is UnixHostSpec
         assert build_host_spec("embedded") is EmbeddedHostSpec
@@ -195,7 +195,7 @@ class TestHostSpecRegistry:
     def test_register_with_explicit_spec(self):
         from otto.host.embedded_host import EmbeddedHost
         from otto.host.os_profile import build_host_spec, register_host_class
-        from otto.models.host import EmbeddedHostSpec
+        from otto.host.specs import EmbeddedHostSpec
 
         class MyHost(EmbeddedHost):
             pass
@@ -206,7 +206,7 @@ class TestHostSpecRegistry:
     def test_register_defaults_spec_via_mro(self):
         from otto.host.embedded_host import EmbeddedHost
         from otto.host.os_profile import build_host_spec, register_host_class
-        from otto.models.host import EmbeddedHostSpec
+        from otto.host.specs import EmbeddedHostSpec
 
         class MyHost(EmbeddedHost):
             pass
@@ -384,7 +384,7 @@ class TestBusyBoxProfile:
         """
         import logging
 
-        from otto.models.host import UnixHostSpec
+        from otto.host.specs import UnixHostSpec
 
         class Rogue(UnixHost):
             pass

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import Never, Self, override
 
+from ..models.base import Cred
 from .command_frame import (
     AshFrame,
     BashFrame,
@@ -32,7 +33,7 @@ from .command_frame import (
     history_prefix,
 )
 from .errors import ConsoleError, RawLandingError, SessionSetupError
-from .login_proxy import Cred, LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
+from .login_proxy import LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
 from .shell_liveness import confirm_live
 from .telnet import TelnetClient
 from .userland import ASH_TYPED_LINE_MAX, refuse_if_gapped

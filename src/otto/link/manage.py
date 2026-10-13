@@ -31,9 +31,18 @@ from ..host.errors import exec_or_raise
 from ..host.host import is_dry_run
 from ..logger.mode import LogMode
 from ..result import CommandResult
-from .impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, LinkImpairer, ScopedState, build_impairer
+from .impairer import build_impairer
 from .model import Link
-from .params import ImpairmentParams, Selector, collides, equivalent
+from .params import (
+    FIRST_SELECTOR_BAND,
+    MAX_SELECTORS,
+    ImpairmentParams,
+    LinkImpairer,
+    ScopedState,
+    Selector,
+    collides,
+    equivalent,
+)
 from .placement import (
     BOTH_DIRECTIONS,
     FlowDirection,
@@ -1371,13 +1380,13 @@ async def impair_link(
     *selector* (``--port``) routes the mutation through the port-scoped path
     instead: *params* merges over just THAT selector's currently-applied
     state (not the whole netdev's), landing in its own prio band (assigned on
-    first use, kept across re-impairs, capped at :data:`~otto.link.impairer.MAX_SELECTORS`
+    first use, kept across re-impairs, capped at :data:`~otto.link.params.MAX_SELECTORS`
     per netdev) with its own u32 filters, one per port-prefix per (side, proto) slot
     it covers. Whole-link and port-scoped
     impairment are exclusive per netdev (spec §1): a bare impair against
     scoped state, or a scoped impair against whole-link state, is a loud
     :class:`ValueError` telling the operator to repair first. A host whose
-    impairer doesn't declare :attr:`~otto.link.impairer.LinkImpairer.supports_selectors`
+    impairer doesn't declare :attr:`~otto.link.params.LinkImpairer.supports_selectors`
     is also a loud capability error — never a silent fallback to whole-link.
     Expire-timers follow the same split: a bare impair only ever cancels/launches
     v1 whole-link timers; a scoped impair only ever cancels/launches its OWN

@@ -113,7 +113,7 @@ layer = "entry"
 # ensure_lab_context builds the context on it.
 # otto._shim_complete: cache.py's inspect verbs read the shim's own answer
 # (inspect_shim, inspect_tests).
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors"]
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors"]
 
 [[modules]]
 path = "otto.config"
@@ -123,6 +123,7 @@ depends_on = [
     # zero-import leaf, so this cannot invert layering or create a cycle.
     "otto.errors",
     "otto.models",
+    "otto.models.base",
     "otto.context",
     "otto.instruction_catalog",
     "otto.labs",
@@ -185,9 +186,8 @@ depends_on = [
 [[modules]]
 path = "otto.coverage"
 layer = "root"
-# otto.models: the capture artifact's models subclass otto.models.base.OttoModel
-# so their schema builds on first use, not at import. otto.models does not
-# depend on otto.coverage, so this adds no cycle.
+# otto.models.base: the capture artifact's models subclass OttoModel so their
+# schema builds on first use, not at import. A foundation leaf, so no cycle.
 depends_on = [
     "otto.utils",
     "otto.host",
@@ -195,7 +195,7 @@ depends_on = [
     "otto.config",
     "otto.version",
     "otto.errors",
-    "otto.models",
+    "otto.models.base",
     # clean_coverage and the product reset hooks build per-product Result
     # values for the CleanReport. otto.result is a leaf (otto.utils,
     # otto.errors) that otto.docker already depends on, so no cycle.
@@ -214,7 +214,7 @@ path = "otto.creds"
 # otto.inventory, which imports it function-locally from the bootstrap path;
 # this package never imports otto.inventory — one-way by construction. Every
 # dependency here is a leaf or a boundary-model package.
-depends_on = ["otto.errors", "otto.models", "otto.registry", "otto.utils"]
+depends_on = ["otto.errors", "otto.models", "otto.models.base", "otto.registry", "otto.utils"]
 
 [[modules]]
 path = "otto.docker"
@@ -276,6 +276,7 @@ depends_on = [
     "otto.config",
     "otto.utils",
     "otto.models",
+    "otto.models.base",
     "otto.labs",
     "otto.inventory",
     "otto.host",
@@ -327,7 +328,15 @@ depends_on = ["otto.instruction_catalog", "otto.context", "otto.params", "otto.p
 path = "otto.host"
 depends_on = [
     "otto.logger",
-    "otto.models",
+    # otto.models.base: OttoModel, the credential pair (CredSpec, the runtime
+    # Cred) and resources_nonempty, the leaf the host specs share with
+    # otto.models (spec 2026-10-11 placement-and-phases §3.3). The host specs
+    # live in this package (otto.host.specs, otto.host.option_specs), so the
+    # host layer imports nothing else from otto.models.
+    "otto.models.base",
+    # otto.link.impairer: a host spec's impairer pin and menu are checked
+    # against the impairer registry, a foundation module.
+    "otto.link.impairer",
     "otto.lifecycle",
     # DEBT: half of the host<->docker cycle — docker_host.py:251 lazily calls
     # compose_up. The compose bridge belongs above both packages.
@@ -391,6 +400,7 @@ depends_on = [
     "otto.errors",
     "otto.host",
     "otto.models",
+    "otto.models.base",
     "otto.registry",
     "otto.tls",
     "otto.utils",
@@ -427,6 +437,7 @@ depends_on = [
     "otto.config",
     "otto.inventory",
     "otto.models",
+    "otto.models.base",
     "otto.host",
     "otto.errors",
     "otto.utils",
@@ -446,7 +457,35 @@ depends_on = ["otto.invocation", "otto.logger"]
 path = "otto.link"
 # NOTE: no otto.tunnel here — the packages are fully decoupled via
 # otto.host.daemon (July finding a1/a3, FIXED). Keep it that way.
-depends_on = ["otto.lifecycle", "otto.logger", "otto.registry", "otto.models", "otto.host", "otto.errors", "otto.check", "otto.result"]
+# otto.link.params, otto.link.impairer, otto.link.netem: the impairment
+# vocabulary and contract, the impairer registry and the built-in netem
+# impairer, each a foundation module of its own (below). No otto.registry:
+# the registry went to otto.link.impairer with IMPAIRERS.
+depends_on = ["otto.lifecycle", "otto.logger", "otto.models", "otto.host", "otto.errors", "otto.check", "otto.result", "otto.link.impairer", "otto.link.netem", "otto.link.params"]
+
+# The impairment vocabulary and the impairer registry, carved out of otto.link
+# into the foundation layer (spec 2026-10-11 placement-and-phases §3.3), so the
+# host specs can read the registry without importing the link layer. The
+# contract (LinkImpairer, ScopedState, the selector bands) lives in
+# otto.link.params, which is standard library only; otto.link.netem imports
+# only that, and otto.link.impairer names netem by reference (a Ref string the
+# string audit lists), so the three form no loop. Their public names stay
+# exported from the otto.link facade.
+
+[[modules]]
+path = "otto.link.impairer"
+layer = "foundation"
+depends_on = ["otto.link.params", "otto.registry"]
+
+[[modules]]
+path = "otto.link.netem"
+layer = "foundation"
+depends_on = ["otto.link.params"]
+
+[[modules]]
+path = "otto.link.params"
+layer = "foundation"
+depends_on = []
 
 [[modules]]
 path = "otto.logger"
@@ -457,7 +496,10 @@ depends_on = ["otto.console"]
 path = "otto.models"
 depends_on = [
     "otto.utils",
-    "otto.link",
+    "otto.models.base",
+    # models/jsonschema.py lists the registered impairer names in the JSON
+    # Schema.
+    "otto.link.impairer",
     # ALLOWED LAZILY ONLY, at three kinds of site: to_runtime() bodies import
     # config.repo at function scope, LoggingConfigSpec's removed-`capture`
     # validator imports TOML_SETTINGS_PATH inside its error branch (so the
@@ -471,8 +513,10 @@ depends_on = [
     "otto.logger",
     # (models -> coverage edge removed 2026-08-03: validate_color moved to
     # otto.models.color, closing the layer inversion.)
-    # DEBT: models/__init__.py imports host.os_profile BEFORE .host as an
-    # import-order hack (todo/registry_builtin_registration_symmetry.md).
+    # DEBT: otto.models re-exports ToolchainSpec and the eight option specs as
+    # facade bindings to otto.host.specs / otto.host.option_specs (spec
+    # 2026-10-11 placement-and-phases §3.3), and models/{jsonschema,snippets,
+    # inventory,settings}.py read those modules.
     "otto.host",
     # models/jsonschema.py stamps `x-otto-version` into every generated schema
     # document (spec 2026-08-27 lab-definition-v2 §12), so `otto init`'s doctor
@@ -483,6 +527,16 @@ depends_on = [
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
 ]
+
+[[modules]]
+path = "otto.models.base"
+layer = "foundation"
+# The leaf otto.host and otto.models both build on: OttoModel and
+# compact_validation_error, the credential pair (CredSpec and the runtime Cred
+# dataclass, with cred_identity) and resources_nonempty. pydantic and the
+# standard library only; it imports no other otto module (spec 2026-10-11
+# placement-and-phases §3.3).
+depends_on = []
 
 [[modules]]
 path = "otto.monitor"
@@ -558,7 +612,7 @@ depends_on = []
 [[modules]]
 path = "otto.monitor.snmp"
 layer = "topology"
-depends_on = ["otto.models", "otto.monitor.parsers", "otto.monitor.rates", "otto.registry", "otto.snmp"]
+depends_on = ["otto.models.base", "otto.monitor.parsers", "otto.monitor.rates", "otto.registry", "otto.snmp"]
 
 [[modules]]
 path = "otto.monitor.store"
@@ -662,7 +716,7 @@ depends_on = ["otto.errors"]
 
 [[modules]]
 path = "otto.reservations"
-depends_on = ["otto.registry", "otto.utils", "otto.models", "otto.config", "otto.errors"]
+depends_on = ["otto.registry", "otto.utils", "otto.models", "otto.models.base", "otto.config", "otto.errors"]
 
 [[modules]]
 path = "otto.snmp"
@@ -718,7 +772,7 @@ layer = "entry"
 # Cannot invert layering or create a cycle: otto.result depends only on
 # otto.utils and otto.errors, both foundation leaves, and otto.host already
 # depends on it.
-depends_on = ["otto.config", "otto.context", "otto.creds", "otto.inventory", "otto.invocation", "otto.labs", "otto.models", "otto.reservations", "otto.host", "otto.result", "otto.suite"]
+depends_on = ["otto.config", "otto.context", "otto.creds", "otto.inventory", "otto.invocation", "otto.labs", "otto.models", "otto.models.base", "otto.reservations", "otto.host", "otto.result", "otto.suite"]
 
 [[modules]]
 path = "otto.tls"

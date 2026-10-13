@@ -2,7 +2,7 @@
 
 Only ``otto link`` calls impair_link/repair_link/check_link; every other
 otto.link importer (every command that validates a host spec, via
-otto.models.host -> IMPAIRERS) must not pay for otto.host.daemon,
+otto.host.specs -> IMPAIRERS) must not pay for otto.host.daemon,
 otto.link.sentinel or otto.check. tests/unit/test_lazy_packages.py holds the
 checks every lazy package shares and tests/unit/import_budget/ the
 surface-level guard; this file proves otto.link's own resolution paths.

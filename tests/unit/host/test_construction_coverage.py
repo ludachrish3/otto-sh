@@ -18,7 +18,7 @@ from otto.host import (
 from otto.host.login_proxy import Cred
 from otto.host.os_profile import HOST_CLASSES
 from otto.host.unix_host import UnixHost
-from otto.models.host import CredSpec
+from otto.models.base import CredSpec
 from otto.registry import FrozenMap, Ref
 from otto.testing import assert_host_registrable
 
@@ -175,7 +175,7 @@ def test_a_pair_given_by_reference_is_refused_at_its_first_get(cls_name, message
     register_host_class(
         "t-ref",
         Ref(f"{__name__}:{cls_name}"),
-        spec=Ref(f"{__name__}:{spec}") if spec else Ref("otto.models.host:UnixHostSpec"),
+        spec=Ref(f"{__name__}:{spec}") if spec else Ref("otto.host.specs:UnixHostSpec"),
     )
     with pytest.raises(ValueError, match=message):
         HOST_CLASSES.get("t-ref")

@@ -84,7 +84,7 @@ BusyBox host resolves it to ``"ash"``. An ``ash`` frame is now registered
 that half of the original hole is closed. What remains missing is the
 WIRING: no call site in this codebase reads :attr:`Userland.shell_dialect`
 and passes it to ``build_command_frame`` — every existing
-``build_command_frame`` call site (``models/host.py``, ``unix_host.py``,
+``build_command_frame`` call site (``host/specs.py``, ``unix_host.py``,
 ``embedded_host.py``) resolves a DECLARED ``command_frame`` string, never
 this probe's result. So the resolved value is still a MEASUREMENT to record
 and pin, not a frame name any caller looks up through this probe. Until
@@ -319,7 +319,7 @@ CLOSED ON PURPOSE, and that is the whole of the typo safety. Every name here
 becomes a real capability key (``applet_<name>``, see :func:`applet_capability`)
 and a real :class:`~otto.host.options.UserlandOptions` field, so a misspelling
 is a ``TypeError`` from the dataclass, an ``extra='forbid'`` validation error
-from :class:`~otto.models.options.UserlandOptionsSpec`, or a ``ValueError``
+from :class:`~otto.host.option_specs.UserlandOptionsSpec`, or a ``ValueError``
 from :func:`applet_capability` -- never a guard that silently never fires.
 An OPEN "ask the device about any name" probe would have none of those three.
 

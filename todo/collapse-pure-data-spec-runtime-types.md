@@ -19,7 +19,7 @@ For the **otto-owned, no-library-seam** value types there is no such seam: the s
 its runtime twin are field-identical and `to_runtime()` is a trivial 1:1 copy. The
 clearest cases are the three forward types:
 
-- [`LocalPortForwardSpec`](../src/otto/models/options.py) → [`LocalPortForward`](../src/otto/host/options.py) (4 plain `str`/`int` fields)
+- [`LocalPortForwardSpec`](../src/otto/host/option_specs.py) → [`LocalPortForward`](../src/otto/host/options.py) (4 plain `str`/`int` fields)
 - `RemotePortForwardSpec` → `RemotePortForward` (4 fields)
 - `SocksForwardSpec` → `SocksForward` (2 fields)
 

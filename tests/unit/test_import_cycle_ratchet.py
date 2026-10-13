@@ -48,6 +48,10 @@ pytestmark = pytest.mark.interpreter_agnostic
 # otto.instructions, otto.project and otto.tunnel left it when the instruction tables moved into
 # otto.instruction_catalog, below the layers that read them, and otto.config stopped importing
 # the execution face (spec 2026-10-11 placement-and-phases §3.2).
+# otto.models -> otto.link went when the impairer registry and its contract became foundation
+# modules of their own, and otto.host -> otto.models when the host specs moved into otto.host
+# and what both packages share into the leaf otto.models.base (spec 2026-10-11
+# placement-and-phases §3.3).
 BASELINE: dict[str, list[str]] = {
     "otto.bootstrap": ["otto.config", "otto.host"],
     "otto.check": ["otto.host"],
@@ -73,12 +77,11 @@ BASELINE: dict[str, list[str]] = {
     "otto.host": [
         "otto.config",
         "otto.docker",
-        "otto.models",
     ],
     "otto.inventory": ["otto.config", "otto.creds", "otto.host", "otto.models"],
     "otto.labs": ["otto.config", "otto.host", "otto.inventory", "otto.link", "otto.models"],
     "otto.link": ["otto.check", "otto.host", "otto.models"],
-    "otto.models": ["otto.config", "otto.host", "otto.link"],
+    "otto.models": ["otto.config", "otto.host"],
     "otto.reservations": ["otto.config", "otto.models"],
     "otto.session": [
         "otto.bootstrap",

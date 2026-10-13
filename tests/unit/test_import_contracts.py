@@ -98,7 +98,7 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     "import otto.utils": ["asyncio"],
     # Every command reads settings; only one that loads a lab needs host code.
     "import otto.models.settings": [
-        "otto.models.host",
+        "otto.host.specs",
         "otto.models.inventory",
         "otto.host.unix_host",
     ],
@@ -234,6 +234,14 @@ IMPORT_MUST_LOAD: dict[str, list[str]] = {
 # dependency of a dependency is that dependency's business, not this row's.
 IMPORT_ONLY_DECLARED: dict[str, list[str]] = {
     "otto.instruction_catalog": [],
+    # The impairment vocabulary, the impairer registry and the built-in netem
+    # impairer sit in the foundation layer, below the host specs that read the
+    # registry. Each loads its declared dependencies at import, and nothing else.
+    "otto.link.impairer": [],
+    "otto.link.netem": [],
+    "otto.link.params": [],
+    # The leaf otto.host and otto.models share: OttoModel, CredSpec, Cred.
+    "otto.models.base": [],
 }
 
 # Runs in the child. It records, for each watched module, the frames that

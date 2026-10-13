@@ -130,7 +130,7 @@ def test_every_builtin_reference_resolves():
     import importlib
 
     from otto.host.os_profile import registered_host_specs
-    from otto.models.host import HostSpec
+    from otto.host.specs import HostSpec
 
     assert _import_every_module_that_builds_a_registry(), "the source scan found no registries"
     registries = _otto_registries()
@@ -267,8 +267,8 @@ def test_each_registry_lists_its_builtins_before_any_implementation_is_imported(
 def test_plugin_overrides_a_referenced_builtin_host_class_with_a_warning(caplog):
     """A plugin's real class replaces the ``unix`` reference, and the override still warns."""
     from otto.host.os_profile import HOST_CLASSES, build_host_spec, register_host_class
+    from otto.host.specs import UnixHostSpec
     from otto.host.unix_host import UnixHost
-    from otto.models.host import UnixHostSpec
 
     class PluginUnixHost(UnixHost):
         pass

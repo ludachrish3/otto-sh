@@ -4,13 +4,13 @@ validator may read one: an option-dependent invariant belongs in contextual vali
 import ast
 import inspect
 
-import otto.models.host as host_models
+import otto.host.specs as host_models
 from otto.host import Element
 from otto.host.factory import create_host_from_dict
 
 
 def _option_tables() -> set[str]:
-    """Every ``*_options`` field any spec in :mod:`otto.models.host` declares."""
+    """Every ``*_options`` field any spec in :mod:`otto.host.specs` declares."""
     return {
         name
         for obj in vars(host_models).values()

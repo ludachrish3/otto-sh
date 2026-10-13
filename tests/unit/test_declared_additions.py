@@ -3,10 +3,12 @@
 Appendix B of ``docs/superpowers/specs/2026-10-04-public-api-manifest-appendix.md``
 gives each taught name with no public path a declared home. Its G addenda
 retire three facade names (registry spec §8.1) and move the host specs from
-``otto.models`` to ``otto.host`` (host construction spec §2.1). A facade binds
-lazily (PEP 562), so each addition is imported in a fresh interpreter both
-ways round, facade first and defining module first: a cycle shows up as an
-ImportError on a partly initialised module.
+``otto.models`` to ``otto.host`` (host construction spec §2.1), and the specs
+themselves now live in ``otto.host.specs`` (spec 2026-10-11
+placement-and-phases §3.3). A facade binds lazily (PEP 562), so each addition
+is imported in a fresh interpreter both ways round, facade first and defining
+module first: a cycle shows up as an ImportError on a partly initialised
+module.
 """
 
 import importlib
@@ -29,28 +31,28 @@ ADDITIONS: dict[str, dict[str, str]] = {
         "Consume": "otto.host.construction",
         "Convert": "otto.host.construction",
         "Element": "otto.host.element",
-        "EmbeddedHostSpec": "otto.models.host",
+        "EmbeddedHostSpec": "otto.host.specs",
         "FlatPreferences": "otto.host.construction",
         "HostBuild": "otto.host.construction",
         "HostCapabilities": "otto.host.capability_grid",
         "HostContext": "otto.host.construction",
         "HostLoopError": "otto.host.loop_owner",
         "HostReadiness": "otto.host.construction",
-        "HostSpec": "otto.models.host",
+        "HostSpec": "otto.host.specs",
         "HostSpecInContext": "otto.host.construction",
         "HostValidationError": "otto.host.construction",
         "Mount": "otto.host.mount",
         "MountNotFoundError": "otto.host.errors",
         "Omit": "otto.host.construction",
         "Pass": "otto.host.construction",
-        "PowerControlSpec": "otto.models.host",
+        "PowerControlSpec": "otto.host.specs",
         "RawLandingError": "otto.host.errors",
         "Resolve": "otto.host.construction",
         "RuntimeOnly": "otto.host.construction",
         "SessionIdentity": "otto.host.capability_grid",
         "SessionSetupError": "otto.host.errors",
         "TermContext": "otto.host.connections",
-        "UnixHostSpec": "otto.models.host",
+        "UnixHostSpec": "otto.host.specs",
         "UserSupport": "otto.host.capability_grid",
         "Userland": "otto.host.userland",
         "host_context": "otto.host.factory",
@@ -59,7 +61,7 @@ ADDITIONS: dict[str, dict[str, str]] = {
     },
     "otto.inventory": {"SupportsStatPaths": "otto.inventory.protocol"},
     "otto.models": {
-        "CredSpec": "otto.models.host",
+        "CredSpec": "otto.models.base",
         "FILLABLE_INVENTORY_FIELDS": "otto.models.inventory",
         "INVENTORY_KEY_FIELDS": "otto.models.inventory",
         "InventoryRecord": "otto.models.inventory",
@@ -76,9 +78,9 @@ ADDITIONS: dict[str, dict[str, str]] = {
 }
 
 RETIRED = [
-    ("otto.models", "EmbeddedHostSpec", "otto.models.host"),
-    ("otto.models", "HostSpec", "otto.models.host"),
-    ("otto.models", "UnixHostSpec", "otto.models.host"),
+    ("otto.models", "EmbeddedHostSpec", "otto.host.specs"),
+    ("otto.models", "HostSpec", "otto.host.specs"),
+    ("otto.models", "UnixHostSpec", "otto.host.specs"),
 ]
 
 ROWS = [(facade, name, home) for facade, names in ADDITIONS.items() for name, home in names.items()]

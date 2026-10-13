@@ -2,9 +2,9 @@
 
 An inventory record is the tool-agnostic half of a host: what is true about
 the machine regardless of otto. Its field names are
-:class:`~otto.models.host.HostSpec`-family field names — the same name the
-referencing host's own concrete spec (:class:`~otto.models.host.UnixHostSpec`,
-:class:`~otto.models.host.EmbeddedHostSpec`) declares — so the join
+:class:`~otto.host.specs.HostSpec`-family field names — the same name the
+referencing host's own concrete spec (:class:`~otto.host.specs.UnixHostSpec`,
+:class:`~otto.host.specs.EmbeddedHostSpec`) declares — so the join
 (:func:`otto.inventory.resolve_host_entry`) is a plain key copy and
 no mapping table exists in otto core: a mapping is where drift hides.
 Every field below is on the shared ``HostSpec`` base, so no record can be
@@ -21,9 +21,11 @@ from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
-from .base import OttoModel
-from .host import CredSpec, InterfaceSpec, IntOrStr
-from .host import coerce_digit_string as coerce_digit_string  # noqa: PLC0414 — explicit re-export
+from ..host.specs import InterfaceSpec, IntOrStr
+from ..host.specs import (
+    coerce_digit_string as coerce_digit_string,  # noqa: PLC0414 — explicit re-export
+)
+from .base import CredSpec, OttoModel
 from .lab import _strip_comment_keys
 
 

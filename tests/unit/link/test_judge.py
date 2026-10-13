@@ -3,7 +3,6 @@
 import pytest
 
 from otto.check import UnmeasuredReason, Verdict
-from otto.link.impairer import ScopedState
 from otto.link.judge import (
     describe,
     judge_control,
@@ -19,7 +18,7 @@ from otto.link.judge import (
     judge_reorder,
     judge_side,
 )
-from otto.link.params import ImpairmentParams, Selector
+from otto.link.params import ImpairmentParams, ScopedState, Selector
 from otto.link.probes import PingStats
 
 

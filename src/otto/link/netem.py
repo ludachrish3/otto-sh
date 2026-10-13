@@ -13,13 +13,15 @@ from typing import ClassVar
 
 from typing_extensions import override
 
-from .impairer import (
+from .params import (
     FIRST_SELECTOR_BAND,
     MAX_SELECTORS,
+    ImpairmentParams,
     LinkImpairer,
     ScopedState,
+    Selector,
+    collides,
 )
-from .params import ImpairmentParams, Selector, collides
 
 _TIME_TOKEN = re.compile(r"^(?P<num>\d+(?:\.\d+)?)(?P<unit>us|usec|ms|msec|s|sec)$")
 _PERCENT_TOKEN = re.compile(r"^(?P<num>\d+(?:\.\d+)?)%$")

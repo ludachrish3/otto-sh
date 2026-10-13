@@ -5,9 +5,10 @@ runtime objects (``DockerSettings``/``DockerImage``/``DockerCompose`` frozen
 dataclasses, ``OsProfile``, the reservation backend) via ``to_runtime()`` — the
 same two-type split the option/host specs use.
 
-Leaf isolation: this module must NOT import from ``otto.config`` at module
-top — doing so triggers ``config/__init__``'s app bootstrap. Runtime types
-from ``config.repo`` are imported lazily inside ``to_runtime()`` and under
+Config isolation: this module must NOT import from ``otto.config`` at module
+scope (ast-grep rule ``models-no-module-scope-config-import``) — doing so
+triggers ``config/__init__``'s app bootstrap. Runtime types from
+``config.repo`` are imported lazily inside ``to_runtime()`` and under
 ``TYPE_CHECKING`` for annotations only.
 """
 
@@ -40,12 +41,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # is a lazy PEP 562 export) and it is what keeps the accepted level names below
 # from drifting out of the module that registers them.
 from ..declared import DeclaredEntry, MatchLeaf, validate_match_table
-from ..logger.levels import LEVEL_NAMES
-from ..utils import anchor_path, parse_cache_ttl
-from .base import OttoModel
-from .color import validate_color
-from .dependencies import clauses_satisfiable, normalize_name, parse_dependency_entry
-from .options import (
+from ..host.option_specs import (
     FtpOptionsSpec,
     NcOptionsSpec,
     ScpOptionsSpec,
@@ -54,6 +50,11 @@ from .options import (
     TelnetOptionsSpec,
     UserlandOptionsSpec,
 )
+from ..logger.levels import LEVEL_NAMES
+from ..utils import anchor_path, parse_cache_ttl
+from .base import OttoModel
+from .color import validate_color
+from .dependencies import clauses_satisfiable, normalize_name, parse_dependency_entry
 
 if TYPE_CHECKING:
     from ..config.repo import (
@@ -465,8 +466,9 @@ class LoggingConfigSpec(OttoModel):
             sut_dir = (info.context or {}).get("sut_dir")
             where = ""
             if sut_dir is not None:
-                # Lazy, and only on this error path: otto.models is a leaf and
-                # must not import otto.config at module top (module docstring).
+                # Lazy, and only on this error path: this module must not import
+                # otto.config at module scope (module docstring; ast-grep rule
+                # models-no-module-scope-config-import).
                 from ..config.repo import TOML_SETTINGS_PATH
 
                 where = f"{Path(sut_dir) / TOML_SETTINGS_PATH}: "

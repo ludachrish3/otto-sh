@@ -1,8 +1,20 @@
-"""Shared base model for all otto pydantic boundary specs."""
+"""The leaf both ``otto.host`` and ``otto.models`` build on.
 
-from typing import TYPE_CHECKING
+It holds what the host layer and the specs layer both need, so neither imports
+the other for it: :class:`OttoModel`, the base of every otto pydantic boundary
+spec, with :func:`compact_validation_error`; the credential pair,
+:class:`CredSpec` (one ``creds`` entry as lab data spells it) and the runtime
+:class:`Cred` dataclass it builds, with :func:`cred_identity`, the key every
+duplicate check uses; and :func:`resources_nonempty`, the one rule for a usable
+reservation identifier. It imports no other otto module (spec 2026-10-11
+placement-and-phases §3.3). ``Cred`` keeps its public path,
+``otto.host.login_proxy.Cred``, and ``CredSpec`` its, ``otto.models.CredSpec``.
+"""
 
-from pydantic import BaseModel, ConfigDict
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from pydantic import ValidationError
@@ -56,3 +68,111 @@ def compact_validation_error(error: "ValidationError") -> str:
         f"{item['msg']} [type={item['type']}]"
         for item in error.errors(include_input=False)
     )
+
+
+@dataclass(frozen=True)
+class Cred:
+    """One credential entry: a login plus how to become it."""
+
+    login: str
+    """The account name."""
+
+    password: str | None = None
+    """Password, or None (key/agent auth on SSH; empty line on telnet; no
+    password exchange in the built-in su proxy)."""
+
+    proxy: str | None = None
+    """Login-proxy registry key; None means directly loginable (switch via
+    the built-in ``"su"``)."""
+
+    via: str | None = None
+    """Login of the account the proxy starts from. None defaults to the
+    first proxy-less cred entry."""
+
+    params: dict[str, Any] = field(default_factory=dict)
+    """Free-form data handed to the proxy callable (host-specific knobs).
+
+    Opaque to otto except for the one key the built-in ``"su"`` proxy reads:
+    ``login_shell`` (default True) chooses between ``su - <login>`` and the
+    environment-inheriting ``su <login>``. A custom proxy is free to give that
+    key its own meaning; nothing outside the proxy that receives these params
+    interprets them.
+    """
+
+    protocols: list[str] = field(default_factory=list)
+    """Protocols this cred is FOR (spec 2026-09-13 cred-scope §3.1).
+
+    Empty means unscoped: the cred applies to every protocol, which is every
+    cred written before scope existed. Non-empty names self-authenticating
+    backends (``ssh``, ``telnet``, ``ftp``); the host spec validates the names.
+    A scoped cred wins its protocol's default pick
+    (:func:`~otto.host.login_proxy.default_login`)
+    and takes part in the cred's identity (:func:`cred_identity`).
+    """
+
+
+def cred_identity(login: str, protocols: list[str]) -> str:
+    """Build the display identity of a cred: ``login``, or ``login [p1, p2]`` when scoped.
+
+    The key every duplicate check and the three-layer merge use (spec
+    2026-09-13 cred-scope §3.2), so an error names exactly the string the key
+    was built from. Scope is sorted: ``["telnet", "ssh"]`` and ``["ssh",
+    "telnet"]`` are one identity.
+    """
+    if not protocols:
+        return login
+    return f"{login} [{', '.join(sorted(protocols))}]"
+
+
+class CredSpec(OttoModel):
+    """One ``creds`` entry: a login plus (optionally) how to become it."""
+
+    login: str
+    password: str | None = None
+    proxy: str | None = None
+    via: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    protocols: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _proxy_field_rules(self) -> "CredSpec":
+        if self.proxy is None and (self.via is not None or self.params):
+            raise ValueError(f"cred {self.login!r}: 'via' and 'params' require 'proxy'")
+        if self.via is not None and self.via == self.login:
+            raise ValueError(f"cred {self.login!r}: 'via' cannot reference itself")
+        return self
+
+    @property
+    def identity(self) -> str:
+        """``login``, or ``login [scope]`` when scoped.
+
+        See :func:`cred_identity`.
+        """
+        return cred_identity(self.login, self.protocols)
+
+    def to_cred(self) -> Cred:
+        """Build the runtime ``Cred`` dataclass from the validated fields."""
+        return Cred(
+            login=self.login,
+            password=self.password,
+            proxy=self.proxy,
+            via=self.via,
+            params=dict(self.params),
+            protocols=list(self.protocols),
+        )
+
+
+def resources_nonempty(v: set[str]) -> set[str]:
+    """Reservation identifiers are opaque, non-empty strings.
+
+    Spec 2026-08-28 three-level-reservations §2, §10. Shared by all three
+    levels — :class:`~otto.models.lab.LabEntrySpec`,
+    :class:`~otto.models.lab.ElementSpec`, and :class:`~otto.host.specs.HostSpec`,
+    and by the runtime :class:`~otto.host.element.Element` — so they cannot
+    drift into three different notions of a usable identifier. Public
+    precisely because it is imported across modules: a leading underscore on a
+    name another module depends on says "private" while meaning the opposite.
+    """
+    if any(not r.strip() for r in v):
+        raise ValueError("resources must be non-empty strings")
+    return v

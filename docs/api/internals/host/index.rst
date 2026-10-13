@@ -22,6 +22,8 @@ host internals
    capability_grid
    os_profile
    construction
+   specs
+   option_specs
    factory
    lab_info
    element

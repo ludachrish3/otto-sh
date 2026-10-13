@@ -38,13 +38,13 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 from typing_extensions import override
 
 from ..logger.mode import LogMode
+from ..models.base import Cred
 from ..result import CommandResult
 from ..utils import Status
 from .connections import LOGINLESS, ConsoleEndpoint, connect_and_describe
 from .construction import RuntimeOnly
 from .errors import ConsoleError
 from .host import BaseHost, is_dry_run
-from .login_proxy import Cred
 from .options import ConsoleOptions, SshOptions, TelnetOptions
 
 if TYPE_CHECKING:

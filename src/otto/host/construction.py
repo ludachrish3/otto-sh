@@ -27,11 +27,11 @@ from typing_extensions import override
 from ..errors import OttoError
 
 if TYPE_CHECKING:
-    from ..models.host import HostSpec
     from ..registry import Prepared
     from .element import Element
     from .os_profile import HostClassEntry, OsProfile
     from .remote_host import RemoteHost
+    from .specs import HostSpec
 
 
 class _Marker:

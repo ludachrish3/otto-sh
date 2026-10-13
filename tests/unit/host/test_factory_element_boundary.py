@@ -5,8 +5,8 @@ from pydantic import ValidationError
 
 from otto.host.element import Element
 from otto.host.factory import create_host_from_dict, host_identity, validate_host_dict
+from otto.host.specs import UnixHostSpec
 from otto.inventory import resolve_host_entry
-from otto.models.host import UnixHostSpec
 
 ENTRY = {"ip": "10.0.0.1", "creds": [{"login": "r", "password": "p"}], "board": "cpu", "slot": 2}
 

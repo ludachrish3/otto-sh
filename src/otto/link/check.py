@@ -61,7 +61,6 @@ from .check_live import (
     live_worst_case_s,
     run_live,
 )
-from .impairer import FIRST_SELECTOR_BAND, ScopedState
 from .judge import (
     judge_corrupt,
     judge_duplicate,
@@ -73,7 +72,7 @@ from .judge import (
 from .manage import find_link, lab_host, launch_clear_timer, resolve_directions
 from .model import Link
 from .netem import NetEmImpairer
-from .params import ImpairmentParams, Selector
+from .params import FIRST_SELECTOR_BAND, ImpairmentParams, ScopedState, Selector
 from .placement import (
     FlowDirection,
     Placement,

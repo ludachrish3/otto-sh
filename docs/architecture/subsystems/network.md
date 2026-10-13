@@ -211,7 +211,10 @@ Static links — `otto.link`:
 - {mod}`otto.link.derive` — resolves hop-derived edges at lab-load time
 - {mod}`otto.link.placement` — endpoint-versus-middlebox placement resolution
   and the facing-interface match
-- {mod}`otto.link.params` — `ImpairmentParams`, the unit and merge rules
+- {mod}`otto.link.params` — `ImpairmentParams`, the unit and merge rules, and
+  the impairer contract: `LinkImpairer`, `ScopedState` and the selector bands
+- {mod}`otto.link.impairer` — the `IMPAIRERS` registry; names the stock netem
+  impairer by reference, so reading it never imports netem
 - {mod}`otto.link.netem` — the `tc`/netem impairer: whole-interface and the
   scoped `prio` tree
 - {mod}`otto.link.manage` — the merge-read-modify-verify orchestration behind

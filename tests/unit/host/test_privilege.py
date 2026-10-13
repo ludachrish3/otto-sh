@@ -13,10 +13,10 @@ from otto.host import host as host_module
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.login_proxy import Cred, register_login_proxy
+from otto.host.option_specs import UserlandOptionsSpec
 from otto.host.options import UserlandOptions
 from otto.host.userland import Userland
 from otto.logger.mode import LogMode
-from otto.models.options import UserlandOptionsSpec
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.fake_shell import ShellModel

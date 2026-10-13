@@ -43,10 +43,11 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from ..logger.mode import LogMode
+from ..models.base import Cred
 from .command_frame import history_prefix
 from .errors import UnsupportedOnUserlandError
 from .host import DEFAULT_COMMAND_TIMEOUT, is_dry_run, refuse_declined_elevation
-from .login_proxy import _SU_PROMPT, _SU_TARGET, Cred, cred_for, perform_switch, run_undo
+from .login_proxy import _SU_PROMPT, _SU_TARGET, cred_for, perform_switch, run_undo
 from .userland import UserlandHost
 
 if TYPE_CHECKING:

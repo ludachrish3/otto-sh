@@ -27,7 +27,7 @@ _SCRATCH_SOURCE = (
 from otto.host.binary_loader import BinaryLoader
 from otto.host.command_frame import BashFrame
 from otto.host.embedded_filesystem import EmbeddedFileSystem
-from otto.link.impairer import LinkImpairer
+from otto.link.params import LinkImpairer
 from otto.tunnel.carrier import TunnelCarrier
 
 
@@ -173,7 +173,8 @@ def test_filesystem_classes_raw_case(scratch):
 
 
 def test_impairers_raw_case(scratch):
-    from otto.link.impairer import IMPAIRERS, LinkImpairer
+    from otto.link.impairer import IMPAIRERS
+    from otto.link.params import LinkImpairer
 
     conformance.assert_raw_registry(
         IMPAIRERS,
@@ -213,7 +214,7 @@ def _shared_class(seam: str) -> type:
     from otto.host.binary_loader import BinaryLoader
     from otto.host.command_frame import BashFrame
     from otto.host.embedded_filesystem import EmbeddedFileSystem
-    from otto.link.impairer import LinkImpairer
+    from otto.link.params import LinkImpairer
     from otto.tunnel.carrier import TunnelCarrier
 
     return {

@@ -22,7 +22,7 @@ from .product import apply_declared_products, apply_product_providers, stamp_cov
 from .remote_host import RemoteHost, make_host_id
 
 if TYPE_CHECKING:
-    from ..models.host import HostSpec
+    from .specs import HostSpec
 
 # Names of the option tables accepted on host dicts and in
 # ``[host_preferences."<selector>"]`` blocks. Kept here as the canonical

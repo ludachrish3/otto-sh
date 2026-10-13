@@ -9,7 +9,8 @@ from typing import ClassVar
 
 import pytest
 
-from otto.link.impairer import IMPAIRERS, LinkImpairer, build_impairer, register_impairer
+from otto.link.impairer import IMPAIRERS, build_impairer, register_impairer
+from otto.link.params import LinkImpairer
 
 
 class _FakeImpairer(LinkImpairer):
@@ -51,15 +52,14 @@ class TestRegistry:
 
 class TestScopedContract:
     def test_base_impairer_does_not_support_selectors(self) -> None:
-        from otto.link.impairer import LinkImpairer
+        from otto.link.params import LinkImpairer
 
         assert LinkImpairer.supports_selectors is False
 
     def test_scoped_methods_default_to_not_implemented(self) -> None:
         import pytest
 
-        from otto.link.impairer import LinkImpairer
-        from otto.link.params import ImpairmentParams, Selector
+        from otto.link.params import ImpairmentParams, LinkImpairer, Selector
 
         imp = LinkImpairer()
         sel = Selector(5201, "tcp")
@@ -77,8 +77,13 @@ class TestScopedContract:
             imp.parse_scoped("", "")
 
     def test_scoped_state_constructors(self) -> None:
-        from otto.link.impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, ScopedState
-        from otto.link.params import ImpairmentParams, Selector
+        from otto.link.params import (
+            FIRST_SELECTOR_BAND,
+            MAX_SELECTORS,
+            ImpairmentParams,
+            ScopedState,
+            Selector,
+        )
 
         assert FIRST_SELECTOR_BAND == 4
         assert MAX_SELECTORS == 8

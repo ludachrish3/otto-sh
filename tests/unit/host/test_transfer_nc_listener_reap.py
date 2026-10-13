@@ -40,11 +40,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from otto.host.connections import ConnectionManager
+from otto.host.option_specs import UserlandOptionsSpec
 from otto.host.options import NcOptions, UserlandOptions
 from otto.host.transfer import nc as nc_module
 from otto.host.transfer.nc import _NC_LISTENER_HARD_CAP_S, NcFileTransfer
 from otto.host.userland import PROBED_APPLETS, Userland, applet_capability
-from otto.models.options import UserlandOptionsSpec
 from otto.result import CommandResult
 
 _SOURCE = Path(inspect.getfile(nc_module)).read_text()

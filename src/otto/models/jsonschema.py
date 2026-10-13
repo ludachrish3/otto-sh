@@ -24,7 +24,7 @@ Emitted documents (default):
 - ``inventory`` — for the json inventory backend's file
   (:class:`~otto.models.inventory.InventoryRecord` per key),
 - ``creds`` — for the json creds store's file
-  (:class:`~otto.models.host.CredSpec` list per key, spec 2026-09-06 §5.2),
+  (:class:`~otto.models.base.CredSpec` list per key, spec 2026-09-06 §5.2),
 - ``monitor-meta`` — the monitor dashboard's internal chart/tab-layout model
   (:class:`~otto.models.monitor.MonitorMeta`); not user-edited and not served
   at any endpoint (it is reshaped into each session's ``SessionMeta`` for the
@@ -56,10 +56,11 @@ from pydantic.json_schema import models_json_schema
 
 from ..host.connections import TERM_BACKENDS
 from ..host.os_profile import registered_host_specs
+from ..host.specs import HostSpec
 from ..host.transfer import TRANSFER_BACKENDS
 from ..link.impairer import IMPAIRERS, build_impairer
 from ..version import get_version
-from .host import CredSpec, HostSpec
+from .base import CredSpec
 from .inventory import FILLABLE_INVENTORY_FIELDS, InventoryRecord
 from .lab import ElementSpec, LabEntrySpec
 from .link import LinkSpec
@@ -186,7 +187,7 @@ def _inject_interface_shorthand(schema: dict[str, Any]) -> None:
     ``{"eth0": "10.0.0.5"}`` as shorthand for ``{"eth0": {"ip": "10.0.0.5"}}``.
     Mirrors ``_inject_selector_enums``'s scalar-or-... rewrite pattern: each
     value in the ``interfaces`` map may be a bare string or an
-    :class:`~otto.models.host.InterfaceSpec` object. No-op for a spec without
+    :class:`~otto.host.specs.InterfaceSpec` object. No-op for a spec without
     an ``interfaces`` property.
     """
     props = schema.get("properties")

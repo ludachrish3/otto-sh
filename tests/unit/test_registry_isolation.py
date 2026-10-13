@@ -318,8 +318,8 @@ def test_host_classes_present_before_the_test_survive_the_restore() -> None:
     that fixture with its first test, and take otto's own built-ins with it.
     """
     from otto.host import os_profile
+    from otto.host.specs import UnixHostSpec
     from otto.host.unix_host import UnixHost
-    from otto.models.host import UnixHostSpec
 
     class _PreExistingHost(UnixHost):
         pass

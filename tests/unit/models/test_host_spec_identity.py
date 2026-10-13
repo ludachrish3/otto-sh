@@ -8,7 +8,7 @@ live on :class:`~otto.host.element.Element` since spec 2026-09-05 §2.6 — see
 import pytest
 from pydantic import ValidationError
 
-from otto.models.host import UnixHostSpec
+from otto.host.specs import UnixHostSpec
 
 
 def _spec(**over):

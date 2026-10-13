@@ -22,6 +22,7 @@ import pytest
 
 from otto.host import userland as userland_module
 from otto.host.command_frame import AshFrame
+from otto.host.option_specs import UserlandOptionsSpec
 from otto.host.options import UserlandOptions
 from otto.host.session import refuse_if_line_editor_would_truncate
 from otto.host.userland import (
@@ -32,7 +33,6 @@ from otto.host.userland import (
     applet_capability,
 )
 from otto.logger.mode import LogMode
-from otto.models.options import UserlandOptionsSpec
 from otto.result import CommandResult, Status
 
 # ── the probe spellings, as Tier 1 measured them ────────────────────────────

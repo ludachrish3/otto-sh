@@ -16,17 +16,17 @@ from otto.host.interface import Interface
 from otto.host.login_proxy import Cred, via_cred
 from otto.host.options import TelnetOptions
 from otto.host.os_profile import register_host_class
-from otto.host.toolchain import Toolchain
-from otto.host.unix_host import UnixHost
-from otto.link import LinkImpairer, register_impairer
-from otto.logger.mode import LogMode
-from otto.models.host import (
-    CredSpec,
+from otto.host.specs import (
     EmbeddedHostSpec,
     HostSpec,
     ToolchainSpec,
     UnixHostSpec,
 )
+from otto.host.toolchain import Toolchain
+from otto.host.unix_host import UnixHost
+from otto.link import LinkImpairer, register_impairer
+from otto.logger.mode import LogMode
+from otto.models.base import CredSpec
 from tests._fixtures.host_build import build_host
 
 

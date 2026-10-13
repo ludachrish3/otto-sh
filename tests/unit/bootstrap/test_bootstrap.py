@@ -911,7 +911,7 @@ def test_a_ref_class_s_bad_own_profile_names_its_registering_module(tmp_path, mo
         register_host_class(
             "typo-host",
             Ref("otto.host.unix_host:UnixHost"),
-            spec=Ref("otto.models.host:UnixHostSpec"),
+            spec=Ref("otto.host.specs:UnixHostSpec"),
             profile=ProfileFields(FrozenMap({"not_a_field": 1})),
         )
         """,

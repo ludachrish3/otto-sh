@@ -18,16 +18,8 @@ every package that builds hosts already depends on it.
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..models.base import resources_nonempty
 from .remote_host import slug
-
-# ``otto.models.lab.resources_nonempty`` is imported function-locally, on
-# purpose: importing ``models.lab`` here at module scope first runs
-# ``otto.models/__init__``, which imports ``models.host``, which imports
-# ``Element`` from this still-initialising module and fails
-# (``models.lab`` itself only names ``Element`` under ``TYPE_CHECKING``).
-# ``remote_host`` carries no such cycle — its ``Element`` import is
-# ``TYPE_CHECKING``-only — so ``slug``, which every construction needs, is
-# imported normally.
 
 
 @dataclass(frozen=True)
@@ -76,7 +68,6 @@ class Element:
         # one-shot iterable, and a second pass over a spent generator would
         # store an empty set behind a validation that saw the real names.
         resources = frozenset(self.resources)
-        from ..models.lab import resources_nonempty  # lazy: see the module comment
 
         resources_nonempty(set(resources))
         # ``frozen=True`` blocks rebinding, not mutation of the dict behind

@@ -36,8 +36,9 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 from typing_extensions import override
 
 from ..errors import OttoError
+from ..models.base import Cred
 from ..registry import BackendRegistry, Ref, class_backend, registration_boundary
-from .login_proxy import Cred, LoginProxyError, default_login, resolve_chain
+from .login_proxy import LoginProxyError, default_login, resolve_chain
 from .options import ConsoleOptions, FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import TelnetClient
 

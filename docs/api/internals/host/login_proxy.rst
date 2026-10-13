@@ -13,8 +13,6 @@ and the reference can link them. The public names are on :doc:`/api/host/login_p
 
 .. autoexception:: otto.host.login_proxy.LoginProxyError
 
-.. autofunction:: otto.host.login_proxy.cred_identity
-
 .. autofunction:: otto.host.login_proxy.cred_for
 
 .. autoclass:: otto.host.login_proxy.HasVia

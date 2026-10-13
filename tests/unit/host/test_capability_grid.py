@@ -30,7 +30,7 @@ from otto.host.capability_grid import (
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.os_profile import register_host_class
 from otto.host.remote_host import RemoteHost
-from otto.models.host import EmbeddedHostSpec
+from otto.host.specs import EmbeddedHostSpec
 from tests._fixtures.host_classes import host_classes_in_the_tree
 
 

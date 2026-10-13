@@ -5,9 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from ..host.login_proxy import cred_identity
-from ..models.base import compact_validation_error
-from ..models.host import CredSpec
+from ..models.base import CredSpec, compact_validation_error, cred_identity
 from ..models.inventory import InventoryRecord
 from .errors import InventoryError
 from .protocol import Inventory
@@ -32,7 +30,7 @@ def merge_creds(
     """Compose two cred layers by identity (spec 2026-09-06 creds-store §6.1).
 
     Matching is by identity — ``login`` plus scope
-    (:func:`~otto.host.login_proxy.cred_identity`), so ``protocols`` is part
+    (:func:`~otto.models.base.cred_identity`), so ``protocols`` is part
     of the key and is never composed. An identity in both layers gets
     ``{**lower_stated, **higher_stated}`` — the higher layer overrides a
     field it states and cannot remove one (``None`` states nothing). The

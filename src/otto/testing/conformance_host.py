@@ -35,7 +35,7 @@ from ..result import CommandNotRunError
 from ..suite.expect import ExpectCollector
 
 if TYPE_CHECKING:
-    from ..models.host import HostSpec
+    from ..host.specs import HostSpec
 
 _PROBE_USER = "__otto_conformance_probe_user__"
 """The ``user=`` every behavioural probe passes.
@@ -323,7 +323,7 @@ def assert_host_registrable(cls: type, *, spec: "type[HostSpec] | None" = None) 
 
     * a :class:`~otto.host.remote_host.RemoteHost` subclass carrying a
       :class:`~otto.host.capability_grid.HostCapabilities` declaration;
-    * a boundary :class:`~otto.models.host.HostSpec` — *spec* when given (it
+    * a boundary :class:`~otto.host.specs.HostSpec` — *spec* when given (it
       must be a ``HostSpec`` subclass), otherwise the spec registered for the
       nearest base of *cls*. A class that adds fields passes the ``HostSpec``
       subclass declaring them as *spec*, exactly as it would to

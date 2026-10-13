@@ -3,6 +3,19 @@ import dataclasses
 import pytest
 from pydantic import ValidationError
 
+from otto.host.option_specs import (
+    OPTION_SPEC_RUNTIME_PAIRS,
+    ConsoleOptionsSpec,
+    FtpOptionsSpec,
+    NcOptionsSpec,
+    ScpOptionsSpec,
+    SftpOptionsSpec,
+    SnmpOptionsSpec,
+    SshOptionsSpec,
+    TelnetOptionsSpec,
+    TftpOptionsSpec,
+    UserlandOptionsSpec,
+)
 from otto.host.options import (
     ConsoleOptions,
     FtpOptions,
@@ -19,19 +32,6 @@ from otto.host.options import (
     UserlandOptions,
 )
 from otto.models.base import OttoModel
-from otto.models.options import (
-    OPTION_SPEC_RUNTIME_PAIRS,
-    ConsoleOptionsSpec,
-    FtpOptionsSpec,
-    NcOptionsSpec,
-    ScpOptionsSpec,
-    SftpOptionsSpec,
-    SnmpOptionsSpec,
-    SshOptionsSpec,
-    TelnetOptionsSpec,
-    TftpOptionsSpec,
-    UserlandOptionsSpec,
-)
 
 
 class _Sample(OttoModel):

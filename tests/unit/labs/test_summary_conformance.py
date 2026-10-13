@@ -13,7 +13,7 @@ from otto.config.lab import Lab
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
 from otto.labs import HostSummary, LabNotFoundError, LoginSummary, logins_of_creds
-from otto.models.host import Cred
+from otto.models.base import Cred
 from otto.testing.conformance import assert_lab_repository_conforms
 
 

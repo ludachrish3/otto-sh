@@ -38,6 +38,7 @@ import pytest
 
 from otto.host.local_host import LocalHost
 from otto.host.options import UserlandOptions
+from otto.host.specs import UnixHostSpec
 from otto.host.userland import (
     _APPLET_CONTROL,
     _RESOLVE_BUDGET_S,
@@ -49,7 +50,6 @@ from otto.host.userland import (
     applet_capability,
 )
 from otto.logger.mode import LogMode
-from otto.models.host import UnixHostSpec
 from otto.result import CommandResult, Result
 from otto.utils import Status
 

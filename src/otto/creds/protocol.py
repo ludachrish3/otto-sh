@@ -1,7 +1,7 @@
 """The ``CredsStore`` protocol (spec 2026-09-06 creds-store §5.1).
 
 A store answers "which credentials does the machine with this inventory key
-accept" with the same :class:`~otto.models.host.CredSpec` entries a lab file
+accept" with the same :class:`~otto.models.base.CredSpec` entries a lab file
 spells. It is the LOWEST creds layer: an inventory record and the lab file
 override it by login (spec §6). Files whose stat IS the store's freshness are
 declared through :class:`otto.inventory.protocol.SupportsStatPaths`, reused
@@ -10,7 +10,7 @@ rather than redeclared.
 
 from typing import Protocol, runtime_checkable
 
-from ..models.host import CredSpec
+from ..models.base import CredSpec
 
 
 @runtime_checkable

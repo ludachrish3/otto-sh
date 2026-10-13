@@ -4,18 +4,21 @@ Model, static derivation, and id computation for the static link layer
 (implicit hop edges, declared routes). Live tunnel creation/discovery lives
 in ``otto.tunnel``.
 
-Every name is exported lazily (PEP 562). ``otto.models.host`` imports
-``IMPAIRERS`` from here at module scope (a host spec's impairer name is checked
-against it), so every command that loads the host models imports this package
+Every name is exported lazily (PEP 562). The host specs import ``IMPAIRERS``
+from ``.impairer`` at module scope (a host spec's impairer name is checked
+against it), so every command that loads the host specs imports this package
 and ``.impairer`` with the ``.params`` it builds on. That import alone loads
 nothing else: not the edge model, the placement layer or the netem builders
 (a command that loads a lab does load ``.model`` and ``.derive``, for the
 lab's links), and never ``.manage`` (``otto.host.daemon``,
 ``otto.link.sentinel``) or ``.check`` (``otto.check``'s probe machinery), which
 only ``otto link`` itself calls. The built-in netem impairer is registered by
-reference in ``.impairer``, so no import here exists for its side effect. The
-resolver does not write a resolved name back into the module dict; see
-``otto.config``'s ``__dir__`` for why.
+reference in ``.impairer``, so no import here exists for its side effect.
+``.params`` (the impairment vocabulary and the impairer contract),
+``.impairer`` (the registry) and ``.netem`` are tach modules of their own, in
+the foundation layer, below the host specs that read them. The resolver does
+not write a resolved name back into the module dict; see ``otto.config``'s
+``__dir__`` for why.
 """
 
 from typing import TYPE_CHECKING
@@ -24,8 +27,6 @@ if TYPE_CHECKING:
     from .check import LinkCheckReport as LinkCheckReport
     from .check import check_link as check_link
     from .impairer import IMPAIRERS as IMPAIRERS
-    from .impairer import LinkImpairer as LinkImpairer
-    from .impairer import ScopedState as ScopedState
     from .impairer import build_impairer as build_impairer
     from .impairer import register_impairer as register_impairer
     from .manage import AppliedPlacement as AppliedPlacement
@@ -50,6 +51,8 @@ if TYPE_CHECKING:
     from .model import make_static_link_id as make_static_link_id
     from .netem import NetEmImpairer as NetEmImpairer
     from .params import ImpairmentParams as ImpairmentParams
+    from .params import LinkImpairer as LinkImpairer
+    from .params import ScopedState as ScopedState
     from .params import Selector as Selector
     from .params import canonical_key as canonical_key
     from .params import equivalent as equivalent
@@ -66,8 +69,6 @@ _LAZY_ATTRS: dict[str, str] = {
     "LinkCheckReport": "otto.link.check",
     "check_link": "otto.link.check",
     "IMPAIRERS": "otto.link.impairer",
-    "LinkImpairer": "otto.link.impairer",
-    "ScopedState": "otto.link.impairer",
     "build_impairer": "otto.link.impairer",
     "register_impairer": "otto.link.impairer",
     "AppliedPlacement": "otto.link.manage",
@@ -92,6 +93,8 @@ _LAZY_ATTRS: dict[str, str] = {
     "make_static_link_id": "otto.link.model",
     "NetEmImpairer": "otto.link.netem",
     "ImpairmentParams": "otto.link.params",
+    "LinkImpairer": "otto.link.params",
+    "ScopedState": "otto.link.params",
     "Selector": "otto.link.params",
     "canonical_key": "otto.link.params",
     "equivalent": "otto.link.params",

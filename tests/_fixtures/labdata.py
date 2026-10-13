@@ -232,7 +232,7 @@ def make_host(ne: str, **kwargs: Any) -> UnixHost:
 
 def host_data_console(ne: str, tech: str = "tech1") -> ConsoleOptions:
     """The runtime ``ConsoleOptions`` a lab entry's ``console_options`` table builds."""
-    from otto.models.options import ConsoleOptionsSpec
+    from otto.host.option_specs import ConsoleOptionsSpec
 
     return ConsoleOptionsSpec(**host_data(ne, tech)["console_options"]).to_runtime()
 

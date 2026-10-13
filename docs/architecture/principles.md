@@ -5,17 +5,19 @@ each one is enforced somewhere concrete, and a change that violates one
 should expect to be challenged in review.
 
 Where "somewhere concrete" is a tool rather than a reviewer, it is listed in
-{doc}`quality-gates`: several of the rules below (the `otto.models` leaf, the
-one-shape-for-outcomes rule) are ast-grep rules, and that page is the
-inventory of which conventions have been converted into gates and which have
-not.
+{doc}`quality-gates`: several of the rules below (no module-scope
+`otto.config` import under `src/otto/models/`, enforced by
+`models-no-module-scope-config-import`; the one-shape-for-outcomes rule) are
+ast-grep rules, and that page is the inventory of which conventions have been
+converted into gates and which have not.
 
 ## Pydantic at the boundary, plain objects inside
 
 External data (lab JSON, settings TOML, environment) is validated exactly
 once, by a spec model, at the moment it enters; what circulates inside is
-ordinary objects that are never re-validated. Corollary: `otto.models` stays
-a leaf — it must not import the app graph it describes. ({doc}`subsystems/data-boundary`)
+ordinary objects that are never re-validated. Corollary: the shared base,
+`otto.models.base` (no otto import, tach `foundation`), never imports the app
+graph it describes. ({doc}`subsystems/data-boundary`)
 
 ## Customize behavior in code, shape in data
 

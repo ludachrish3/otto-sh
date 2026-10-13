@@ -10,9 +10,10 @@ exists; the live, host-resident tunnels built over it are
 and :doc:`API reference <tunnel>`).
 
 Impairment builds on that same edge model: ``otto.link.params`` is the typed
-parameter set and its unit/merge rules, ``otto.link.placement`` resolves
+parameter set, its unit/merge rules and the ``LinkImpairer`` contract an
+impairer implements, ``otto.link.placement`` resolves
 *where* one direction's netem lands (endpoint or in-path middlebox),
-``otto.link.impairer`` is the pluggable ``LinkImpairer`` registry
+``otto.link.impairer`` is the pluggable impairer registry
 (``otto.link.netem`` the first-party NetEm registrant), ``otto.link.manage``
 is the merge-read-modify-verify orchestration behind ``otto link
 impair``/``repair``/``list``, and ``otto.link.sentinel`` tags the detached
