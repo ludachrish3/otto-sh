@@ -674,6 +674,36 @@ The thirteen tests replaced in `tests/unit/host/test_docker_host.py`:
 Two matches are unrelated and stay unchanged: `docs/contributing.md:19` and `:83` are Vagrant's
 `autostart`, and `tests/unit/suite/test_monitor_fixture.py:137` is a monitor event pair.
 
+**Amended by P4, 2026-10-13.** Building P4 changed this section in these places:
+- **Owner ruling: a probe's three outcomes (Chris, 2026-10-13).** `_resolve_container_id` folded
+  every non-ok probe into "no container", so a daemon that could not answer was reported as a
+  container that was not running, and Docker's own text was lost. Before P4, that text reached
+  the user through the auto-start failure. `_ensure_running` now tells three outcomes apart:
+  - the probe answered and found nothing: `ContainerNotRunningError`, with the message above;
+  - the probe ran and failed (`Status.Failed`, e.g. the daemon is down or the socket refuses):
+    `ContainerNotRunningError`, whose message says the probe failed on the parent and carries the
+    exit status and Docker's text. It never says "no running container was found";
+  - the command never completed (`Status.Error`: a timeout, a lost session, no return code):
+    the existing `HostUnreachableError`. A transport that raises (`OSError`, `ConnectionError`)
+    propagates unchanged.
+
+  `is_running` is unchanged: every non-ok probe still reads as `False`, because tunnel discovery
+  relies on it.
+- **The message labels each route**, because the CLI deploys use-cases only. `otto docker compose
+  up <use-case>` and `otto.docker.deploy(<use-case>)` serve a use-case, and
+  `otto.docker.compose_up(...)` serves a repo's own compose files.
+- **The thirteen tests become seven functions with thirteen ids.** Six `compose_up` spies elsewhere
+  watched a path that no longer exists, so they could never fail. Two were on `is_running`, three
+  in `tunnel/test_discovery.py` and one in `tunnel/test_manage_resolve.py`. They are deleted, and
+  those tests now assert the commands the parent was asked to run. The concurrency test holds the
+  first probe open and goes on only once the second caller is seen waiting on the lock.
+- **More collateral than the table lists:** the `errors.py` counts and a `test_error_base.py`
+  row, two `host.py` docstrings, `link/manage.py`, `docs/architecture/subsystems/docker-hosts.md`,
+  the dry-run decline class in `tests/unit/host/test_dry_run.py`, the `is_declared_use_case`
+  helper in `tests/unit/test_run_repos_accessor.py`, and `docker_host.py`'s now-unused logger.
+- **No import contract is added.** tach, the ratchet and a scan of `otto.host` for `otto.docker`
+  imports each catch the edge coming back. `CURRENT_LANDING` becomes P4; 13/45 was shared with P3.
+
 ### 3.5 Composed-repos catalog in otto.declared (P5)
 
 **Today** two readers below the composition root read the repos from it:
@@ -1300,6 +1330,11 @@ bucket. At unchanged totals, the two moved files' opens are counted under `otto:
 from `other` to `fd`. A bucket move that every run reproduces exactly is the change itself, not
 noise; the stop rule for a bucket shuffle at an unchanged total applies to a run that does not
 reproduce its own base.
+
+**P4, measured (amended by P4, 2026-10-13).** Row P4's predicted decline does not appear. All 38
+surfaces are +0 on every minor, no bucket moved, and base and tip each reproduced exactly. The
+removed imports were function-local in `_auto_up`, which ran only when a placeholder's probe
+found nothing, and no measured surface constructs a placeholder.
 
 ### 4.3 Package ancestors
 
