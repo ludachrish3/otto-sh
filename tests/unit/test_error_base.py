@@ -66,6 +66,7 @@ from otto.host.connections import TermBackendError, TermConstructionError
 from otto.host.construction import HostValidationError
 from otto.host.errors import (
     ConsoleError,
+    ContainerNotRunningError,
     CoverageToolMissingError,
     HostCommandError,
     HostUnreachableError,
@@ -184,6 +185,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (HostValidationError, ValueError),
     (HostUnreachableError, RuntimeError),
     (HostCommandError, RuntimeError),
+    (ContainerNotRunningError, RuntimeError),
     (CoverageToolMissingError, RuntimeError),
     (MountNotFoundError, ValueError),
     (ListingError, ValueError),

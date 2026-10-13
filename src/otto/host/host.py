@@ -1448,7 +1448,8 @@ class BaseHost(ABC):
         is what makes the hole look handled. On
         :class:`~otto.host.docker_host.DockerContainerHost` that arm ran
         ``_ensure_running()`` immediately after the banner, so a dry run could
-        reach ``compose_up`` and start a real container.
+        ask the docker daemon for the container's id (and, while otto still
+        started containers on use, start one).
 
         Args:
             name: the session name the caller asked for.
@@ -1626,8 +1627,8 @@ class BaseHost(ABC):
         side effect (a terminal bridged to a real shell), and declining to
         perform it is the whole point. On
         :class:`~otto.host.docker_host.DockerContainerHost` the arm matters
-        twice over: ``run_login`` calls ``_ensure_running()``, which can reach
-        ``compose_up`` and START A CONTAINER. The CLI's ``--dry-run`` seam
+        twice over: ``run_login`` calls ``_ensure_running()``, which asks the
+        docker daemon for the container's id. The CLI's ``--dry-run`` seam
         already stops this verb before its body (it declares no preview), so
         the exposed caller is the LIBRARY one.
 

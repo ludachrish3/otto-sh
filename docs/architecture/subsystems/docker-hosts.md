@@ -160,9 +160,12 @@ lab. This walks each repo's `[docker]` settings and registers
    a composes-only repo → `<parent>.<repo>.<service>`) or completion offers
    ids nothing registers; both take the same branch, and the divergence is
    pinned by `tests/unit/config/test_completion_container_ids.py`.
-2. Operations against a not-yet-up container produce a clear "run
-   `otto docker compose up --build <project>` first" error rather than a confusing "no such
-   host."
+2. Operations against a not-yet-up container fail fast, rather than with a
+   confusing "no such host"; see
+   {ref}`Starting containers before you use them <docker-start-first>`.
+   A `docker ps` probe that fails on the parent raises the same
+   `ContainerNotRunningError`, carrying Docker's own text. A parent that
+   cannot complete the probe raises `HostUnreachableError` instead.
 
 When `compose_up()` runs (from CLI or directly from an instruction),
 it overwrites the placeholder with a real entry whose `container_id`

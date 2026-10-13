@@ -52,6 +52,9 @@ pytestmark = pytest.mark.interpreter_agnostic
 # modules of their own, and otto.host -> otto.models when the host specs moved into otto.host
 # and what both packages share into the leaf otto.models.base (spec 2026-10-11
 # placement-and-phases §3.3).
+# otto.host -> otto.docker went when a container host stopped starting its own stack: a
+# stopped declared container now fails fast and names the explicit ways to start it (spec
+# 2026-10-11 placement-and-phases §3.4).
 BASELINE: dict[str, list[str]] = {
     "otto.bootstrap": ["otto.config", "otto.host"],
     "otto.check": ["otto.host"],
@@ -74,10 +77,7 @@ BASELINE: dict[str, list[str]] = {
     ],
     "otto.creds": ["otto.models"],
     "otto.docker": ["otto.config", "otto.host", "otto.models"],
-    "otto.host": [
-        "otto.config",
-        "otto.docker",
-    ],
+    "otto.host": ["otto.config"],
     "otto.inventory": ["otto.config", "otto.creds", "otto.host", "otto.models"],
     "otto.labs": ["otto.config", "otto.host", "otto.inventory", "otto.link", "otto.models"],
     "otto.link": ["otto.check", "otto.host", "otto.models"],

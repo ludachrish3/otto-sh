@@ -244,26 +244,20 @@ def _container_placeholder(ps_out: str, exec_ps_text: str = ""):
 class TestContainerScanning:
     """Issue #139: discovery must never start docker — it is a read-only scan."""
 
-    def test_down_placeholder_contributes_nothing_and_never_composes(self, monkeypatch) -> None:
-        compose_up = AsyncMock()
-        monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-        monkeypatch.setattr("otto.bootstrap.get_repos", MagicMock(return_value=[]))
-        monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
+    def test_down_placeholder_contributes_nothing_and_asks_only_the_probe(self) -> None:
         ctr, calls = _container_placeholder(ps_out="")
         lab = FakeLab(hosts={"a": FakeHost("a", _full_ps_for("a")), ctr.id: ctr})
 
         result = asyncio.run(discover_tunnels(lab))
 
-        compose_up.assert_not_awaited()
         # A stopped container definitively has no processes: that is a clean
         # scan result, not an unreachable host.
         assert result.unreachable == []
-        # The parent saw at most the read-only probe — never an exec/compose.
-        assert all(cmd.startswith("docker ps -q") for cmd, _log in calls)
+        # The parent saw exactly the read-only probe — never an exec/compose.
+        assert [cmd.split(" --filter")[0] for cmd, _log in calls] == ["docker ps -q"], calls
+        assert ctr.container_id == ""
 
-    def test_running_container_scans_through_docker_exec(self, monkeypatch) -> None:
-        compose_up = AsyncMock()
-        monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
+    def test_running_container_scans_through_docker_exec(self) -> None:
         ctr, calls = _container_placeholder(
             ps_out="abc123\n",
             exec_ps_text=_ps_line(9, "02:00", Direction.FWD, Role.EGRESS, 2),
@@ -272,8 +266,10 @@ class TestContainerScanning:
 
         result = asyncio.run(discover_tunnels(lab))
 
-        compose_up.assert_not_awaited()
         assert result.unreachable == []
+        # One probe, then the scan inside the container; nothing else on the parent.
+        verbs = [cmd.split()[1] for cmd, _log in calls]
+        assert verbs == ["ps", "exec"], calls
         # The running container WAS scanned: its observation joined the group.
         (d,) = result.tunnels
         assert (ctr.id, Direction.FWD, Role.EGRESS) in d.present
@@ -330,15 +326,13 @@ class TestTheDryRunBackstop:
                 asyncio.run(_scan_hosts(list(lab.hosts.values())))
             assert asyncio.run(discover_tunnels(lab)).unreachable == []
 
-    def test_a_container_is_not_probed_for_liveness_either(self, monkeypatch) -> None:
+    def test_a_container_is_not_probed_for_liveness_either(self) -> None:
         """The second device touch — ``is_running()`` never passes through ``exec``.
 
         Under a dry run the probe's own ``docker ps -q`` was answered by the
         banner, whose truthiness made ``_resolve_container_id`` report the
         container UP and cache ``"[DRY RUN] Command not executed"`` as its id.
         """
-        compose_up = AsyncMock()
-        monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
         ctr, calls = _container_placeholder(ps_out="abc123\n")
         lab = FakeLab(hosts={ctr.id: ctr})
 
@@ -346,7 +340,6 @@ class TestTheDryRunBackstop:
             result = asyncio.run(discover_tunnels(lab))
 
         assert result.not_measured is True
-        compose_up.assert_not_awaited()
         assert calls == []
         assert ctr.container_id == ""
 

@@ -383,8 +383,8 @@ class TestIsRunningStopsAnsweringForAContainerItNeverAskedAbout:
     ``grep``: they are the only ``is_running()`` call sites in ``src/``. This
     is therefore a LIBRARY-surface backstop, and it is tested where the
     fabrication is born (``_resolve_container_id``) so both callers inherit
-    it, including ``_ensure_running`` -> ``_auto_up`` -> ``compose_up``, which
-    is the path that STARTS A CONTAINER.
+    it, including ``_ensure_running``, which turns ``""`` into a
+    ``ContainerNotRunningError`` for a container nobody asked about.
     """
 
     def _container(self, parent: UnixHost) -> DockerContainerHost:

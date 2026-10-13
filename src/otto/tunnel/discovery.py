@@ -185,9 +185,9 @@ async def _scan_hosts(hosts: list[Any]) -> tuple[list[tuple[str, Observation]], 
         try:
             # Hosts with a liveness probe (docker containers) are asked first:
             # a declared-but-down container definitively carries no processes
-            # — a clean empty scan, not an unreachable host — and exec'ing it
-            # would auto-start its whole compose stack (issue #139; docker is
-            # a test aid, never a tunnel requirement).
+            # — a clean empty scan, not an unreachable host — and exec on a
+            # stopped container fails (issue #139; docker is a test aid, never
+            # a tunnel requirement).
             if getattr(host, "is_running", None) is not None and not await _device_running(host):
                 return [], None
             result = await _device_read(host, DISCOVERY_PS_COMMAND)

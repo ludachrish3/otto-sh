@@ -22,6 +22,7 @@ preference.
 from __future__ import annotations
 
 import os
+import re
 import uuid
 
 import pytest
@@ -377,40 +378,61 @@ def test_e2e_list_hosts_includes_declared_container(tmp_path):
     assert not missing, f"expected {missing} in output:\n{output}"
 
 
-def test_e2e_run_against_unstarted_container_auto_starts(
+_STACK_MARK = "OTTO-STACK-COUNT"
+"""Starts the one line the container-count probe prints, so it is findable in
+console output that also carries otto's own command echo."""
+
+
+def test_e2e_run_against_unstarted_container_fails_fast(
     teardown_default_parent_after, default_parent_host, tmp_path
 ):
-    """Accessing a declared container whose stack isn't running must
-    auto-start the stack (feature de361cc) rather than erroring.
+    """Accessing a declared container whose stack isn't running fails fast.
 
-    The command then succeeds against the freshly-started container — no
-    ``otto docker compose up`` step required of the caller.
-    ``teardown_default_parent_after`` reaps the auto-started stack so it can't
-    leak. The image is built first, explicitly: starting a stack never builds.
-    The id is a PLACEHOLDER's, so this must run on the host the default parent
-    minted it for (:data:`_DEFAULT_PARENT`).
+    otto never starts a container on use: the command exits non-zero with the
+    error, framed rather than a traceback, naming the container and
+    ``otto docker compose up``, and the stack's compose project has no
+    container afterwards. The id is a PLACEHOLDER's, so this must run on the
+    host the default parent minted it for (:data:`_DEFAULT_PARENT`).
+    ``teardown_default_parent_after`` reaps the stack anyway, so a regression
+    that starts one cannot leak it.
     """
     suffix = teardown_default_parent_after
     docker_host = default_parent_host
-    # Auto-start builds nothing, so the image it composes must already be there.
-    built = _run_otto(
-        "docker", "build", "repo1-api", "--parent", docker_host, xdir=tmp_path, env=_WIDE
-    )
-    assert built.returncode == 0, built.stdout + built.stderr
+    container = f"{docker_host}.{_REPO1_USE_CASE}.api"
     result = _run_otto(
         "host",
-        f"{docker_host}.repo1.api",
+        container,
         "exec",
         "true",
         xdir=tmp_path,
         compose_suffix=suffix,
+        env=_WIDE,
     )
     output = result.stdout + result.stderr
-    assert result.returncode == 0, output
-    # The api container was brought up on demand before the command ran.
-    assert "Started" in output or "Running" in output, (
-        f"expected the stack to be auto-started, got:\n{output}"
+    assert result.returncode != 0, output
+    assert "Traceback" not in output, output
+    flat = _flat(output)
+    assert f"Container '{container}' is not running" in flat, output
+    assert f"`otto docker compose up {_REPO1_USE_CASE}`" in flat, output
+
+    project = f"unix-{_REPO1_USE_CASE}-{suffix}"
+    # `docker ps` runs on its own, so its exit status is the command's: a daemon
+    # that cannot answer fails the probe instead of being counted as "none".
+    ids = f"ids=$(docker ps -aq --filter label=com.docker.compose.project={project})"
+    count = """printf '%s' "$ids" | grep -c ."""
+    probe = _run_otto(
+        "host",
+        docker_host,
+        "exec",
+        f"{ids} && echo {_STACK_MARK} $({count})",
+        xdir=tmp_path,
+        env=_WIDE,
     )
+    text = probe.stdout + probe.stderr
+    assert probe.returncode == 0, text
+    # The echo of the command itself reads `<mark> $(...`, never `<mark> <digits>`.
+    counts = set(re.findall(rf"{_STACK_MARK} (\d+)", text))
+    assert counts == {"0"}, f"expected no container in {project}, got:\n{text}"
 
 
 # ---------------------------------------------------------------------------

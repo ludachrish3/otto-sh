@@ -10,8 +10,8 @@ Run it against the unix lab::
     OTTO_SUT_DIRS=<repo1 dir> otto -l unix run run-on-container \\
         --on <element>.repo1.api
 
-The container must already be running (or auto-start-capable) when this
-instruction executes.
+The container must already be running when this instruction executes
+(``otto docker compose up repo1`` first): otto never starts one on use.
 """
 
 import logging

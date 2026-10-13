@@ -1642,10 +1642,10 @@ async def read_link_state(lab: Any, link: Link) -> LinkState:
 
     "Never dies" is why the read arms end at bare ``RuntimeError`` rather
     than at this module's two classes. The host stack underneath still
-    raises unnamed ``RuntimeError``s that no rule in
-    ``.ast-grep/rules/`` covers — a dead session
-    (``host/session.py``), a declared-but-not-running container
-    (``host/docker_host.py``), an unresolvable hop
+    raises ``RuntimeError``s that are not this module's two classes and that
+    no rule in ``.ast-grep/rules/`` covers — a dead session
+    (``host/session.py``), a declared container that is not running
+    (``ContainerNotRunningError``, ``host/errors.py``), an unresolvable hop
     (``host/remote_host.py``) — and this function is the last place that can
     catch them: ``read_link_states`` promises never to raise per link, and
     ``otto link list`` has no ``try`` of its own.

@@ -115,11 +115,9 @@ Container ids are also synthesized at lab-load time **before** any
 `otto docker compose up`, under the default parent of
 {ref}`Which host <docker-which-host>` — so tab completion works immediately
 wherever that rule resolves; a lab whose rule refuses has none until a stack
-is up. Accessing a
-declared-but-stopped container auto-starts its compose stack on demand
-(`build=False`, so access never triggers an image build). If the stack
-can't be started — for example its image hasn't been built — the command
-fails fast with a clear "run `otto docker compose up --build <project>` first" error.
+is up. otto never starts a container because you used it: accessing a
+declared container whose stack is not running fails fast (see
+{ref}`Starting containers before you use them <docker-start-first>`).
 
 See {doc}`../../architecture/subsystems/docker-hosts` for why a container
 delegates to its parent host instead of being a parallel transport stack.
@@ -127,6 +125,56 @@ delegates to its parent host instead of being a parallel transport stack.
 Configuration lives with the rest of the project's settings: the per-project
 `[docker]` block in {doc}`../../configuration/settings`, and the per-lab
 `docker_capable`/`docker_priority` host fields in {doc}`../../configuration/lab-config`.
+
+(docker-start-first)=
+## Starting containers before you use them
+
+otto never starts a container because you used it. A container host whose
+stack is not running, declared but not brought up by this process, fails with a
+{class}`~otto.host.errors.ContainerNotRunningError` that names the container
+and the ways to start it, and nothing is brought up. Start the stack
+explicitly, before anything touches its containers. A container that stops
+after its id is cached fails from `docker exec` itself. If the `docker ps`
+probe fails on the parent (the daemon down, no permission on the socket), the
+same error carries Docker's own text. If the parent cannot complete the probe
+at all, the error is a {class}`~otto.host.errors.HostUnreachableError` naming
+the container and its parent.
+
+From the shell, deploy the use-case:
+
+```text
+otto docker compose up --build integration
+```
+
+From a test run, deploy it once for the whole run in a session-scoped
+fixture, in the `conftest.py` at the root of your tests directory. The fixture
+runs under `otto test`, whose event loop is session-scoped (see
+{doc}`../../cookbook/host-scopes`):
+
+```python
+import pytest_asyncio
+
+from otto.docker import deploy
+
+
+@pytest_asyncio.fixture(scope="session")
+async def integration():
+    return await deploy("integration", build=True)
+```
+
+A test that names the fixture gets the
+{class}`~otto.docker.deployment.UseCaseStack`, and its containers are hosts
+like any other:
+
+```python
+async def test_api_answers(integration):
+    await integration.hosts["api"].run("./run-tests")
+```
+
+`deploy` leaves the stack running when the run ends; use
+{func}`~otto.docker.deployment.deployed` instead to tear it down again (see
+{doc}`../../cookbook/test-recipes`). A repo whose compose files are not part of
+a use-case starts its own stack with {func}`~otto.docker.compose.compose_up`.
 
 (docker-persistent-shell-state)=
 ## Persistent shell state
@@ -227,14 +275,10 @@ or anywhere else on disk. A *later* otto invocation re-registers each
 declared container host as a placeholder with an empty `mounts`, even while
 the stack is up and healthy — so bringing the stack up from the CLI and
 then translating a path from a separate `pytest` process does not work.
-Touching the container first is not a dependable workaround either.
-`exec`/`run`/`put`/`get` on a placeholder resolve its container id, and if
-the stack is *down* they auto-start it — that bring-up does re-register the
-stack's hosts with fresh mount tables, so a later `get_container_host(...)`
-in the same process returns a populated one. But when the stack is already
-up the id resolves without any bring-up and no mount table is ever read;
-and the placeholder object you are already holding keeps its empty `mounts`
-either way.
+Touching the container first is no workaround either:
+`exec`/`run`/`put`/`get` on a placeholder only resolve its container id (and
+fail when the stack is down), so no mount table is ever read, and the
+placeholder object you are holding keeps its empty `mounts`.
 
 To translate paths, the process doing the translating must be the one that
 brought the stack up — a test that deploys through `compose_up` or a

@@ -10,7 +10,7 @@ the same ``try`` — the first lexical match wins.
 DEFINES, not raises, and the difference is not small: otto also raises plain
 stdlib exceptions at hundreds of sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 96 NAMED failures", not "anything otto
+therefore means "one of otto's 97 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -24,7 +24,7 @@ rather than offering a comforting near-miss:
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
 * ``except (ValueError, RuntimeError)`` covers most of those raise sites,
-  and 62 of the 96 named classes. Of the other 34, twenty-six are rooted at
+  and 63 of the 97 named classes. Of the other 34, twenty-six are rooted at
   plain ``Exception`` (the bootstrap, project-activation,
   project-instruction, lab-repository, term-backend, transfer-backend,
   inventory, creds, reservation, power-controller, field, monitor and init
@@ -35,7 +35,7 @@ rather than offering a comforting near-miss:
   ``NcPortSharedError``, ``RetryAttemptTimeoutError``, ``SessionSetupError``,
   ``WaitTimeoutError``), and one sits under ``LookupError``
   (``OptionsNotAvailableError``, for ``ctx.options(Cls)`` asked of a class
-  with no bound value) — 62 + 26 + 7 + 1 = 96, so the split accounts for
+  with no bound value) — 63 + 26 + 7 + 1 = 97, so the split accounts for
   every named class.
 
 The class counts are measured, not maintained by arithmetic, and gated

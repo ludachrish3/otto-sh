@@ -29,7 +29,6 @@ from otto.logger import management
 from otto.logger.mode import LogMode
 from otto.result import CommandNotRunError, CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
-from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fake_shell import ShellModel
 from tests.conftest import active_context
 
@@ -1775,9 +1774,10 @@ class TestADryRunOpensNoSessionOnAnyHost:
     session manager anyway -- the announcement-without-the-suppression
     inversion, where the log line is precisely what makes the hole look
     handled. On `DockerContainerHost` the next statement was
-    `_ensure_running()`, so a dry run could reach `_auto_up` -> `compose_up`
-    and START A REAL CONTAINER, contradicting `_ensure_running`'s own docstring
-    (which asserted that every dry-run path short-circuits above it).
+    `_ensure_running()`, so a dry run could question the docker daemon (and,
+    while otto still started containers on use, START A REAL CONTAINER),
+    contradicting `_ensure_running`'s own docstring (which asserted that every
+    dry-run path short-circuits above it).
 
     What comes back instead is a `DeclinedSession` -- `NotRunResult`'s
     philosophy one level up. The caller gets a handle that is safe to hold,
@@ -1788,7 +1788,7 @@ class TestADryRunOpensNoSessionOnAnyHost:
 
     Every test carries its POSITIVE CONTROL against the same host and the same
     spy. Nothing contacts a device: the session manager and the
-    container-start path are spies, and the hostile condition is INJECTED with
+    container-id probe are spies, and the hostile condition is INJECTED with
     `active_context(dry_run=True)` around real host objects.
     """
 
@@ -1832,7 +1832,7 @@ class TestADryRunOpensNoSessionOnAnyHost:
 
     @pytest.mark.asyncio
     async def test_a_dry_run_never_starts_a_container(self):
-        """The one that starts a machine: `open_session` -> `_ensure_running` -> `compose_up`.
+        """The one that asks the daemon: `open_session` -> `_ensure_running` -> the id probe.
 
         Driven with an EMPTY `container_id`, which is the placeholder every
         declared-but-unresolved container host carries after a lab load, and
@@ -1842,12 +1842,12 @@ class TestADryRunOpensNoSessionOnAnyHost:
         """
         parent = _unix()
         probes: list[str] = []
-        ups: list[str] = []
         opened: list[str] = []
 
         async def recording_exec(cmd: str, timeout: float = 30.0, log=LogMode.NORMAL):
             probes.append(cmd)
-            return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+            # The stack is up: the probe answers with a container id.
+            return CommandResult(Status.Success, value="abc123def456\n", command=cmd, retcode=0)
 
         parent.exec = recording_exec
         host = DockerContainerHost(
@@ -1858,10 +1858,6 @@ class TestADryRunOpensNoSessionOnAnyHost:
             compose_project="otto-repo1-vagrant",
         )
 
-        async def recording_auto_up() -> str:
-            ups.append("compose_up")
-            return "started123"
-
         async def recording_open(name: str):
             opened.append(name)
             return "a live session"
@@ -1871,7 +1867,6 @@ class TestADryRunOpensNoSessionOnAnyHost:
         async def recording_login(user: str | None = None, force: bool = False) -> None:
             logins.append(user)
 
-        host._auto_up = recording_auto_up
         host._session_mgr.open_session = recording_open
         # `run_login` is SPIED, not left real: its second act is
         # `parent._connections.ssh()`, so a mutation that drops `login`'s arm
@@ -1886,17 +1881,16 @@ class TestADryRunOpensNoSessionOnAnyHost:
             assert isinstance(await host.open_session("monitor"), DeclinedSession)
             await host.login()
 
-        assert ups == [], f"A DRY RUN STARTED A CONTAINER: {ups}"
         assert probes == [], f"a dry run questioned the docker daemon: {probes}"
         assert opened == []
         assert logins == [], "a dry run reached `run_login`, whose first act is `_ensure_running()`"
         assert host.container_id == "", "a dry run cached a container id it never resolved"
 
         # POSITIVE CONTROL, same host, same spies, no dry run: the placeholder
-        # really does resolve through the probe and then start the stack.
+        # really does resolve through the probe, caches the id and opens.
         await host.open_session("monitor")
         assert probes, "the daemon was never asked even WITHOUT --dry-run"
-        assert ups == ["compose_up"], "the stack was never started even WITHOUT --dry-run"
+        assert host.container_id == "abc123def456"
         assert opened == ["monitor"]
 
     @pytest.mark.asyncio
@@ -2410,119 +2404,6 @@ class TestADryRunDrivesNoSessionItAlreadyHolds:
         finally:
             # A mocked/None `_connections` keeps `__del__` from churning a loop.
             embedded._connections = None
-
-
-class TestADeclineNeverResurfacesAsAFabricatedFailure:
-    """The last type-stripping conversion in the docker package.
-
-    `DockerContainerHost._auto_up` wrapped EVERYTHING `compose_up` raised in
-    `RuntimeError("... auto-start failed: ...")`. For a real failure that is
-    the right story; for a `CommandNotRunError` it is the wrong one twice
-    over -- it asserts an attempt that never happened, and it strips the type
-    that is the only thing marking the answer as a decline, so nothing
-    upstream can tell the two apart afterwards. The dry-run contract work
-    removed twelve of these from `otto.docker.compose`; this is the one that
-    was left in the host layer.
-
-    THE SITE IS UNREACHABLE UNDER A DRY RUN TODAY, which is exactly why the
-    obvious test is worthless: `_ensure_running` asks `_resolve_container_id`
-    first and that refuses outright, so driving the public path proves only
-    that the public path is guarded (`TestADryRunOpensNoSessionOnAnyHost`
-    already pins that, and would pass against a wide arm that fabricates).
-    The hostile condition is therefore INJECTED AT THE SEAM: `_auto_up` is
-    called directly with a `compose_up` that declines, which is the shape one
-    plausible refactor away (a cached container id, or a second caller that
-    skips the probe).
-
-    Nothing contacts a device: `compose_up`, the composition root and
-    `get_lab` are all stubbed, and the parent host is never asked anything.
-    """
-
-    @staticmethod
-    def _host() -> DockerContainerHost:
-        return DockerContainerHost(
-            parent=_unix(),
-            container_id="",  # the declared-but-unresolved placeholder
-            project="repo1",
-            service="api",
-            compose_project="otto-repo1-vagrant",
-        )
-
-    @staticmethod
-    def _stub_config(monkeypatch) -> None:
-        """`_auto_up`'s two late imports, stubbed so nothing reads a real lab.
-
-        ``docker_settings.use_cases`` is present (empty) rather than omitted:
-        `_auto_up` asks `is_declared_use_case` (over the run's repos) before the
-        legacy per-repo route, and a bare name-only stub would AttributeError
-        there instead of taking this test's legacy-route path.
-        """
-        docker_settings = dataclasses.make_dataclass("DockerSettings", ["use_cases"])(use_cases=())
-        repo = dataclasses.make_dataclass("Repo", ["name", "docker_settings"])(
-            name="repo1", docker_settings=docker_settings
-        )
-        patch_bootstrap(monkeypatch, [repo])
-        # `_auto_up` hands the lab straight to the spied `compose_up` and
-        # never looks inside it, so an opaque object is the honest stub.
-        monkeypatch.setattr("otto.config.fleet.get_lab", object)
-
-    @pytest.mark.asyncio
-    async def test_auto_up_hands_a_decline_back_unwrapped(self, monkeypatch):
-        """Both arms, one test: a decline passes through, a real failure is wrapped.
-
-        Without the second half the guard is satisfied by an `_auto_up` whose
-        wide arm simply re-raises everything -- which would delete the
-        actionable "build its image first" message the real failure path exists
-        to produce. The two halves discriminate the named arm from no arm.
-        """
-        host = self._host()
-        self._stub_config(monkeypatch)
-
-        # The decline exactly as `compose_up`'s own dry-run arm builds it.
-        declined = CommandNotRunError(
-            "compose_up(repo1: otto-repo1-vagrant)",
-            host.parent.id,
-            "No image was built, no file was staged, no container was started "
-            "and no host was registered.",
-        )
-
-        async def declining_compose_up(*_args, **_kwargs):
-            raise declined
-
-        monkeypatch.setattr("otto.docker.compose.compose_up", declining_compose_up)
-
-        with pytest.raises(CommandNotRunError) as exc:
-            await host._auto_up()
-
-        # `is`, not a type check: a bare `raise` re-raises THE SAME object, so
-        # a rewrap that happened to preserve the class would still redden.
-        assert exc.value is declined, f"the decline was rebuilt on the way out: {exc.value!r}"
-        assert "auto-start failed" not in str(exc.value), (
-            f"a decline was filed as an attempted start that failed: {exc.value}"
-        )
-
-        # POSITIVE CONTROL, same host, same seam: a REAL failure must still
-        # come back as the wide arm's actionable RuntimeError. Note
-        # `CommandNotRunError` IS a `RuntimeError`, so the type alone proves
-        # nothing here -- the message and the NOT-a-decline check do.
-        async def failing_compose_up(*_args, **_kwargs):
-            raise RuntimeError("no such image: repo1/api:latest")
-
-        monkeypatch.setattr("otto.docker.compose.compose_up", failing_compose_up)
-
-        with pytest.raises(RuntimeError) as real:
-            await host._auto_up()
-
-        assert not isinstance(real.value, CommandNotRunError), (
-            "a real image failure was reported as a dry-run decline"
-        )
-        assert "auto-start failed" in str(real.value), (
-            f"the wide arm lost its actionable message: {real.value}"
-        )
-        assert "no such image" in str(real.value), (
-            f"the wide arm lost the underlying cause: {real.value}"
-        )
-        assert "Build its image first (`otto docker build --parent" in str(real.value)
 
 
 class TestTheDryRunLabelFollowsTheInvocationNotTheFile:

@@ -284,19 +284,15 @@ class TestContainerLiveness:
         other = FakeUnix("test2-soil", ip="10.10.200.12")
         return _lab(**{parent.id: parent, ctr.id: ctr, other.id: other}), parent, other
 
-    def test_down_container_endpoint_fails_loud_without_compose(self, monkeypatch) -> None:
-        from unittest.mock import AsyncMock, MagicMock
-
-        compose_up = AsyncMock()
-        monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-        monkeypatch.setattr("otto.bootstrap.get_repos", MagicMock(return_value=[]))
-        monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
+    def test_down_container_endpoint_fails_loud_and_asks_only_the_probe(self) -> None:
         ctr = _real_placeholder(running_cid="")
         lab, parent, other = self._lab_with(ctr)
 
         with pytest.raises(ValueError, match="otto docker compose up"):
             asyncio.run(resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)]))
-        compose_up.assert_not_awaited()
+        asked = [call.args[0] for call in ctr.parent.exec.call_args_list]
+        assert [cmd.split(" --filter")[0] for cmd in asked] == ["docker ps -q"], asked
+        assert ctr.container_id == ""
 
     def test_running_container_endpoint_resolves_from_probe(self) -> None:
         ctr = _real_placeholder(running_cid="abc123")

@@ -865,10 +865,10 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
     A repo that declares ``[[docker.use_cases]]`` fragments takes the
     USE-CASE branch below INSTEAD OF the legacy composes walk (never both):
     its placeholders carry the use-case name as the id's middle segment
-    (``<parent>.<usecase>.<service>``, spec §9) rather than the repo name, so
-    ``DockerContainerHost._auto_up`` can tell the
-    two kinds apart and auto-start through the right pipeline. A repo with no
-    ``use_cases`` keeps today's per-repo ids unchanged.
+    (``<parent>.<usecase>.<service>``, spec §9) rather than the repo name, and
+    their ``project`` field names what to start: the use-case, which the
+    container host's not-running error shows. A repo with no ``use_cases``
+    keeps today's per-repo ids unchanged.
 
     Both branches register under the ONE parent the lab's default rule names
     (:func:`~otto.docker.observe.default_docker_parent`) and under none when
@@ -938,14 +938,12 @@ def _register_use_case_placeholders(lab: Lab, repo: Repo, parent: UnixHost) -> i
 
     Every fragment's services are registered under *parent*, the one the
     lab's default rule names (:func:`_default_parent_or_none`, resolved once
-    by the caller). The provider
-    competition (spec §4) never runs here — a placeholder exists so
-    `otto host <id>` and completion see something before the first `deploy`,
-    whose auto-up (``DockerContainerHost._auto_up``) deploys the ACTUAL
-    winning use-case. A fragment whose ``composes`` handles cannot be
-    resolved to services contributes nothing and the rest are still tried;
-    the walk of services and
-    declared users is :func:`~otto.docker.deployment._declared`, the one
+    by the caller). The provider competition (spec §4) never runs here — a
+    placeholder exists so `otto host <id>` and completion see something
+    before the first `deploy`, which deploys the ACTUAL winning use-case. A
+    fragment whose ``composes`` handles cannot be resolved to services
+    contributes nothing and the rest are still tried; the walk of services
+    and declared users is :func:`~otto.docker.deployment._declared`, the one
     answer for both.
     """
     # Function-scope: this walk runs in `cli/invoke.py`'s preamble on every

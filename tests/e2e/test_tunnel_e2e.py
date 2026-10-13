@@ -597,8 +597,8 @@ def test_cli_cycle_add_list_remove_list_docker_free(tmp_path: Path) -> None:
 
     The scaffolded lab declares container hosts (placeholders register at lab
     load), so all four invocations exercise the issue #139 surface: pre-fix,
-    even a bare ``otto tunnel list`` auto-started compose stacks on the peers
-    and flooded the console with docker I/O.
+    even a bare ``otto tunnel list`` would start compose stacks on the peers
+    and flood the console with docker I/O.
     """
     for ne in ("test1", "test2"):
         asyncio.run(assert_reachable(ne, host_data(ne)["ip"]))

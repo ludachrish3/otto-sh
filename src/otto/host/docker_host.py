@@ -21,7 +21,6 @@ the per-call ``exec`` path still works against any parent.
 """
 
 import asyncio
-import logging
 import shlex
 import uuid
 from dataclasses import (
@@ -35,11 +34,11 @@ from typing import TYPE_CHECKING, Annotated
 from typing_extensions import override
 
 from ..logger.mode import LogMode
-from ..result import CommandNotRunError, CommandResult, Result
+from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .connections import teardown_step
-from .errors import MountNotFoundError
+from .errors import ContainerNotRunningError, HostUnreachableError, MountNotFoundError
 from .file_ops import PosixFileOps
 from .host import (
     CONCURRENT_HELP,
@@ -59,8 +58,6 @@ if TYPE_CHECKING:
 
 
 from .session import Expect, HostSession, SessionManager, ShellSession, _DockerSshSession
-
-logger = logging.getLogger(__name__)
 
 
 def compose_container_probe(
@@ -92,6 +89,12 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     Construction is normally done by :mod:`otto.docker.compose` after a
     successful ``docker compose up``; tests instantiate it directly with a
     mocked parent.
+
+    A container host never starts its container. One registered from the
+    declared settings before its stack is up (a placeholder, its
+    ``container_id`` empty) resolves the running container's id on first
+    use, and raises :class:`~otto.host.errors.ContainerNotRunningError` when
+    there is none; bring the stack up first (``otto docker compose up``).
     """
 
     capabilities = HostCapabilities(
@@ -193,7 +196,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     _ensure_lock: asyncio.Lock = field(init=False, repr=False)
     """Serializes :meth:`_ensure_running` so concurrent accesses to a
-    down container trigger at most one auto-up."""
+    placeholder probe for it one at a time and resolve its id once."""
 
     def __post_init__(self) -> None:
         parent_id = getattr(self.parent, "id", getattr(self.parent, "name", "localhost"))
@@ -264,19 +267,41 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         Resolve lazily: ask the parent for any container labeled with
         ``com.docker.compose.project={self.compose_project}`` and
         ``com.docker.compose.service={self.service}``. If found, cache the
-        id on ``self``. If not, auto-start the stack via :func:`compose_up`
-        and re-resolve.
+        id on ``self``. If not, raise: this method never starts anything, and
+        the error names the explicit ways to start it. A cached id is not
+        probed again, so a container that stopped after its id was cached
+        fails from the ``docker exec`` itself.
 
-        :func:`compose_up` **starts a container, so every caller of this method
-        owes a dry run an arm above its own call**, and the list of them is the
-        invariant: ``_docker_exec`` (via ``_exec_via_parent``), ``_run_one``,
-        ``send``, ``put``, ``get`` and ``open_session`` return a decline;
-        ``_expect_one``'s caller (``BaseHost.expect``) raises above it; ``login``
-        announces and returns. A new caller that forgets is a dry run that
-        starts a container. This paragraph asserted the invariant before it was
-        true: ``open_session`` logged ``[DRY RUN] open_session(...)`` and then
-        called this method anyway, and ``login`` had no dry-run arm at all
-        (both fixed 2026-08-15).
+        The probe has three outcomes that fail, and each raises something
+        different (``_resolve_for_use`` maps them): it answered with no id (the
+        stack is not up), it ran and failed (docker itself could not answer),
+        or the parent could not complete it (the transport, not the container,
+        is the problem).
+
+        The probe still asks the docker daemon, **so every caller of this
+        method owes a dry run an arm above its own call**, and the list of them
+        is the invariant: ``_docker_exec`` (via ``_exec_via_parent``),
+        ``_run_one``, ``send``, ``put``, ``get`` and ``open_session`` return a
+        decline; ``_expect_one``'s caller (``BaseHost.expect``) raises above it;
+        ``login`` announces and returns. A new caller that forgets meets the
+        probe's own refusal (``refuse_declined_fact``) instead of a decline,
+        but only while the id is unresolved: a cached id is not probed, so once
+        it is resolved the caller's own dry-run arm is the only guard.
+        This paragraph asserted the invariant before it was true:
+        ``open_session`` logged ``[DRY RUN] open_session(...)`` and then called
+        this method anyway, and ``login`` had no dry-run arm at all (both fixed
+        2026-08-15).
+
+        Raises:
+            ~otto.host.errors.ContainerNotRunningError: the probe answered and
+                no running container was found for this placeholder, or the
+                probe ran on the parent and failed (the message carries
+                Docker's own text).
+            ~otto.host.errors.HostUnreachableError: the parent could not
+                complete the probe. A transport the parent cannot open at all
+                raises out of its ``exec`` and propagates unchanged.
+            ~otto.result.CommandNotRunError: this is a dry run and the
+                container id is not already cached (from the probe).
         """
         # Claimed before the lock: ``_ensure_lock`` is per-loop state that a
         # stale owner's rebuild replaces.
@@ -290,20 +315,29 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             if self.container_id:
                 return
 
-            cid = await self._resolve_container_id()
+            cid = await self._resolve_for_use()
             if not cid:
-                cid = await self._auto_up()
+                raise ContainerNotRunningError(
+                    f"Container {self.id!r} is not running: no running container was "
+                    f"found for service {self.service!r} of compose project "
+                    f"{self.compose_project!r}, and otto does not start containers on "
+                    f"use. Bring its stack up first: from the shell, "
+                    f"`otto docker compose up {self.project}` (a use-case); from Python, "
+                    f"`otto.docker.deploy({self.project!r})` (a use-case) or "
+                    f"`otto.docker.compose_up(...)` (a repo's own compose files), for "
+                    f"example in a session-scoped fixture."
+                )
             self.container_id = cid
 
     async def is_running(self) -> bool:
         """Whether the backing container is live right now — side-effect-free.
 
-        Unlike ``_ensure_running``, this NEVER auto-starts the stack: it
-        is the read-only liveness probe for paths that must not require
-        docker at all (tunnel discovery and manage — a declared-but-down
-        container trivially carries no processes). A placeholder whose
-        container turns out to be running caches the resolved id, so
-        subsequent ``exec`` calls skip both probe and auto-up.
+        Like ``_ensure_running`` it never starts anything; unlike it, it
+        answers rather than raising: it is the read-only liveness probe for
+        paths that must not require docker at all (tunnel discovery and
+        manage — a declared-but-down container trivially carries no
+        processes). A placeholder whose container turns out to be running
+        caches the resolved id, so subsequent ``exec`` calls skip the probe.
 
         Side-effect-free is not the same as dry-run-safe: it is a ``bool``
         answering a question about a device, which is exactly the shape a
@@ -326,15 +360,14 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             return True
         return False
 
-    async def _resolve_container_id(self, log: LogMode = LogMode.NORMAL) -> str:
-        """Return the running container id for this service, or ``""``.
+    async def _probe_container(self, log: LogMode = LogMode.NORMAL) -> CommandResult:
+        """Ask the parent for this service's running container; return its raw answer.
 
-        ``""`` is this method's whole vocabulary for "not running", so a dry
-        run's decline cannot be folded into it: :meth:`is_running` turns it
-        into ``False`` and reports a container down that was never asked
-        about, and ``_ensure_running`` turns it into an ``_auto_up`` that
-        STARTS ONE. The refusal is here rather than in each caller because
-        the fabrication is born here -- one funnel, two callers, no drift.
+        A dry run's decline cannot be read as any of the probe's answers:
+        :meth:`is_running` would report a container down that was never asked
+        about, and ``_ensure_running`` would raise an error that says the
+        same. The refusal is here rather than in each caller because the
+        fabrication would be born here -- one funnel, two callers, no drift.
 
         Raises:
             ~otto.result.CommandNotRunError: this is a dry run, so nothing
@@ -344,150 +377,83 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             compose_container_probe(self.compose_project, self.service), log=log
         )
         refuse_declined_fact(result, asked=f"is_running({self.id})")
+        return result
+
+    async def _resolve_container_id(self, log: LogMode = LogMode.NORMAL) -> str:
+        """Return the running container id for this service, or ``""``.
+
+        ``""`` is this method's whole vocabulary for "not running", and every
+        probe that is not ok folds into it: :meth:`is_running` answers rather
+        than raising, and tunnel discovery relies on a container whose docker
+        cannot answer reading as down.
+
+        Raises:
+            ~otto.result.CommandNotRunError: this is a dry run (from the probe).
+        """
+        result = await self._probe_container(log)
         if result.status.is_ok and result.value.strip():
             return result.value.strip().splitlines()[0]
         return ""
 
-    async def _auto_up(self) -> str:
-        """Bring the owning stack up and return this service's container id.
+    async def _resolve_for_use(self) -> str:
+        """Return the running container id, ``""`` when the probe found none, or raise.
 
-        Called when the container is declared but not running. Two routes,
-        chosen by whether ``self.project`` names a declared use-case (spec
-        §9) or a legacy per-repo compose: a placeholder registered by
-        ``register_declared_container_hosts``'s use-case branch carries the
-        use-case's name in ``project`` — the very field a legacy placeholder
-        carries the REPO's name in — so this is the one place that has to
-        tell the two apart before deciding what to bring up. Both routes use
-        ``build=False`` so access never triggers an image rebuild — a
-        missing image fails fast with an actionable error.
+        Unlike :meth:`_resolve_container_id`, this tells the probe's failures
+        apart, because each has a different remedy. What ``parent.exec``
+        reports, and where each lands:
 
-        If an active repo happens to share its name with a declared use-case,
-        a LEGACY placeholder for that repo (``project`` = the repo's name)
-        still routes to the use-case pipeline — the two placeholder shapes
-        are told apart by this ONE field and the use-case check runs first.
-        This is intentional (spec allows either namespace and does not
-        reserve one from the other) rather than a bug to guard against here;
-        a schema-level refusal of the collision, if wanted, belongs beside
-        settings validation, not in this per-call routing.
+        * an ok status: the probe answered. Its first line is the id; no
+          output is ``""``, and ``_ensure_running`` raises "no running
+          container was found".
+        * ``Status.Failed``: the command RAN and exited non-zero (the ssh
+          exec channel, ``SessionManager.exec_on``; a pooled or default shell
+          session, ``ShellSession.run_cmd``; a local subprocess,
+          ``LocalHost._exec_subprocess``). The daemon is down, there is no
+          docker binary, or there is no permission on the socket:
+          :class:`~otto.host.errors.ContainerNotRunningError` carrying the
+          probe, its exit and Docker's own text (stderr is merged into it).
+        * ``Status.Error`` (always the status when ``timed_out`` is set): the
+          command never completed, from a timeout or a session lost
+          mid-command in the same three producers, or a local subprocess that
+          reported no return code: :class:`~otto.host.errors.HostUnreachableError`.
+        * A transport the parent cannot open at all RAISES out of its
+          ``exec`` (``OSError`` / ``ConnectionError``, the contract
+          :func:`~otto.host.errors.exec_or_raise` is written against). It is
+          not caught here and reaches the caller unchanged.
+
+        Any other status that is not ok counts as a failure the command
+        reported; ``Status.NotRun`` never gets this far, because the probe
+        refuses it.
 
         Raises:
-            ~otto.result.CommandNotRunError: :func:`~otto.docker.deployment.deploy`
-                or :func:`~otto.docker.compose.compose_up` declined, unwrapped.
-                See the arms below for why it is spelled out.
+            ~otto.host.errors.ContainerNotRunningError: the probe ran and failed.
+            ~otto.host.errors.HostUnreachableError: the parent could not
+                complete the probe.
+            ~otto.result.CommandNotRunError: this is a dry run (from the probe).
         """
-        from ..docker.resolve import is_declared_use_case
-
-        if is_declared_use_case(self.project):
-            from ..docker.deployment import deploy
-
-            logger.debug(
-                rf"\[docker] container {self.id!r}: {self.project!r} routes to the "
-                f"use-case auto-start pipeline (a same-named repo, if any, would "
-                f"never reach here)"
+        result = await self._probe_container()
+        probe = compose_container_probe(self.compose_project, self.service)
+        parent = self.parent.id
+        if result.status is Status.Error or result.timed_out:
+            raise HostUnreachableError(
+                f"Container {self.id!r}: its parent {parent!r} could not complete the "
+                f"probe for its running container (`{probe}`): "
+                f"{result.value.strip() or result.status.name}"
             )
-            logger.info(
-                rf"\[docker] container {self.id!r} not running; "
-                f"auto-starting use-case {self.project!r}"
+        if not result.status.is_ok:
+            raise ContainerNotRunningError(
+                f"Container {self.id!r} could not be checked: the probe for its running "
+                f"container failed on parent {parent!r}. `{probe}` exited "
+                f"{result.retcode} ({result.status.name}): "
+                f"{result.value.strip() or '(no output)'}. otto does not start "
+                f"containers on use. Check docker on {parent!r}, then bring the "
+                f"stack up: from the shell, `otto docker compose up {self.project}`; "
+                f"from Python, `otto.docker.deploy({self.project!r})` or "
+                f"`otto.docker.compose_up(...)`."
             )
-            try:
-                stack = await deploy(self.project, parent=self.parent.id, build=False)
-            except CommandNotRunError:
-                # Same reasoning as the legacy branch's bare raise below:
-                # `deploy` declines a dry run by raising `CommandNotRunError`
-                # with its own resolved-plan message, and refiling that as a
-                # generic "auto-start failed" would tell the operator a start
-                # was attempted and failed when nothing was attempted at all.
-                raise
-            except Exception as e:
-                raise RuntimeError(
-                    f"Container {self.id!r} is declared but not running, and "
-                    f"auto-start failed: {e}. Run `otto docker compose up --build {self.project}` "
-                    f"first."
-                ) from e
-
-            # `stack.by_host[self.parent.id]`: the deploy was pinned to this
-            # placeholder's own parent above, so that is the one entry that
-            # can hold this service. A missing container id gets this
-            # method's actionable refusal below rather than a bare "no such
-            # container" from a later `docker exec`.
-            by_parent = stack.by_host.get(self.parent.id, {})
-            host = by_parent.get(self.service)
-            cid = host.container_id if host is not None else ""
-            if not cid:
-                raise RuntimeError(
-                    f"Container {self.id!r} is declared but not running. "
-                    f"Auto-start of use-case {self.project!r} did not produce "
-                    f"a container for service {self.service!r} on {self.parent.id}. "
-                    f"Run `otto docker compose up --build {self.project}` first."
-                )
-            return cid
-
-        from ..config.fleet import current_repos
-        from ..config.fleet import get_lab as _get_lab
-        from ..docker.compose import compose_up
-
-        logger.info(
-            rf"\[docker] container {self.id!r} not running; "
-            f"auto-starting stack {self.compose_project!r}"
-        )
-        lab = _get_lab()
-        repo = next((r for r in current_repos() if r.name == self.project), None)
-        if repo is None:
-            raise RuntimeError(
-                f"Container {self.id!r} is declared but not running, and no "
-                f"repo named {self.project!r} is configured to auto-start it. "
-                f"Build its image first (`otto docker build --parent {self.parent.id}`) and retry."
-            )
-
-        try:
-            hosts = await compose_up(
-                repo,
-                lab,
-                parent=self.parent.id,
-                project_name=self.compose_project,
-                build=False,
-            )
-        except CommandNotRunError:
-            # BEFORE the wide arm, which would otherwise STRIP THE TYPE:
-            # `compose_up` declines a dry run by raising
-            # `CommandNotRunError`, and refiling that as `RuntimeError("...
-            # auto-start failed: ...")` tells the operator a start was
-            # attempted and failed when nothing was attempted at all. It is
-            # the last of the conversions the dry-run contract work removed
-            # from `compose_down` and its siblings — see
-            # docs/superpowers/specs/2026-08-15-dry-run-contract-design.md.
-            # A fabricated failure is worse here than a missing guard would
-            # be: it is indistinguishable from a real one, so the decline
-            # stops being visible as a decline anywhere upstream.
-            #
-            # UNREACHABLE TODAY, and closed anyway. `_ensure_running` — the
-            # only caller of `_auto_up` — asks `_resolve_container_id` first,
-            # and that refuses a dry run outright (`refuse_declined_fact`), so
-            # no dry run reaches this call. The premise is one plausible
-            # refactor from changing: a cached container id, or any second
-            # caller that skips the probe, and the wide arm below starts
-            # fabricating.
-            #
-            # Bare `raise`, not a rewrap: the decline's own message already
-            # names `compose_up(<repo>: <project>)` and says no image was
-            # built, no file staged, no container started.
-            raise
-        except Exception as e:
-            raise RuntimeError(
-                f"Container {self.id!r} is declared but not running, and "
-                f"auto-start failed: {e}. Build its image first "
-                f"(`otto docker build --parent {self.parent.id}`) and retry."
-            ) from e
-
-        host = hosts.get(self.service)
-        if host is None or not host.container_id:
-            raise RuntimeError(
-                f"Container {self.id!r} is declared but not running. "
-                f"Auto-start of stack {self.compose_project!r} did not produce "
-                f"a container for service {self.service!r}. Build its image first "
-                f"(`otto docker build --parent {self.parent.id}`) and retry."
-            )
-        return host.container_id
+        if result.value.strip():
+            return result.value.strip().splitlines()[0]
+        return ""
 
     def _effective_user(self, user: "str | None") -> "str | None":
         """Per-call beats declared; neither → ``None`` (the image's ``USER`` prevails)."""
@@ -753,8 +719,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         fired. The parent's decline also names the ``docker exec`` WRAPPER, and
         a decline that names a command the caller never issued is the wrong
         error however it is delivered. And ``_docker_exec`` below calls
-        ``_ensure_running``, which resolves (and can auto-start) the container
-        on the daemon — a dry run must reach neither.
+        ``_ensure_running``, which resolves the container on the daemon — a
+        dry run must reach neither.
 
         Public ``exec``/``run`` short-circuit above this in ``BaseHost``, so
         today nothing arrives here under a dry run. This method is also
@@ -847,9 +813,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
         The dry-run arm sits ABOVE ``_ensure_running()``, which is the whole
         point of it: the previous shape logged the ``[DRY RUN]`` line and then
-        ran ``_ensure_running()`` anyway, so a dry run could resolve the
-        container and — via ``_auto_up`` → ``compose_up`` — START ONE. The
-        daemon is not asked, no container is started, and the handle is a
+        ran ``_ensure_running()`` anyway, so a dry run could ask the daemon
+        for the container's id (and, while otto still started containers on
+        use, START ONE). The daemon is not asked, and the handle is a
         :class:`~otto.host.session.DeclinedSession` — see
         ``BaseHost._dry_run_session``.
 

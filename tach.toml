@@ -338,9 +338,6 @@ depends_on = [
     # against the impairer registry, a foundation module.
     "otto.link.impairer",
     "otto.lifecycle",
-    # DEBT: half of the host<->docker cycle — docker_host.py:251 lazily calls
-    # compose_up. The compose bridge belongs above both packages.
-    "otto.docker",
     "otto.console",
     "otto.result",
     "otto.snmp",

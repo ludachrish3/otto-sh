@@ -7,24 +7,23 @@ the placeholder ``container_id == ""`` guard.
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from otto.errors import OttoError
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
-from otto.host.errors import HostCommandError, MountNotFoundError
+from otto.host.errors import ContainerNotRunningError, HostUnreachableError, MountNotFoundError
 from otto.host.inventory_ref import InventoryRef
 from otto.host.login_proxy import Cred
 from otto.host.mount import Mount
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
-from tests._fixtures.bootstrap_seam import patch_bootstrap
-from tests._fixtures.fake_repo import fake_repo
 from tests.conftest import active_context
 
 
@@ -870,307 +869,346 @@ async def test_named_session_after_a_bound_run_opens_as_the_bound_user():
 
 
 # ---------------------------------------------------------------------------
-# Placeholder (container_id == "") — auto-up behavior
+# Placeholder (container_id == "") — fails fast; nothing is ever started
 # ---------------------------------------------------------------------------
 
 
-def _mock_repos(repo_name: str | None = "repo1"):
-    """Return a fake repos list optionally including *repo_name*."""
-    if repo_name:
-        repo = MagicMock()
-        repo.name = repo_name
-        return [repo]
-    return []
+def _probes(parent: MagicMock) -> list[str]:
+    """Every command the mocked *parent* was asked to run, in order."""
+    return [call.args[0] for call in parent.exec.call_args_list]
 
 
 @pytest.mark.asyncio
-async def test_placeholder_auto_ups_stack(monkeypatch):
-    """Accessing a declared-but-down container auto-starts its stack."""
+async def test_a_down_placeholder_fails_fast_and_starts_nothing():
+    """Touching a declared container whose stack is down raises; nothing starts.
+
+    The parent is asked one question, the read-only ``docker ps`` probe, and
+    nothing else: no ``docker compose``, no ``docker exec``. The error keeps
+    ``RuntimeError`` as its stdlib root, as every failure on this path had, so
+    an existing ``except RuntimeError`` still catches it.
+    """
     parent = _mock_parent()  # docker ps returns empty out -> not running
     h = _make_container(parent, container_id="")
 
-    started = _make_container(parent, container_id="freshcid")
-    compose_up = AsyncMock(return_value={"api": started})
-    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    patch_bootstrap(monkeypatch, _mock_repos())
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
+    with pytest.raises(ContainerNotRunningError) as exc:
+        await h.exec("echo hi")
+
+    assert isinstance(exc.value, RuntimeError)
+    assert isinstance(exc.value, OttoError)
+    assert h.container_id == "", "a down placeholder cached an id"
+    probes = _probes(parent)
+    assert len(probes) == 1, probes
+    assert probes[0].startswith("docker ps -q"), probes
+    assert "com.docker.compose.project=otto-repo1-vagrant" in probes[0], probes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("project", ["repo1", "integration"])
+async def test_the_error_names_the_container_and_each_way_to_start_it(project):
+    """The message is the remedy: the container, and each explicit way to start it.
+
+    The host does not ask whether ``project`` names a declared use-case or a
+    repo's own compose files, so the message offers the route for each and
+    says which is which.
+    """
+    parent = _mock_parent()
+    h = DockerContainerHost(
+        parent=parent,
+        container_id="",
+        project=project,
+        service="api",
+        compose_project=f"unix-{project}-vagrant",
+    )
+
+    with pytest.raises(ContainerNotRunningError) as exc:
+        await h.exec("echo hi")
+
+    msg = str(exc.value)
+    assert f"Container 'test3.{project}.api' is not running" in msg, msg
+    assert f"compose project 'unix-{project}-vagrant'" in msg, msg
+    assert f"`otto docker compose up {project}` (a use-case)" in msg, msg
+    assert f"`otto.docker.deploy({project!r})` (a use-case)" in msg, msg
+    assert "`otto.docker.compose_up(...)` (a repo's own compose files)" in msg, msg
+    assert "session-scoped fixture" in msg, msg
+
+
+@pytest.mark.asyncio
+async def test_a_failed_probe_says_why_with_dockers_own_text_and_starts_nothing():
+    """A probe that RAN and failed (the daemon down, no docker binary, no
+    permission on the socket) is not reported as "nothing is running": the
+    error names the probe, its exit and Docker's own text, after the one probe."""
+    parent = _mock_parent()
+    parent.exec = AsyncMock(
+        return_value=_fail(
+            out="Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n"
+        )
+    )
+    h = _make_container(parent, container_id="")
+
+    with pytest.raises(ContainerNotRunningError) as exc:
+        await h.exec("echo hi")
+
+    msg = str(exc.value)
+    probes = _probes(parent)
+    assert len(probes) == 1, probes
+    assert probes[0].startswith("docker ps -q"), probes
+    assert "Cannot connect to the Docker daemon" in msg, msg
+    assert probes[0] in msg, msg
+    assert "failed on parent 'test3'" in msg, msg
+    assert "otto does not start containers on use" in msg, msg
+    assert "no running container was found" not in msg, msg
+    assert h.container_id == "", "a failed probe cached an id"
+
+
+_NOT_COMPLETED = [
+    pytest.param(
+        CommandResult(
+            status=Status.Error,
+            value="Command timed out after 30.0s",
+            command="",
+            retcode=-1,
+            timed_out=True,
+        ),
+        id="timed-out",
+    ),
+    pytest.param(
+        CommandResult(
+            status=Status.Error,
+            value="Session died unexpectedly (connection lost)",
+            command="",
+            retcode=-1,
+        ),
+        id="session-died",
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", _NOT_COMPLETED)
+async def test_a_probe_the_parent_could_not_complete_is_an_unreachable_parent(answer):
+    """A probe that never completed (a timeout, or the parent's session lost
+    mid-command) is a transport failure, not a verdict about the container:
+    ``HostUnreachableError`` naming the container and its parent, and nothing
+    started."""
+    parent = _mock_parent()
+    parent.exec = AsyncMock(return_value=answer)
+    h = _make_container(parent, container_id="")
+
+    with pytest.raises(HostUnreachableError) as exc:
+        await h.exec("echo hi")
+
+    assert not isinstance(exc.value, ContainerNotRunningError)
+    msg = str(exc.value)
+    assert "'test3.repo1.api'" in msg, msg
+    assert "parent 'test3'" in msg, msg
+    probes = _probes(parent)
+    assert len(probes) == 1, probes
+    assert probes[0].startswith("docker ps -q"), probes
+    assert h.container_id == "", "an unreachable parent cached an id"
+
+
+@pytest.mark.asyncio
+async def test_a_parent_whose_transport_raises_propagates_its_own_error():
+    """A parent that cannot even open its transport RAISES out of ``exec``;
+    that exception reaches the caller unchanged, never re-worded as a
+    container that is not running."""
+    parent = _mock_parent()
+    boom = ConnectionRefusedError("connect to test3 port 22 refused")
+    parent.exec = AsyncMock(side_effect=boom)
+    h = _make_container(parent, container_id="")
+
+    with pytest.raises(ConnectionRefusedError) as exc:
+        await h.exec("echo hi")
+
+    assert exc.value is boom
+    assert len(_probes(parent)) == 1
+    assert h.container_id == ""
+
+
+@pytest.mark.asyncio
+async def test_a_running_placeholder_resolves_its_id_once_and_runs():
+    """The probe's other answer: a stack that IS up (brought up by another
+    process) resolves, the id is cached, and the command runs in that container."""
+    parent = _mock_parent()
+
+    async def answer(cmd, *_args, **_kwargs):
+        return _ok(cmd, "freshcid\n" if cmd.startswith("docker ps -q") else "hi")
+
+    parent.exec = AsyncMock(side_effect=answer)
+    h = _make_container(parent, container_id="")
+
+    first = await h.exec("echo hi")
+    await h.exec("echo again")
+
+    assert first.status == Status.Success
+    assert h.container_id == "freshcid"
+    probes = _probes(parent)
+    assert [p.startswith("docker ps -q") for p in probes] == [True, False, False], probes
+    assert probes[1].startswith("docker exec"), probes
+    assert "freshcid" in probes[1], probes
+
+
+@pytest.mark.asyncio
+async def test_a_cached_id_is_trusted_and_a_gone_container_fails_from_docker_exec():
+    """Only an UNRESOLVED placeholder is probed. A cached id is used as it is,
+    so a container that stopped after its id was cached fails from the
+    ``docker exec`` itself, as a failed result; it is not probed and nothing
+    is started."""
+    parent = _mock_parent()
+    parent.exec = AsyncMock(return_value=_fail(out="Error: No such container: abc123def456"))
+    h = _make_container(parent)  # the id is already cached
 
     result = await h.exec("echo hi")
 
-    compose_up.assert_awaited_once()
-    assert compose_up.call_args.kwargs["build"] is False
-    assert compose_up.call_args.kwargs["project_name"] == "otto-repo1-vagrant"
-    # Auto-up composes on the container's OWN parent host, not a
-    # lab-wide placement: a `test1.repo1.api` container must auto-start on
-    # test1, not on whatever host use-case/pin resolution happens to pick.
-    # (Latent bug surfaced by the multi-host docker pool — see
-    # docker_host.py::_auto_up.)
-    assert compose_up.call_args.kwargs["parent"] == parent.id
-    assert h.container_id == "freshcid"
-    assert result.status == Status.Success
+    assert result.status == Status.Failed
+    probes = _probes(parent)
+    assert len(probes) == 1, probes
+    assert probes[0].startswith("docker exec"), probes
 
 
-@pytest.mark.asyncio
-async def test_placeholder_no_repo_raises(monkeypatch):
-    """No configured repo to auto-start -> clear 'not running' error."""
-    h = _make_container(container_id="")
-    patch_bootstrap(monkeypatch, _mock_repos(repo_name=None))
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
-    with pytest.raises(RuntimeError, match="not running"):
+async def _use(h: DockerContainerHost, operation: str, tmp_path: Path) -> None:
+    """Drive *operation* against *h* the way a caller would."""
+    local = tmp_path / "x"
+    local.write_text("x")
+    if operation == "exec":
         await h.exec("echo hi")
+    elif operation == "run":
+        await h.run("echo hi")
+    elif operation == "put":
+        await h.put([local], Path("/tmp"))
+    elif operation == "get":
+        await h.get([Path("/etc/hostname")], tmp_path)
+    elif operation == "send":
+        await h.send("echo hi\n")
+    else:
+        await h.open_session("aux")
 
 
 @pytest.mark.asyncio
-async def test_placeholder_auto_up_failure_raises(monkeypatch):
-    """A compose_up failure surfaces as a 'not running' RuntimeError."""
-    h = _make_container(container_id="")
-    compose_up = AsyncMock(side_effect=RuntimeError("compose boom"))
-    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    patch_bootstrap(monkeypatch, _mock_repos())
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
-    with pytest.raises(RuntimeError, match="not running"):
-        await h.exec("echo hi")
-
-
-@pytest.mark.asyncio
-async def test_placeholder_use_case_project_auto_starts_via_deploy(monkeypatch):
-    """A placeholder whose ``project`` names a declared use-case (spec §9)
-    auto-starts through ``deployment.deploy``, never the legacy per-repo
-    ``compose_up`` — the id shape (``<parent>.<usecase>.<service>``) synthesized
-    by ``register_declared_container_hosts``'s use-case branch is exactly what
-    routes it here (see test_register_declared_use_case_repo_synthesizes_
-    usecase_ids in test_compose.py)."""
-    parent = _mock_parent()
-    h = DockerContainerHost(
-        parent=parent,
-        container_id="",
-        project="integration",
-        service="api",
-        compose_project="unix-integration-vagrant",
-    )
-    uc_repo = fake_repo(
-        "a", docker_settings=SimpleNamespace(use_cases=[SimpleNamespace(name="integration")])
-    )
-    started = _make_container(parent, container_id="freshcid")
-    stack = SimpleNamespace(
-        hosts={"api": started},
-        by_host={parent.id: {"api": started}},
-    )
-    deploy = AsyncMock(return_value=stack)
-    compose_up = AsyncMock()
-    monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
-    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    patch_bootstrap(monkeypatch, [uc_repo])
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
-
-    result = await h.exec("echo hi")
-
-    # The placeholder knows its parent: the auto-up names it rather than
-    # leaving the rule to re-pick one (dropping `parent=` fails here).
-    deploy.assert_awaited_once_with("integration", parent=parent.id, build=False)
-    compose_up.assert_not_awaited()
-    assert h.container_id == "freshcid"
-    assert result.status == Status.Success
-
-
-def _uc_repos(use_case: str = "integration"):
-    return [
-        fake_repo("a", docker_settings=SimpleNamespace(use_cases=[SimpleNamespace(name=use_case)]))
-    ]
-
-
-@pytest.mark.asyncio
-async def test_use_case_auto_up_picks_the_container_of_its_own_parent(monkeypatch):
-    """`_auto_up` reads `stack.by_host[self.parent.id]`, never the flattened
-    `stack.hosts` (keyed last-write-wins across parents), so a stack that
-    carries another parent's same-named service cannot hand THIS container
-    (bound to `self.parent` for every subsequent docker exec) a container id
-    belonging to a DIFFERENT host. The deploy itself is pinned to this
-    placeholder's parent."""
-    parent_other = _mock_parent("test1")
-    parent_mine = _mock_parent("test3")
-    h = DockerContainerHost(
-        parent=parent_mine,
-        container_id="",
-        project="integration",
-        service="api",
-        compose_project="unix-integration-vagrant",
-    )
-    other_container = _make_container(parent_other, container_id="wrong-parent-cid")
-    mine_container = _make_container(parent_mine, container_id="right-parent-cid")
-    # The flattened map deliberately carries the OTHER parent's container —
-    # exactly what a naive `stack.hosts[self.service]` read would return.
-    stack = SimpleNamespace(
-        hosts={"api": other_container},
-        by_host={
-            "test1": {"api": other_container},
-            "test3": {"api": mine_container},
-        },
-    )
-    deploy = AsyncMock(return_value=stack)
-    monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
-    patch_bootstrap(monkeypatch, _uc_repos())
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
-
-    await h.exec("echo hi")
-
-    deploy.assert_awaited_once_with("integration", parent="test3", build=False)
-    assert h.container_id == "right-parent-cid"
-
-
-@pytest.mark.asyncio
-async def test_use_case_auto_up_hands_a_decline_back_unwrapped(monkeypatch):
-    """The dry-run decline pass-through on the use-case route (docker_host.py's
-    CommandNotRunError arm) — untested-under-coverage counterpart of the
-    legacy route's test_auto_up_hands_a_decline_back_unwrapped in
-    test_dry_run.py."""
-    parent = _mock_parent()
-    h = DockerContainerHost(
-        parent=parent,
-        container_id="",
-        project="integration",
-        service="api",
-        compose_project="unix-integration-vagrant",
-    )
-    declined = CommandNotRunError("deploy(integration)", parent.id, "No stack was brought up.")
-
-    async def declining_deploy(*_a, **_kw):
-        raise declined
-
-    monkeypatch.setattr("otto.docker.deployment.deploy", declining_deploy)
-    patch_bootstrap(monkeypatch, _uc_repos())
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
-
-    with pytest.raises(CommandNotRunError) as exc:
-        await h._auto_up()
-
-    assert exc.value is declined
-    assert "auto-start failed" not in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_use_case_auto_up_wraps_a_real_deploy_failure(monkeypatch):
-    """The use-case route's wide `except Exception` — a real failure must
-    surface as the actionable 'auto-start failed' RuntimeError, exact
-    phrase, never a bare pass-through of the underlying error."""
-    parent = _mock_parent()
-    h = DockerContainerHost(
-        parent=parent,
-        container_id="",
-        project="integration",
-        service="api",
-        compose_project="unix-integration-vagrant",
-    )
-
-    async def failing_deploy(*_a, **_kw):
-        raise HostCommandError("docker compose up failed: no such image")
-
-    monkeypatch.setattr("otto.docker.deployment.deploy", failing_deploy)
-    patch_bootstrap(monkeypatch, _uc_repos())
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
-
-    with pytest.raises(RuntimeError, match="not running, and auto-start failed") as exc:
-        await h._auto_up()
-
-    assert "`otto docker compose up --build integration`" in str(exc.value), (
-        "the remedy must name the command that builds the image the failure is "
-        f"most often about: {exc.value}"
-    )
-
-
-@pytest.mark.asyncio
-async def test_use_case_auto_up_no_container_for_service_is_refused(monkeypatch):
-    """The use-case route's 'did not produce a container for service'
-    refusal — deploy succeeds but this parent's service never resolved."""
-    parent = _mock_parent("test3")
-    h = DockerContainerHost(
-        parent=parent,
-        container_id="",
-        project="integration",
-        service="api",
-        compose_project="unix-integration-vagrant",
-    )
-    stack = SimpleNamespace(hosts={}, by_host={})
-    deploy = AsyncMock(return_value=stack)
-    monkeypatch.setattr("otto.docker.deployment.deploy", deploy)
-    patch_bootstrap(monkeypatch, _uc_repos())
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
-
-    with pytest.raises(
-        RuntimeError, match="did not produce a container for service 'api' on test3"
-    ) as exc:
-        await h._auto_up()
-
-    assert "`otto docker compose up --build integration`" in str(exc.value)
-
-
-_LEGACY_REMEDY = "Build its image first (`otto docker build --parent test3`) and retry."
-
-
-@pytest.mark.asyncio
-async def test_legacy_auto_up_with_no_repo_names_the_building_remedy(monkeypatch):
-    """No repo named ``repo1`` is configured: the remedy builds, because an
-    unbuilt image is the usual reason a bring-up is needed at all."""
-    h = _make_container(container_id="")
-    patch_bootstrap(monkeypatch, _mock_repos(None))
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
-
-    with pytest.raises(RuntimeError, match="no repo named 'repo1'") as exc:
-        await h._auto_up()
-
-    assert _LEGACY_REMEDY in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_legacy_auto_up_wide_arm_names_the_building_remedy(monkeypatch):
-    """A real ``compose_up`` failure is wrapped with the building remedy."""
-    h = _make_container(container_id="")
-
-    async def failing_compose_up(*_a, **_kw):
-        raise HostCommandError("docker compose up failed: no such image")
-
-    monkeypatch.setattr("otto.docker.compose.compose_up", failing_compose_up)
-    patch_bootstrap(monkeypatch, _mock_repos())
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
-
-    with pytest.raises(RuntimeError, match="auto-start failed") as exc:
-        await h._auto_up()
-
-    assert _LEGACY_REMEDY in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_legacy_auto_up_with_no_service_container_names_the_building_remedy(monkeypatch):
-    """``compose_up`` succeeds but never produced this service's container."""
-    h = _make_container(container_id="")
-    monkeypatch.setattr("otto.docker.compose.compose_up", AsyncMock(return_value={}))
-    patch_bootstrap(monkeypatch, _mock_repos())
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
-
-    with pytest.raises(RuntimeError, match="did not produce a container") as exc:
-        await h._auto_up()
-
-    assert _LEGACY_REMEDY in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_concurrent_access_triggers_single_auto_up(monkeypatch):
-    """Two concurrent calls against a down container auto-up exactly once."""
-    import asyncio
-
+@pytest.mark.parametrize("operation", ["exec", "run", "put", "get", "send", "open_session"])
+async def test_every_operation_on_a_down_placeholder_fails_fast(operation, tmp_path):
+    """Each operation resolves the container first, so each raises before any
+    transfer, channel or session is opened, and the probe is all the parent saw."""
     parent = _mock_parent()
     h = _make_container(parent, container_id="")
 
-    started = _make_container(parent, container_id="freshcid")
-    compose_up = AsyncMock(return_value={"api": started})
-    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    patch_bootstrap(monkeypatch, _mock_repos())
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
+    with pytest.raises(ContainerNotRunningError):
+        await _use(h, operation, tmp_path)
 
-    await asyncio.gather(h.exec("echo a"), h.exec("echo b"))
+    parent.put.assert_not_awaited()
+    parent.get.assert_not_awaited()
+    probes = _probes(parent)
+    assert len(probes) == 1, probes
+    assert probes[0].startswith("docker ps -q"), probes
 
-    compose_up.assert_awaited_once()
-    assert h.container_id == "freshcid"
+
+class _WatchedLock(asyncio.Lock):
+    """An ``asyncio.Lock`` that says when a caller has to wait for it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.contended = asyncio.Event()
+
+    async def acquire(self) -> bool:
+        if self.locked():
+            self.contended.set()
+        return await super().acquire()
+
+
+async def _first_of(
+    events: dict[str, asyncio.Event], tasks: list[asyncio.Task], timeout: float = 5.0
+) -> str:
+    """Name the first of *events* to be set, never waiting past *timeout*.
+
+    A task in *tasks* that ends first surfaces at once: its own exception is
+    re-raised, and a clean finish fails the test. *timeout* is a hang guard,
+    never a timing assumption: on the passing path an event is always set first.
+    """
+    waiters = {asyncio.ensure_future(event.wait()): name for name, event in events.items()}
+    try:
+        done, _pending = await asyncio.wait(
+            [*waiters, *tasks], timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+        )
+    finally:
+        for waiter in waiters:
+            waiter.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
+    for waiter, name in waiters.items():
+        if waiter in done:
+            return name
+    for task in tasks:
+        if task in done:
+            raise AssertionError(f"a caller finished early, with {task.result()!r}")
+    raise AssertionError(f"none of {sorted(events)} happened within {timeout}s")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_access_raises_for_each_caller_and_starts_nothing():
+    """Two concurrent calls against a down placeholder each get the error.
+
+    Real contention, acknowledged rather than hoped for: the first caller's
+    probe is held open, and the test goes on only when the second caller is
+    seen WAITING on the lock (or, if nothing holds it back, seen probing,
+    which fails at once). Then the first probe ends, each caller raises in
+    turn, the probes never overlap, nothing starts and no id is cached. Every
+    wait is bounded and watches both callers, so a caller that fails early
+    surfaces its own error instead of hanging the test.
+    """
+    parent = _mock_parent()
+    first_probe_open = asyncio.Event()
+    release_first_probe = asyncio.Event()
+    second_probe_started = asyncio.Event()
+    in_flight = 0
+    most_in_flight = 0
+
+    async def answer(cmd, *_args, **_kwargs):
+        nonlocal in_flight, most_in_flight
+        in_flight += 1
+        most_in_flight = max(most_in_flight, in_flight)
+        try:
+            if not first_probe_open.is_set():
+                first_probe_open.set()
+                await release_first_probe.wait()
+            else:
+                second_probe_started.set()
+            return _ok(cmd)
+        finally:
+            in_flight -= 1
+
+    parent.exec = AsyncMock(side_effect=answer)
+    h = _make_container(parent, container_id="")
+    lock = _WatchedLock()
+    h._ensure_lock = lock
+
+    first = asyncio.create_task(h.exec("echo a"))
+    second = None
+    try:
+        await _first_of({"first probe open": first_probe_open}, [first])
+        second = asyncio.create_task(h.exec("echo b"))
+        seen = await _first_of(
+            {"second waits": lock.contended, "second probed": second_probe_started},
+            [first, second],
+        )
+        assert seen == "second waits", (
+            "the second caller probed while the first probe was still open: "
+            "nothing serialized the two probes"
+        )
+        release_first_probe.set()
+        for task in (first, second):
+            with pytest.raises(ContainerNotRunningError):
+                await asyncio.wait_for(task, timeout=5.0)
+    finally:
+        release_first_probe.set()
+        started = [task for task in (first, second) if task is not None]
+        for task in started:
+            task.cancel()
+        await asyncio.gather(*started, return_exceptions=True)
+
+    assert most_in_flight == 1, _probes(parent)
+    probes = _probes(parent)
+    assert len(probes) == 2, probes
+    assert all(p.startswith("docker ps -q") for p in probes), probes
+    assert h.container_id == ""
 
 
 # ---------------------------------------------------------------------------
@@ -1188,57 +1226,56 @@ async def test_is_running_true_without_probe_when_id_resolved():
 
 
 @pytest.mark.asyncio
-async def test_is_running_probes_quietly_and_caches_id(monkeypatch):
+async def test_is_running_probes_quietly_and_caches_id():
     """A placeholder probe is one read-only, QUIET `docker ps` — never a compose."""
     from otto.logger.mode import LogMode
 
     parent = _mock_parent()
     parent.exec = AsyncMock(return_value=_ok(out="abc123\n"))
     h = _make_container(parent, container_id="")
-    compose_up = AsyncMock()
-    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
 
     assert await h.is_running() is True
 
     assert h.container_id == "abc123"
-    compose_up.assert_not_awaited()
+    assert parent.exec.await_count == 1, parent.exec.call_args_list
     cmd = parent.exec.call_args.args[0]
     assert cmd.startswith("docker ps -q")
     assert parent.exec.call_args.kwargs.get("log") is LogMode.QUIET
 
 
 @pytest.mark.asyncio
-async def test_is_running_false_when_down_never_composes(monkeypatch):
-    """A down placeholder reports False; is_running must NEVER auto-start."""
+async def test_is_running_false_when_down_asks_only_the_probe():
+    """A down placeholder reports False after one read-only probe, and nothing else."""
     parent = _mock_parent()  # docker ps returns empty out -> not running
     h = _make_container(parent, container_id="")
-    compose_up = AsyncMock()
-    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
 
     assert await h.is_running() is False
 
     assert h.container_id == ""
-    compose_up.assert_not_awaited()
+    probes = _probes(parent)
+    assert len(probes) == 1, probes
+    assert probes[0].startswith("docker ps -q"), probes
 
 
 @pytest.mark.asyncio
-async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
-    """File transfer against a down container also auto-starts the stack."""
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param(_fail(out="Cannot connect to the Docker daemon"), id="probe-failed"),
+        *_NOT_COMPLETED,
+    ],
+)
+async def test_is_running_folds_a_failed_or_incomplete_probe_to_false(answer):
+    """``is_running`` answers rather than raising: a probe that failed or never
+    completed reports ``False``, which tunnel discovery relies on."""
     parent = _mock_parent()
+    parent.exec = AsyncMock(return_value=answer)
     h = _make_container(parent, container_id="")
-    f = tmp_path / "x"
-    f.write_text("x")
 
-    started = _make_container(parent, container_id="freshcid")
-    compose_up = AsyncMock(return_value={"api": started})
-    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    patch_bootstrap(monkeypatch, _mock_repos())
-    monkeypatch.setattr("otto.config.fleet.get_lab", MagicMock())
+    assert await h.is_running() is False
 
-    status, _ = _sm(await h.put([f], Path("/tmp")))
-
-    compose_up.assert_awaited_once()
-    assert status == Status.Success
+    assert h.container_id == ""
+    assert len(_probes(parent)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1621,7 +1658,7 @@ async def test_expect_dry_run_declines_rather_than_reporting_no_match():
         await h.expect("prompt> ")
     assert "prompt> " in str(exc.value)
     # `_expect_one` calls `_ensure_running()`, so this also pins that a dry-run
-    # expect never reaches the daemon (and so can never auto-start the stack).
+    # expect never reaches the daemon (not even for the container id probe).
     parent.exec.assert_not_awaited()
 
 

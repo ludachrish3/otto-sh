@@ -1,7 +1,6 @@
 """Where no context object is in hand, the run's repos come through one accessor (spec 2 §4)."""
 
 import contextlib
-from types import SimpleNamespace
 
 import pytest
 
@@ -19,12 +18,6 @@ def _fresh():
     bs.invalidate()
 
 
-def _docker_repo(name, use_case):
-    """A repo declaring one docker use-case named *use_case* (as test_docker_host.py builds it)."""
-    use_cases = [SimpleNamespace(name=use_case)]
-    return fake_repo(name, docker_settings=SimpleNamespace(use_cases=use_cases))
-
-
 def test_the_accessor_reads_the_installed_context_first(monkeypatch):
     from otto.config.fleet import current_ordered_repos, current_repos
 
@@ -37,19 +30,6 @@ def test_the_accessor_reads_the_installed_context_first(monkeypatch):
     finally:
         reset_context(binding)
     assert [r.name for r in current_repos()] == ["from_bootstrap"]
-
-
-def test_the_declared_use_case_query_works_inside_a_context_and_without_one(monkeypatch):
-    from otto.docker.resolve import is_declared_use_case
-
-    patch_bootstrap(monkeypatch, [_docker_repo("r", "web")])
-    assert is_declared_use_case("web")
-    assert not is_declared_use_case("db")
-    binding = set_context(OttoContext(lab=Lab(name="rig"), bootstrap=fake_bootstrap_result([])))
-    try:
-        assert not is_declared_use_case("web")  # the context's repos, not bootstrap's
-    finally:
-        reset_context(binding)
 
 
 def test_the_docker_conveniences_still_refuse_without_a_context():

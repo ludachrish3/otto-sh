@@ -94,6 +94,27 @@ class ConsoleError(OttoError, ConnectionError):
     """
 
 
+class ContainerNotRunningError(OttoError, RuntimeError):
+    """A declared container host was used, and no running container for it could be found.
+
+    otto never starts a container because it was used: a container host
+    registered from the declared settings (a placeholder, its container id not
+    yet known) asks its parent for the running container with a ``docker ps``
+    probe. It raises this for two outcomes: nothing is running (the probe
+    answered with no id), or the probe failed (it ran on the parent and
+    exited non-zero; the message then carries Docker's own text). A parent
+    that could not complete the probe at all is a transport failure and
+    raises :class:`HostUnreachableError` instead. The message names the
+    container and each explicit way to
+    bring its stack up: ``otto docker compose up`` from the shell, or
+    :func:`~otto.docker.deployment.deploy` / :func:`~otto.docker.compose.compose_up`
+    from Python.
+
+    A ``RuntimeError``, the root every failure on this path already had, so an
+    existing ``except RuntimeError`` still catches it.
+    """
+
+
 class MountNotFoundError(OttoError, ValueError):
     """A container path could not be translated to a parent-side path.
 

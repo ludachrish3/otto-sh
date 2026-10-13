@@ -29,4 +29,4 @@ Like `up`, `down` has no `--repo`: narrowing is by use-case and service
 
 The container host ids stay synthesized after `down` — they are derived from
 the lab declaration, not from what is running — so completion keeps offering
-them and the next access auto-starts the stack again.
+them, and the next access fails until the stack is brought up again.

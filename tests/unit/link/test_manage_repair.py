@@ -308,10 +308,11 @@ class TestReadStates:
         """`link list` NEVER dies (spec §9), and this module's two classes do
         not cover everything a read can raise.
 
-        The host stack underneath raises unnamed RuntimeErrors that no
-        ast-grep rule scopes — a dead session (`host/session.py`), a
-        declared-but-not-running container (`host/docker_host.py`), an
-        unresolvable hop (`host/remote_host.py`). Narrowing the read arms to
+        The host stack underneath raises RuntimeErrors that are not this
+        module's two classes and that no ast-grep rule scopes — a dead session
+        (`host/session.py`), a declared container that is not running
+        (`ContainerNotRunningError`, `host/errors.py`), an unresolvable hop
+        (`host/remote_host.py`). Narrowing the read arms to
         LinkHostUnreachableError/LinkCommandFailedError let those propagate
         straight out of read_link_states, and neither `otto link list` nor any
         other caller has a try. Filed as a read failure, since whether the

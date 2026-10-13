@@ -1500,8 +1500,8 @@ def _core_compose(services: tuple = ("api",), users: tuple = ()) -> DockerCompos
 
 def test_register_declared_use_case_repo_synthesizes_usecase_ids():
     """Spec §9: a use-case repo's placeholders carry <parent>.<usecase>.<service>,
-    never <parent>.<repo>.<service> — that id is what routes DockerContainerHost's
-    auto-up through deployment.deploy instead of the legacy compose_up."""
+    never <parent>.<repo>.<service>, and their ``project`` names the use-case to
+    deploy, which is what the not-running error tells the reader to start."""
     lab = _make_lab()
     repo = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
 
