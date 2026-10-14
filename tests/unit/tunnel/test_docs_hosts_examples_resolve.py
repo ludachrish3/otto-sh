@@ -1,4 +1,4 @@
-"""Guard: every ``--hosts`` example in the docs still resolves against lab data.
+"""Guard: every ``--hosts`` example in the docs and the e2e tests resolves against lab data.
 
 A ``--hosts`` entry written without ``@iface`` asks otto to pick the host's
 interface, which only works while the host has at most one. That made the
@@ -9,9 +9,12 @@ else), three published tunnel examples and three e2e tests started failing
 with ``ambiguous interface`` — and no gate noticed, because tunnel resolution
 against a live host is not in the hostless lane.
 
-This guard is the hostless half of that. It cannot see the e2e tests, but it
-holds the published commands to the lab data they are written against, which
-is where the ambiguity is decided. The e2e half needs ``make coverage``.
+This guard is the hostless half of that. It holds the published commands, and
+the argv literals the e2e tests spawn ``otto`` with, to the lab data they are
+written against, which is where the ambiguity is decided. The e2e literals
+joined the scan after the fourth bare call site (``test_reboot_chaos.py``,
+#640) sat unnoticed for seven weeks: the sweep that qualified the other three
+gated on ``make coverage``, which never runs the chaos lane.
 
 Deliberately NOT a check that the examples run: it asks only the question the
 examples silently assume an answer to.
@@ -35,6 +38,11 @@ DOCS = PROJECT_ROOT / "docs"
 _EXCLUDED_DIRS = {"superpowers", "_build", "_inventories", "examples"}
 
 _HOSTS_RE = re.compile(r"--hosts\s+(\S+)")
+
+# The e2e tests spawn otto with an argv LIST, so the value is the next string
+# literal after ``"--hosts"``: ``["tunnel", "add", "--hosts", "test1,test2", ...]``.
+E2E = PROJECT_ROOT / "tests" / "e2e"
+_ARGV_HOSTS_RE = re.compile(r'"--hosts",\s*"([^"]+)"')
 
 # Entries that name something other than a plain lab host, so the interface
 # question does not apply to them. Container endpoints carry their address
@@ -64,12 +72,19 @@ def _pages() -> list[Path]:
     ]
 
 
+def _sources() -> list[tuple[Path, re.Pattern[str]]]:
+    """Every file the guard reads, paired with the ``--hosts`` shape it carries."""
+    pages = [(page, _HOSTS_RE) for page in _pages()]
+    e2e = [(module, _ARGV_HOSTS_RE) for module in sorted(E2E.rglob("*.py"))]
+    return pages + e2e
+
+
 def _examples() -> list[tuple[Path, str, str]]:
-    """Every ``(page, entry, full-value)`` a ``--hosts`` example names."""
+    """Every ``(source, entry, full-value)`` a ``--hosts`` example or argv names."""
     return [
-        (page, entry, value)
-        for page in _pages()
-        for value in _HOSTS_RE.findall(page.read_text())
+        (source, entry, value)
+        for source, rx in _sources()
+        for value in rx.findall(source.read_text())
         for entry in value.split(",")
         if entry and not any(t in entry for t in _NOT_A_PLAIN_HOST)
     ]
@@ -86,6 +101,9 @@ def test_the_corpus_is_not_empty() -> None:
     assert len(examples) >= 5, f"only {len(examples)} --hosts entries found; the scan broke"
     assert any("@" in e for _, e, _ in examples), "no qualified entry found; the scan broke"
     assert any("@" not in e for _, e, _ in examples), "no bare entry found; nothing to guard"
+    assert any(source.is_relative_to(E2E) for source, _, _ in examples), (
+        "no e2e argv literal found; the argv scan broke"
+    )
 
 
 def test_a_multi_homed_host_is_never_named_without_its_interface() -> None:
@@ -93,15 +111,17 @@ def test_a_multi_homed_host_is_never_named_without_its_interface() -> None:
     that exits 1 with ``ambiguous interface``."""
     counts = _interface_counts()
     offenders = []
-    for page, entry, value in _examples():
+    for source, entry, value in _examples():
         if "@" in entry:
             continue
         count = counts.get(entry)
         if count is not None and count > 1:
-            offenders.append(f"{page.relative_to(DOCS)}: --hosts {value} (entry {entry!r})")
+            offenders.append(
+                f"{source.relative_to(PROJECT_ROOT)}: --hosts {value} (entry {entry!r})"
+            )
     assert not offenders, (
-        "these documented commands name a multi-homed host without an interface "
-        "and fail with 'ambiguous interface':\n  " + "\n  ".join(offenders)
+        "these documented or spawned commands name a multi-homed host without an "
+        "interface and fail with 'ambiguous interface':\n  " + "\n  ".join(offenders)
     )
 
 

@@ -129,7 +129,7 @@ def test_reboot_x_tunnel_survivors_reaped(tmp_path):
             "tunnel",
             "add",
             "--hosts",
-            "test1,test2",
+            "test1@eth2,test2",
             "--port",
             str(_REBOOT_TUNNEL_PORT),
         ],
