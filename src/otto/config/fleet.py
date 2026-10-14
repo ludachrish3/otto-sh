@@ -648,9 +648,9 @@ def fleet_of_interest(
     >>> fleet_of_interest(lab, [])  # nothing declared: the whole lab
     ['sensor-1', 'gw-1']
     """
-    from ..bootstrap import ProjectScopeError  # function-scope: keeps this module import-light
+    # function-scope: keeps this module import-light
     from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
-    from .scope import resolve_scopes, scoped_ids
+    from .scope import ProjectScopeError, resolve_scopes, scoped_ids
 
     # The verdicts the walk's context resolves (``scopes_of(ctx)``), with
     # the same ``local`` exclusion, so the two read identical data.

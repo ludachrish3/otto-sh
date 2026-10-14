@@ -1,10 +1,14 @@
 """The root state guards RESTORE pre-test state — they must not reset to defaults.
 
-Pins Wave 14's conversion of ``_restore_otto_logger_state`` and
-``_restore_bootstrap_state`` (root conftest) from reset-to-default teardowns
-to snapshot-restore. The motivating defect (review §5.5): a module-scoped
-fixture's logging/bootstrap state was destroyed by the reset after its FIRST
-test, so every later test in that module silently ran against defaults.
+Pins Wave 14's conversion of ``_restore_otto_logger_state`` and the
+bootstrap-state restore, now ``_restore_composition_state`` (root conftest),
+from reset-to-default teardowns to snapshot-restore. The composition state has
+two owners, ``otto.bootstrap``'s caches and the catalog ``otto.declared``
+holds, and the guard restores the CLI's completion-cache snapshot on
+``otto.registry`` with them; all three are pinned. The motivating defect
+(review §5.5): a module-scoped fixture's logging/bootstrap state was
+destroyed by the reset after its FIRST test, so every later test in that
+module silently ran against defaults.
 
 The pin is deliberately order-independent under ``pytest-randomly``: a
 module-scoped fixture primes the state and BOTH tests assert it. Under the
@@ -19,12 +23,14 @@ state).
 """
 
 import contextlib
+import dataclasses
 import logging
 from collections.abc import Iterator
+from types import SimpleNamespace
 
 import pytest
 
-from otto import bootstrap
+from otto import bootstrap, declared, registry
 from otto.logger import management
 
 pytestmark = pytest.mark.hostless
@@ -211,25 +217,87 @@ def test_the_guards_state_snapshot_does_not_alias_its_mutable_fields(tmp_path) -
 
 
 @pytest.fixture(scope="module")
-def primed_completion_names() -> Iterator[dict]:
-    """Module-scoped bootstrap cache: the completion-names fast-path snapshot."""
-    saved = bootstrap.get_completion_names()
-    sentinel = {"__snapshot_restore_pin__": object()}
-    bootstrap.set_completion_names(sentinel)
+def primed_bootstrap_cache() -> Iterator[object]:
+    """Module-scoped bootstrap cache: a discovery memoized before any per-test snapshot."""
+    saved = (bootstrap._discovered, bootstrap._result)
+    sentinel = SimpleNamespace(repos=[], errors=[])
+    bootstrap._discovered = sentinel
     yield sentinel
-    bootstrap.set_completion_names(saved)
+    bootstrap._discovered, bootstrap._result = saved
 
 
-def _assert_bootstrap_state_survives(sentinel: dict) -> None:
-    assert bootstrap.get_completion_names() is sentinel, (
+def _assert_bootstrap_state_survives_then_poison_it(sentinel: object) -> None:
+    assert bootstrap._discovered is sentinel, (
         "a module fixture's bootstrap cache was cleared by a per-test teardown — "
         "the guard reset to defaults instead of restoring its snapshot"
     )
+    assert bootstrap._result is None, "a sibling's bootstrap result leaked forward"
+    # Poison for whichever sibling runs next: the guard must swap it back out.
+    bootstrap._result = SimpleNamespace(repos=[], ordered_repos=[])
 
 
-def test_bootstrap_state_outlives_a_sibling_test(primed_completion_names: dict) -> None:
-    _assert_bootstrap_state_survives(primed_completion_names)
+def test_bootstrap_state_outlives_a_sibling_test(primed_bootstrap_cache: object) -> None:
+    _assert_bootstrap_state_survives_then_poison_it(primed_bootstrap_cache)
 
 
-def test_bootstrap_state_outlives_another_sibling_test(primed_completion_names: dict) -> None:
-    _assert_bootstrap_state_survives(primed_completion_names)
+def test_bootstrap_state_outlives_another_sibling_test(primed_bootstrap_cache: object) -> None:
+    _assert_bootstrap_state_survives_then_poison_it(primed_bootstrap_cache)
+
+
+@pytest.fixture(scope="module")
+def primed_completion_names() -> Iterator[dict]:
+    """Module-scoped completion-cache snapshot, installed before any per-test snapshot."""
+    saved = registry.get_completion_names()
+    sentinel = {"__snapshot_restore_pin__": object()}
+    registry.set_completion_names(sentinel)
+    yield sentinel
+    registry.set_completion_names(saved)
+
+
+def _assert_completion_names_survive_then_poison_them(sentinel: dict) -> None:
+    assert registry.get_completion_names() is sentinel, (
+        "a module fixture's completion snapshot was cleared by a per-test teardown — "
+        "the guard reset it instead of restoring its snapshot"
+    )
+    # Poison for whichever sibling runs next: the guard must swap it back out.
+    registry.set_completion_names({"__poison__": True})
+
+
+def test_the_completion_snapshot_outlives_a_sibling_test(primed_completion_names: dict) -> None:
+    _assert_completion_names_survive_then_poison_them(primed_completion_names)
+
+
+def test_the_completion_snapshot_outlives_another_sibling_test(
+    primed_completion_names: dict,
+) -> None:
+    _assert_completion_names_survive_then_poison_them(primed_completion_names)
+
+
+@pytest.fixture(scope="module")
+def primed_catalog() -> Iterator[object]:
+    """Module-scoped catalog: a complete result published before any per-test snapshot."""
+    saved = dataclasses.replace(declared._composition)
+    sentinel = SimpleNamespace(repos=[], ordered_repos=[])
+    declared.publish_composed(sentinel, complete=True)
+    yield sentinel
+    declared._composition = saved
+
+
+def _assert_catalog_survives_then_poison_it(sentinel: object) -> None:
+    assert declared._composition.result is sentinel, (
+        "a module fixture's published result was cleared by a per-test teardown — "
+        "the guard reset the catalog instead of restoring its snapshot"
+    )
+    assert declared._composition.in_progress is None, (
+        "a sibling's in-progress publication leaked forward"
+    )
+    # Poison for whichever sibling runs next: the guard must swap it back out.
+    declared._composition.in_progress = SimpleNamespace(repos=[], ordered_repos=[])
+
+
+def test_the_catalog_outlives_a_sibling_test(primed_catalog: object) -> None:
+    _assert_catalog_survives_then_poison_it(primed_catalog)
+
+
+def test_the_catalog_outlives_another_sibling_test(primed_catalog: object) -> None:
+    _assert_catalog_survives_then_poison_it(primed_catalog)

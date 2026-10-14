@@ -6,6 +6,7 @@ import pytest
 
 from otto.host.dev_tool import apply_dev_tool_providers, register_dev_tool_provider
 from otto.host.element import Element
+from tests._fixtures.bootstrap_seam import fail_composition
 
 
 def _tool(name):
@@ -191,16 +192,17 @@ def _scope(labs, hosts=(".*",)):
 
 @pytest.fixture
 def scope_table(monkeypatch):
-    """An owner -> declaration table the gate reads instead of bootstrap's repos.
+    """An owner -> declaration table the gate reads instead of the composed repos.
 
-    Patched on ``otto.config.scope`` because that is the module the gate looks
-    the name up through. An owner absent from the table resolves to ``None``,
-    which is exactly the real lookup's "no such repo / no ``[project]``" answer.
+    Patched on ``otto.declared``, the module that defines the lookup: the gate
+    imports it from there when it runs. An owner absent from the table resolves
+    to ``None``, which is exactly the real lookup's "no such repo / no
+    ``[project]``" answer.
     """
-    from otto.config import scope as scope_mod
+    from otto import declared as declared_mod
 
     table = {}
-    monkeypatch.setattr(scope_mod, "scope_for_repo", table.get)
+    monkeypatch.setattr(declared_mod, "scope_for_repo", table.get)
     return table
 
 
@@ -303,9 +305,9 @@ def test_an_unstamped_host_admits_without_consulting_any_declaration(monkeypatch
     # arrive this way, and they predate scoping.
     #
     # The lookup list is the second leg: an unattributed host must not even
-    # reach the lookup, which bootstraps lazily — asking would drag a full
+    # reach the lookup, which composes lazily — asking would drag a full
     # composition root into bare library use.
-    from otto.config import scope as scope_mod
+    from otto import declared as declared_mod
     from otto.registry import registering_repo
 
     lookups = []
@@ -314,7 +316,7 @@ def test_an_unstamped_host_admits_without_consulting_any_declaration(monkeypatch
         lookups.append(owner)
         return _scope(["nowhere"], hosts=["nothing"])
 
-    monkeypatch.setattr(scope_mod, "scope_for_repo", _excluding)
+    monkeypatch.setattr(declared_mod, "scope_for_repo", _excluding)
     with registering_repo("r1"):
         register_dev_tool_provider(lambda host: [_tool("gdbserver")])
     host = _host()  # no source_lab: BaseHost's unattributed default
@@ -328,13 +330,9 @@ def test_an_unstamped_host_admits_without_consulting_any_declaration(monkeypatch
 def test_a_registration_made_outside_any_repo_admits(monkeypatch):
     # Owner None, through the REAL lookup: a provider registered by library
     # code (or by a test) has no declaration to be bounded by, and refusing it
-    # would break every such use. `get_repos` is made hostile so a lookup that
-    # consulted config for a None owner cannot pass this quietly.
-
-    def _unavailable():
-        raise RuntimeError("no bootstrap in this process")
-
-    monkeypatch.setattr("otto.bootstrap.get_repos", _unavailable)
+    # would break every such use. Composition is made hostile so a lookup that
+    # consulted the repos for a None owner cannot pass this quietly.
+    fail_composition(monkeypatch)
     register_dev_tool_provider(lambda host: [_tool("gdbserver")])
     host = _host(source_lab="b")
 
@@ -344,16 +342,13 @@ def test_a_registration_made_outside_any_repo_admits(monkeypatch):
 
 
 def test_an_owner_config_cannot_resolve_admits(monkeypatch):
-    # REAL `scope_for_repo` here, with `get_repos` injected to raise: an ingest
-    # that ran where no bootstrap is reachable must attach exactly what it
-    # attached before this gate existed. A gate that let the lookup's failure
-    # propagate would turn an unbootstrapped process into an ingest crash.
+    # REAL `scope_for_repo` here, with composition injected to raise: an
+    # ingest that ran where the repos cannot be composed must attach exactly
+    # what it attached before this gate existed. A gate that let the lookup's
+    # failure propagate would turn an uncomposed process into an ingest crash.
     from otto.registry import registering_repo
 
-    def _unavailable():
-        raise RuntimeError("no bootstrap in this process")
-
-    monkeypatch.setattr("otto.bootstrap.get_repos", _unavailable)
+    fail_composition(monkeypatch)
     with registering_repo("ghost"):
         register_dev_tool_provider(lambda host: [_tool("gdbserver")])
     host = _host(source_lab="b")

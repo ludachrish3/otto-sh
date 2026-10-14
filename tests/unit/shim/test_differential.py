@@ -17,6 +17,7 @@ import pytest
 
 from otto import _shim_complete as sc
 from otto import bootstrap as bs
+from otto import registry
 from otto.cli.main import _completion_collectors
 from otto.config import completion_cache as cc
 from otto.config.completion_tree import build_shim_payload
@@ -220,7 +221,7 @@ def world(tmp_path, monkeypatch):
 
         monkeypatch.setattr(cc, "run_collect_child", _no_child)
         monkeypatch.setattr(cc, "spawn_collect_child", _no_child)
-        bs.set_completion_names(None)
+        registry.set_completion_names(None)
         stored = cc.read_cache(repos)
         assert stored is not None
         monkeypatch.setattr(
@@ -283,14 +284,14 @@ def _typer(cli, words: str, cword: int, env: dict[str, str], monkeypatch) -> str
     # and answers live. Only docker lines get it: a warm snapshot also turns ``otto test``'s
     # option stubs from live to cached (the SUT's own options vanish), which is the warm-stub
     # path this differential deliberately does not compare.
-    saved = bs.get_completion_names()
+    saved = registry.get_completion_names()
     if _TYPER_DEFAULT_PARENTS is not None and _subcommand_word(words) == "docker":
-        bs.set_completion_names({"docker_default_parent_by_lab": _TYPER_DEFAULT_PARENTS})
+        registry.set_completion_names({"docker_default_parent_by_lab": _TYPER_DEFAULT_PARENTS})
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             return completer.complete()
     finally:
-        bs.set_completion_names(saved)
+        registry.set_completion_names(saved)
 
 
 def _shim(words: str, cword: int, env: dict[str, str]) -> tuple[str | None, str]:

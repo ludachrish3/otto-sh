@@ -11,6 +11,7 @@ from otto.config.lab import Lab
 from otto.context import open_context
 from otto.host import LocalHost
 from otto.invocation import RunPolicy, install_policy, reset_binding
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result, install_composed
 from tests._fixtures.registry import DuckHost, registered_ids
 
 
@@ -38,7 +39,7 @@ def lab_without_repos(monkeypatch):
     from otto import bootstrap as bs
 
     bs._reset()
-    monkeypatch.setattr(bs, "_result", bs.BootstrapResult(env=None, repos=[]))  # type: ignore[arg-type]
+    install_composed(monkeypatch, fake_bootstrap_result([]))
     return Lab(name="rig")
 
 

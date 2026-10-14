@@ -27,6 +27,7 @@ To add a contract, add a row. A row belongs here when it is a pure
 still works, an access DOES load something) stays with the code it tests.
 """
 
+import ast
 import json
 import os
 import subprocess
@@ -199,8 +200,15 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     "import otto.params": ["typer"],
     # --- Library facades. ---
     # The composition root's accessors cost nothing until called: importing
-    # otto.bootstrap loads neither the settings parsers nor the host classes.
-    "import otto.bootstrap": ["otto.config", "otto.host"],
+    # otto.bootstrap loads neither the settings parsers nor the host classes. It
+    # does load otto.config.scope, the foundation module that owns the error
+    # types it re-exports, and otto.declared, whose initiator slot it fills.
+    "import otto.bootstrap": [
+        "otto.config.repo",
+        "otto.config.version",
+        "otto.host",
+        "otto.models",
+    ],
     # The lab facade is lazy: a bare import loads no implementation, and its
     # lightest name, the error class, loads only the scope module.
     "import otto.lab": ["otto.config", "otto.host"],
@@ -232,6 +240,12 @@ IMPORT_MUST_LOAD: dict[str, list[str]] = {
 # declared dependency that does not load therefore fails until its row names
 # it lazy, and a lazy one imported at module scope fails as well. A lazy
 # dependency of a dependency is that dependency's business, not this row's.
+#
+# A carved module's package ancestors run on the way in, and an ancestor
+# __init__ may import a sibling eagerly when that sibling is stdlib-only
+# (.ast-grep/rules/lazy-package-init-stays-lazy.yml; spec 2026-10-11
+# placement-and-phases §4.3): otto/config/__init__.py imports otto.config.env.
+# Those modules, and only those, are allowed too (ancestor_eager_imports).
 IMPORT_ONLY_DECLARED: dict[str, list[str]] = {
     "otto.instruction_catalog": [],
     # The impairment vocabulary, the impairer registry and the built-in netem
@@ -242,6 +256,13 @@ IMPORT_ONLY_DECLARED: dict[str, list[str]] = {
     "otto.link.params": [],
     # The leaf otto.host and otto.models share: OttoModel, CredSpec, Cred.
     "otto.models.base": [],
+    # The scope predicate and the composition root's error types, below every
+    # layer; it normalizes repo names inside its functions.
+    "otto.config.scope": ["otto.models.dependencies"],
+    # The declared-entry core and the composed-repos catalog. It never loads
+    # otto.bootstrap: the root fills its initiator slot from above.
+    "otto.declared": ["otto.config.scope", "otto.invocation"],
+    "otto.models.dependencies": [],
 }
 
 # Runs in the child. It records, for each watched module, the frames that
@@ -368,6 +389,56 @@ def test_an_entry_loads_what_it_exists_to_load(entry, required):
     assert sorted(report["loaded"]) == sorted(required), report
 
 
+# Resolving a command for its help, the walk the import-budget harness's verb
+# surfaces make (scripts/import_budget.py's CLI child), never loads the
+# composition root: the root group, the command stubs and the completers read
+# the completion-cache snapshot from otto.registry, which every resolution
+# loads anyway. "help" lists the root's commands. The fast-path test resolves
+# `run` with a snapshot installed, the completion fast path's branch of the walk.
+HELP_RESOLUTIONS = [
+    "help",
+    "run",
+    "host",
+    "reservation",
+    "docker",
+    "schema",
+    "monitor",
+    "test",
+    "cov",
+]
+
+
+def resolution_entry(verb: str, *, cached: bool = False) -> str:
+    """The entry that resolves *verb* for ``--help`` (``help``: the root's command list)."""
+    argv = ["otto", "--help"] if verb == "help" else ["otto", verb, "--help"]
+    lines = ["import sys", "import typer", f"sys.argv = {argv!r}", "import otto"]
+    if cached:
+        lines += [
+            "from otto.registry import set_completion_names",
+            'set_completion_names({"commands": [], "instructions": []})',
+        ]
+    lines += [
+        "cmd = typer.main.get_command(otto.app)",
+        'ctx = cmd.make_context("otto", sys.argv[1:], resilient_parsing=True)',
+        "cmd.list_commands(ctx)" if verb == "help" else f"cmd.get_command(ctx, {verb!r})",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize("verb", HELP_RESOLUTIONS)
+def test_resolving_a_command_for_help_never_loads_the_composition_root(verb):
+    entry = resolution_entry(verb)
+    report = run_contract(entry, ["otto.bootstrap"])
+    assert report == {"preloaded": [], "loaded": {}}, _explain(entry, report)
+
+
+def test_the_completion_fast_path_resolves_without_the_composition_root():
+    entry = resolution_entry("run", cached=True)
+    report = run_contract(entry, ["otto.bootstrap", "otto.cli.run"])
+    assert report["preloaded"] == [], report
+    assert sorted(report["loaded"]) == ["otto.cli.run"], _explain(entry, report)
+
+
 def declared_closure(module: str, graph: rmg.ModuleGraph, lazy: "list[str]") -> "list[str]":
     """*module* and every tach module it declares a dependency on, transitively.
 
@@ -386,21 +457,51 @@ def declared_closure(module: str, graph: rmg.ModuleGraph, lazy: "list[str]") -> 
 
 
 def undeclared_loads(
-    module: str, loaded: "list[str]", graph: rmg.ModuleGraph, lazy: "list[str]"
+    module: str,
+    loaded: "list[str]",
+    graph: rmg.ModuleGraph,
+    lazy: "list[str]",
+    ancestor_loads: "list[str] | None" = None,
 ) -> "list[str]":
     """The otto modules in *loaded* that importing *module* may not load.
 
     One is allowed when the tach module that owns it is *module* or one of its
-    declared dependencies loaded at import (not in *lazy*), or when it is a
-    package above an allowed one (a submodule's import loads its parents first).
+    declared dependencies loaded at import (not in *lazy*), when it is a
+    package above an allowed one (a submodule's import loads its parents first),
+    or when it is in *ancestor_loads*, what those parents import eagerly.
     """
     allowed = declared_closure(module, graph, lazy)
+    excused = set(ancestor_loads or [])
     return [
         name
         for name in loaded
-        if rmg.declared_owner(name, graph.modules) not in allowed
+        if name not in excused
+        and rmg.declared_owner(name, graph.modules) not in allowed
         and not any(a.startswith(name + ".") for a in allowed)
     ]
+
+
+def ancestor_eager_imports(module: str, src: "Path | None" = None) -> "list[str]":
+    """The modules the package ``__init__`` files above *module* import at module scope.
+
+    Only a top-level relative import counts: one under ``if TYPE_CHECKING:`` or
+    inside a function runs later, if ever.
+    """
+    root = PROJECT_ROOT / "src" if src is None else src
+    parts = module.split(".")
+    found: "list[str]" = []
+    for depth in range(1, len(parts)):
+        package = ".".join(parts[:depth])
+        init = root.joinpath(*parts[:depth], "__init__.py")
+        if not init.is_file():
+            continue
+        for node in ast.parse(init.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.ImportFrom) and node.level == 1:
+                if node.module:
+                    found.append(f"{package}.{node.module}")
+                else:
+                    found.extend(f"{package}.{alias.name}" for alias in node.names)
+    return sorted(set(found))
 
 
 def unloaded_eager_dependencies(
@@ -431,7 +532,9 @@ def test_an_entry_loads_only_its_declared_dependencies(module, lazy):
     report = run_contract(entry, otto_modules())
     assert report["preloaded"] == [], report
     assert module in report["loaded"], report
-    extra = undeclared_loads(module, sorted(report["loaded"]), graph, lazy)
+    extra = undeclared_loads(
+        module, sorted(report["loaded"]), graph, lazy, ancestor_eager_imports(module)
+    )
     assert not extra, _explain(
         entry, {"preloaded": [], "loaded": {name: report["loaded"][name] for name in extra}}
     )
@@ -450,6 +553,35 @@ def test_the_allowlist_admits_declared_dependencies_and_their_packages_only():
     loaded = ["otto", "otto.base", "otto.base.sub", "otto.low", "otto.pkg", "otto.up"]
     assert undeclared_loads("otto.low", loaded, graph, []) == ["otto.pkg", "otto.up"]
     assert undeclared_loads("otto.pkg.mid", loaded, graph, []) == ["otto.up"]
+
+
+def test_the_allowlist_admits_what_a_lazy_ancestor_imports_eagerly():
+    graph = rmg.ModuleGraph({"otto.pkg.leaf": []})
+    loaded = ["otto", "otto.other", "otto.pkg", "otto.pkg.env", "otto.pkg.leaf"]
+    assert undeclared_loads("otto.pkg.leaf", loaded, graph, []) == ["otto.other", "otto.pkg.env"]
+    assert undeclared_loads("otto.pkg.leaf", loaded, graph, [], ["otto.pkg.env"]) == ["otto.other"]
+
+
+def test_ancestor_eager_imports_reads_top_level_relative_imports_only(tmp_path):
+    pkg = tmp_path / "otto" / "pkg"
+    pkg.mkdir(parents=True)
+    (tmp_path / "otto" / "__init__.py").write_text("")
+    (pkg / "__init__.py").write_text(
+        "from typing import TYPE_CHECKING\n"
+        "from .env import X\n"
+        "from . import consts\n"
+        "if TYPE_CHECKING:\n"
+        "    from .heavy import Y\n"
+        "def f():\n"
+        "    from .lazy import Z\n"
+    )
+    assert ancestor_eager_imports("otto.pkg.leaf", tmp_path) == ["otto.pkg.consts", "otto.pkg.env"]
+
+
+def test_the_config_package_imports_only_its_env_module_eagerly():
+    """Pins spec 2026-10-11 placement-and-phases §4.3: importing a module carved
+    out of otto.config loads otto.config.env and nothing else of the package."""
+    assert ancestor_eager_imports("otto.config.scope") == ["otto.config.env"]
 
 
 def test_the_allowlist_holds_a_lazy_dependency_to_function_scope():

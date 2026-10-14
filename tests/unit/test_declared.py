@@ -3,6 +3,7 @@
 import contextlib
 import logging
 import re
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -475,9 +476,16 @@ def test_a_registry_without_a_class_factory_refuses_a_class_entry(kinds):
         kinds.build([entry], _host())
 
 
-# ── declared_for_host: repo collection + the §5 targeting gate ───────────────
+# ── declared_for_host: repo collection from the catalog + the §5 targeting gate
 
-from otto.declared import declared_for_host
+from otto.declared import (
+    clear_composed,
+    declared_for_host,
+    install_initiator,
+    publish_composed,
+    scope_for_repo,
+    surviving_repos,
+)
 
 
 def _repo(name="repo1", scope=None, products=(), dev_tools=()):
@@ -502,22 +510,21 @@ def _scope(labs, hosts=(".*",)):
 
 
 @pytest.fixture
-def repos_table(monkeypatch):
-    """Fake the bootstrap's repos — declared_for_host reads them via otto.bootstrap.get_repos.
+def repos_table():
+    """The repos a finished composition published; ``declared_for_host`` reads them there.
 
-    Also pins the non-forcing probe as "bootstrapped": declared_for_host checks
-    ``is_bootstrapped()`` before ever calling ``get_repos()``, so a fixture that
-    patched only the latter would have every test below silently collect
-    nothing — patching both keeps the simulated state honest.
+    One list is both ``repos`` and ``ordered_repos``, so every repo a test adds
+    survives the dependency pass. The root conftest withdraws the publication
+    after the test.
     """
-
     table: list = []
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: table)
-    # Every faked repo survives the dependency pass unless a test says
-    # otherwise — declared_for_host filters against the survivors' names.
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: table)
-    monkeypatch.setattr("otto.bootstrap.is_bootstrapped", lambda: True)
+    publish_composed(_composed(table, table), complete=True)
     return table
+
+
+def _composed(repos, ordered):
+    """A stand-in for a composition result: the two fields the catalog's readers take."""
+    return SimpleNamespace(repos=repos, ordered_repos=ordered)
 
 
 def test_declared_for_host_collects_only_targeting_repos(repos_table):
@@ -533,20 +540,19 @@ def test_declared_for_host_collects_only_targeting_repos(repos_table):
     assert declared_for_host(host, "declared_products") == [e1, e3]
 
 
-def test_declared_for_host_skips_dependency_skipped_repos(repos_table, monkeypatch):
+def test_declared_for_host_skips_dependency_skipped_repos():
     """A repo the dependency pass dropped contributes no entries (Chris,
     2026-09-02): its init never ran, so applying its declared half while its
     provider half stays silent would split the two seams' view of the repo.
-    Precedence among survivors stays get_repos() discovery order — the
-    surviving list here is deliberately REVERSED to prove the filter never
-    reorders."""
+    Precedence among survivors stays the published ``repos`` (discovery)
+    order — the surviving list here is deliberately REVERSED to prove the
+    filter never reorders."""
 
     e1, e2, e3 = _entry("a"), _entry("b"), _entry("c")
     r1 = _repo("first", products=[e1])
     r2 = _repo("dep-skipped", products=[e2])
     r3 = _repo("last", products=[e3])
-    repos_table.extend([r1, r2, r3])
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [r3, r1])
+    publish_composed(_composed([r1, r2, r3], [r3, r1]), complete=True)
     assert declared_for_host(_host(), "declared_products") == [e1, e3]
 
 
@@ -566,40 +572,216 @@ def test_declared_for_host_selects_the_named_seam(repos_table):
     assert declared_for_host(host, "declared_dev_tools") == [t]
 
 
-def test_declared_for_host_unreachable_config_yields_nothing(monkeypatch, caplog):
-    # Unlike scope_for_repo's admit-on-failure, "no config" here means the
-    # entries themselves do not exist — the empty answer IS the true answer.
-    # Bootstrapped is pinned True so this exercises get_repos() raising, not
-    # the non-forcing probe short-circuit (that path is a separate test).
-    import logging
+def test_declared_for_host_reads_the_result_a_running_composition_published():
+    """An init module that builds a host runs while its composition is still in progress.
 
-    def boom():
-        raise RuntimeError("no bootstrap")
+    The root publishes the in-progress result before the init modules run, and
+    its ``repos`` and ``ordered_repos`` are final by then: a reader that took
+    only the complete result would drop the entries of every host built in
+    that window while its providers still applied.
+    """
+    e = _entry("a")
+    clear_composed()
+    publish_composed(_composed([_repo(products=[e])], [_repo(products=[e])]), complete=False)
+    assert declared_for_host(_host(), "declared_products") == [e]
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", boom)
-    monkeypatch.setattr("otto.bootstrap.is_bootstrapped", lambda: True)
+
+def test_the_complete_result_replaces_the_in_progress_one():
+    early, final = _entry("early"), _entry("final")
+    clear_composed()
+    publish_composed(_composed([_repo(products=[early])], [_repo()]), complete=False)
+    publish_composed(_composed([_repo(products=[final])], [_repo()]), complete=True)
+    assert declared_for_host(_host(), "declared_products") == [final]
+    assert declared_mod._composition.in_progress is None
+
+
+def test_declared_for_host_with_nothing_published_yields_nothing(caplog):
+    # Unlike scope_for_repo's admit-on-failure, "nothing composed" here means the
+    # entries themselves do not exist yet: the empty answer IS the true answer.
+    clear_composed()
     with caplog.at_level(logging.DEBUG, logger="otto.declared"):
         assert declared_for_host(_host(), "declared_products") == []
-    assert "config unreachable" in caplog.text
+    assert "nothing composed yet" in caplog.text
 
 
-def test_declared_for_host_never_forces_bootstrap(monkeypatch):
-    """Entry collection must PROBE, never FORCE: an un-bootstrapped process
-    (bare-library, ``otto init``, a unit test constructing a host directly)
-    must not pay discovery's cost or run repo init imports just to ask what
-    entries exist yet — there are none until something else bootstraps.
+def test_declared_for_host_never_starts_composition(monkeypatch):
+    """Entry collection reads, never composes: an uncomposed process (bare
+    library, ``otto init``, a unit test constructing a host directly) must not
+    pay discovery's cost or run repo init imports just to ask what entries
+    exist yet — there are none until something else composes.
     """
-
     called: list[bool] = []
 
-    def boom():
+    def _initiator():
         called.append(True)
-        raise AssertionError("bootstrap forced")
+        raise AssertionError("composition started by declared_for_host")
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", boom)
-    monkeypatch.setattr("otto.bootstrap.is_bootstrapped", lambda: False)
+    clear_composed()
+    monkeypatch.setattr(declared_mod._composition, "initiator", _initiator)
     assert declared_for_host(_host(), "declared_products") == []
-    assert not called  # get_repos must never be reached when not bootstrapped
+    assert surviving_repos() == []
+    assert not called, "declared_for_host must never call the initiator"
+
+
+def test_clear_composed_withdraws_both_results_and_keeps_the_initiator(monkeypatch):
+    def _initiator():
+        raise AssertionError("not called here")
+
+    monkeypatch.setattr(declared_mod._composition, "initiator", _initiator)
+    publish_composed(_composed([_repo()], [_repo()]), complete=False)
+    publish_composed(_composed([_repo()], [_repo()]), complete=True)
+    clear_composed()
+    assert declared_mod._composition.result is None
+    assert declared_mod._composition.in_progress is None
+    assert declared_mod._composition.initiator is _initiator
+
+
+def test_install_initiator_fills_the_slot(monkeypatch):
+    def _initiator():
+        raise AssertionError("installing must not run it")
+
+    monkeypatch.setattr(declared_mod._composition, "initiator", None)
+    install_initiator(_initiator)
+    assert declared_mod._composition.initiator is _initiator
+
+
+# ── scope_for_repo: the NAME -> declaration hop the ingest gate needs ─────────
+#
+# Provider registrations carry the registering repo's name; repo_targets judges
+# a compiled config. The repos come from the catalog: the complete published
+# result, else the initiator's answer. Every "cannot answer" answers None,
+# which repo_targets reads as ADMITS, because the seam that asks runs in bare
+# library use and in every factory unit test, where there is no composition
+# to ask at all.
+
+
+def _initiating(monkeypatch, *results):
+    """Install an initiator that answers *results* in turn; return the list of its calls."""
+    calls: list[int] = []
+    answers = iter(results)
+
+    def _initiator():
+        calls.append(1)
+        answer = next(answers)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(declared_mod._composition, "initiator", _initiator)
+    return calls
+
+
+def test_scope_for_repo_returns_the_named_repos_declaration(monkeypatch):
+    wanted = _repo("sensors", scope=_scope(["bench"], hosts=["sensor-.*"]))
+    other = _repo("gateways", scope=_scope(["bench"], hosts=["gw-.*"]))
+    # `other` first, so a lookup that returned the FIRST declaration it saw
+    # rather than the matching one answers with the wrong repo's fleet.
+    publish_composed(_composed([other, wanted], [other, wanted]), complete=True)
+    _initiating(monkeypatch)  # an initiator that would fail if it were asked
+
+    assert scope_for_repo("sensors") is wanted.project_scope
+
+
+def test_scope_for_repo_asks_the_initiator_when_nothing_is_complete(monkeypatch):
+    """No complete result: the initiator composes (or, inside a running
+    composition, answers with the in-progress result) and its repos decide."""
+    wanted = _repo("sensors", scope=_scope(["bench"]))
+    clear_composed()
+    calls = _initiating(monkeypatch, _composed([wanted], [wanted]))
+
+    assert scope_for_repo("sensors") is wanted.project_scope
+    assert calls == [1]
+
+
+def test_scope_for_repo_reads_a_complete_result_before_the_initiator(monkeypatch):
+    wanted = _repo("sensors", scope=_scope(["bench"]))
+    publish_composed(_composed([wanted], [wanted]), complete=True)
+    calls = _initiating(monkeypatch, AssertionError("the initiator was asked"))
+
+    assert scope_for_repo("sensors") is wanted.project_scope
+    assert calls == []
+
+
+def test_scope_for_repo_admits_when_no_root_is_loaded(no_composition_root):
+    """Decision D2 (spec 2026-10-11 placement-and-phases §3.5): with no
+    initiator installed, ``otto.bootstrap`` was never imported, and the gate
+    admits rather than start composition from below."""
+    clear_composed()
+    assert declared_mod._composition.initiator is None
+    assert scope_for_repo("sensors") is None
+
+
+def test_scope_for_repo_admits_in_a_process_that_never_loaded_the_root():
+    """The cold path the in-process test can only imitate: a fresh interpreter
+    that imports ``otto.declared`` alone answers ``None`` and loads no root."""
+    import subprocess
+
+    probe = (
+        "import sys, otto.declared as d; "
+        "print(d.scope_for_repo('sensors') is None, 'otto.bootstrap' in sys.modules)"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.split() == ["True", "False"]
+
+
+def test_scope_for_repo_admits_an_owner_no_repo_claims(monkeypatch):
+    # An owner otto cannot place is NOT the unknown-owner refusal scoped_ids
+    # raises. There the caller named a repo to be bounded BY; here a provider
+    # arrived carrying a name this process cannot resolve (a stale marker, a
+    # repo bootstrap skipped), and refusing ingest over it would take a working
+    # lab offline. The gate is a narrowing, so its failure mode is to narrow
+    # nothing.
+    known = _repo("sensors", scope=_scope(["bench"], hosts=["sensor-.*"]))
+    publish_composed(_composed([known], [known]), complete=True)
+
+    assert scope_for_repo("ghost") is None
+
+
+def test_scope_for_repo_of_an_undeclared_repo_is_none():
+    # A known repo with no `[project]` block: None again, and for the same
+    # reason repo_targets reads None as everything — it scoped nothing out.
+    plain = _repo("toolsrepo", scope=None)
+    publish_composed(_composed([plain], [plain]), complete=True)
+
+    assert scope_for_repo("toolsrepo") is None
+
+
+def test_scope_for_repo_never_composes_for_an_unowned_registration(monkeypatch):
+    # Kills: looking the owner up before testing it for None. The initiator
+    # composes, so a needless call here would drag a full composition root
+    # into every library import that registers a provider outside a repo.
+    clear_composed()
+    calls = _initiating(monkeypatch, AssertionError("composed for an unowned registration"))
+
+    assert scope_for_repo(None) is None
+    assert calls == [], "a registration made outside any repo has nothing to look up"
+
+
+def test_scope_for_repo_admits_when_composition_fails(monkeypatch):
+    # The hostile condition is INJECTED, not inherited: an initiator that
+    # raises is what a broken repo or an unreadable environment looks like from
+    # here, and a lookup that let it propagate would turn every such use into
+    # an ingest crash.
+    clear_composed()
+    calls = _initiating(monkeypatch, RuntimeError("composition failed"))
+
+    assert scope_for_repo("sensors") is None
+    assert calls == [1]
+
+
+def test_scope_for_repo_admits_when_composition_answers_with_no_repos(monkeypatch):
+    # The quieter half of "cannot be reached": a composition that came back
+    # with nothing to iterate rather than one that blew up. Same verdict, and
+    # it must not become a TypeError on the way there — the lookup has to be
+    # TOTAL, or the carve-out it exists to provide is conditional on config's
+    # mood.
+    clear_composed()
+    _initiating(monkeypatch, _composed(None, None), _composed([], []))
+    assert scope_for_repo("sensors") is None
+    assert scope_for_repo("sensors") is None
 
 
 def test_repo_parse_settings_builds_declared_entries(tmp_path):

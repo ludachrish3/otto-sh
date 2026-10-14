@@ -1,11 +1,18 @@
-"""The one seam a unit test patches to hand otto its repos: the composition root.
+"""The seams a unit test uses to hand otto its repos: the composition root and its catalog.
 
 ``otto.bootstrap.get_repos`` and ``get_ordered_repos`` read ``bootstrap()`` at
 call time, and so does a context built without ``bootstrap=`` (on its first
 read of ``repos``, ``ordered_repos`` or its scope verdicts). Patching
-``bootstrap`` itself is therefore the one patch every reader sees, with one
-result's repos, walk order and errors. A test that builds its own context
-hands it ``bootstrap=fake_bootstrap_result(...)`` instead.
+``bootstrap`` itself is therefore the one patch every reader of the root
+sees, with one result's repos, walk order and errors. A test that builds its
+own context hands it ``bootstrap=fake_bootstrap_result(...)`` instead.
+
+Below the root, ``otto.declared`` reads the composed-repos catalog the root
+publishes. ``scope_for_repo`` takes the complete published result, else asks
+the initiator, which calls ``bootstrap()``, so a patched ``bootstrap`` reaches
+it. ``declared_for_host`` reads only what is published and never composes: a
+test that hands a lab load its declared entries publishes its repos with
+:func:`publish_repos`.
 """
 
 from collections.abc import Mapping
@@ -26,6 +33,55 @@ def fake_bootstrap_result(repos, *, ordered=None, errors=None) -> BootstrapResul
         errors=list(cast("list[BootstrapError]", errors or [])),
         ordered_repos=list(repos if ordered is None else ordered),
     )
+
+
+def publish_repos(repos, *, ordered=None) -> BootstrapResult:
+    """Publish a result holding *repos* in the catalog, as a finished composition would; return it.
+
+    *ordered* defaults to *repos* (nothing dependency-skipped). The root
+    conftest's ``_restore_composition_state`` withdraws it after the test.
+    """
+    from otto.declared import publish_composed
+
+    result = fake_bootstrap_result(repos, ordered=ordered)
+    publish_composed(result, complete=True)
+    return result
+
+
+def install_composed(monkeypatch, result: BootstrapResult) -> BootstrapResult:
+    """Make *result* the root's finished composition for this test, and return it.
+
+    Two writes, as a finished ``bootstrap()`` makes them: the root's own cache
+    (``otto.bootstrap._result``, which ``bootstrap()`` and ``is_bootstrapped``
+    read) and the catalog below it (``publish_composed``, which
+    ``declared_for_host`` reads). Setting the cache alone would leave the root
+    bootstrapped with nothing published, a state product code never reaches.
+    The monkeypatch undoes the cache; the root conftest's
+    ``_restore_composition_state`` withdraws the publication.
+    """
+    from otto import bootstrap as bs
+    from otto.declared import publish_composed
+
+    monkeypatch.setattr(bs, "_result", result)
+    publish_composed(result, complete=True)
+    return result
+
+
+def fail_composition(monkeypatch) -> None:
+    """For this test, publish nothing and make every attempt to compose raise.
+
+    The hostile condition a reader below the root meets when composition
+    cannot run: a broken repo or an unreadable environment, as the catalog
+    sees it.
+    """
+    from otto import declared
+
+    def _unavailable():
+        raise RuntimeError("composition failed in this process")
+
+    monkeypatch.setattr(declared._composition, "result", None)
+    monkeypatch.setattr(declared._composition, "in_progress", None)
+    monkeypatch.setattr(declared._composition, "initiator", _unavailable)
 
 
 def patch_bootstrap(monkeypatch, repos, *, ordered=None, errors=None) -> BootstrapResult:

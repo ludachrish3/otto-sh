@@ -17,21 +17,27 @@ split is what lets the D3 consequences be *stored* at context creation and
 *raised* only at project-layer entry (§5), so a scoping typo never bricks an
 explicit ``otto host <id> <verb>``.
 
-Layering: this module sits in ``otto.config`` so ``otto.config.fleet`` can
-import it without inverting tach's layers; it must never import from
-``otto.project``. Its runtime imports are ``dataclasses``, ``re`` and
-``otto.errors`` — the last is a zero-import leaf (tach declares the edge), so
-the module stays as import-light as "stdlib-only" was, while
-:class:`EmptySelectionError` can be defined where the selection happens. The
-pydantic spec the config is built from is a ``TYPE_CHECKING`` annotation, so
-importing the predicate never drags the settings models in, and
-``ProjectScopeError`` — shared with bootstrap's D2 refusal rather than
-duplicated — is imported inside the functions that raise it.
+Layering: a foundation module, so every layer may import it: the host
+layer's ingest gate needs :func:`repo_targets`, and :mod:`otto.declared`
+reads the declarations through it. It must never import upward. Its runtime
+imports are ``dataclasses``, ``re`` and ``otto.errors``, a zero-import leaf,
+plus ``otto.models.dependencies`` inside the functions that normalize a repo
+name. Importing it also runs ``otto.config``'s ``__init__`` on the way, which
+is lazy bar one eager import, :mod:`otto.config.env` (stdlib only at import),
+so that module loads too. The pydantic spec the config is built from is a
+``TYPE_CHECKING`` annotation, so importing the predicate never drags the
+settings models in.
+
+The composition root's error types live here too: :class:`BootstrapError`,
+its subclasses :class:`DependencyError` and :class:`ProjectScopeError`, and
+:class:`BootstrapWarning`. ``ProjectScopeError`` is shared by bootstrap's D2
+refusal and this module's scope checks, so it is defined where both can reach
+it; :mod:`otto.bootstrap` re-exports all four under their public names.
 """
 
 import dataclasses
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..errors import OttoError
 
@@ -40,6 +46,52 @@ if TYPE_CHECKING:
     from ..host.host import Host
     from ..models.settings import ProjectScopeSpec
     from .repo import Repo
+
+
+class BootstrapError(OttoError):
+    """One user file failed to load during bootstrap registration."""
+
+    def __init__(self, sut_dir: Any, source: str, cause: BaseException) -> None:
+        """Frame *cause* as ``repo <sut_dir>: failed to load <source>``."""
+        super().__init__(f"repo {sut_dir}: failed to load {source}: {cause!r}")
+        self.sut_dir = sut_dir
+        self.source = source
+        self.__cause__ = cause
+
+
+class DependencyError(BootstrapError):
+    """A repo's declared dependencies cannot be satisfied (or a dependency was skipped)."""
+
+    def __init__(self, sut_dir: Any, message: str) -> None:
+        """Frame *message* as ``repo <sut_dir>: <message>``."""
+        Exception.__init__(self, f"repo {sut_dir}: {message}")
+        self.sut_dir = sut_dir
+        self.source = "dependencies"
+
+
+class ProjectScopeError(BootstrapError):
+    """A repo registered providers without declaring the labs it applies to (D2).
+
+    Unlike its siblings this one is NOT contained: a repo whose providers can
+    never reach a host is a configuration mistake with no degraded mode worth
+    offering, and the whole point of the check is that it is impossible to
+    ignore. *message* is used verbatim — it already opens with the repo's name,
+    so the ``repo <sut_dir>:`` prefix its siblings add would say it twice.
+    """
+
+    def __init__(self, sut_dir: Any, message: str) -> None:
+        """Carry *message* unframed; keep *sut_dir* on the exception for callers."""
+        Exception.__init__(self, message)
+        self.sut_dir = sut_dir
+        self.source = "project_scope"
+
+
+@dataclasses.dataclass(frozen=True)
+class BootstrapWarning:
+    """A non-fatal dependency finding: rendered at startup, never gates dispatch."""
+
+    sut_dir: Any
+    message: str
 
 
 class EmptySelectionError(OttoError, ValueError):
@@ -54,8 +106,8 @@ class EmptySelectionError(OttoError, ValueError):
     other to the flag. A caller that wants to tell them apart reads the
     instance's ``excluded_by``.
 
-    Rooted here rather than beside :class:`~otto.bootstrap.ProjectScopeError`,
-    and the difference is what each one is ABOUT. ``ProjectScopeError`` is a
+    A sibling of :class:`ProjectScopeError` rather than a subclass, and the
+    difference is what each one is ABOUT. ``ProjectScopeError`` is a
     ``BootstrapError``: a repo's ``[project]`` declaration cannot work, the
     fix is an edit to a ``settings.toml``, and it carries a ``sut_dir`` to
     name the file. This one is a bad *selection at the call* — a ``--hosts``
@@ -230,56 +282,6 @@ def _lab_applies(scope: "ProjectScopeConfig | None", lab_name: str) -> bool:
     if scope is None:
         return True
     return any(p.fullmatch(lab_name) for p in scope.lab_patterns)
-
-
-def scope_for_repo(owner: "str | None") -> "ProjectScopeConfig | None":
-    """Look up the compiled ``[project]`` declaration of the repo named *owner*.
-
-    The NAME-to-declaration hop the ingest gate needs. A provider registration
-    carries the registering repo's name
-    (:func:`otto.registry.get_registering_repo`), while :func:`repo_targets`
-    judges a compiled :class:`ProjectScopeConfig`; the repos that hold both are
-    reachable only through :func:`otto.bootstrap.get_repos`, which bootstraps
-    lazily. That import is function-scope on purpose: this module sits low in
-    the layering, and ``otto.bootstrap`` imports ``otto.config``.
-
-    EVERY "cannot answer" answers ``None``, which :func:`repo_targets` reads as
-    *admits everything*, and that direction is deliberate. This lookup is
-    consulted from the host factory, which runs in bare library use, in
-    ``otto init`` scaffolding and in several hundred unit tests — none of which
-    have a bootstrap to ask. Raising or refusing there would turn "otto could
-    not find its config" into "your host has no products", which is the same
-    silent-wrong-answer this scoping exists to prevent, only pointed the other
-    way. A gate is a NARROWING; when it cannot compute one, it narrows nothing.
-
-    An owner no repo claims is admitted for the same reason, and is NOT the
-    unknown-owner refusal :func:`scoped_ids` raises: there a caller asked to be
-    bounded BY a repo and getting the whole lab instead would be a widening,
-    while here a provider arrived carrying a name this process cannot resolve
-    (a repo bootstrap skipped, a marker from another run) and refusing it would
-    take a working lab offline.
-
-    Args:
-        owner: ``Repo.name`` of the repo being asked about, or ``None`` for a
-            registration made outside any repo's init import.
-
-    Returns:
-        That repo's compiled declaration, or ``None`` when the owner is
-        ``None``, names no known repo, names a repo with no ``[project]``
-        table, or the repos cannot be reached at all.
-    """
-    if owner is None:
-        return None
-    try:
-        from ..bootstrap import get_repos  # function-scope: otto.bootstrap imports otto.config
-
-        repos = get_repos()
-    except Exception:  # noqa: BLE001 — see above: ANY failure to reach the repos admits, deliberately
-        return None
-    for repo in repos or ():
-        if repo.name == owner:
-            return repo.project_scope
-    return None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -692,13 +694,11 @@ def require_current_scope(scopes: "dict[str, ProjectScope]", current_repo_name: 
         None — always, when there is nothing to refuse.
 
     Raises:
-        otto.bootstrap.ProjectScopeError: The same class bootstrap's D2 check
+        ProjectScopeError: The same class bootstrap's D2 check
             raises; the taxonomy has one "this repo's scope declaration cannot
             work" error, not one per site. Message names the repo, what was
             loaded, what was declared, and the file to edit.
     """
-    from ..bootstrap import ProjectScopeError  # function-scope: keeps this module import-light
-
     scope = scopes.get(current_repo_name)
     # The condition is :func:`unusable_scope`'s, never a copy of it — the
     # orchestrator's dependency skip reads the same predicate, and D3's
@@ -775,7 +775,7 @@ def scoped_ids(
         The admissible ids, as a set.
 
     Raises:
-        otto.bootstrap.ProjectScopeError: *owner* names a repo that is not in
+        ProjectScopeError: *owner* names a repo that is not in
             *scopes*, while *scopes* holds verdicts. Silently falling back to
             the whole lab there would turn a caller's typo — or a repo this
             run never parsed — into exactly the quiet WIDENING this
@@ -816,8 +816,6 @@ def scoped_ids(
         # whether or not anything declared: the caller asked to be bounded by a
         # repo that does not exist, and answering "the whole lab" to that is
         # the widening, not a degraded mode.
-        from ..bootstrap import ProjectScopeError  # function-scope: keeps this module import-light
-
         raise ProjectScopeError(
             "",  # no repo, so no settings.toml to send the reader to
             _UNKNOWN_OWNER.format(owner=owner, known=", ".join(sorted(scopes)) or "(none)"),
@@ -927,13 +925,11 @@ def require_nonempty_fleet(
         None — always, when there is nothing to refuse.
 
     Raises:
-        otto.bootstrap.ProjectScopeError: The base set is empty and at least
+        ProjectScopeError: The base set is empty and at least
             one repo declared ``[project]``. Same class as D3's per-repo
             aborts: the taxonomy has one "a scope declaration cannot work"
             error, and this is that condition read at a fleet surface.
     """
-    from ..bootstrap import ProjectScopeError  # function-scope: keeps this module import-light
-
     if admissible:
         return
     declared = [scope for scope in scopes.values() if scope.declared]

@@ -24,6 +24,7 @@ from otto.host.product import Product, ShellProduct, register_product_provider
 from otto.registry import registering_repo
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import publish_repos
 from tests._fixtures.fake_repo import fake_repo
 
 ROOT1 = Path("/work/repo1")
@@ -122,14 +123,11 @@ def _host(hid, *, lab="labA", default_dest_dir=None, **attrs):
 
 
 @pytest.fixture
-def ingest(monkeypatch):
+def ingest():
     """Return a function that ingests *hosts* against *repos* the way a lab load does."""
 
     def go(repos, hosts):
-
-        monkeypatch.setattr("otto.bootstrap.is_bootstrapped", lambda: True)
-        monkeypatch.setattr("otto.bootstrap.get_repos", lambda: list(repos))
-        monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: list(repos))
+        publish_repos(repos)
         for host in hosts:
             apply_providers(host)
         return SimpleNamespace(name="labA", hosts={h.id: h for h in hosts})

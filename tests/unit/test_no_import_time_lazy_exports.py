@@ -18,7 +18,17 @@ both spellings at module level, for two sets of names:
   ``otto.logger``, and of the ``_LAZY_ATTRS`` table of ``otto.lab``, that is a
   function once the table chain is followed to its defining module;
 - ``PROCESS_WIDE_GETTERS``: getters no lazy table exports, because their
-  defining module is their public home (``otto.bootstrap``'s accessors).
+  defining module is their public home (``otto.bootstrap``'s accessors), or
+  because their public home re-exports them (``get_completion_names``, defined
+  in ``otto.registry``).
+
+A module that binds a guarded name only to re-export it — the name is in its
+``__all__`` literal and the module never reads it — is not a caller: there is
+no call of its own for a patch to miss, and ``tests/unit/test_patch_targets.py``
+refuses a patch of the re-export itself. It is a public path to the name,
+though: a module-level ``from otto.bootstrap import get_completion_names``
+binds the owner's getter as surely as importing it from ``otto.registry``, so
+each such re-export is guarded too (:func:`with_reexports`).
 
 The tables are re-derived from source so this test imports no otto module;
 ``tests/_fixtures/_lazy_exports.py`` does the same derivation at run time, by
@@ -43,6 +53,7 @@ exported names".
 import ast
 import functools
 from pathlib import Path
+from typing import NamedTuple
 
 from tests._fixtures.paths import PROJECT_ROOT
 
@@ -69,9 +80,9 @@ PROCESS_WIDE_GETTERS: dict[str, frozenset[str]] = {
             "get_ordered_repos",
             "get_env",
             "is_bootstrapped",
-            "get_completion_names",
         }
     ),
+    "otto.registry": frozenset({"get_completion_names"}),
     "otto.invocation": frozenset({"current_policy", "installed_policy", "installed_resolver"}),
 }
 
@@ -161,7 +172,12 @@ def guarded_names() -> dict[str, frozenset[str]]:
         not_functions = sorted(name for name in names if not _is_function(module, name))
         assert not not_functions, f"PROCESS_WIDE_GETTERS: {module} defines no {not_functions}"
         guarded.setdefault(module, set()).update(names)
-    return {module: frozenset(names) for module, names in guarded.items()}
+    sources = {
+        _module_of(path): path.read_text(encoding="utf-8")
+        for path in sorted(SRC_ROOT.rglob("*.py"))
+        if path.name != "__init__.py"
+    }
+    return with_reexports({module: frozenset(names) for module, names in guarded.items()}, sources)
 
 
 def _absolute(module: str, node: ast.ImportFrom) -> str:
@@ -180,13 +196,96 @@ def _is_type_checking(test: ast.expr) -> bool:
     )
 
 
-class _ImportTimeBindings(ast.NodeVisitor):
-    """Collect ``(line, source module, name)`` for each guarded name bound at import."""
+class Binding(NamedTuple):
+    """A guarded name a module binds at import."""
 
-    def __init__(self, module: str, guarded: dict[str, frozenset[str]]) -> None:
+    line: int
+    module: str
+    """The module the name is imported from."""
+    name: str
+    """The name as that module defines it."""
+
+
+def _reexported_only(tree: ast.Module) -> set[str]:
+    """The names *tree* lists in its ``__all__`` literal and never reads itself."""
+    exported: set[str] = set()
+    for node in tree.body:
+        target = node.target if isinstance(node, ast.AnnAssign) else None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+        if isinstance(target, ast.Name) and target.id == "__all__" and node.value is not None:
+            exported = set(ast.literal_eval(node.value))
+    read = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    return exported - read
+
+
+def _module_scope_imports(body: list[ast.stmt]) -> list[ast.ImportFrom]:
+    """Each ``from ... import`` in *body* that runs at import.
+
+    Walks module-level compound statements (``if``, ``try`` and its handlers,
+    ``with``, loops, ``match``) recursively, but never a ``def`` or ``class``
+    body, whose bindings are not the module's, nor an ``if TYPE_CHECKING:``
+    body, which binds nothing at runtime.
+    """
+    found: list[ast.ImportFrom] = []
+    for node in body:
+        if isinstance(node, ast.ImportFrom):
+            found.append(node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        elif isinstance(node, ast.If) and _is_type_checking(node.test):
+            found.extend(_module_scope_imports(node.orelse))
+        else:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.ExceptHandler, ast.match_case)):
+                    found.extend(_module_scope_imports(child.body))
+            for field in ("body", "orelse", "finalbody"):
+                block = getattr(node, field, None)
+                if isinstance(block, list):
+                    found.extend(_module_scope_imports(block))
+    return found
+
+
+def with_reexports(
+    guarded: dict[str, frozenset[str]], sources: dict[str, str]
+) -> dict[str, frozenset[str]]:
+    """*guarded* plus each guarded name a module re-exports, under the name it exports.
+
+    *sources* maps a module to its source. A module-scope import of a guarded
+    name that the module only re-exports (:func:`_reexported_only`) makes that
+    module a public path to it, so importing the name from there at import time
+    is a binding too. Followed until nothing new appears, so a re-export of a
+    re-export counts. Package ``__init__`` files are left out by the caller:
+    they are lazy and import nothing at module scope.
+    """
+    result = {module: set(names) for module, names in guarded.items()}
+    trees = {module: ast.parse(source) for module, source in sources.items()}
+    reexported = {module: _reexported_only(tree) for module, tree in trees.items()}
+    changed = True
+    while changed:
+        changed = False
+        for module, tree in trees.items():
+            for node in _module_scope_imports(tree.body):
+                names = result.get(_absolute(module, node), set())
+                for alias in node.names:
+                    bound = alias.asname or alias.name
+                    known = result.get(module, set())
+                    if alias.name in names and bound in reexported[module] and bound not in known:
+                        result.setdefault(module, set()).add(bound)
+                        changed = True
+    return {module: frozenset(names) for module, names in result.items()}
+
+
+class _ImportTimeBindings(ast.NodeVisitor):
+    """Collect a :class:`Binding` for each guarded name bound at import."""
+
+    def __init__(
+        self, module: str, guarded: dict[str, frozenset[str]], reexported: set[str]
+    ) -> None:
         self.module = module
         self.guarded = guarded
-        self.found: list[tuple[int, str, str]] = []
+        self.reexported = reexported
+        self.found: list[Binding] = []
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """A function body runs at call time: nothing in it is checked."""
@@ -207,15 +306,23 @@ class _ImportTimeBindings(ast.NodeVisitor):
         if source == self.module.removesuffix(".__init__"):
             return
         names = self.guarded.get(source, frozenset())
-        self.found.extend((node.lineno, source, a.name) for a in node.names if a.name in names)
+        self.found.extend(
+            Binding(node.lineno, source, a.name)
+            for a in node.names
+            if a.name in names and (a.asname or a.name) not in self.reexported
+        )
 
 
 def import_time_bindings(
     source: str, module: str, guarded: dict[str, frozenset[str]]
-) -> list[tuple[int, str, str]]:
-    """``(line, source module, name)`` for each guarded name *source* binds at import."""
-    visitor = _ImportTimeBindings(module, guarded)
-    visitor.visit(ast.parse(source))
+) -> list[Binding]:
+    """A :class:`Binding` for each guarded name *source* binds at import to call it.
+
+    A name the module only re-exports (:func:`_reexported_only`) is skipped.
+    """
+    tree = ast.parse(source)
+    visitor = _ImportTimeBindings(module, guarded, _reexported_only(tree))
+    visitor.visit(tree)
     return visitor.found
 
 
@@ -234,8 +341,9 @@ def test_the_scan_knows_the_names_it_guards():
         "get_ordered_repos",
         "get_env",
         "is_bootstrapped",
-        "get_completion_names",
     } <= guarded["otto.bootstrap"]
+    assert "get_completion_names" in guarded["otto.registry"]
+    assert "get_completion_names" in guarded["otto.bootstrap"]  # its public re-export
     assert {"get_lab", "do_for_all_hosts"} <= guarded["otto.config.fleet"]
     assert {"get_lab", "do_for_all_hosts", "fleet_of_interest"} <= guarded["otto.lab"]
     assert {"Lab", "EmptySelectionError"}.isdisjoint(guarded["otto.lab"])  # classes
@@ -276,6 +384,93 @@ def test_the_scan_flags_only_bindings_made_at_import_time():
         (10, "otto.config", "load_user_settings"),
         (18, "otto.config", "load_user_settings"),
     ]
+
+
+def test_a_name_the_module_only_re_exports_is_not_a_binding():
+    """A re-export has no call of its own; a re-export the module also reads does."""
+    guarded = {"otto.registry": frozenset({"get_completion_names"})}
+    reexport = '__all__ = ["get_completion_names"]\nfrom .registry import get_completion_names\n'
+    assert import_time_bindings(reexport, "otto.bootstrap", guarded) == []
+    reads_it = reexport + "def f():\n    return get_completion_names()\n"
+    assert import_time_bindings(reads_it, "otto.bootstrap", guarded) == [
+        (2, "otto.registry", "get_completion_names")
+    ]
+    unlisted = "__all__ = []\nfrom .registry import get_completion_names\n"
+    assert import_time_bindings(unlisted, "otto.bootstrap", guarded) == [
+        (2, "otto.registry", "get_completion_names")
+    ]
+    aliased = '__all__ = ["names"]\nfrom .registry import get_completion_names as names\n'
+    assert import_time_bindings(aliased, "otto.bootstrap", guarded) == []
+
+
+def test_a_module_level_import_of_a_guarded_re_export_is_a_binding():
+    """``from otto.bootstrap import get_completion_names`` binds the owner's getter all the same."""
+    guarded = {"otto.registry": frozenset({"get_completion_names"})}
+    root = '__all__ = ["get_completion_names"]\nfrom .registry import get_completion_names\n'
+    aliased = with_reexports(guarded, {"otto.bootstrap": root})
+    assert aliased["otto.bootstrap"] == frozenset({"get_completion_names"})
+    caller = (
+        "from otto.bootstrap import get_completion_names\n"
+        "from ..bootstrap import get_completion_names as names\n"
+        "def f():\n"
+        "    return get_completion_names(), names()\n"
+    )
+    assert import_time_bindings(caller, "otto.cli.main", aliased) == [
+        (1, "otto.bootstrap", "get_completion_names"),
+        (2, "otto.bootstrap", "get_completion_names"),
+    ]
+    # The re-exporting module itself still passes: it has no call of its own.
+    assert import_time_bindings(root, "otto.bootstrap", aliased) == []
+    # A module that imports the name and reads it is a caller, not a public path.
+    reads_it = root + "def f():\n    return get_completion_names()\n"
+    assert "otto.bootstrap" not in with_reexports(guarded, {"otto.bootstrap": reads_it})
+
+
+class TestAReExportUnderAModuleLevelStatement:
+    """A re-export made inside a module-level ``if``/``try`` body runs at import all the same."""
+
+    def bindings(self, root: str) -> list[Binding]:
+        guarded = {"otto.registry": frozenset({"get_completion_names"})}
+        aliased = with_reexports(guarded, {"otto.bootstrap": root})
+        caller = "from otto.bootstrap import get_completion_names\n"
+        return import_time_bindings(caller, "otto.cli.main", aliased)
+
+    def test_an_if_body(self):
+        root = (
+            '__all__ = ["get_completion_names"]\n'
+            "if True:\n"
+            "    from .registry import get_completion_names\n"
+        )
+        assert self.bindings(root) == [(1, "otto.bootstrap", "get_completion_names")]
+
+    def test_a_try_body(self):
+        root = (
+            '__all__ = ["get_completion_names"]\n'
+            "try:\n"
+            "    pass\n"
+            "except ImportError:\n"
+            "    pass\n"
+            "else:\n"
+            "    with open(__file__):\n"
+            "        from .registry import get_completion_names\n"
+        )
+        assert self.bindings(root) == [(1, "otto.bootstrap", "get_completion_names")]
+
+    def test_a_function_or_class_body_stays_clean(self):
+        for body in ("def f():\n", "class C:\n"):
+            root = (
+                f'__all__ = ["get_completion_names"]\n{body}'
+                "    from .registry import get_completion_names\n"
+            )
+            assert self.bindings(root) == [], body
+
+    def test_a_type_checking_body_stays_clean(self):
+        root = (
+            '__all__ = ["get_completion_names"]\n'
+            "if TYPE_CHECKING:\n"
+            "    from .registry import get_completion_names\n"
+        )
+        assert self.bindings(root) == []
 
 
 def test_no_otto_module_binds_a_lazily_exported_function_at_import_time():

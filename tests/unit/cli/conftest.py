@@ -196,9 +196,15 @@ def _with_repos(real_bootstrap, repo):
 
     Both ``repos`` and ``ordered_repos``: the context's readers take either,
     and a walk over the real result's order would reach repos this fixture
-    never declared.
+    never declared. The result is published to the composed-repos catalog
+    too, over the real one, so the readers below the root (the declared
+    entries a lab load applies) see the same one repo.
     """
-    return dataclasses.replace(real_bootstrap(), repos=[repo], ordered_repos=[repo])
+    from otto.declared import publish_composed
+
+    result = dataclasses.replace(real_bootstrap(), repos=[repo], ordered_repos=[repo])
+    publish_composed(result, complete=True)
+    return result
 
 
 @pytest.fixture

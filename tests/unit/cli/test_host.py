@@ -980,7 +980,7 @@ class TestHostIdCompleter:
             "hosts": ["router1", "router2", "switch7"],
         }
         with (
-            patch("otto.bootstrap.get_completion_names", return_value=fake_cache),
+            patch("otto.registry.get_completion_names", return_value=fake_cache),
             patch(
                 "otto.bootstrap.get_repos",
                 return_value=[_fake_repo(tmp_path / "does-not-exist")],
@@ -1005,7 +1005,7 @@ class TestHostIdCompleter:
             ],
         )
         with (
-            patch("otto.bootstrap.get_completion_names", return_value=None),
+            patch("otto.registry.get_completion_names", return_value=None),
             patch("otto.bootstrap.get_repos", return_value=[_fake_repo(lab)]),
         ):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
@@ -1065,7 +1065,7 @@ class TestHostIdCompleterLabFilter:
             ],
         )
         with (
-            patch("otto.bootstrap.get_completion_names", return_value=None),
+            patch("otto.registry.get_completion_names", return_value=None),
             patch("otto.bootstrap.get_repos", return_value=[_fake_repo(lab)]),
         ):
             result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="")
@@ -1082,7 +1082,7 @@ class TestHostIdCompleterLabFilter:
             },
         }
         with (
-            patch("otto.bootstrap.get_completion_names", return_value=fake_cache),
+            patch("otto.registry.get_completion_names", return_value=fake_cache),
             patch(
                 "otto.bootstrap.get_repos",
                 return_value=[_fake_repo(tmp_path / "does-not-exist")],
@@ -1098,7 +1098,7 @@ class TestHostIdCompleterLabFilter:
             "hosts": ["test1", "alt2"],
             "hosts_by_lab": {"unix": ["test1"], "unix_alt": ["alt2"]},
         }
-        with patch("otto.bootstrap.get_completion_names", return_value=fake_cache):
+        with patch("otto.registry.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="")
         assert result == ["local", "test1"]
 
@@ -1108,7 +1108,7 @@ class TestHostIdCompleterLabFilter:
             "hosts": ["test1"],
             "hosts_by_lab": {"unix": ["test1"]},
         }
-        with patch("otto.bootstrap.get_completion_names", return_value=fake_cache):
+        with patch("otto.registry.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(["ghosts"]), incomplete="")
         assert result == ["local"]
 
@@ -1118,7 +1118,7 @@ class TestHostIdCompleterLabFilter:
             "hosts": ["test1", "alt2", "alt3"],
             "hosts_by_lab": {"unix": ["test1"]},
         }
-        with patch("otto.bootstrap.get_completion_names", return_value=fake_cache):
+        with patch("otto.registry.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(None), incomplete="")
         assert result == ["alt2", "alt3", "test1"]
 
@@ -1127,7 +1127,7 @@ class TestHostIdCompleterLabFilter:
             "hosts": ["test1", "cabbage-seed", "alt2"],
             "hosts_by_lab": {"unix": ["test1", "cabbage-seed"]},
         }
-        with patch("otto.bootstrap.get_completion_names", return_value=fake_cache):
+        with patch("otto.registry.get_completion_names", return_value=fake_cache):
             result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="test")
         assert result == ["test1"]
 

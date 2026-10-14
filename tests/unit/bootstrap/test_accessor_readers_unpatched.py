@@ -1,10 +1,13 @@
 """The six readers that swallow a failed accessor, run against a real bootstrap.
 
-Five readers import an ``otto.bootstrap`` accessor inside a broad ``except``
+Three readers import an ``otto.bootstrap`` accessor inside a broad ``except``
 (spec ``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md``
 §2.1). An import that names a home the accessor no longer has raises
 ``ImportError``, the ``except`` swallows it, and the reader quietly answers
-its "nothing to read" default. The sixth,
+its "nothing to read" default. Two more, ``scope_for_repo`` and the declared
+entries, read the composed-repos catalog ``otto.bootstrap`` publishes into
+``otto.declared`` (spec 2026-10-11 placement-and-phases §3.5): a root that
+stopped publishing leaves them the same quiet default. The sixth,
 ``otto.bootstrap.discovered_teardown_deadline``, swallows a failed discovery
 and answers ``None``, so the run keeps its 10-second default. Nothing here
 patches an accessor: each test writes a real SUT repo, points
@@ -44,12 +47,23 @@ def _rig():
 
 
 def test_scope_for_repo_reads_the_real_repos(declaring_repo):
-    from otto.config.scope import scope_for_repo
+    from otto.declared import scope_for_repo
 
     bs.bootstrap()
     scope = scope_for_repo("scoped")
     assert scope is not None, "scope_for_repo admitted everything: its accessor import failed"
     assert [p.pattern for p in scope.lab_patterns] == ["rig"]
+
+
+def test_scope_for_repo_composes_through_the_initiator(declaring_repo):
+    """Nothing composed yet: the initiator ``otto.bootstrap`` installed composes, then answers."""
+    from otto.declared import scope_for_repo
+
+    assert not bs.is_bootstrapped()
+    scope = scope_for_repo("scoped")
+    assert scope is not None, "scope_for_repo admitted everything: the initiator never composed"
+    assert [p.pattern for p in scope.lab_patterns] == ["rig"]
+    assert bs.is_bootstrapped()
 
 
 def test_the_teardown_deadline_reads_the_real_environment(declaring_repo, monkeypatch):

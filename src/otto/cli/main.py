@@ -145,8 +145,9 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # 
     built in the completion fast path); falls back to a live best-effort
     collection on a cache miss. Empty when the backend can't enumerate users.
     """
-    from ..bootstrap import get_completion_names, get_repos
+    from ..bootstrap import get_repos
     from ..config.completion_cache import collect_reservation_usernames
+    from ..registry import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("usernames"), list):
@@ -165,9 +166,10 @@ def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa:
     code). ``--lab`` combines labs with ``+``, so only the in-progress segment
     is completed and already-named labs are dropped.
     """
-    from ..bootstrap import get_completion_names, get_repos
+    from ..bootstrap import get_repos
     from ..config.completion_cache import collect_lab_names
     from ..config.lab import LAB_SEPARATOR
+    from ..registry import get_completion_names
     from ..utils import complete_separated_list
 
     cached = get_completion_names()
@@ -391,7 +393,7 @@ class _OttoGroup(TyperGroup):
         """Return (importing + caching once) the real resolved command for *spec*."""
         _, cache = self._caches()
         if spec.name not in cache:
-            from ..bootstrap import get_completion_names
+            from ..registry import get_completion_names
             from .registry import resolve_spec_command
 
             loader = spec.loader
@@ -417,7 +419,7 @@ class _OttoGroup(TyperGroup):
 
     @override
     def list_commands(self, ctx: Any) -> list[str]:
-        from ..bootstrap import get_completion_names
+        from ..registry import get_completion_names
         from .registry import CLI_COMMANDS
 
         static = [n for n in super().list_commands(ctx) if n not in CLI_COMMANDS]
@@ -457,7 +459,7 @@ class _OttoGroup(TyperGroup):
         are never dispatched and dispatch resolves through CLI_COMMANDS on the
         slow path.
         """
-        from ..bootstrap import get_completion_names
+        from ..registry import get_completion_names
         from .registry import CommandSpec
 
         cached = {
@@ -1079,6 +1081,7 @@ def entry(cache_stale: bool = False) -> None:
         is_completion_mode,
         spawn_requested_refresh,
     )
+    from ..registry import get_completion_names, set_completion_names
 
     if os.environ.get(DUMP_TESTS_ENV_VAR):
         # The collect child, spawned by a test-name completer: it seeds or
@@ -1123,7 +1126,7 @@ def entry(cache_stale: bool = False) -> None:
         # `commands` list would traceback into the shell rather than fall
         # through to the slow path.
         with contextlib.suppress(Exception):
-            bs.set_completion_names(_cached_names_payload(bs.discover().repos))
+            set_completion_names(_cached_names_payload(bs.discover().repos))
     elif not completion and sys.argv[1:] in ROOT_HELP_ARGV:
         # Root help: the same names, the same reader, contained the same way —
         # a broken cache must cost a full load, not a traceback in front of
@@ -1131,9 +1134,9 @@ def entry(cache_stale: bool = False) -> None:
         # tail (`sys.argv[1:] == []`) coincides with a root-help tail, but a
         # bash TAB is never the root help screen.
         with contextlib.suppress(Exception):
-            bs.set_completion_names(_cached_names_payload(bs.discover().repos))
+            set_completion_names(_cached_names_payload(bs.discover().repos))
 
-    if bs.get_completion_names() is None:
+    if get_completion_names() is None:
         try:
             result = bs.bootstrap()
         except (FileNotFoundError, ValueError, bs.BootstrapError) as e:

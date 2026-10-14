@@ -661,8 +661,18 @@ package's `__init__` names the defining module; a name declared through another
 lazy package (`otto.app` → `otto.cli.app`) is defined one hop further
 (`otto.cli.main.app`). The repo accessors are not lazy: `otto.bootstrap`
 defines them, so `otto.bootstrap.get_repos` is both their import path and their
-patch target. `tests/unit/test_patch_targets.py` parses every test tree,
-integration and e2e included, and names the module to patch instead; the root
+patch target. An EAGER re-export is a different binding too: `otto.bootstrap`
+binds the error types `otto.config.scope` defines, so a test that needs to
+replace `ProjectScopeError` patches `otto.config.scope.ProjectScopeError`.
+Every other module that raises or catches it imports it from there when
+called, so that patch reaches every raise and `except` in otto except
+`otto.bootstrap`'s own: its providing-repo scope check raises through the
+binding it took at import. Do not replace the class to test that check; it
+raises the owner's object, so
+`pytest.raises(otto.config.scope.ProjectScopeError)` catches it.
+`tests/unit/test_patch_targets.py` parses every test tree,
+integration and e2e included, and names the module to patch instead (its
+second scan finds the eager re-exports by identity); the root
 conftest's teardown hook (`tests/_fixtures/_lazy_exports.py`) catches a leak at
 run time, fails the leaking test by name and evicts the cached object. Names
 from a `_LAZY_ATTRS` package that a consumer binds at module level
@@ -670,8 +680,9 @@ from a `_LAZY_ATTRS` package that a consumer binds at module level
 leaks nothing.
 
 **Source reads process-wide getters at call time.** The process-wide getters —
-`otto.bootstrap`'s `bootstrap`, `get_repos`, `get_ordered_repos`, `get_env`,
-`is_bootstrapped` and `get_completion_names`, and the function entries of the
+`otto.bootstrap`'s `bootstrap`, `get_repos`, `get_ordered_repos`, `get_env`
+and `is_bootstrapped`, `otto.registry`'s `get_completion_names` (which
+`otto.bootstrap` re-exports), and the function entries of the
 `otto`, `otto.config`, `otto.logger` and `otto.lab` lazy tables (`get_lab`,
 `all_hosts`, `do_for_all_hosts`, `get_context`, `try_get_context`, ... and the
 registrars, such as `register_options` and `register_cli_command`) — are
@@ -683,7 +694,11 @@ run the real bootstrap without anyone noticing. Classes (`Repo`, `OttoContext`)
 are free to import at module level: binding one defeats no patch.
 `tests/unit/test_no_import_time_lazy_exports.py` flags a module-level binding
 by any spelling; its `ALLOWED` table lists the sites that cannot move (a
-decorator applied at import), each with its reason.
+decorator applied at import), each with its reason. A module that binds a
+getter only to re-export it, listed in its `__all__` and never read by the
+module itself, is not a caller and passes; a module-level import of that
+re-export (`from otto.bootstrap import get_completion_names`) is flagged like
+an import from the getter's owner.
 
 **A moved name has one spelling.** When a public name moves home, its old home
 is refused in every spelling — import, attribute, patch-target string,

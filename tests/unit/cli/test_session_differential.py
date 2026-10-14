@@ -109,6 +109,7 @@ from typer.testing import CliRunner
 
 from otto import bootstrap as bs
 from otto.config.repo import TOML_SETTINGS_PATH, Repo
+from otto.declared import publish_composed
 from tests._fixtures.labdata import lab_data_dir, write_lab_json
 from tests._fixtures.rootoptions import make_root_options
 from tests._fixtures.sutrepo import make_sut_repo
@@ -140,7 +141,12 @@ def _hermetic_env(tmp_path, monkeypatch):
 
 
 def _install(monkeypatch, repos: "list[Any]", errors: "list[bs.BootstrapError] | None" = None):
-    """Make *repos* and *errors* what ``bootstrap()`` returns for this test."""
+    """Make *repos* and *errors* what ``bootstrap()`` returns for this test.
+
+    Published to the composed-repos catalog too, as ``bootstrap()`` does: the
+    declared entries the lab's hosts get are read there. The root conftest
+    restores both owners after the test.
+    """
     bs._reset()
     result = bs.BootstrapResult(
         env=None,
@@ -150,6 +156,7 @@ def _install(monkeypatch, repos: "list[Any]", errors: "list[bs.BootstrapError] |
         ordered_repos=list(repos),  # as bootstrap() fills it, so the real preflight sees them
     )
     monkeypatch.setattr(bs, "_result", result)
+    publish_composed(result, complete=True)
 
 
 def _host(element: str, ip: str, lab: str = "lab1", **fields: Any) -> dict:

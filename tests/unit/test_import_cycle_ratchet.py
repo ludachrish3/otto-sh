@@ -55,13 +55,16 @@ pytestmark = pytest.mark.interpreter_agnostic
 # otto.host -> otto.docker went when a container host stopped starting its own stack: a
 # stopped declared container now fails fast and names the explicit ways to start it (spec
 # 2026-10-11 placement-and-phases §3.4).
+# otto.host and otto.check left it when the composed repos moved into a catalog in otto.declared
+# that the composition root fills, scope_for_repo moved beside it, and otto.config.scope,
+# otto.declared and otto.models.dependencies became foundation modules of their own: the host
+# layer imports nothing of otto.config but the scope predicate (spec 2026-10-11
+# placement-and-phases §3.5).
 BASELINE: dict[str, list[str]] = {
-    "otto.bootstrap": ["otto.config", "otto.host"],
-    "otto.check": ["otto.host"],
+    "otto.bootstrap": ["otto.config"],
     "otto.config": [
         "otto.bootstrap",
         "otto.context",
-        "otto.host",
         "otto.inventory",
         "otto.labs",
         "otto.link",
@@ -71,26 +74,22 @@ BASELINE: dict[str, list[str]] = {
     "otto.context": [
         "otto.bootstrap",
         "otto.config",
-        "otto.host",
         "otto.reservations",
         "otto.session",
     ],
     "otto.creds": ["otto.models"],
-    "otto.docker": ["otto.config", "otto.host", "otto.models"],
-    "otto.host": ["otto.config"],
-    "otto.inventory": ["otto.config", "otto.creds", "otto.host", "otto.models"],
-    "otto.labs": ["otto.config", "otto.host", "otto.inventory", "otto.link", "otto.models"],
-    "otto.link": ["otto.check", "otto.host", "otto.models"],
-    "otto.models": ["otto.config", "otto.host"],
+    "otto.docker": ["otto.config", "otto.models"],
+    "otto.inventory": ["otto.config", "otto.creds", "otto.models"],
+    "otto.labs": ["otto.config", "otto.inventory", "otto.link", "otto.models"],
+    "otto.link": ["otto.models"],
+    "otto.models": ["otto.config"],
     "otto.reservations": ["otto.config", "otto.models"],
     "otto.session": [
         "otto.bootstrap",
         "otto.config",
         "otto.docker",
-        "otto.host",
         "otto.inventory",
         "otto.labs",
-        "otto.models",
     ],
 }
 

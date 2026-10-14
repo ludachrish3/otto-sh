@@ -37,11 +37,36 @@ such site.
 
 Two kinds of reference fail. A use of the privileged write API outside the
 home and the installer: an import of it, a call, an attribute read or store, a
-by-name reference. And a raw write to the slot's table through one of
-``Registry``'s public write methods (``TABLE_WRITES``) anywhere but the home,
-the installer included: the privileged API is the only way in. The registry's
-private methods (``_restore`` and the like) are not checked: they belong to
-the registry engine and to the test isolation that snapshots every table.
+by-name reference. And a raw write to one of the slot's tables anywhere but the
+home, the installer included: the privileged API is the only way in. A raw
+write is a call of one of ``Registry``'s public write methods
+(``TABLE_WRITES``) on the table, or a store into the table itself: an
+attribute assignment, augmented assignment or ``del`` on it (a plain record's
+fields, such as ``otto.declared``'s ``_composition`` or ``otto.registry``'s
+``_COMPLETION_SNAPSHOT``), ``setattr``/``delattr`` with a literal name, or a
+rebinding of the table's name on its home module (by attribute, ``setattr``,
+``vars(...)[...]`` or ``__dict__[...]``). The registry's private methods
+(``_restore`` and the like) are not checked: they belong to the registry
+engine and to the test isolation that snapshots every table.
+
+The threat model: this is a static check against ordinary code, not a sandbox.
+In scope, flagged outside the slot's home module through any import alias:
+
+* attribute, augmented and ``del`` stores on a record's fields;
+* ``setattr`` and ``delattr`` with a literal name, bare or qualified
+  (``builtins.setattr``, ``builtins.delattr``, the module imported under any
+  name);
+* ``vars(record)[...]`` and ``record.__dict__[...]`` stores and deletes;
+* a record reached through a literal ``getattr(module, "<record name>")``
+  (bare or ``builtins.getattr``), then any of the above;
+* rebinding the record on its home module.
+
+Out of scope, as deliberate evasion the scan does not promise to see (it may
+still catch some): a builtin re-bound under another name (``w = setattr``,
+``from builtins import setattr as w``); ``object.__setattr__`` and
+``type.__setattr__``; ``exec``, ``eval`` and ``compile``; a computed,
+non-literal attribute string (the exclusion above); ``ctypes``, ``gc`` and
+frame tricks.
 """
 
 import ast
@@ -85,6 +110,34 @@ SLOTS = [
         installer="otto/project/actions.py",
         privileged=["declare_first_party_actions"],
         tables=["FIRST_PARTY_ACTIONS"],
+    ),
+    Slot(
+        name="composed repos",
+        home="otto/declared.py",
+        installer="otto/bootstrap.py",
+        privileged=["publish_composed", "clear_composed"],
+        tables=["_composition"],
+    ),
+    Slot(
+        name="bootstrap initiator",
+        home="otto/declared.py",
+        installer="otto/bootstrap.py",
+        privileged=["install_initiator"],
+        tables=["_composition"],
+    ),
+    Slot(
+        name="completion snapshot",
+        home="otto/registry.py",
+        installer="otto/cli/main.py",
+        privileged=["set_completion_names"],
+        tables=["_COMPLETION_SNAPSHOT"],
+    ),
+    Slot(
+        name="completion snapshot withdrawal",
+        home="otto/registry.py",
+        installer="otto/bootstrap.py",
+        privileged=["clear_completion_names"],
+        tables=["_COMPLETION_SNAPSHOT"],
     ),
 ]
 
@@ -280,6 +333,17 @@ class _Resolver:
             return {key} if "sys.modules" in self.local(owner, scope) else set()
         if (
             isinstance(node, ast.Call)
+            and len(node.args) >= 2
+            and _literal(node.args[1]) is not None
+            and (
+                (isinstance(node.func, ast.Name) and node.func.id == "getattr")
+                or "builtins.getattr" in self.local(node.func, scope)
+            )
+        ):
+            # A literal getattr reaches the attribute it names.
+            return {f"{q}.{_literal(node.args[1])}" for q in self.local(node.args[0], scope)}
+        if (
+            isinstance(node, ast.Call)
             and "importlib.import_module" in self.local(node.func, scope)
             and node.args
             and _literal(node.args[0]) is not None
@@ -343,8 +407,9 @@ class _TreeResolver:
 def references(tree: _TreeResolver, rel: str, slot: Slot) -> "list[Reference]":
     """Every line where the file *rel* refers to *slot*'s privileged API, in line order.
 
-    A reference's ``what`` is the privileged name, or ``<table>.<method>`` for a
-    raw write to one of the slot's tables.
+    A reference's ``what`` is the privileged name, or, for a raw write to one of
+    the slot's tables, ``<table>.<method>`` (a write method's call),
+    ``<table>.<field> (a store)`` or ``<home>.<table> (a rebinding)``.
     """
     home = rmg.module_of(slot.home)
     resolver = tree.modules[tree.files[rel]]
@@ -365,18 +430,49 @@ def references(tree: _TreeResolver, rel: str, slot: Slot) -> "list[Reference]":
             hits.extend(f"{tables[q]}.{attr}" for q in resolved if q in tables)
         return hits
 
+    def subscript_stored(node: ast.Subscript) -> "list[str]":
+        """A ``vars(x)[...]`` or ``x.__dict__[...]`` store: into a table, or rebinding one."""
+        resolved = resolver.resolve(node)
+        hits = [f"{q} (a rebinding)" for q in resolved if q in tables]
+        for q in resolved:
+            parent, _, field = q.rpartition(".")
+            if parent in tables:
+                hits.append(f"{tables[parent]}.{field} (a store)")
+        return hits
+
+    def builtin(call: ast.Call) -> "str | None":
+        """The attribute builtin *call* calls, bare or qualified as ``builtins.<name>``."""
+        if isinstance(call.func, ast.Name) and call.func.id in _NAMED_ATTRIBUTE_CALLS:
+            return call.func.id
+        resolved = resolver.resolve(call.func)
+        return next(
+            (name for name in sorted(_NAMED_ATTRIBUTE_CALLS) if f"builtins.{name}" in resolved),
+            None,
+        )
+
+    def stored(owner: "ast.expr", attr: str) -> "list[str]":
+        """A store of *attr* on *owner*: into one of the tables, or rebinding one."""
+        resolved = resolver.resolve(owner)
+        hits = [f"{tables[q]}.{attr} (a store)" for q in resolved if q in tables]
+        rebound = tree.canonical({f"{q}.{attr}" for q in resolved})
+        hits.extend(f"{q} (a rebinding)" for q in rebound if q in tables)
+        return hits
+
     for node in ast.walk(resolver.tree):
         if isinstance(node, (ast.Name, ast.Subscript)):
             found.update(
                 Reference(node.lineno, privileged[q])
                 for q in resolver.resolve(node) & privileged.keys()
             )
+            if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                found.update(Reference(node.lineno, hit) for hit in subscript_stored(node))
         elif isinstance(node, ast.Attribute):
             found.update(Reference(node.lineno, hit) for hit in named(node.value, node.attr))
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                found.update(Reference(node.lineno, hit) for hit in stored(node.value, node.attr))
         elif (
             isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in _NAMED_ATTRIBUTE_CALLS
+            and (called := builtin(node)) is not None
             and len(node.args) >= 2
             and _literal(node.args[1]) is not None
         ):
@@ -384,6 +480,11 @@ def references(tree: _TreeResolver, rel: str, slot: Slot) -> "list[Reference]":
                 Reference(node.lineno, hit)
                 for hit in named(node.args[0], str(_literal(node.args[1])))
             )
+            if called in {"setattr", "delattr"}:
+                found.update(
+                    Reference(node.lineno, hit)
+                    for hit in stored(node.args[0], str(_literal(node.args[1])))
+                )
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             text = node.value.strip()
             for target, name in privileged.items():
@@ -392,26 +493,47 @@ def references(tree: _TreeResolver, rel: str, slot: Slot) -> "list[Reference]":
     return sorted(found)
 
 
+@dataclasses.dataclass(frozen=True)
+class RawWrite:
+    """One raw write in a file: the reference, and the home whose table it writes."""
+
+    ref: Reference
+    home: str
+
+
+def _raw_write_message(rel: str, write: RawWrite, sharing: "list[Slot]") -> str:
+    """One message for a raw write, naming every slot that shares the written table."""
+    names = " and ".join(slot.name for slot in sharing)
+    writers = ", ".join(name for slot in sharing for name in slot.privileged)
+    return (
+        f"{rel}:{write.ref.line} {write.ref.what}: a raw write to the {names} "
+        f"slot{'s' if len(sharing) > 1 else ''}; only {write.home} writes it, through "
+        f"{writers} (spec 2026-10-11 placement-and-phases §2.1)"
+    )
+
+
 def misuses(src: Path, slots: "list[Slot]") -> "list[str]":
-    """Every use of a slot's write API outside its home and installer, and every raw table write."""
+    """Every use of a slot's write API outside its home and installer, and every raw table write.
+
+    Slots that share one table (one record, written through two privileged
+    APIs) report a raw write to it once, naming every one of their writers.
+    """
     tree = _TreeResolver(src)
     problems: list[str] = []
     for rel in tree.files:
+        raw: dict[RawWrite, list[Slot]] = {}
         for slot in slots:
             if rel == slot.home:
                 continue
             for ref in references(tree, rel, slot):
                 if "." in ref.what:
-                    problems.append(
-                        f"{rel}:{ref.line} calls {ref.what}, a raw write to the {slot.name} "
-                        f"slot; only {slot.home} writes it, through {', '.join(slot.privileged)} "
-                        "(spec 2026-10-11 placement-and-phases §2.1)"
-                    )
+                    raw.setdefault(RawWrite(ref, slot.home), []).append(slot)
                 elif rel != slot.installer:
                     problems.append(
                         f"{rel}:{ref.line} uses {ref.what}, the {slot.name} slot's write API; only "
                         f"{slot.installer} may (spec 2026-10-11 placement-and-phases §2.1)"
                     )
+        problems.extend(_raw_write_message(rel, write, sharing) for write, sharing in raw.items())
     return problems
 
 
@@ -526,6 +648,101 @@ def test_the_installer_may_use_the_api_but_not_write_the_table_raw(tmp_path: Pat
     assert _scan(tmp_path, {installer: calls_the_api}) == set()
     raw = f"from {home} import {slot.tables[0]}\n{slot.tables[0]}.unregister('otto')\n"
     assert _scan(tmp_path, {installer: calls_the_api + raw}) == {f"otto/{installer}"}
+
+
+RECORD_SLOTS = [slot for slot in SLOTS if slot.name in {"composed repos", "completion snapshot"}]
+"""One slot per plain record (a dataclass, not a ``Registry``): its fields are its table."""
+
+
+@pytest.mark.parametrize("slot", RECORD_SLOTS, ids=[slot.name for slot in RECORD_SLOTS])
+def test_the_scan_sees_every_store_into_a_slot_s_record(slot: Slot, tmp_path: Path) -> None:
+    """A field store installs or withdraws as surely as the privileged API, by any spelling."""
+    home = rmg.module_of(slot.home)
+    sibling = home.rpartition(".")[2]
+    table = slot.tables[0]
+    stores = {
+        "store.py": f"from {home} import {table}\n{table}.field = {{}}\n",
+        "store_aliased.py": (
+            f"def install(names):\n    from .{sibling} import {table} as state\n\n"
+            "    state.field = names\n"
+        ),
+        "store_none.py": f"from {home} import {table} as state\nstate.field = None\n",
+        "store_augmented.py": f"from {home} import {table} as state\nstate.field += 1\n",
+        "store_del.py": f"from {home} import {table} as state\ndel state.field\n",
+        "store_setattr.py": f"from {home} import {table} as state\nsetattr(state, 'field', None)\n",
+        "store_delattr.py": f"from {home} import {table} as state\ndelattr(state, 'field')\n",
+        "store_module.py": f"import {home} as m\nm.{table}.field = None\n",
+        "rebind.py": f"import {home} as m\nm.{table} = None\n",
+        "rebind_setattr.py": f"import {home} as m\nsetattr(m, {table!r}, None)\n",
+        "rebind_vars.py": f"import {home} as m\nvars(m)[{table!r}] = None\n",
+        "rebind_dict.py": f"import {home} as m\nm.__dict__[{table!r}] = None\n",
+        "store_vars.py": f"from {home} import {table} as state\nvars(state)['field'] = None\n",
+        "store_vars_del.py": f"from {home} import {table} as state\ndel vars(state)['field']\n",
+        "store_dict.py": f"from {home} import {table} as state\nstate.__dict__['field'] = {{}}\n",
+        "store_dict_del.py": f"from {home} import {table} as state\ndel state.__dict__['field']\n",
+        "store_builtins_setattr.py": (
+            f"import builtins\nfrom {home} import {table} as state\n"
+            "builtins.setattr(state, 'field', None)\n"
+        ),
+        "store_builtins_delattr.py": (
+            f"import builtins as b\nfrom {home} import {table} as state\n"
+            "b.delattr(state, 'field')\n"
+        ),
+        "store_getattr.py": f"import {home} as m\ngetattr(m, {table!r}).field = None\n",
+        "store_getattr_bound.py": (
+            f"import {home} as m\nstate = getattr(m, {table!r})\nstate.field = {{}}\n"
+        ),
+        "store_getattr_setattr.py": (
+            f"import {home} as m\nsetattr(getattr(m, {table!r}), 'field', None)\n"
+        ),
+        "store_getattr_vars.py": (
+            f"import {home} as m\nvars(getattr(m, {table!r}))['field'] = None\n"
+        ),
+        "store_builtins_getattr.py": (
+            f"import builtins\nimport {home} as m\nbuiltins.getattr(m, {table!r}).field = None\n"
+        ),
+    }
+    installer = slot.installer.removeprefix("otto/")
+    calls_the_api = f"from {home} import {slot.privileged[0]}\n{slot.privileged[0]}(object)\n"
+    flagged = _scan(
+        tmp_path,
+        {**stores, installer: calls_the_api + f"from {home} import {table}\n{table}.field = 1\n"},
+    )
+    assert flagged == {f"otto/{name}" for name in [*stores, installer]}
+
+
+@pytest.mark.parametrize("slot", RECORD_SLOTS, ids=[slot.name for slot in RECORD_SLOTS])
+def test_a_store_into_a_shared_record_is_one_message(slot: Slot, tmp_path: Path) -> None:
+    """Two slots share each record, so one store reports once and names both slots' writers."""
+    sharing = [other for other in SLOTS if other.tables == slot.tables]
+    assert len(sharing) == 2, [other.name for other in sharing]
+    home = rmg.module_of(slot.home)
+    table = slot.tables[0]
+    path = tmp_path / "otto" / "store.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(f"from {home} import {table}\n{table}.field = None\n")
+    problems = misuses(tmp_path, SLOTS)
+    assert len(problems) == 1, problems
+    for writer in (name for other in sharing for name in other.privileged):
+        assert writer in problems[0], (writer, problems[0])
+
+
+@pytest.mark.parametrize("slot", RECORD_SLOTS, ids=[slot.name for slot in RECORD_SLOTS])
+def test_reading_a_slot_s_record_is_no_store(slot: Slot, tmp_path: Path) -> None:
+    home = rmg.module_of(slot.home)
+    table = slot.tables[0]
+    clean = {
+        "reads.py": f"from {home} import {table}\nx = {table}.field\ngetattr({table}, 'field')\n",
+        "rebinds_its_own_name.py": f"from {home} import {table}\n{table} = None\n",
+        "other_record.py": f"from otto.elsewhere import {table}\n{table}.field = None\n",
+        "local_copy.py": f"import dataclasses\nfrom {home} import {table}\n"
+        f"copy = dataclasses.replace({table})\ncopy.field = None\n",
+        "reads_vars.py": f"from {home} import {table} as state\nx = vars(state)['field']\n"
+        "y = state.__dict__['field']\n",
+        "reads_getattr.py": f"import {home} as m\nx = getattr(m, {table!r}).field\n",
+        "other_vars.py": "import otto.elsewhere as e\nvars(e.record)['field'] = None\n",
+    }
+    assert _scan(tmp_path, clean) == set()
 
 
 def test_the_scan_leaves_same_named_objects_of_other_modules_alone(tmp_path: Path) -> None:

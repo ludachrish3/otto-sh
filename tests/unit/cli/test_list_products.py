@@ -58,10 +58,8 @@ class ProbeProduct(Product):
 
 @pytest.fixture
 def listing_world(real_main_mocks):
-    """The real lab with declared entries on its repo; ``ordered_repos`` pinned to it."""
-    repo = real_main_mocks["repo"]
-    with patch("otto.bootstrap.get_ordered_repos", return_value=[repo]):
-        yield repo
+    """The real lab's one repo, which each test gives its declared entries."""
+    return real_main_mocks["repo"]
 
 
 def _invoke(*args, env=None):

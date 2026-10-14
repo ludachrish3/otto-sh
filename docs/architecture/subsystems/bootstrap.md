@@ -132,17 +132,52 @@ builds it. Its choices:
   the environment, invalidate, bootstrap again. That is also why the errors
   ride the cached result rather than a parallel module global — recomputing
   discovery necessarily recomputes them, so a stale error cannot outlive the
-  discovery that produced it. The five repo accessors —
+  discovery that produced it. The four repo accessors —
   {func}`~otto.bootstrap.get_repos`, {func}`~otto.bootstrap.get_ordered_repos`,
-  {func}`~otto.bootstrap.get_env`, {func}`~otto.bootstrap.is_bootstrapped` and
-  {func}`~otto.bootstrap.get_completion_names` — live in the same module, so the
-  code that composes the repos is the one place that answers for them.
-  {func}`~otto.bootstrap.get_repos` and {func}`~otto.bootstrap.get_ordered_repos`
-  bootstrap on first use and {func}`~otto.bootstrap.get_env` runs discovery
-  only; {func}`~otto.bootstrap.is_bootstrapped` and
-  {func}`~otto.bootstrap.get_completion_names` never force either; none runs
-  at import
+  {func}`~otto.bootstrap.get_env` and {func}`~otto.bootstrap.is_bootstrapped` —
+  live in the same module, so the code that composes the repos is the one
+  place that answers for them. {func}`~otto.bootstrap.get_repos` and
+  {func}`~otto.bootstrap.get_ordered_repos` bootstrap on first use and
+  {func}`~otto.bootstrap.get_env` runs discovery only;
+  {func}`~otto.bootstrap.is_bootstrapped` never forces either; none runs at
+  import. {func}`~otto.bootstrap.get_completion_names`, the CLI's
+  completion-cache snapshot, is defined in {mod}`otto.registry` and
+  re-exported here. Every command resolution loads that module anyway, and
+  the CLI reads the snapshot there, so resolving
+  a command for `--help` or a TAB loads no composition root, and
+  {func}`~otto.bootstrap.invalidate` clears it. The error types the root
+  re-exports, {class}`~otto.config.scope.BootstrapError` and its kin, are
+  defined in {mod}`otto.config.scope`, below every layer that raises or
+  catches them
+- {mod}`otto.declared` — the declared products and dev tools core; it also
+  holds the composed-repos catalog, which the layers below the root read
+  instead of importing it. {func}`~otto.bootstrap.bootstrap` publishes the
+  in-progress result before the repos' init modules run, then the complete
+  one; a failed composition and {func}`~otto.bootstrap.invalidate` withdraw
+  both. Importing {mod}`otto.bootstrap` installs the catalog's initiator, and
+  installing runs nothing. {func}`~otto.declared.declared_for_host` reads only
+  what was published and never composes. {func}`~otto.declared.scope_for_repo`
+  reads the complete result, else asks the initiator to compose; in a process
+  that never imported the root there is no initiator, and it admits (answers
+  `None`), as it does when composition fails. The CLI and every public entry
+  point that can compose import the root first, so they behave as before
 - `otto.init` — the `otto init` doctor and scaffolder over the areas
   (settings, schemas, lab, tests, instructions, kmodcov): detect / validate /
   scaffold, reusing bootstrap's own ingestion code; `otto.cli.init` only
   renders it
+
+**A process that never imports the root composes nothing.** Take a library
+process that registers a product or dev-tool provider through the public
+{func}`otto.registry.registering_repo` and never imports {mod}`otto.bootstrap`.
+The provider gate judges each host built stamped with its lab: a lab load
+({func}`otto.lab.load_lab`, `otto.load_lab`, a
+{class}`~otto.labs.LabRepository`'s loader such as the built-in JSON
+repository's), a direct {func}`~otto.host.create_host_from_dict` call with a
+`lab_name`, and the container hosts {mod}`otto.docker.compose` stamps from
+their parent. With no initiator, {func}`~otto.declared.scope_for_repo` admits,
+so that provider runs on every such host. And because nothing composes, the
+repos' init modules do not run in that process, so their
+`[[products]]`/`[[dev_tools]]` entries and the providers they register attach
+to no host either. To keep the narrowing and the declared entries, import
+{mod}`otto.bootstrap` first, or start from an entry point that composes (the
+`otto` CLI, {func}`otto.open_context`).

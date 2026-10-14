@@ -83,10 +83,16 @@ depends_on = [
     # (otto.host does not import otto.bootstrap) and no new module to the
     # import cycle — both ends were already in it.
     "otto.host",
+    # otto.config.scope: the error types this module re-exports. otto.declared:
+    # the composed-repos catalog bootstrap() publishes into, and the initiator
+    # slot this module fills when it is imported (its one installer).
+    "otto.config.scope",
+    "otto.declared",
 ]
 
 [[modules]]
 path = "otto.check"
+layer = "topology"
 # Shared by otto.link and otto.tunnel, so it may import NEITHER (they stay
 # decoupled; see the otto.link entry). Host probing only.
 depends_on = ["otto.host", "otto.logger", "otto.version", "otto.errors", "otto.result"]
@@ -113,7 +119,7 @@ layer = "entry"
 # ensure_lab_context builds the context on it.
 # otto._shim_complete: cache.py's inspect verbs read the shim's own answer
 # (inspect_shim, inspect_tests).
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors"]
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies"]
 
 [[modules]]
 path = "otto.config"
@@ -150,7 +156,21 @@ depends_on = [
     # file or conftest that registers anything is refused there too. A leaf
     # (it depends only on otto.errors), so no cycle can form.
     "otto.registry",
+    "otto.config.scope",
+    "otto.models.dependencies",
 ]
+
+[[modules]]
+path = "otto.config.scope"
+layer = "foundation"
+# The one membership predicate, its config and resolver, and the composition
+# root's error types (spec 2026-10-11 placement-and-phases §3.5). Foundation,
+# so the host layer's ingest gate and otto.declared may import it. Its
+# ancestor otto/config/__init__.py stays lazy (§4.3) bar one eager import,
+# otto.config.env, so importing this module loads that too.
+# otto.models.dependencies is read inside the functions that normalize a repo
+# name.
+depends_on = ["otto.errors", "otto.models.dependencies"]
 
 [[modules]]
 path = "otto.console"
@@ -181,6 +201,7 @@ depends_on = [
     "otto.reservations",
     # The context composes the leaf's run policy, resolver and bindings.
     "otto.invocation",
+    "otto.config.scope",
 ]
 
 [[modules]]
@@ -206,6 +227,7 @@ depends_on = [
     "otto.context",
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
+    "otto.config.scope",
 ]
 
 [[modules]]
@@ -215,6 +237,16 @@ path = "otto.creds"
 # this package never imports otto.inventory — one-way by construction. Every
 # dependency here is a leaf or a boundary-model package.
 depends_on = ["otto.errors", "otto.models", "otto.models.base", "otto.registry", "otto.utils"]
+
+[[modules]]
+path = "otto.declared"
+layer = "foundation"
+# The declared-entry core and the composed-repos catalog with its initiator
+# slot (spec 2026-10-11 placement-and-phases §2.1, §3.5): otto.bootstrap
+# publishes into it and installs the initiator; nothing here imports the root.
+# The scope predicate and the run policy are read inside the functions that
+# need them.
+depends_on = ["otto.config.scope", "otto.invocation", "otto.registry"]
 
 [[modules]]
 path = "otto.docker"
@@ -241,6 +273,8 @@ depends_on = [
     # console does not relay a listing the verb then prints itself. otto.logger
     # depends only on otto.console, so this edge cannot make a cycle.
     "otto.logger",
+    "otto.config.scope",
+    "otto.declared",
 ]
 
 [[modules]]
@@ -298,7 +332,8 @@ depends_on = [
     "otto.docker",
     "otto.logger",
     "otto.host",
-    "otto.models",
+    "otto.config.scope",
+    "otto.models.dependencies",
 ]
 
 [[modules]]
@@ -326,6 +361,7 @@ depends_on = ["otto.instruction_catalog", "otto.context", "otto.params", "otto.p
 
 [[modules]]
 path = "otto.host"
+layer = "host"
 depends_on = [
     "otto.logger",
     # otto.models.base: OttoModel, the credential pair (CredSpec, the runtime
@@ -342,7 +378,6 @@ depends_on = [
     "otto.result",
     "otto.snmp",
     "otto.utils",
-    "otto.config",
     "otto.registry",
     "otto.errors",
     # otto.kmodcov: kmod_tool_kind.py's interface_problem() reads
@@ -357,6 +392,12 @@ depends_on = [
     "otto.invocation",
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
+    # The ingest gate: product.py and dev_tool.py judge a provider's repo with
+    # otto.config.scope's repo_targets, after otto.declared's scope_for_repo names
+    # its declaration; the declared-entry kinds and listing read otto.declared.
+    # Both are foundation modules that never import upward.
+    "otto.config.scope",
+    "otto.declared",
 ]
 
 [[modules]]
@@ -523,6 +564,8 @@ depends_on = [
     "otto.version",
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
+    "otto.declared",
+    "otto.models.dependencies",
 ]
 
 [[modules]]
@@ -533,6 +576,13 @@ layer = "foundation"
 # dataclass, with cred_identity) and resources_nonempty. pydantic and the
 # standard library only; it imports no other otto module (spec 2026-10-11
 # placement-and-phases §3.3).
+depends_on = []
+
+[[modules]]
+path = "otto.models.dependencies"
+layer = "foundation"
+# Dependency-spec parsing and repo-name normalization: the standard library and
+# packaging only, so the scope predicate below every layer can normalize a name.
 depends_on = []
 
 [[modules]]
@@ -557,7 +607,7 @@ layer = "workflows"
 # (gate G6, the one sanctioned poll spelling).
 # otto.monitor.*: the lower files this module imports, each a module of its own
 # (below).
-depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.link", "otto.filesystem", "otto.logger", "otto.console", "otto.errors", "otto.utils", "otto.config", "otto.context", "otto.tunnel", "otto.monitor.broadcast", "otto.monitor.errors", "otto.monitor.event_ops", "otto.monitor.events", "otto.monitor.formats", "otto.monitor.parsers", "otto.monitor.snmp", "otto.monitor.store", "otto.monitor.tls"]
+depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.link", "otto.filesystem", "otto.logger", "otto.console", "otto.errors", "otto.utils", "otto.config", "otto.context", "otto.tunnel", "otto.monitor.broadcast", "otto.monitor.errors", "otto.monitor.event_ops", "otto.monitor.events", "otto.monitor.formats", "otto.monitor.parsers", "otto.monitor.snmp", "otto.monitor.store", "otto.monitor.tls", "otto.config.scope"]
 
 # The monitor's eleven lower files, one tach module each, at topology (spec
 # 2026-10-11 placement-and-phases §3.11). They are not one subpackage module:
@@ -639,13 +689,16 @@ layer = "workflows"
 # instructions import it at CLI startup. tach counts a function-scope import as
 # an edge regardless, which is why it is declared.
 #
-# otto.config and otto.context are TYPE_CHECKING-only in actions.py (Repo,
-# OttoContext): the per-repo actions are HANDED both at construction and never
-# look either up. The orchestrator DOES look them up -- ambient-context module
-# functions are its whole shape -- but only from inside the call
-# (orchestrator._lab), for the same reason otto.host is lazy here: `import
-# otto.project` must stay cheap, and a module-scope import of either would join
-# the config<->context and host<->context cycles.
+# otto.config is TYPE_CHECKING-only here (Repo), and otto.context is in
+# actions.py (OttoContext): the per-repo actions are HANDED both at
+# construction and never look either up. The orchestrator DOES look the context
+# up -- ambient-context module functions are its whole shape -- but only from
+# inside the call (orchestrator._lab), for the same reason otto.host is lazy
+# here: `import otto.project` must stay cheap. The scope predicates the
+# orchestrator reads come from otto.config.scope, a foundation module, imported
+# inside the calls that use them (its ProjectScope annotation is
+# TYPE_CHECKING-only). Importing it also runs otto/config/__init__.py, which
+# loads otto.config.env.
 #
 # otto.cli: no edge. The `@instruction` decorator lives in
 # otto.instruction_catalog (since the thin-CLI series, 2026-09-28, in
@@ -677,13 +730,13 @@ layer = "workflows"
 # The cost is nil -- otto.errors imports nothing -- so `import otto.project`
 # stays as cheap as the note above requires.
 #
-# otto.models is `normalize_name`, the ONE PEP-503 normalizer, reached at
-# function scope from orchestrator's activation code. The alternative was
-# importing it from otto.config.dependencies, which merely re-exports it: that
-# would have satisfied tach with an already-declared edge while hiding the real
-# dependency, and the honest edge is the one that survives someone moving the
-# re-export. It points DOWN (nothing under otto.models imports otto.project)
-# and every module otto.models itself depends on is already reachable here.
+# otto.models.dependencies is `normalize_name`, the ONE PEP-503 normalizer,
+# reached at function scope from orchestrator's activation code. The
+# alternative was importing it from otto.config.dependencies, which merely
+# re-exports it: that would have satisfied tach with an already-declared edge
+# while hiding the real dependency, and the honest edge is the one that
+# survives someone moving the re-export. It is a foundation module with no
+# dependencies.
 #
 # Neither edge added a member to the import cycle: otto.project was already
 # in it.
@@ -692,16 +745,16 @@ depends_on = [
     "otto.result",
     "otto.utils",
     "otto.host",
-    "otto.config",
     "otto.context",
     "otto.link",
     "otto.tunnel",
     "otto.errors",
-    "otto.models",
     "otto.instruction_catalog",
     "otto.params",
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
+    "otto.config.scope",
+    "otto.models.dependencies",
 ]
 
 [[modules]]
@@ -748,7 +801,7 @@ layer = "root"
 #
 # No loop: otto.project no longer imports otto.cli (thin-CLI item 1).
 # otto.invocation: the runner sweep (suite/loops.py) reads the run policy's teardown deadline.
-depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors"]
+depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope"]
 
 [[modules]]
 path = "otto.testing"

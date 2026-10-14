@@ -505,13 +505,12 @@ class OttoContext:
         except Exception as exc:  # noqa: BLE001 — no repos reachable ⇒ no [coverage] ⇒ off
             logger.debug(f"otto: coverage detection unavailable ({exc!r}); ctx.cov is False")
             return False
-        from .bootstrap import ProjectScopeError
         from .config.coverage_settings import (
             CoverageConfigError,
             get_cov_config,
             load_hosts_pattern,
         )
-        from .config.scope import EmptySelectionError
+        from .config.scope import EmptySelectionError, ProjectScopeError
         from .session.errors import RepoLoadError
 
         cov_config = get_cov_config(repos)
@@ -1170,7 +1169,7 @@ class ProjectContextView:
         """
         if with_owner:
             if "owner" in kwargs and kwargs["owner"] != self._repo_name:
-                from .bootstrap import ProjectScopeError  # function-scope: import-light
+                from .config.scope import ProjectScopeError  # function-scope: import-light
 
                 raise ProjectScopeError(
                     "",  # a caller mistake, so there is no settings.toml to send them to

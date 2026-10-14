@@ -174,14 +174,12 @@
       "by_bucket": {
         "fd": 67,
         "other": 218,
-        "otto:*": 10,
+        "otto:*": 9,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-314-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-314.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:bootstrap": 2,
-        "otto:bootstrap.cpython-314.pyc": 1,
         "otto:cli": 33,
         "otto:config": 17,
         "otto:errors": 2,
@@ -205,9 +203,9 @@
         "stdlib": 570
       },
       "by_process": {
-        "python": 1257
+        "python": 1253
       },
-      "file_ops": 1257,
+      "file_ops": 1253,
       "workspace": 0
     },
     "dispatch_local_warm": {
@@ -372,14 +370,12 @@
       "by_bucket": {
         "fd": 67,
         "other": 218,
-        "otto:*": 11,
+        "otto:*": 10,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-314-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-314.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:bootstrap": 2,
-        "otto:bootstrap.cpython-314.pyc": 1,
         "otto:cli": 33,
         "otto:config": 17,
         "otto:errors": 2,
@@ -405,23 +401,21 @@
         "stdlib": 570
       },
       "by_process": {
-        "python": 1261
+        "python": 1257
       },
-      "file_ops": 1261,
+      "file_ops": 1257,
       "workspace": 0
     },
     "help": {
       "by_bucket": {
         "fd": 67,
         "other": 218,
-        "otto:*": 10,
+        "otto:*": 9,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-314-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-314.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:bootstrap": 2,
-        "otto:bootstrap.cpython-314.pyc": 1,
         "otto:cli": 29,
         "otto:config": 17,
         "otto:errors": 2,
@@ -445,9 +439,9 @@
         "stdlib": 570
       },
       "by_process": {
-        "python": 1253
+        "python": 1249
       },
-      "file_ops": 1253,
+      "file_ops": 1249,
       "workspace": 0
     },
     "help_repo": {
@@ -604,14 +598,12 @@
       "by_bucket": {
         "fd": 67,
         "other": 218,
-        "otto:*": 10,
+        "otto:*": 9,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-314-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-314.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:bootstrap": 2,
-        "otto:bootstrap.cpython-314.pyc": 1,
         "otto:cli": 41,
         "otto:config": 17,
         "otto:errors": 2,
@@ -635,9 +627,9 @@
         "stdlib": 570
       },
       "by_process": {
-        "python": 1265
+        "python": 1261
       },
-      "file_ops": 1265,
+      "file_ops": 1261,
       "workspace": 0
     },
     "host_local_exec": {
@@ -1073,14 +1065,12 @@
       "by_bucket": {
         "fd": 67,
         "other": 222,
-        "otto:*": 11,
+        "otto:*": 10,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-314-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-314.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:bootstrap": 2,
-        "otto:bootstrap.cpython-314.pyc": 1,
         "otto:cli": 33,
         "otto:config": 17,
         "otto:errors": 2,
@@ -1106,23 +1096,21 @@
         "stdlib": 578
       },
       "by_process": {
-        "python": 1273
+        "python": 1269
       },
-      "file_ops": 1273,
+      "file_ops": 1269,
       "workspace": 0
     },
     "reservation": {
       "by_bucket": {
         "fd": 69,
         "other": 220,
-        "otto:*": 12,
+        "otto:*": 11,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-314-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-314.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:bootstrap": 2,
-        "otto:bootstrap.cpython-314.pyc": 1,
         "otto:cli": 33,
         "otto:config": 17,
         "otto:errors": 2,
@@ -1149,23 +1137,21 @@
         "stdlib": 574
       },
       "by_process": {
-        "python": 1303
+        "python": 1299
       },
-      "file_ops": 1303,
+      "file_ops": 1299,
       "workspace": 0
     },
     "run": {
       "by_bucket": {
         "fd": 67,
         "other": 218,
-        "otto:*": 11,
+        "otto:*": 10,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-314-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-314.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:bootstrap": 2,
-        "otto:bootstrap.cpython-314.pyc": 1,
         "otto:cli": 33,
         "otto:config": 17,
         "otto:errors": 2,
@@ -1191,9 +1177,9 @@
         "stdlib": 570
       },
       "by_process": {
-        "python": 1261
+        "python": 1257
       },
-      "file_ops": 1261,
+      "file_ops": 1257,
       "workspace": 0
     },
     "run_bootstrapped": {
@@ -1262,14 +1248,12 @@
       "by_bucket": {
         "fd": 67,
         "other": 218,
-        "otto:*": 10,
+        "otto:*": 9,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-314-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-314.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:bootstrap": 2,
-        "otto:bootstrap.cpython-314.pyc": 1,
         "otto:cli": 33,
         "otto:config": 17,
         "otto:errors": 2,
@@ -1293,23 +1277,21 @@
         "stdlib": 570
       },
       "by_process": {
-        "python": 1257
+        "python": 1253
       },
-      "file_ops": 1257,
+      "file_ops": 1253,
       "workspace": 0
     },
     "test": {
       "by_bucket": {
         "fd": 67,
         "other": 218,
-        "otto:*": 11,
+        "otto:*": 10,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
         "otto:__init__.cpython-314-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-314.pyc": 1,
         "otto:__init__.so": 1,
-        "otto:bootstrap": 2,
-        "otto:bootstrap.cpython-314.pyc": 1,
         "otto:cli": 33,
         "otto:config": 17,
         "otto:errors": 2,
@@ -1335,9 +1317,9 @@
         "stdlib": 570
       },
       "by_process": {
-        "python": 1261
+        "python": 1257
       },
-      "file_ops": 1261,
+      "file_ops": 1257,
       "workspace": 0
     },
     "test_repo": {

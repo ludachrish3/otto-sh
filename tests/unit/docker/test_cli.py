@@ -1161,7 +1161,7 @@ def test_use_cases_runs_through_the_production_dispatch():
 
 def test_use_case_completer_cache_hit():
     with patch(
-        "otto.bootstrap.get_completion_names",
+        "otto.registry.get_completion_names",
         return_value={"docker_use_cases": ["soak", "integration"]},
     ):
         assert docker_cli._use_case_completer(MagicMock(), "") == ["integration", "soak"]
@@ -1169,7 +1169,7 @@ def test_use_case_completer_cache_hit():
 
 def test_use_case_completer_cache_miss_falls_back_to_the_repos():
     with (
-        patch("otto.bootstrap.get_completion_names", return_value=None),
+        patch("otto.registry.get_completion_names", return_value=None),
         patch(
             "otto.bootstrap.get_repos",
             return_value=[_uc_repo("a", _uc()), _uc_repo("b", _uc())],
@@ -1180,7 +1180,7 @@ def test_use_case_completer_cache_miss_falls_back_to_the_repos():
 
 def test_use_case_completer_filters_by_prefix():
     with patch(
-        "otto.bootstrap.get_completion_names",
+        "otto.registry.get_completion_names",
         return_value={"docker_use_cases": ["soak", "integration", "install"]},
     ):
         assert docker_cli._use_case_completer(MagicMock(), "ins") == ["install"]
@@ -1194,7 +1194,7 @@ def test_use_case_completer_filters_by_prefix():
 def test_completer_cache_hit():
     """_docker_host_completer returns sorted cached docker_hosts on cache hit."""
     with patch(
-        "otto.bootstrap.get_completion_names",
+        "otto.registry.get_completion_names",
         return_value={"docker_hosts": ["h2", "h1"]},
     ):
         result = docker_cli._docker_host_completer(MagicMock(), "")
@@ -1205,7 +1205,7 @@ def test_completer_cache_hit():
 def test_completer_cache_miss_falls_back():
     """_docker_host_completer falls back to collect_docker_capable_host_ids on cache miss."""
     with (
-        patch("otto.bootstrap.get_completion_names", return_value=None),
+        patch("otto.registry.get_completion_names", return_value=None),
         patch(
             "otto.config.completion_cache.collect_docker_capable_host_ids",
             return_value=["h2", "h1"],
@@ -1220,7 +1220,7 @@ def test_completer_cache_miss_falls_back():
 def test_completer_prefix_filter():
     """_docker_host_completer filters by incomplete prefix."""
     with patch(
-        "otto.bootstrap.get_completion_names",
+        "otto.registry.get_completion_names",
         return_value={"docker_hosts": ["alpha", "beta", "almond"]},
     ):
         result = docker_cli._docker_host_completer(MagicMock(), "al")
@@ -1245,7 +1245,7 @@ def test_completer_cache_hit_filters_by_selected_lab():
         "docker_hosts": ["test1", "alt2"],
         "hosts_by_lab": {"unix": ["test1"], "unix_alt": ["alt2"]},
     }
-    with patch("otto.bootstrap.get_completion_names", return_value=fake_cache):
+    with patch("otto.registry.get_completion_names", return_value=fake_cache):
         result = docker_cli._docker_host_completer(_ctx_with_labs(["unix"]), "")
 
     assert result == ["test1"]
@@ -1279,7 +1279,7 @@ def test_completer_cache_miss_filters_by_selected_lab(tmp_path):
         lab_sources=json_lab_sources(tmp_path, [lab]), docker_settings=None, sut_dir=tmp_path
     )
     with (
-        patch("otto.bootstrap.get_completion_names", return_value=None),
+        patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.bootstrap.get_repos", return_value=[repo]),
     ):
         result = docker_cli._docker_host_completer(_ctx_with_labs(["unix"]), "")
@@ -1292,7 +1292,7 @@ def test_completer_no_lab_selected_keeps_all_docker_hosts():
         "docker_hosts": ["test1", "alt2"],
         "hosts_by_lab": {"unix": ["test1"], "unix_alt": ["alt2"]},
     }
-    with patch("otto.bootstrap.get_completion_names", return_value=fake_cache):
+    with patch("otto.registry.get_completion_names", return_value=fake_cache):
         result = docker_cli._docker_host_completer(_ctx_with_labs(None), "")
 
     assert result == ["alt2", "test1"]

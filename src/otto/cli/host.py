@@ -45,7 +45,7 @@ def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: 
     per-repo backends complete without re-running user code);
     falls back to the live registry, where otto's built-ins are always present.
     """
-    from ..bootstrap import get_completion_names
+    from ..registry import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("term_backends"), list):
@@ -66,7 +66,7 @@ def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
     host, so only backends whose ``host_families`` include ``'unix'`` are offered.
     Cached entries are ``{"name": str, "host_families": [...]}``.
     """
-    from ..bootstrap import get_completion_names
+    from ..registry import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("transfer_backends"), list):

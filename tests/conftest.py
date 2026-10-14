@@ -1275,14 +1275,22 @@ def _restore_otto_logger_state():
         root_logger.setLevel(saved_root_level)
 
 
-@pytest.fixture(autouse=True)
-def _restore_bootstrap_state():
-    """Snapshot-restore ``otto.bootstrap``'s discovery/registration caches.
+_BOOTSTRAP_CACHES = ["_discovered", "_result", "_in_progress"]
+"""``otto.bootstrap``'s own module caches, snapshot and restored by name at their owner."""
 
-    ``bootstrap()`` memoizes into module globals; discovery errors ride
-    the cached ``_discovered`` :class:`~otto.bootstrap.DiscoveryResult` itself
-    (the old append-only ``_discovery_errors`` global is gone). So one test
-    that drives the CLI with ``OTTO_SUT_DIRS`` pointing at a scratch repo —
+
+@pytest.fixture(autouse=True)
+def _restore_composition_state():
+    """Snapshot-restore the composition state at each of its owners, importing neither.
+
+    Two owners hold it. ``otto.bootstrap`` memoizes into module globals
+    (``_BOOTSTRAP_CACHES``); discovery errors ride the cached ``_discovered``
+    :class:`~otto.bootstrap.DiscoveryResult` itself (the old append-only
+    ``_discovery_errors`` global is gone). ``otto.declared`` holds the
+    composed-repos catalog the root publishes and the initiator slot the root
+    fills when it is imported, on one record, ``_composition`` (spec
+    2026-10-11 placement-and-phases §3.5, §3.13). So one test that drives the
+    CLI with ``OTTO_SUT_DIRS`` pointing at a scratch repo —
     ``test_init_prompts``'s epilogue tests do exactly that — records a framed
     "no .otto/settings.toml" error that outlives the ``monkeypatch.setenv``
     restoring the var. Every later test on that worker then trips
@@ -1290,8 +1298,25 @@ def _restore_bootstrap_state():
     report the missing ``--lab``, so the ``TestArgumentValidation`` /
     ``TestLabFreeFlags`` "must exit 2" tests fail with a bare
     ``SystemExit(1)`` and no usage message. It only reproduced under xdist
-    (~1 run in 3, load-dependent) because it needs the poisoning
-    test and the victims to land on the same worker in that order.
+    (~1 run in 3, load-dependent) because it needs the poisoning test and the
+    victims to land on the same worker in that order.
+
+    The CLI's completion-cache snapshot, which ``otto.bootstrap.invalidate``
+    also clears, lives on ``otto.registry``'s ``_COMPLETION_SNAPSHOT`` and is
+    restored with them; ``otto.registry`` installs nothing, so reading it
+    imports no root.
+
+    It never imports ``otto.bootstrap``: importing the root installs the
+    initiator, so a fixture that imported it before every test would hide the
+    one case the initiator exists for, a process that never loaded the root.
+    Each owner is read only when it is already loaded. An owner the test
+    itself loaded is reset at teardown to its import-time state. The
+    initiator slot keeps one invariant: it holds ``otto.bootstrap._initiate``
+    exactly when ``otto.bootstrap`` is loaded. Teardown restores the snapshot,
+    then re-establishes that, because a module import cannot be undone, and
+    fails if ``_initiate`` was left replaced: patch ``otto.bootstrap.bootstrap``,
+    never ``_initiate``. A test that needs "no root loaded" in process asks for
+    ``no_composition_root``.
 
     Snapshot-restore, not the old ``bootstrap._reset()`` teardown (review
     §5.5): reset-to-empty also destroyed caches that existed BEFORE the test,
@@ -1315,25 +1340,61 @@ def _restore_bootstrap_state():
     the same #132/#133 rule that put ``_isolate_registries`` and the
     ``sys.path`` guard here.
     """
-    from otto import bootstrap
+    from otto import registry as otto_registry
 
-    saved = (
-        bootstrap._discovered,
-        bootstrap._result,
-        bootstrap._in_progress,
-        bootstrap._completion_names,
+    bootstrap = sys.modules.get("otto.bootstrap")
+    declared = sys.modules.get("otto.declared")
+    # Read unconditionally on a loaded owner: a renamed cache or record fails
+    # here, at setup (AttributeError). The teardown's setattr alone would
+    # silently mint new attributes, so this read is the guard (fable's
+    # final-review find).
+    saved_caches = (
+        None
+        if bootstrap is None
+        else {name: getattr(bootstrap, name) for name in _BOOTSTRAP_CACHES}
     )
+    saved_composition = None if declared is None else dataclasses.replace(declared._composition)
+    saved_initiate = None if bootstrap is None else bootstrap._initiate
+    saved_names = otto_registry._COMPLETION_SNAPSHOT.names
     yield
-    # Direct rebinds, same access the _ADD_LOCKS guard below uses. A rename of
-    # these globals fails loudly at the snapshot READ above (setup raises
-    # AttributeError); this teardown setattr alone would silently mint new
-    # attributes, so the read is the guard (fable's final-review find).
-    (
-        bootstrap._discovered,
-        bootstrap._result,
-        bootstrap._in_progress,
-        bootstrap._completion_names,
-    ) = saved
+    otto_registry._COMPLETION_SNAPSHOT.names = saved_names
+    bootstrap = sys.modules.get("otto.bootstrap")
+    declared = sys.modules.get("otto.declared")
+    left_initiate = None if bootstrap is None else bootstrap._initiate
+    if bootstrap is not None:
+        for name in _BOOTSTRAP_CACHES:
+            setattr(bootstrap, name, None if saved_caches is None else saved_caches[name])
+        # Put a replaced ``_initiate`` back before failing, so the leak fails
+        # only the test that left it, not every later test on the worker.
+        if saved_initiate is not None:
+            bootstrap._initiate = saved_initiate
+    if declared is not None:
+        declared._composition = (
+            type(declared._composition)() if saved_composition is None else saved_composition
+        )
+        declared._composition.initiator = None if bootstrap is None else bootstrap._initiate
+    # The slot is re-derived from the live root, so a replaced ``_initiate``
+    # left on it would pass into every later test's slot. Patch
+    # ``otto.bootstrap.bootstrap`` (the initiator looks it up when called),
+    # never ``_initiate``.
+    assert left_initiate is None or left_initiate.__module__ == "otto.bootstrap", (
+        f"otto.bootstrap._initiate was left replaced ({left_initiate!r}): patch "
+        "otto.bootstrap.bootstrap, never _initiate"
+    )
+
+
+@pytest.fixture
+def no_composition_root(monkeypatch):
+    """Run the test with the initiator slot empty, as if ``otto.bootstrap`` had never loaded.
+
+    Only the slot is cleared: a module import cannot be undone in process, so
+    ``otto.bootstrap`` may stay in ``sys.modules``. The true cold path, a
+    fresh interpreter that never imported the root, is a fresh-process test's
+    to cover. The root conftest's restore puts the slot back after the test.
+    """
+    from otto import declared
+
+    monkeypatch.setattr(declared._composition, "initiator", None)
 
 
 @pytest.fixture(autouse=True)

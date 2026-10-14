@@ -10,6 +10,7 @@ import typer
 from otto import bootstrap as bs
 from otto.cli.invoke import fail_loud_on_bootstrap_errors
 from otto.config.scope import ProjectScopeConfig
+from tests._fixtures.bootstrap_seam import install_composed
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.rootoptions import make_root_options
 
@@ -25,8 +26,7 @@ def _install_result(monkeypatch, *, errors=(), warnings=(), repos=()):
     result = bs.BootstrapResult(
         env=None, repos=list(repos), errors=list(errors), warnings=list(warnings)
     )
-    monkeypatch.setattr(bs, "_result", result)
-    return result
+    return install_composed(monkeypatch, result)
 
 
 def _fake_ctx(*, labs=None, include=(), exclude=()):

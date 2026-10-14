@@ -110,7 +110,7 @@ _C = {"ip": "192.168.5.5", "element": "c", "creds": [{"login": "u", "password": 
 def test_hosts_completer_narrows_to_l2_neighbors_after_comma(tmp_path):
     repo = _repo_with_hosts(tmp_path, [_A, _B, _C])
     with (
-        patch("otto.bootstrap.get_completion_names", return_value=None),
+        patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.bootstrap.get_repos", return_value=[repo]),
     ):
         result = _hosts_completer(None, "a,")
@@ -120,7 +120,7 @@ def test_hosts_completer_narrows_to_l2_neighbors_after_comma(tmp_path):
 def test_hosts_completer_falls_back_to_full_list_on_narrowing_error(tmp_path):
     repo = _repo_with_hosts(tmp_path, [_A, _B, _C])
     with (
-        patch("otto.bootstrap.get_completion_names", return_value=None),
+        patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.bootstrap.get_repos", return_value=[repo]),
         patch("otto.cli.tunnel._ip_by_host", side_effect=RuntimeError("boom")),
     ):
@@ -131,7 +131,7 @@ def test_hosts_completer_falls_back_to_full_list_on_narrowing_error(tmp_path):
 def test_hosts_completer_no_comma_yet_is_unaffected(tmp_path):
     repo = _repo_with_hosts(tmp_path, [_A, _B, _C])
     with (
-        patch("otto.bootstrap.get_completion_names", return_value=None),
+        patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.bootstrap.get_repos", return_value=[repo]),
     ):
         result = _hosts_completer(None, "a")
@@ -154,7 +154,7 @@ def test_hosts_completer_live_scan_filters_by_selected_lab(tmp_path):
         [dict(_A, labs=["unix"]), dict(_B, labs=["unix_alt"]), dict(_C, labs=["unix_alt"])],
     )
     with (
-        patch("otto.bootstrap.get_completion_names", return_value=None),
+        patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.bootstrap.get_repos", return_value=[repo]),
     ):
         result = _hosts_completer(_ctx_with_labs(["unix"]), "")
@@ -168,7 +168,7 @@ def test_hosts_completer_cached_hosts_filtered_by_selected_lab():
         "hosts_by_lab": {"unix": ["a"], "unix_alt": ["b", "c"]},
     }
     with (
-        patch("otto.bootstrap.get_completion_names", return_value=fake_cache),
+        patch("otto.registry.get_completion_names", return_value=fake_cache),
         patch("otto.bootstrap.get_repos", return_value=[]),
     ):
         result = _hosts_completer(_ctx_with_labs(["unix_alt"]), "")
@@ -178,7 +178,7 @@ def test_hosts_completer_cached_hosts_filtered_by_selected_lab():
 def test_hosts_completer_no_lab_selected_keeps_full_fleet(tmp_path):
     repo = _repo_with_hosts(tmp_path, [dict(_A, labs=["unix"]), dict(_B, labs=["unix_alt"])])
     with (
-        patch("otto.bootstrap.get_completion_names", return_value=None),
+        patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.bootstrap.get_repos", return_value=[repo]),
     ):
         result = _hosts_completer(_ctx_with_labs(None), "")
@@ -192,7 +192,7 @@ def test_hosts_completer_l2_narrowing_respects_lab_scope(tmp_path):
         [dict(_A, labs=["unix"]), dict(_B, labs=["unix_alt"])],  # a+b share 10.0.0.0/24
     )
     with (
-        patch("otto.bootstrap.get_completion_names", return_value=None),
+        patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.bootstrap.get_repos", return_value=[repo]),
     ):
         result = _hosts_completer(_ctx_with_labs(["unix"]), "a,")

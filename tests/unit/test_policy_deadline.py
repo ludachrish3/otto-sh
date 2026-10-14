@@ -7,6 +7,7 @@ import pytest
 from otto import bootstrap as bs
 from otto import lifecycle
 from otto.invocation import RunPolicy, install_policy, reset_binding
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result, install_composed
 
 
 @pytest.fixture(autouse=True)
@@ -141,7 +142,7 @@ async def test_a_nested_open_context_with_failed_discovery_runs_under_ten_second
 
     monkeypatch.setattr("otto.bootstrap.discovered_teardown_deadline", lambda: None)
     bs._reset()
-    monkeypatch.setattr(bs, "_result", bs.BootstrapResult(env=None, repos=[]))  # type: ignore[arg-type]
+    install_composed(monkeypatch, fake_bootstrap_result([]))
     ambient = install_policy(RunPolicy(teardown_deadline=3.0))
     try:
         async with context.open_context(lab=Lab(name="rig")):

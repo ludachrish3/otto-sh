@@ -49,7 +49,6 @@ UNOWNED = [
     "otto/__init__.py",
     "otto/__main__.py",
     "otto/_shim.py",
-    "otto/declared.py",
     "otto/env/__init__.py",
     "otto/env/backends.py",
     "otto/env/manage.py",

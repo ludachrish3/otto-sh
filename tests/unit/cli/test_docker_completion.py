@@ -25,7 +25,7 @@ def _ctx(**params):
 
 @pytest.fixture(autouse=True)
 def names():
-    with patch("otto.bootstrap.get_completion_names", return_value=NAMES):
+    with patch("otto.registry.get_completion_names", return_value=NAMES):
         yield
 
 
@@ -106,15 +106,15 @@ def test_no_lab_selected_uses_the_maps_only_entry(observed, monkeypatch):
 def test_no_lab_selected_and_two_different_defaults_offers_nothing(observed, monkeypatch):
     monkeypatch.setattr(docker_cli, "_selected_labs_for_tab", lambda ctx: [])
     two = {**NAMES, "docker_default_parent_by_lab": {"east": "test3", "west": "alt2"}}
-    with patch("otto.bootstrap.get_completion_names", return_value=two):
+    with patch("otto.registry.get_completion_names", return_value=two):
         assert docker_cli._container_completer(_ctx(parent=None), "") == []
 
 
 def test_a_cold_cache_offers_nothing_without_a_parent(observed, monkeypatch):
     monkeypatch.setattr(docker_cli, "_selected_labs_for_tab", lambda ctx: [])
-    with patch("otto.bootstrap.get_completion_names", return_value=None):
+    with patch("otto.registry.get_completion_names", return_value=None):
         assert docker_cli._container_completer(_ctx(parent=None), "") == []
-    with patch("otto.bootstrap.get_completion_names", return_value={}):
+    with patch("otto.registry.get_completion_names", return_value={}):
         assert docker_cli._tag_completer(_ctx(parent=None), "") == []
 
 
@@ -145,7 +145,7 @@ def test_container_completer_reads_the_one_parents_state_alone(observed, monkeyp
 
 def test_a_cold_cache_falls_back_to_the_collectors_for_declared_names():
     with (
-        patch("otto.bootstrap.get_completion_names", return_value=None),
+        patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.config.completion_cache.collect_docker_image_names", return_value=["cold"]),
         patch("otto.bootstrap.get_repos", return_value=["repo"]),
     ):
@@ -155,7 +155,7 @@ def test_a_cold_cache_falls_back_to_the_collectors_for_declared_names():
 def test_the_completers_never_raise():
     boom = RuntimeError("boom")
     with (
-        patch("otto.bootstrap.get_completion_names", side_effect=boom),
+        patch("otto.registry.get_completion_names", side_effect=boom),
         patch("otto.bootstrap.get_repos", side_effect=boom),
         patch("otto.bootstrap.discover", side_effect=boom),
         patch("otto.config.completion_cache.read_docker_observed", side_effect=boom),

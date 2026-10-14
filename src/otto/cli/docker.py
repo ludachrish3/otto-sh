@@ -113,8 +113,9 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     (``cache['docker_hosts']``); falls through to a live ``lab.json``
     scan on cache miss so first-run completion still works.
     """
-    from ..bootstrap import get_completion_names, get_repos
+    from ..bootstrap import get_repos
     from ..config.completion_cache import collect_docker_capable_host_ids
+    from ..registry import get_completion_names
     from .completers import lab_scoped_host_ids, selected_lab_names
 
     cached = get_completion_names()
@@ -141,8 +142,9 @@ def _use_case_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
     completer: a use-case is declared by REPOS, and which lab is selected
     decides where its fragments land, not whether it exists.
     """
-    from ..bootstrap import get_completion_names, get_repos
+    from ..bootstrap import get_repos
     from ..config.completion_cache import collect_docker_use_case_names
+    from ..registry import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("docker_use_cases"), list):
@@ -155,7 +157,7 @@ def _use_case_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
 
 def _names_or(key: str, collect: "Callable[[], Any]") -> Any:
     """Return the cached ``names`` entry for *key*, else the collector's live answer (cold run)."""
-    from ..bootstrap import get_completion_names
+    from ..registry import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and key in cached:
@@ -248,7 +250,7 @@ def _default_parent_for_tab(ctx: typer.Context) -> "str | None":
 
     The bash shim mirrors this as ``otto._shim_complete._default_parent``; change both or neither.
     """
-    from ..bootstrap import get_completion_names
+    from ..registry import get_completion_names
 
     cached = get_completion_names()
     by_lab = cached.get("docker_default_parent_by_lab") if cached else None

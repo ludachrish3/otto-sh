@@ -14,6 +14,7 @@ from otto.host import dev_tool as dev_tool_mod
 from otto.host import product as product_mod
 from otto.host.element import Element
 from otto.registry import resolved
+from tests._fixtures.bootstrap_seam import publish_repos
 from tests._fixtures.fake_repo import fake_repo
 
 SEAMS = [
@@ -276,7 +277,7 @@ async def test_shell_kind_commands_run_on_the_host():
 # ── factory chokepoint ───────────────────────────────────────────────────────
 
 
-def _factory_world(monkeypatch):
+def _factory_world():
     """A scoped fake repo declaring one product and one dev tool for ``probe-box.*``."""
 
     product_entry = DeclaredEntry(
@@ -303,9 +304,7 @@ def _factory_world(monkeypatch):
         declared_products=[product_entry],
         declared_dev_tools=[dev_tool_entry],
     )
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [repo])
-    monkeypatch.setattr("otto.bootstrap.get_ordered_repos", lambda: [repo])
-    monkeypatch.setattr("otto.bootstrap.is_bootstrapped", lambda: True)
+    publish_repos([repo])
 
 
 def _factory_host():
@@ -333,7 +332,7 @@ def test_factory_applies_declared_entries_alongside_providers_after_the_lab_stam
     """
     from otto.registry import registering_repo
 
-    _factory_world(monkeypatch)
+    _factory_world()
     with registering_repo("coderepo"):
         product_mod.register_product_provider(
             lambda host: [SimpleNamespace(name="extra", owner=None, cov_dir="/tmp/extra")]
@@ -368,7 +367,7 @@ def test_factory_refuses_a_provider_name_a_declared_entry_holds(monkeypatch, sea
     """
     from otto.registry import registering_repo
 
-    _factory_world(monkeypatch)
+    _factory_world()
     with registering_repo("coderepo"):
         if seam_name == "products":
             product_mod.register_product_provider(

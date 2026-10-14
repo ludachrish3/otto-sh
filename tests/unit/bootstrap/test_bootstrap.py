@@ -675,6 +675,58 @@ def test_a_raising_bootstrap_leaves_no_partial_view_behind(tmp_path, monkeypatch
 
     assert bs._in_progress is None
     assert bs._result is None  # nothing was published
+    from otto import declared
+
+    assert declared._composition.in_progress is None  # the in-progress view was withdrawn
+    assert declared._composition.result is None
+
+
+# ── the catalog: what the root publishes into otto.declared ───────────────
+
+
+def test_a_completed_bootstrap_publishes_its_result(tmp_path, monkeypatch):
+    """The complete result is what ``otto.declared``'s readers take; the in-progress one goes."""
+    from otto import declared
+
+    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path))
+    result = bs.bootstrap()
+    assert declared._composition.result is result
+    assert declared._composition.in_progress is None
+
+
+def test_invalidate_withdraws_the_catalog_and_keeps_the_initiator(tmp_path, monkeypatch):
+    from otto import declared
+
+    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path))
+    bs.bootstrap()
+    bs.invalidate()
+    assert declared._composition.result is None
+    assert declared._composition.in_progress is None
+    assert declared._composition.initiator is bs._initiate
+
+
+def test_the_initiator_runs_the_patched_bootstrap(monkeypatch):
+    """The initiator looks ``bootstrap`` up when called, so a patch of the root reaches it."""
+    sentinel = bs.BootstrapResult(env=None, repos=[])
+    monkeypatch.setattr(bs, "bootstrap", lambda: sentinel)
+    assert bs._initiate() is sentinel
+
+
+def test_importing_the_root_installs_the_initiator_and_composes_nothing():
+    """A fresh interpreter: importing ``otto.bootstrap`` fills the slot and runs no discovery."""
+    import subprocess
+    import sys
+
+    probe = (
+        "import otto.bootstrap as bs, otto.declared as d; "
+        "print(d._composition.initiator is bs._initiate, "
+        "d._composition.result is None, bs._discovered is None)"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.split() == ["True", "True", "True"]
 
 
 # ── is_bootstrapped(): mid-bootstrap counts as bootstrapped ───────────────

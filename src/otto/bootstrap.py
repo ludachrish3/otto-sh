@@ -22,20 +22,43 @@ deliberately NOT part of bootstrap — it happens lazily at first access.
 parsing, ``open_context()`` calls it lazily, and repeated calls return the
 same :class:`BootstrapResult`.
 
-The five repo accessors live here too: :func:`get_repos` and
+What it composes is also published to the composed-repos catalog in
+:mod:`otto.declared`, where the layers below this root read it: the
+in-progress result before the repos' init modules run, then the complete one;
+a composition that fails, and :func:`invalidate`, withdraw both. The last
+statement of this module installs the catalog's initiator, so importing the
+root lets a reader below it start composition, and composes nothing itself.
+
+Its error types, :class:`BootstrapError`, :class:`DependencyError`,
+:class:`ProjectScopeError` and :class:`BootstrapWarning`, are defined in
+:mod:`otto.config.scope`, below every layer that raises or catches them, and
+re-exported here under their public names: each is the same object as its
+owner's. Every other module that raises or catches :class:`ProjectScopeError`
+imports it from the owner when called, so a test's patch of
+``otto.config.scope.ProjectScopeError`` reaches it there; this module's own
+D2 check raises through the binding it took at import, which that patch does
+not reach.
+
+The repo accessors live here too: :func:`get_repos` and
 :func:`get_ordered_repos` read :func:`bootstrap`'s result, :func:`get_env`
-reads :func:`discover`'s, and :func:`is_bootstrapped` and
-:func:`get_completion_names` read this module's state. Each runs discovery
-or bootstrap on first use, never at import, and each looks its source up
-when called, so a test's patch of ``otto.bootstrap.bootstrap`` reaches it.
+reads :func:`discover`'s, and :func:`is_bootstrapped` reads this module's
+state. Each runs discovery or bootstrap on first use, never at import, and
+each looks its source up when called, so a test's patch of
+``otto.bootstrap.bootstrap`` reaches it. :func:`get_completion_names` is
+defined in :mod:`otto.registry`, which holds the CLI's completion-cache
+snapshot, and re-exported here: its readers import that module, not this
+one, so resolving a command for ``--help`` or a TAB loads no composition
+root.
 """
 
 import importlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from .errors import OttoError, is_containable
-from .registry import registering_repo
+from .config.scope import BootstrapError, BootstrapWarning, DependencyError, ProjectScopeError
+from .declared import clear_composed, install_initiator, publish_composed
+from .errors import is_containable
+from .registry import clear_completion_names, get_completion_names, registering_repo
 
 if TYPE_CHECKING:
     from .config.repo import Repo
@@ -55,52 +78,6 @@ __all__ = [
     "invalidate",
     "is_bootstrapped",
 ]
-
-
-class BootstrapError(OttoError):
-    """One user file failed to load during bootstrap registration."""
-
-    def __init__(self, sut_dir: Any, source: str, cause: BaseException) -> None:
-        """Frame *cause* as ``repo <sut_dir>: failed to load <source>``."""
-        super().__init__(f"repo {sut_dir}: failed to load {source}: {cause!r}")
-        self.sut_dir = sut_dir
-        self.source = source
-        self.__cause__ = cause
-
-
-class DependencyError(BootstrapError):
-    """A repo's declared dependencies cannot be satisfied (or a dependency was skipped)."""
-
-    def __init__(self, sut_dir: Any, message: str) -> None:
-        """Frame *message* as ``repo <sut_dir>: <message>``."""
-        Exception.__init__(self, f"repo {sut_dir}: {message}")
-        self.sut_dir = sut_dir
-        self.source = "dependencies"
-
-
-class ProjectScopeError(BootstrapError):
-    """A repo registered providers without declaring the labs it applies to (D2).
-
-    Unlike its siblings this one is NOT contained: a repo whose providers can
-    never reach a host is a configuration mistake with no degraded mode worth
-    offering, and the whole point of the check is that it is impossible to
-    ignore. *message* is used verbatim — it already opens with the repo's name,
-    so the ``repo <sut_dir>:`` prefix its siblings add would say it twice.
-    """
-
-    def __init__(self, sut_dir: Any, message: str) -> None:
-        """Carry *message* unframed; keep *sut_dir* on the exception for callers."""
-        Exception.__init__(self, message)
-        self.sut_dir = sut_dir
-        self.source = "project_scope"
-
-
-@dataclass(frozen=True)
-class BootstrapWarning:
-    """A non-fatal dependency finding: rendered at startup, never gates dispatch."""
-
-    sut_dir: Any
-    message: str
 
 
 @dataclass(frozen=True)
@@ -141,10 +118,9 @@ exists so a RE-ENTRANT ``bootstrap()`` has something true to answer with, and
 the reentrance is real: the import phase runs repo ``init`` modules, i.e. user
 code, and anything there that reaches :func:`get_repos`
 — directly, or by way of a stamped host whose product providers consult
-:func:`~otto.config.scope.scope_for_repo` — lands back here with ``_result``
+:func:`~otto.declared.scope_for_repo` — lands back here with ``_result``
 still unset. Without this, that call composed a SECOND, nested root.
 """
-_completion_names: dict[str, Any] | None = None
 
 
 _NO_LAB_PATTERNS = """\
@@ -360,6 +336,7 @@ def bootstrap() -> BootstrapResult:
         warnings=resolution.warnings,
         ordered_repos=resolution.ordered,
     )
+    publish_composed(_in_progress, complete=False)
     try:
         importlib.import_module("otto.project.actions").declare()
         for repo in resolution.ordered:
@@ -403,8 +380,14 @@ def bootstrap() -> BootstrapResult:
         # Cleared whichever way this leaves. A bootstrap that RAISED (D2's
         # refusal, an uncontainable init failure) must not leave a partial view
         # standing as though it were the composition root: the next call has to
-        # re-run and fail the same way, not read a half-built answer.
+        # re-run and fail the same way, not read a half-built answer. The
+        # catalog follows: the complete result replaces the in-progress one,
+        # or a failure withdraws both.
         _in_progress = None
+        if _result is not None:
+            publish_composed(_result, complete=True)
+        else:
+            clear_composed()
     return _result
 
 
@@ -466,41 +449,13 @@ def is_bootstrapped() -> bool:
     of calling :func:`bootstrap` or :func:`get_repos` — only a
     process that has not started bootstrap at all collects nothing.
 
-    Callers that must not pay bootstrap's cost as a side effect of merely
-    asking — e.g. :func:`otto.declared.declared_for_host`, reached from
-    ``create_host_from_dict`` in bare-library and pre-bootstrap processes —
-    check this first and treat ``False`` as "nothing loaded yet".
+    A caller below this root reads the published results in
+    :mod:`otto.declared` instead (:func:`otto.declared.declared_for_host`,
+    reached from ``create_host_from_dict`` in bare-library and pre-bootstrap
+    processes): they are published in the same two moments, so "nothing
+    published" there is ``False`` here.
     """
     return _result is not None or _in_progress is not None
-
-
-def set_completion_names(names: "dict[str, Any] | None") -> None:
-    """Install the completion-cache snapshot (fast path; set by the CLI entry)."""
-    global _completion_names  # noqa: PLW0603 — module-level singleton/cache
-    _completion_names = names
-
-
-def get_completion_names() -> "dict[str, Any] | None":
-    """Return cached instruction/suite/host data when the completion fast path is active.
-
-    Return ``None`` when not active.
-
-    Returned keys:
-
-    - ``instructions`` / ``suites``: each a list of
-      ``{"name": str, "options": [...]}`` dicts. :mod:`otto.cli.main` rebuilds
-      Typer stubs from them.
-    - ``hosts``: a plain list of host-ID strings. :mod:`otto.cli.host`'s
-      ``host_id`` completer prefers this over live ``lab.json`` parsing.
-    - ``term_backends``: a ``list[str]`` of registered term backend names.
-      :mod:`otto.cli.host`'s ``--term`` completer prefers this over the live
-      registry.
-    - ``transfer_backends``: a list of
-      ``{"name": str, "host_families": [str, ...]}`` dicts for registered
-      transfer backends. :mod:`otto.cli.host`'s ``--transfer`` completer
-      prefers this over the live registry.
-    """
-    return _completion_names
 
 
 def invalidate() -> None:
@@ -509,9 +464,12 @@ def invalidate() -> None:
     The supported recovery path for long-lived embedders: fix the repo or the
     environment, call ``invalidate()``, and re-run :func:`bootstrap` — the
     prior discovery's errors are discarded together with the discovery that
-    produced them.
+    produced them. The results published in :mod:`otto.declared` are
+    withdrawn too; the initiator stays installed, so the next initiating read
+    composes again. The CLI's completion-cache snapshot
+    (:func:`otto.registry.get_completion_names`) is cleared as well.
     """
-    global _discovered, _result, _in_progress, _completion_names  # noqa: PLW0603 — module-level singleton/cache
+    global _discovered, _result, _in_progress  # noqa: PLW0603 — module-level singleton/cache
     _discovered = None
     _result = None
     # Defence in depth. `bootstrap()` clears this in a `finally`, so it is
@@ -519,9 +477,25 @@ def invalidate() -> None:
     # bootstrap result" must mean every one, or the day that invariant breaks
     # this function silently stops being the recovery path it advertises.
     _in_progress = None
-    _completion_names = None
+    clear_completion_names()
+    clear_composed()
 
 
 def _reset() -> None:
     """Clear all bootstrap state (test hook; alias of :func:`invalidate`)."""
     invalidate()
+
+
+def _initiate() -> BootstrapResult:
+    """Start composition for a reader below the root: run :func:`bootstrap`.
+
+    The initiator :mod:`otto.declared` holds. ``bootstrap`` is looked up in
+    this module when the initiator is called, so a replaced or patched
+    ``otto.bootstrap.bootstrap`` is the one that runs.
+    """
+    return bootstrap()
+
+
+# Last: installing the initiator runs nothing, so importing this module
+# composes nothing (spec 2026-10-11 placement-and-phases §3.5).
+install_initiator(_initiate)

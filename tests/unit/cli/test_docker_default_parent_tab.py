@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from otto import bootstrap
+from otto import registry
 from otto.cli import docker as docker_cli
 from otto.config import completion_cache as cc
 from tests._fixtures.sutrepo import touch_settings
@@ -31,12 +31,12 @@ def stored_names(tmp_path, monkeypatch):
     )
     view = cc.read_cache([repo])
     assert view is not None
-    saved = bootstrap.get_completion_names()
-    bootstrap.set_completion_names(view)
+    saved = registry.get_completion_names()
+    registry.set_completion_names(view)
     try:
         yield
     finally:
-        bootstrap.set_completion_names(saved)
+        registry.set_completion_names(saved)
 
 
 def _ctx(labs=None):
@@ -94,13 +94,13 @@ MIRROR_ROWS = [
 @pytest.mark.parametrize(("by_lab", "labs", "expected"), MIRROR_ROWS)
 def test_default_parent_mirror_table(by_lab, labs, expected, monkeypatch):
     """The shim twin runs the identical rows; the two functions must agree on every one."""
-    saved = bootstrap.get_completion_names()
-    bootstrap.set_completion_names({"docker_default_parent_by_lab": by_lab})
+    saved = registry.get_completion_names()
+    registry.set_completion_names({"docker_default_parent_by_lab": by_lab})
     monkeypatch.setattr(docker_cli, "_selected_labs_for_tab", lambda ctx: list(labs))
     try:
         assert docker_cli._default_parent_for_tab(_ctx()) == expected
     finally:
-        bootstrap.set_completion_names(saved)
+        registry.set_completion_names(saved)
 
 
 def test_reading_the_default_parent_never_bootstraps(stored_names):

@@ -143,8 +143,7 @@ def monitor(
         typer.echo(ctx.get_help())
         raise typer.Exit(2)
 
-    from ..bootstrap import ProjectScopeError
-    from ..config.scope import EmptySelectionError
+    from ..config.scope import EmptySelectionError, ProjectScopeError
     from ..lifecycle import run_command
     from ..monitor.errors import (
         MonitorInputError,

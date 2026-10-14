@@ -267,9 +267,10 @@ def test_a_tests_open_context_leaves_its_hosts_open_until_the_runner_shuts_down(
     pytester, otto_plugins, monkeypatch
 ):
     from otto import bootstrap as bs
+    from tests._fixtures.bootstrap_seam import fake_bootstrap_result, install_composed
 
     bs._reset()
-    monkeypatch.setattr(bs, "_result", bs.BootstrapResult(env=None, repos=[]))  # type: ignore[arg-type]
+    install_composed(monkeypatch, fake_bootstrap_result([]))
     pytester.makepyfile(fakehost=_FAKE)
     result = run_inner(
         pytester,

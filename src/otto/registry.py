@@ -26,6 +26,20 @@ The module also holds the *registering-repo marker* (:func:`registering_repo`,
 each repo's init imports, so registrations record *which repo* an entry came
 from rather than only which module.
 
+And it holds the CLI's *completion-cache snapshot* (:func:`get_completion_names`,
+:func:`set_completion_names`): on the completion fast path and for the root
+help screen the CLI entry installs the ``names`` section of the completion
+cache here, and the CLI reads the names the registries held when the cache
+was written instead of populating the registries. It lives in this foundation
+module, which every command resolution loads anyway, so resolving a command
+for ``--help`` or a TAB reads it without loading the composition root.
+:mod:`otto.bootstrap` re-exports :func:`get_completion_names`, its public
+name, as the same object. Patch it here: a patch of the re-export reaches no
+reader. The snapshot is a slot with two privileged writes, each with one
+caller (``tests/unit/test_slot_installers.py``): the CLI entry installs it
+(:func:`set_completion_names`), and :func:`otto.bootstrap.invalidate`
+withdraws it (:func:`clear_completion_names`).
+
 Every table refuses entries registered from outside otto while repo test files
 load (:func:`loading_test_files`): test files and conftests load only inside a
 pytest session, so anything they registered would exist for some commands and
@@ -273,6 +287,62 @@ def _registering_for_otto() -> "Iterator[None]":
         yield
     finally:
         _REGISTERING_REPO.reset(token)
+
+
+# ── Completion-cache snapshot ───────────────────────────────────────────
+
+
+@dataclasses.dataclass
+class _CompletionSnapshot:
+    """The one record the snapshot lives on, so no function rebinds a module global."""
+
+    names: "dict[str, Any] | None" = None
+
+
+_COMPLETION_SNAPSHOT: _CompletionSnapshot = _CompletionSnapshot()
+
+
+def set_completion_names(names: "dict[str, Any] | None") -> None:
+    """Install the completion-cache snapshot: the slot's installing write.
+
+    Only :mod:`otto.cli.main`'s entry calls it, on the completion fast path and
+    for the root help screen; ``tests/unit/test_slot_installers.py`` fails on
+    any other caller. :func:`clear_completion_names` is the one other write.
+    """
+    _COMPLETION_SNAPSHOT.names = names
+
+
+def clear_completion_names() -> None:
+    """Withdraw the completion-cache snapshot: :func:`otto.bootstrap.invalidate`'s write.
+
+    Only :mod:`otto.bootstrap` calls it, so dropping every cached result also
+    drops the names a stale cache served; ``tests/unit/test_slot_installers.py``
+    fails on any other caller.
+    """
+    _COMPLETION_SNAPSHOT.names = None
+
+
+def get_completion_names() -> "dict[str, Any] | None":
+    """Return cached instruction/suite/host data when the completion fast path is active.
+
+    Return ``None`` when not active.
+
+    Returned keys:
+
+    - ``instructions`` / ``suites``: each a list of
+      ``{"name": str, "options": [...]}`` dicts. :mod:`otto.cli.main` rebuilds
+      Typer stubs from them.
+    - ``hosts``: a plain list of host-ID strings. :mod:`otto.cli.host`'s
+      ``host_id`` completer prefers this over live ``lab.json`` parsing.
+    - ``term_backends``: a ``list[str]`` of registered term backend names.
+      :mod:`otto.cli.host`'s ``--term`` completer prefers this over the live
+      registry.
+    - ``transfer_backends``: a list of
+      ``{"name": str, "host_families": [str, ...]}`` dicts for registered
+      transfer backends. :mod:`otto.cli.host`'s ``--transfer`` completer
+      prefers this over the live registry.
+    """
+    return _COMPLETION_SNAPSHOT.names
 
 
 # ── Engine-wide state ───────────────────────────────────────────────────

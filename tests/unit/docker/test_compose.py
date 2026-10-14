@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from otto.config import scope as scope_mod
+from otto import declared as declared_mod
 from otto.config.lab import Lab
 from otto.config.repo import (
     DockerCompose,
@@ -1451,7 +1451,7 @@ def test_ingest_runs_after_the_source_lab_stamp(tmp_path, monkeypatch):
         "bench": ProjectScopeConfig([re.compile("a")], [re.compile(".*")]),
         "elsewhere": ProjectScopeConfig([re.compile("b")], [re.compile(".*")]),
     }
-    monkeypatch.setattr(scope_mod, "scope_for_repo", scopes.get)
+    monkeypatch.setattr(declared_mod, "scope_for_repo", scopes.get)
 
     repo = _make_repo(tmp_path)
     lab = _merged_lab_with_stamped_parent()  # parent.source_lab == "a", lab.name == "a+b"

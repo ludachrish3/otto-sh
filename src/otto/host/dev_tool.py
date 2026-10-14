@@ -301,7 +301,8 @@ def apply_dev_tool_providers(host: "Host") -> None:
     deliberately separate, so a gate present in one loop and absent from the
     other would leave a repo free to hang debug tooling on any host it liked.
     """
-    from ..config.scope import repo_targets, scope_for_repo  # function-scope: import-light seam
+    from ..config.scope import repo_targets  # function-scope: import-light seam
+    from ..declared import scope_for_repo  # at call time: a patch of the owner reaches both seams
 
     seen = {t.name for t in host.dev_tools}
     for provider, provider_owner in registered_dev_tool_providers():

@@ -288,6 +288,9 @@ def install_asyncssh_warning_filters() -> None:
     filter_list[1:] = [entry for entry in filter_list[1:] if not is_ours(entry)]
 
 
+SSH_DEBUG_ENV_VAR = "OTTO_SSH_DEBUG"
+"""The env var that raises asyncssh's debug level for one invocation (1..3)."""
+
 _SSH_DEBUG_LEVELS = range(1, 4)
 """asyncssh's own accepted debug levels: 1..3."""
 
@@ -320,8 +323,6 @@ def apply_ssh_debug_level() -> None:
     the repo's floor back. A value outside 1..3 is reported and ignored
     rather than turned into a ValueError on every connect, and lifts nothing.
     """
-    from ..config.env import SSH_DEBUG_ENV_VAR
-
     raw = os.environ.get(SSH_DEBUG_ENV_VAR)
     if raw is None:
         return

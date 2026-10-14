@@ -17,6 +17,10 @@ session runner loop closed with hosts still registered, even when a later
 registration has since forgotten that loop's registry, and a session that
 ends with two live otto registry tables sharing one ``(module, kind)``.
 
+``_restore_composition_state`` keeps the initiator slot ``otto.declared``
+holds filled exactly when ``otto.bootstrap`` is loaded, even when a test is
+what loaded it.
+
 ``tests/unit/test_lazy_packages.py`` tests the check's functions directly;
 what this module pins is the WIRING. Each test runs an inner session with the
 repo's root conftest registered as a plugin
@@ -404,6 +408,63 @@ def test_reset_otto_context_restores_both_vars(inner: pytest.Pytester) -> None:
     result = inner.runpytest_subprocess(*PROBE_ARGS, timeout=180)
     combined = str(result.stdout) + str(result.stderr)
     assert _outcomes(result) == {"passed": 2}, combined
+
+
+PROBE_COMPOSITION = """\
+import sys
+
+from otto import declared
+
+
+def test_a_loads_the_composition_root():
+    # The root conftest imports otto.declared and never otto.bootstrap.
+    assert "otto.bootstrap" not in sys.modules
+    assert declared._composition.initiator is None
+    import otto.bootstrap  # importing the root fills the slot
+
+
+def test_b_finds_the_initiator_the_root_installed():
+    import otto.bootstrap as bs
+
+    assert declared._composition.initiator is bs._initiate
+"""
+
+
+def test_restore_composition_state_keeps_the_slot_with_its_root(inner: pytest.Pytester) -> None:
+    # The snapshot was taken before the root loaded, so restoring it alone would
+    # empty the slot while otto.bootstrap stays imported.
+    (inner.path / "test_probe_composition.py").write_text(PROBE_COMPOSITION)
+    result = inner.runpytest_subprocess(*PROBE_ARGS, timeout=180)
+    combined = str(result.stdout) + str(result.stderr)
+    assert _outcomes(result) == {"passed": 2}, combined
+
+
+PROBE_REPLACED_INITIATOR = """\
+import otto.bootstrap as bs
+
+
+from otto import declared
+
+
+def test_leaves_the_initiator_replaced():
+    bs._initiate = lambda: None  # no monkeypatch: nothing undoes it
+
+
+def test_later_test_finds_the_root_initiator_again():
+    assert bs._initiate.__module__ == "otto.bootstrap"
+    assert declared._composition.initiator is bs._initiate
+"""
+
+
+def test_restore_composition_state_refuses_a_replaced_initiator(inner: pytest.Pytester) -> None:
+    # The teardown re-derives the slot from the live root, so a replaced
+    # _initiate would otherwise ride into every later test's slot. It puts the
+    # root's own back before failing, so only the leaking test errors.
+    (inner.path / "test_probe_initiator.py").write_text(PROBE_REPLACED_INITIATOR)
+    result = inner.runpytest_subprocess(*PROBE_ARGS, timeout=180)
+    combined = str(result.stdout) + str(result.stderr)
+    assert _outcomes(result) == {"passed": 2, "errors": 1}, combined
+    assert "patch otto.bootstrap.bootstrap, never _initiate" in combined
 
 
 PROBE_MODULE_INSTALL = """\

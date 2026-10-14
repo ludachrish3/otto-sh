@@ -4,7 +4,7 @@
 def test_lab_completer_prefers_cache(monkeypatch):
 
     monkeypatch.setattr(
-        "otto.bootstrap.get_completion_names",
+        "otto.registry.get_completion_names",
         lambda: {"labs": ["tech1", "tech2", "prod"]},
     )
     from otto.cli.main import _lab_completer
@@ -15,7 +15,7 @@ def test_lab_completer_prefers_cache(monkeypatch):
 def test_lab_completer_falls_back_to_live(monkeypatch):
     import otto.config.completion_cache as cc
 
-    monkeypatch.setattr("otto.bootstrap.get_completion_names", lambda: None)
+    monkeypatch.setattr("otto.registry.get_completion_names", lambda: None)
     monkeypatch.setattr("otto.bootstrap.get_repos", list)
     monkeypatch.setattr(cc, "collect_lab_names", lambda repos: ["alpha", "beta"])
     from otto.cli.main import _lab_completer
@@ -42,7 +42,7 @@ def _serve(monkeypatch, *, names=(), markers=()):
 
 def test_lab_completer_continues_after_plus(monkeypatch):
 
-    monkeypatch.setattr("otto.bootstrap.get_completion_names", lambda: {"labs": ["tech1", "tech2"]})
+    monkeypatch.setattr("otto.registry.get_completion_names", lambda: {"labs": ["tech1", "tech2"]})
     from otto.cli.main import _lab_completer
 
     # First lab typed; completing the second must keep the prefix and not

@@ -606,12 +606,19 @@ def test_cov_reads_through_a_repo_view(cov_detection):
 #
 # The bootstrap result is INSTALLED, the way tests/unit/cli/test_bootstrap_gate.py
 # installs it, so each test decides exactly which repos (and which load errors)
-# open_context sees. The root conftest's `_restore_bootstrap_state` puts the
+# open_context sees. The root conftest's `_restore_composition_state` puts the
 # previous result back afterwards.
 
 
 def _install_result(monkeypatch, *, repos=(), errors=()):
-    """Make *repos* and *errors* what ``bootstrap()`` returns for this test."""
+    """Make *repos* and *errors* what ``bootstrap()`` returns for this test.
+
+    Published to the composed-repos catalog too, as a finished ``bootstrap()``
+    publishes it, so the readers below the root (the declared entries a lab
+    load applies) see the same repos.
+    """
+    from otto.declared import publish_composed
+
     bs._reset()
     result = bs.BootstrapResult(
         env=None,
@@ -621,6 +628,7 @@ def _install_result(monkeypatch, *, repos=(), errors=()):
         ordered_repos=list(repos),  # as bootstrap() fills it, so the real preflight sees them
     )
     monkeypatch.setattr(bs, "_result", result)
+    publish_composed(result, complete=True)
     return result
 
 

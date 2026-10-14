@@ -2,8 +2,11 @@
 
 Spec ``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md``
 §2 and §2.1, and appendix F of the 2026-10-04 manifest spec: twelve names
-are declared; ``discover``, ``DiscoveryResult`` and ``set_completion_names``
-stay phase-1 and CLI plumbing; the accessors keep their semantics.
+are declared; ``discover`` and ``DiscoveryResult`` stay phase-1 plumbing; the
+accessors keep their semantics. ``get_completion_names`` is defined in
+``otto.registry``, which holds the CLI's completion-cache snapshot below the
+root, and re-exported here; its writer, ``set_completion_names``, is the CLI's
+and never passes through this module.
 """
 
 from types import SimpleNamespace
@@ -11,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from otto import bootstrap as bs
+from otto import registry
 from tests._fixtures.sutrepo import make_sut_repo
 
 APPENDIX_F = [
@@ -38,7 +42,7 @@ def _fresh_bootstrap():
 
 def test_otto_bootstrap_declares_exactly_appendix_f():
     assert sorted(bs.__all__) == sorted(APPENDIX_F)
-    assert {"discover", "DiscoveryResult", "set_completion_names"}.isdisjoint(bs.__all__)
+    assert {"discover", "DiscoveryResult"}.isdisjoint(bs.__all__)
     namespace: dict[str, object] = {}
     exec("from otto.bootstrap import *", namespace)  # noqa: S102 — a star import needs a statement
     assert sorted(set(namespace) - {"__builtins__"}) == sorted(APPENDIX_F)
@@ -76,3 +80,17 @@ def test_get_completion_names_documents_the_snapshot_keys():
         "transfer_backends",
     ):
         assert f"``{key}``" in doc, key
+
+
+def test_get_completion_names_is_the_registry_s_own():
+    """The public name is the owner's function, so both read one snapshot."""
+    assert bs.get_completion_names is registry.get_completion_names
+    snapshot = {"commands": []}
+    registry.set_completion_names(snapshot)
+    assert bs.get_completion_names() is snapshot
+
+
+def test_invalidate_clears_the_completion_snapshot():
+    registry.set_completion_names({"commands": []})
+    bs.invalidate()
+    assert registry.get_completion_names() is None

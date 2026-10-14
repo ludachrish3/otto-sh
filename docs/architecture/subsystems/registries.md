@@ -426,7 +426,9 @@ its result from the cache ({doc}`completion-cache`, "The test-names cache").
 ## Where the code lives
 
 - {mod}`otto.registry` — the `Registry` engine underneath every entry in the
-  inventory: loud duplicates, did-you-mean lookups, attribution
+  inventory: loud duplicates, did-you-mean lookups, attribution; it also holds
+  the CLI's completion snapshot
+  ([Bootstrap: where the code lives](bootstrap.md#where-the-code-lives))
 - {mod}`otto.cli.registry` — `CommandSpec`, the CLI command registry, and
   lazy dispatch
 - {mod}`otto.instruction_catalog` — the `@instruction` decorator, the

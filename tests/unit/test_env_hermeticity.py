@@ -251,7 +251,7 @@ def test_bootstrap_state_cannot_leak_between_tests():
     on that worker then hits ``fail_loud_on_bootstrap_errors()`` and exits 1
     before Click reports the missing ``--lab`` — the "must exit 2" tests below
     fail with a bare ``SystemExit(1)``. ``tests/conftest.py``'s
-    ``_restore_bootstrap_state`` swaps the poisoned caches back out after each
+    ``_restore_composition_state`` swaps the poisoned caches back out after each
     test (snapshot-restore); this runs the exact historical pair, in order, in
     one process to prove the isolation half still holds.
 

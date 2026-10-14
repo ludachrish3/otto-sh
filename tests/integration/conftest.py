@@ -108,7 +108,7 @@ def _default_sut_dirs_env():
     fullmatching a mock's ``source_lab``): 50 failures under ``make coverage``,
     every one of the files green on its own.
 
-    Per test, the root conftest's ``_restore_bootstrap_state`` also drops
+    Per test, the root conftest's ``_restore_composition_state`` also drops
     whatever repo1 the memo picked up while the test ran, so nothing this
     fixture enables survives the test that asked for it. Autouse stays — every
     test under this tree still gets the SUT — but the scope must never widen
@@ -129,19 +129,25 @@ def sut_dirs_env_module():
     a flock or hand-build a ``UnixHost``/``Lab``, neither of which reads the env
     or bootstraps (a context reads its repos lazily), so they do not ask.
 
-    Brackets the bootstrap memo too. A module fixture primes it BEFORE the root
-    conftest's per-test ``_restore_bootstrap_state`` takes its snapshot, so
-    without this restore a repo1 discovered during module setup would outlive
-    the module on that worker — the same leak through a different door.
+    Brackets the composition state too, at both of its owners: the bootstrap
+    memo and the composed-repos catalog it publishes to ``otto.declared``, and
+    the CLI's completion-cache snapshot on ``otto.registry``. A
+    module fixture primes them BEFORE the root conftest's per-test
+    ``_restore_composition_state`` takes its snapshot, so without this restore
+    a repo1 discovered during module setup would outlive the module on that
+    worker — the same leak through a different door.
     """
-    from otto import bootstrap
+    import dataclasses
+
+    from otto import bootstrap, declared, registry
 
     saved = (
         bootstrap._discovered,
         bootstrap._result,
         bootstrap._in_progress,
-        bootstrap._completion_names,
     )
+    saved_composition = dataclasses.replace(declared._composition)
+    saved_names = registry._COMPLETION_SNAPSHOT.names
     try:
         yield from _default_sut_dirs_env_impl()
     finally:
@@ -149,8 +155,9 @@ def sut_dirs_env_module():
             bootstrap._discovered,
             bootstrap._result,
             bootstrap._in_progress,
-            bootstrap._completion_names,
         ) = saved
+        declared._composition = saved_composition
+        registry._COMPLETION_SNAPSHOT.names = saved_names
 
 
 _LAB_DATA = lab_data_path()

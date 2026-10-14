@@ -207,7 +207,7 @@ def cached_host_class_for_id(host_id: str) -> type | None:
     the memo can never go stale in practice.
     """
     global _discovered_host_classes  # noqa: PLW0603 — process-lifetime memo, see docstring
-    from ..bootstrap import get_completion_names
+    from ..registry import get_completion_names
 
     cached = get_completion_names()
     mapping = cached.get("host_classes_by_id") if cached is not None else None
