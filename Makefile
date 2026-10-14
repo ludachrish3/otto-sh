@@ -117,6 +117,16 @@ COVERAGE_THRESHOLD := 95.5
 # and the pair is held equal by the same test.
 CI_COVERAGE_THRESHOLD := 94.75
 
+# Worker count for `make coverage`'s main pytest leg (coverage-python): one more
+# than the CPU count, where pytest's `-n auto` would use exactly the CPU count.
+# Much of that leg's e2e and integration time is spent waiting on lab-VM I/O, so
+# the extra worker overlaps that wait. Measured on a 4-CPU, 7 GB VM, main-leg
+# wall time over two runs per count: 4 workers 806 s (792/819), 5 workers 763 s
+# (777/749), 6 workers 745 s (749/742) -- but +2 left under 1 GB of RAM free,
+# too thin, so +1. Override with `make coverage COVERAGE_WORKERS=N`.
+# CPU count: nproc, else getconf, else sysctl (stock macOS has only the last two), else 1.
+COVERAGE_WORKERS ?= $(shell n=$$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); echo $$((n + 1)))
+
 # Iteration count for `make repeat`. Override on the command line:
 #   make repeat COUNT=50
 COUNT ?= 10
@@ -744,7 +754,7 @@ build: ## (Build & Release) Build the project with uv
 # Pinned by tests/unit/test_coverage_html_placement.py.
 coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95.5 gate (lines + branches); the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
 	@$(SAY) "pytest: all tiers, pinned Python (browser lane folded in)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not conformance and not kmodcov and not serial_timing" --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not conformance and not kmodcov and not serial_timing" -n $(COVERAGE_WORKERS) --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(COVERAGE_THRESHOLD)% lines+branches on the full fold)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser and not busybox and not conformance and not kmodcov" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-python-serial)
 	@$(SAY) "unit outliers, the ten slowest files (a report, never a gate; all of them: make unit-outliers)"
