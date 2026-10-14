@@ -580,7 +580,7 @@ what you want to exercise:
 |----------|------------|------------|
 | Unit tier only (level) | `make coverage-unit` (pinned) / `make nox-unit` (all Pythons) | none |
 | Unit + integration tiers (level) | `make coverage-integration` / `make nox-integration` | full lab |
-| No-testbed CI gate (tests/unit + no-VM e2e) | `make coverage-hostless` (pinned) / `make nox-hostless` (full on the 3.10 + 3.14 bookends, trimmed `tests/unit` minus `interpreter_agnostic` on 3.11–3.13) | none |
+| No-testbed CI gate (tests/unit + no-VM e2e) | `make coverage-hostless` (pinned) / `make nox-hostless` (full on the 3.10 + 3.14 bookends, coverage-gated on 3.10 only, trimmed `tests/unit` minus `interpreter_agnostic` on 3.11–3.13) | none |
 | Full coverage gate (all tiers, excludes `stability`) | `make coverage` | lab VMs |
 | Unix VMs, incl. multi-hop (resource) | `make coverage-unix` / `make nox-unix` | test1/test2/test3 |
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |

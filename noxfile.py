@@ -34,9 +34,10 @@ PRIMARY_PYTHON = "3.10"
 CANARY_PYTHON = "3.14"
 
 # The two interpreters that run EVERYTHING: the floor and the ceiling. The
-# versions between run the trimmed hostless pair (HOSTLESS_MIDDLE_*_ARGS
-# below). Pinned to be exactly min/max of PYTHON_VERSIONS by
-# tests/unit/test_python_matrix_tiering.py.
+# floor gates coverage (HOSTLESS_*_ARGS below), the ceiling runs the same
+# selection with coverage off (HOSTLESS_CANARY_*_ARGS), and the versions
+# between run the trimmed pair (HOSTLESS_MIDDLE_*_ARGS). Pinned to be exactly
+# min/max of PYTHON_VERSIONS by tests/unit/test_python_matrix_tiering.py.
 BOOKEND_PYTHONS = (PRIMARY_PYTHON, CANARY_PYTHON)
 
 # JUnit XML is written into a per-target subdirectory of reports/junit/ named
@@ -61,13 +62,16 @@ nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 
 # Coverage floors — every one a COMBINED line+branch number, since .coveragerc
 # measures branches (`branch = true`). tests_hostless gates at 94.75 on the
-# BOOKEND Pythons — the Makefile's CI_COVERAGE_THRESHOLD, and the floor `make
+# PRIMARY Python — the Makefile's CI_COVERAGE_THRESHOLD, and the floor `make
 # coverage-hostless` enforces on the same test selection, so it's the same
 # number; tests/unit/test_coverage_floors.py holds the pair equal and both
 # above their codified minimums (the Makefile comment on COVERAGE_THRESHOLD
-# has the measurements). The interior Pythons run the trimmed pair below with
-# coverage OFF: a trimmed selection cannot meet the floor, and instrumenting a
-# leg whose report nothing reads is a quarter of its CPU for no reader.
+# has the measurements). The CANARY and interior Pythons run with coverage
+# OFF: the canary's job is "does otto still work on the newest interpreter",
+# the floor is already enforced on the primary, and the interior's trimmed
+# selection cannot meet it anyway. Instrumenting a leg whose report nothing
+# reads costs it ~14 % of wall time (the canary session measured 552 s with
+# coverage, 473 s without) for no reader.
 # tests_all gates at 92, BELOW `make coverage`'s 95.5 (COVERAGE_THRESHOLD):
 # `make coverage` folds the dashboard browser process's Python coverage in via
 # --cov-append, which these browser-excluded nox sessions don't, so their
@@ -162,6 +166,34 @@ HOSTLESS_SERIAL_ARGS = (
     "-n0",
     "--cov-append",
     "--cov-fail-under=94.75",
+)
+
+# The CANARY Python's pair: the bookend selection verbatim, coverage off. Same
+# paths, same marker expressions (`interpreter_agnostic` and the e2e tier
+# included — the newest interpreter runs everything the primary does), only
+# the coverage flags differ: no `--cov-fail-under`, no `--cov-append`, and
+# `--no-cov` instead. tests/unit/test_python_matrix_tiering.py pins that this
+# pair is the bookend pair minus exactly those flags.
+HOSTLESS_CANARY_TEST_ARGS = (
+    "tests/unit",
+    "tests/e2e",
+    "-m",
+    (
+        "not integration and not embedded and not stability and not browser "
+        "and not busybox and not conformance and not kmodcov and not serial_timing"
+    ),
+    "--no-cov",
+)
+HOSTLESS_CANARY_SERIAL_ARGS = (
+    "tests/unit",
+    "tests/e2e",
+    "-m",
+    (
+        "serial_timing and not integration and not embedded and not stability and not browser "
+        "and not busybox and not conformance and not kmodcov"
+    ),
+    "-n0",
+    "--no-cov",
 )
 
 # The INTERIOR Pythons' pair (every PYTHON_VERSIONS entry not in
@@ -275,9 +307,10 @@ def tests_hostless(session: nox.Session) -> None:
     ``.github/workflows/ci.yml`` runs and what ``nox.options.sessions`` defaults
     to. Auto-includes any future no-testbed e2e test.
 
-    Tiered by interpreter: the BOOKEND_PYTHONS run the full pair, the interior
-    versions the trimmed HOSTLESS_MIDDLE pair (see its comment for what is
-    trimmed and why). The junit group names are shared, so
+    Tiered by interpreter: the PRIMARY_PYTHON runs the full pair with the
+    coverage gate, the CANARY_PYTHON the same selection with coverage off, and
+    the interior versions the trimmed HOSTLESS_MIDDLE pair (see its comment for
+    what is trimmed and why). The junit group names are shared, so
     reports/junit/nox-hostless/<session>.xml is one file per Python either way.
     """
     # Each branch spells its bundles by NAME: the lane scanners in
@@ -286,9 +319,16 @@ def tests_hostless(session: nox.Session) -> None:
     # path-less, marker-less `pytest` — and be judged as reaching every tier.
     parallel_junit = _junitxml(session, "nox-hostless")
     serial_junit = _junitxml(session, "nox-hostless-serial")
-    if session.python in BOOKEND_PYTHONS:
+    if session.python == PRIMARY_PYTHON:
         session.run("pytest", *HOSTLESS_TEST_ARGS, parallel_junit, *session.posargs, env=_LEAK_ENV)
         session.run("pytest", *HOSTLESS_SERIAL_ARGS, serial_junit, *session.posargs, env=_LEAK_ENV)
+    elif session.python == CANARY_PYTHON:
+        session.run(
+            "pytest", *HOSTLESS_CANARY_TEST_ARGS, parallel_junit, *session.posargs, env=_LEAK_ENV
+        )
+        session.run(
+            "pytest", *HOSTLESS_CANARY_SERIAL_ARGS, serial_junit, *session.posargs, env=_LEAK_ENV
+        )
     else:
         session.run(
             "pytest", *HOSTLESS_MIDDLE_TEST_ARGS, parallel_junit, *session.posargs, env=_LEAK_ENV

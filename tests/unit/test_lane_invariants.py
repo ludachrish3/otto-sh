@@ -211,10 +211,12 @@ _SERIAL_LEG_TOKEN = '"serial_timing and '
 
 # The module-level constant pairs noxfile.py may spell a serial_timing
 # exclusion in: (parallel bundle, its -n0 twin). The bookend pair is what CI
-# and the bookend Pythons run; the middle pair is the interior Pythons' trim
+# and the primary Python run; the canary pair is the same selection with
+# coverage off, and the middle pair is the interior Pythons' trim
 # (tests/unit/test_python_matrix_tiering.py pins that it narrows its twin).
 _CONSTANT_PAIRS = (
     ("HOSTLESS_TEST_ARGS", "HOSTLESS_SERIAL_ARGS"),
+    ("HOSTLESS_CANARY_TEST_ARGS", "HOSTLESS_CANARY_SERIAL_ARGS"),
     ("HOSTLESS_MIDDLE_TEST_ARGS", "HOSTLESS_MIDDLE_SERIAL_ARGS"),
 )
 

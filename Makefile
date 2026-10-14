@@ -100,9 +100,11 @@ COVERAGE_TARGET ?= coverage-python
 # hostless selection 95.08% combined (lines 96.17%, branches 91.33%). For the
 # record, the lines-only history: full fold 96.27-96.31% (2026-08-25, four
 # runs); hostless 95.21-95.29% across the five CI Pythons (since 2026-09-11
-# only the two BOOKEND Pythons run the full hostless selection and gate on
-# it — the interior versions run a trimmed, uninstrumented tier; see
-# noxfile.py HOSTLESS_MIDDLE_TEST_ARGS), 95.18-95.22% on a local 3.14 leg.
+# only the two BOOKEND Pythons run the full hostless selection, and only the
+# PRIMARY one (3.10) measures and gates on it — the canary (3.14) runs the same
+# selection uninstrumented and the interior versions a trimmed, uninstrumented
+# tier; see noxfile.py HOSTLESS_CANARY_TEST_ARGS and HOSTLESS_MIDDLE_TEST_ARGS),
+# 95.18-95.22% on a local 3.14 leg.
 # The floors sit just under the measurements on purpose, so a change that
 # sheds covered lines or branches argues with the gate rather than ratcheting
 # the number down — and .coveragerc sets `precision = 2` so the comparison
@@ -407,7 +409,7 @@ nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. R
 	@$(SAY) "nox: embedded/Zephyr suite, all Pythons (x$(NOX_COUNT))"
 	@uv run nox -s tests_embedded -- --count=$(NOX_COUNT) --repeat-scope=session
 
-nox-hostless: ## Run the no-testbed CI gate across all supported Pythons: the full selection (tests/unit + no-VM e2e, 95 coverage floor) on the bookends 3.10 + 3.14, the trimmed tests/unit tier (minus `interpreter_agnostic`, no coverage) on 3.11-3.13. No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
+nox-hostless: ## Run the no-testbed CI gate across all supported Pythons: the full selection (tests/unit + no-VM e2e) on the bookends 3.10 + 3.14, with the 95 coverage floor on 3.10 only, the trimmed tests/unit tier (minus `interpreter_agnostic`, no coverage) on 3.11-3.13. No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
 	@$(SAY) "nox: hostless CI gate, all Pythons (x$(NOX_COUNT))"
 	@uv run nox -s tests_hostless -- --count=$(NOX_COUNT) --repeat-scope=session
 

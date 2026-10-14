@@ -3,11 +3,13 @@
 Two numbers gate Python coverage: ``COVERAGE_THRESHOLD`` (the full fold —
 ``make coverage``'s Python legs plus the dashboard browser process's
 ``--cov-append``) and ``CI_COVERAGE_THRESHOLD`` (the hostless selection CI
-runs and gates on the two bookend Pythons; the interior versions run a
+runs and gates on the primary Python, 3.10; the 3.14 canary runs the same
+selection without coverage instrumentation, and the interior versions a
 trimmed, uninstrumented tier — see ``noxfile.py``'s
-``HOSTLESS_MIDDLE_TEST_ARGS``). Both live in the Makefile; the hostless one
-is restated in ``noxfile.py``'s ``HOSTLESS_SERIAL_ARGS`` because the nox
-session is what CI actually invokes, and the two are a hand-kept pair — the
+``HOSTLESS_CANARY_TEST_ARGS`` and ``HOSTLESS_MIDDLE_TEST_ARGS``). Both live
+in the Makefile; the hostless one is restated in ``noxfile.py``'s
+``HOSTLESS_SERIAL_ARGS`` because the nox session is what CI actually
+invokes, and the two are a hand-kept pair — the
 noxfile comment says "keep in step" and nothing enforced it.
 
 This module turns the floors into decisions. Every floor is a COMBINED

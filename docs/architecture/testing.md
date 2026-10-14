@@ -326,7 +326,8 @@ Three more axes sit alongside level/resource, each narrower in scope:
   plumbing, the shim differential); together with the `tests/e2e` tier,
   which drives real `otto` subprocesses and `pip` venv builds, they were
   65 % of an interior leg's CPU and prove the same thing on every Python.
-  The bookends still run all of it, and the trim is pinned to be a strict
+  The bookends still run all of it (coverage is gated on the 3.10 floor
+  only; see `noxfile.py`), and the trim is pinned to be a strict
   narrowing by `tests/unit/test_python_matrix_tiering.py`. `make nox-full`
   is the complete matrix, all tiers on all five Pythons, at roughly 5×
   `make nox`'s wall clock.

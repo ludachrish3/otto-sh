@@ -42,7 +42,9 @@ pytestmark = pytest.mark.interpreter_agnostic
 _NOXFILE = PROJECT_ROOT / "noxfile.py"
 _MARKER = "interpreter_agnostic"
 _BOOKEND_PAIR = ("HOSTLESS_TEST_ARGS", "HOSTLESS_SERIAL_ARGS")
+_CANARY_PAIR = ("HOSTLESS_CANARY_TEST_ARGS", "HOSTLESS_CANARY_SERIAL_ARGS")
 _MIDDLE_PAIR = ("HOSTLESS_MIDDLE_TEST_ARGS", "HOSTLESS_MIDDLE_SERIAL_ARGS")
+_COVERAGE_FLAGS = ("--cov-append", "--cov-fail-under=", "--no-cov")
 
 # The carriers whose cost is the reason the trim exists. Measured 2026-09-11
 # on the 3.11 hostless leg: 85 s, 58 s, 31 s, 26 s and 249 s respectively.
@@ -145,6 +147,51 @@ def test_the_middle_pair_narrows_its_bookend_twin(noxfile_tree: ast.Module) -> N
         assert "--cov-append" not in middle, f"{middle_name} appends to a report it never writes"
 
 
+def canary_gaps(bookend: "list[str]", canary: "list[str]") -> "list[str]":
+    """Why *canary* is not *bookend* with coverage switched off and nothing else.
+
+    Pure, so the red arm is testable without editing noxfile.py. The canary
+    interpreter runs the FULL selection (paths, marker expression, every other
+    flag) — only the coverage flags may differ, and it must carry ``--no-cov``
+    and none of the gating flags.
+    """
+
+    def strip(tokens: "list[str]") -> "list[str]":
+        return [t for t in tokens if not t.startswith(_COVERAGE_FLAGS)]
+
+    gaps: "list[str]" = []
+    if strip(canary) != strip(bookend):
+        gaps.append(f"canary differs from its bookend twin beyond coverage: {strip(canary)}")
+    if "--no-cov" not in canary:
+        gaps.append("canary leg still instruments coverage")
+    if any(t.startswith(("--cov-append", "--cov-fail-under=")) for t in canary):
+        gaps.append("canary leg carries a coverage gate it never measures")
+    return gaps
+
+
+def test_the_canary_pair_is_its_bookend_twin_without_coverage(noxfile_tree: ast.Module) -> None:
+    bundles = _bundles(noxfile_tree)
+    for bookend_name, canary_name in zip(_BOOKEND_PAIR, _CANARY_PAIR, strict=True):
+        assert canary_gaps(bundles[bookend_name], bundles[canary_name]) == [], canary_name
+        assert "tests/e2e" in _roots(bundles[canary_name]), f"{canary_name} lost the e2e tier"
+        assert _MARKER not in _marker_expr(bundles[canary_name])
+
+
+def test_the_canary_scanner_observes_red() -> None:
+    bookend = ["tests/unit", "-m", "not busybox", "--cov-fail-under=94.75"]
+    assert canary_gaps(bookend, ["tests/unit", "-m", "not busybox", "--no-cov"]) == []
+    gaps = canary_gaps(bookend, ["tests/unit", "-m", "not busybox", "--cov-fail-under=94.75"])
+    assert gaps == [
+        "canary leg still instruments coverage",
+        "canary leg carries a coverage gate it never measures",
+    ]
+    gaps = canary_gaps(bookend, ["tests/unit", "-m", "not busybox and not x", "--no-cov"])
+    assert len(gaps) == 1
+    assert "beyond coverage" in gaps[0]
+    gaps = canary_gaps(bookend, ["tests/unit", "-m", "not busybox"])
+    assert gaps == ["canary leg still instruments coverage"]
+
+
 def test_the_trim_scanner_observes_red() -> None:
     bookend = "not integration and not busybox and not serial_timing"
     assert middle_trim_gaps(bookend, f"{bookend} and not {_MARKER}") == []
@@ -157,10 +204,14 @@ def test_the_trim_scanner_observes_red() -> None:
     assert "would run nowhere" in gap
 
 
+def _names(*nodes: ast.AST) -> "set[str]":
+    return {n.id for node in nodes for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
 def test_the_hostless_session_runs_each_pair_on_its_own_pythons(
     noxfile_tree: ast.Module,
 ) -> None:
-    """``tests_hostless`` branches on BOOKEND_PYTHONS and runs all four bundles.
+    """``tests_hostless`` branches per Python and runs all six bundles.
 
     Read from the session's own AST rather than from the invocation scan,
     which flattens both branches into one list and so cannot tell a session
@@ -171,10 +222,26 @@ def test_the_hostless_session_runs_each_pair_on_its_own_pythons(
         for node in noxfile_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "tests_hostless"
     )
-    names = {node.id for node in ast.walk(session) if isinstance(node, ast.Name)}
-    assert "BOOKEND_PYTHONS" in names, "tests_hostless no longer selects its args by Python"
-    for bundle in (*_BOOKEND_PAIR, *_MIDDLE_PAIR):
+    names = _names(session)
+    assert {"PRIMARY_PYTHON", "CANARY_PYTHON"} <= names, (
+        "tests_hostless no longer selects its args by Python"
+    )
+    for bundle in (*_BOOKEND_PAIR, *_CANARY_PAIR, *_MIDDLE_PAIR):
         assert bundle in names, f"tests_hostless does not run {bundle}"
+    # Each branch runs ITS pair and no other: swapping the bodies (gating
+    # coverage on 3.14 instead of 3.10) would still name all six bundles.
+    primary = next(n for n in session.body if isinstance(n, ast.If))
+    assert "PRIMARY_PYTHON" in _names(primary.test), "first branch is not the PRIMARY_PYTHON one"
+    canary = primary.orelse[0]
+    assert isinstance(canary, ast.If)
+    assert "CANARY_PYTHON" in _names(canary.test), "second branch is not the CANARY_PYTHON one"
+    for branch, pair in (
+        (primary.body, _BOOKEND_PAIR),
+        (canary.body, _CANARY_PAIR),
+        (canary.orelse, _MIDDLE_PAIR),
+    ):
+        used = _names(*branch) & {*_BOOKEND_PAIR, *_CANARY_PAIR, *_MIDDLE_PAIR}
+        assert used == set(pair), f"a tests_hostless branch runs {sorted(used)}, not {pair}"
     # And the invocation scan (what the lane-leg membership gate reads) sees
     # both pairs, so an interior leg that selects nothing reddens there too.
     seen = {
@@ -183,7 +250,7 @@ def test_the_hostless_session_runs_each_pair_on_its_own_pythons(
         if "-m" in tokens
     }
     bundles = _bundles(noxfile_tree)
-    for bundle in (*_BOOKEND_PAIR, *_MIDDLE_PAIR):
+    for bundle in (*_BOOKEND_PAIR, *_CANARY_PAIR, *_MIDDLE_PAIR):
         expected = (_marker_expr(bundles[bundle]), _roots(bundles[bundle]))
         assert expected in seen, f"the invocation scanner does not see {bundle}: {expected}"
 
