@@ -662,7 +662,56 @@ _VALUE_FLAGS = frozenset(
 )
 
 
-def _python_pytest_invocations(source: Path, *, resolve_names: bool = False) -> "list[list[str]]":
+def _branch_for(
+    python: str, stmts: "list[ast.stmt]", constants: "dict[str, str]"
+) -> "list[ast.stmt]":
+    """*stmts* with every ``if session.python == …`` ladder resolved for *python*.
+
+    Only a TOP-LEVEL ``if`` is resolved, and only the ladder shape; any other
+    top-level ``if`` is refused (``if session.posargs:`` included — the reader
+    cannot tell which branch a run takes, so it reads neither). A ladder
+    nested inside a compound statement survives this pass with both branches
+    readable; :func:`_python_pytest_invocations` refuses that afterwards.
+    """
+    chosen: "list[ast.stmt]" = []
+    for stmt in stmts:
+        if not isinstance(stmt, ast.If):
+            chosen.append(stmt)
+            continue
+        test = stmt.test
+        readable = (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Attribute)
+            and test.left.attr == "python"
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Eq)
+            and isinstance(test.comparators[0], (ast.Name, ast.Constant))
+        )
+        assert readable, (
+            f"line {stmt.lineno}: an `if` this reader cannot resolve — only a top-level "
+            f"`if session.python == <str constant or name>` ladder is read"
+        )
+        right = test.comparators[0]
+        value = right.value if isinstance(right, ast.Constant) else constants[right.id]
+        assert isinstance(value, str), (
+            f"line {stmt.lineno}: `session.python` is compared with {value!r}, not a str"
+        )
+        chosen += _branch_for(python, stmt.body if value == python else stmt.orelse, constants)
+    return chosen
+
+
+def _mentions_python(node: ast.AST) -> bool:
+    """Whether *node* reads a ``.python`` attribute anywhere (``session.python``)."""
+    return any(isinstance(sub, ast.Attribute) and sub.attr == "python" for sub in ast.walk(node))
+
+
+def _python_pytest_invocations(
+    source: Path,
+    *,
+    resolve_names: bool = False,
+    scope: "str | None" = None,
+    python: "str | None" = None,
+) -> "list[list[str]]":
     """Every ``pytest`` argv built in *source*, each kept whole as its literal tokens.
 
     A second pass over the same syntax :func:`_python_marker_expressions`
@@ -687,6 +736,14 @@ def _python_pytest_invocations(source: Path, *, resolve_names: bool = False) -> 
     lane-leg membership gate in ``tests/unit/test_lane_invariants.py``, where
     a dropped ``DASHBOARD_MARKER_EXPR`` leaves ``-m`` adjacent to
     ``"--browser"`` and the next token would be read as the marker expression.
+
+    *scope* names one top-level function (a nox session) and only calls
+    inside it are read, with the module's bundles and constants still in
+    force. With *python* as well, an ``if session.python == X`` / ``elif`` /
+    ``else`` ladder inside it is RESOLVED for that interpreter (X a module
+    string constant or a literal) and only the branch it runs is read; any
+    other test shape on ``session.python`` is refused loudly. The release
+    census reads one (session, interpreter) at a time.
     """
     tree = ast.parse(source.read_text())
     constants = _string_constants(tree) if resolve_names else {}
@@ -714,8 +771,32 @@ def _python_pytest_invocations(source: Path, *, resolve_names: bool = False) -> 
                 out.append(constants[elt.id])
         return out
 
+    root: "ast.AST" = tree
+    if scope is not None:
+        matches = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == scope]
+        assert matches, f"{source.name} has no top-level function {scope!r}"
+        root = matches[0]
+        if python is not None:
+            root = ast.Module(
+                body=_branch_for(python, root.body, _string_constants(tree)), type_ignores=[]
+            )
+        # A ladder the top-level pass did not reach (nested in `with`, `for`,
+        # `try`; an `IfExp`; a `match`) — or ANY ladder when no *python* was
+        # given to resolve it for — would be walked with BOTH branches
+        # readable, crediting a run with legs it never executes.
+        unresolved = [
+            node.lineno
+            for node in ast.walk(root)
+            if (isinstance(node, (ast.If, ast.IfExp)) and _mentions_python(node.test))
+            or (isinstance(node, ast.Match) and _mentions_python(node.subject))
+        ]
+        assert not unresolved, (
+            f"{source.name}: {scope} tests session.python at line(s) {unresolved} in a "
+            f"shape this reader cannot resolve — only a top-level `if`/`elif`/`else` "
+            f"ladder is read, and only for a run that names its interpreter"
+        )
     found: "list[list[str]]" = []
-    for node in ast.walk(tree):
+    for node in ast.walk(root):
         if isinstance(node, ast.Call):
             seq = list(node.args)
         elif isinstance(node, (ast.Tuple, ast.List)):
@@ -2052,6 +2133,71 @@ def test_release_invokes_the_kmodcov_matrix_stage_which_runs_the_lane():
     assert not re.search(r"\$\(MAKE\)\s+kmodcov\b(?![-\w])", release), (
         "`make release` still invokes `kmodcov` directly beside the matrix stage — one run, not two"
     )
+
+
+# The lanes every default gate excludes, in the order the release campaign
+# runs them: hermetic first (cheap failures first), bed lanes after, the chaos
+# lanes LAST — they hold the bed exclusively and `chaos-embedded` can wedge a
+# board, so nothing bed-bound may follow them.
+_CAMPAIGN_LANES = (
+    "stability",
+    "dashboard-soak",
+    "conformance",
+    "busybox",
+    "chaos",
+    "chaos-embedded",
+)
+
+
+def _make_invocations(recipe: str) -> "list[str]":
+    """The targets a recipe invokes through ``$(MAKE)``, in recipe order."""
+    return re.findall(r"\$\(MAKE\)\s+(?:--no-print-directory\s+)?([a-zA-Z0-9_.-]+)", recipe)
+
+
+def test_release_invokes_the_campaign_which_runs_every_excluded_lane_once():
+    """G13: `make release` runs the campaign; the campaign runs each excluded lane once, in order.
+
+    Issue #566: before this stage no stability, chaos, soak, hermetic
+    conformance or BusyBox lane ran at release. "Releases lose no tests" is
+    the rule; the campaign is its mechanism; the census in
+    tests/unit/test_lane_invariants.py is its proof. COUNT=1 throughout:
+    completeness is a selection property; multiplicity belongs to nightly and
+    to scripts/stability_campaign.py's opt-in ladder. Propagation (a red lane
+    aborts the release) is proved for real in tests/unit/test_make_release_lanes.py.
+    """
+    recipes = _makefile_recipes()
+    release = recipes.get("release")
+    assert release, "no `release:` recipe with a body found in the Makefile (guard misparse?)"
+    assert "release-campaign" in _make_invocations(release), (
+        "`make release` does not invoke `release-campaign`"
+    )
+    campaign = recipes.get("release-campaign")
+    assert campaign, "no `release-campaign:` recipe with a body found in the Makefile"
+    assert _make_invocations(campaign) == list(_CAMPAIGN_LANES), _make_invocations(campaign)
+    assert re.search(r"\$\(MAKE\)\s+stability\s+COUNT=1\b", campaign), (
+        "stability must run at COUNT=1"
+    )
+    assert re.search(r"OTTO_CONFORMANCE_CELLS=all\s+\$\(MAKE\)\s+conformance(?:\s|$)", campaign), (
+        "hermetic conformance must cover EVERY cell at release (the lane's default samples 8)"
+    )
+
+
+def test_the_release_campaign_runs_after_the_matrices_and_before_the_docs():
+    """G13b: the matrices commit, so they follow the functional legs; the campaign holds the bed.
+
+    The docs render the matrices, so they come after both.
+    """
+    order = _make_invocations(_makefile_recipes()["release"])
+    for earlier, later in (
+        ("nox", "release-matrix"),
+        ("validate-ts", "release-matrix"),
+        ("release-matrix", "release-kmodcov-matrix"),
+        ("release-kmodcov-matrix", "release-campaign"),
+        ("release-campaign", "docs"),
+    ):
+        assert order.index(earlier) < order.index(later), (
+            f"{earlier} must precede {later}; stages: {order}"
+        )
 
 
 def test_no_lane_but_the_kmodcov_lane_can_select_the_kmodcov_tier():

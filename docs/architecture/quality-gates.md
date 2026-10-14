@@ -279,7 +279,7 @@ job that enforces it on push.
 | docs | `docs` | `docs` | `docs` |
 | vendored-UI upstream drift | — | — | `untitledui-drift.yml` (its own workflow) |
 | Python coverage floor (95.5, lines + branches) | `coverage`, `validate`, `all` | — | **not in CI** — local only; `release` runs a lower 92 floor via `nox -s tests_all` |
-| chaos / stability lanes | `chaos`, `chaos-embedded`, `stability*` | `chaos`, `chaos_embedded` | **not in `ci.yml`** — nightly runs the no-VM legs only |
+| chaos / stability lanes | `chaos`, `chaos-embedded`, `stability*`; `release-campaign` runs them once inside `make release` (see below) | `chaos`, `chaos_embedded` | **not in `ci.yml`** — nightly runs the no-VM legs only |
 
 ### The last two rows are the point
 
@@ -308,7 +308,13 @@ the shared testbed — so they are excluded from every default gate and from
 tier-2 real-signal chaos suite over a loopback sshd, a dockerized tier-3
 slice, and `stability-unit` across the Python matrix. Everything that needs
 a real host — `make chaos`, `stability-unix`, `stability-tunnel`,
-`stability-embedded` — runs when a human decides to run it.
+`stability-embedded` — runs when a human decides to run it, and once in
+every release: `make release-campaign` (a stage of `make release`) runs the
+stability tiers at `COUNT=1`, the dashboard replay soak, hermetic
+conformance over every cell, the BusyBox artifact tier, and the two chaos
+lanes last. The release census in `tests/unit/test_lane_invariants.py`
+proves that every test pytest collects is selected by some stage of the
+release, so a lane cannot quietly fall out of it.
 
 ### The public-surface declaration
 

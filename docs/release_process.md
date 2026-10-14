@@ -49,11 +49,22 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
    [Repairing a missing mark](contributing.md#repairing-a-missing-mark)).
    `NEW_VERSION=` skips the first check and turns the second into a warning.
 
-   `make release` runs `typecheck`, builds the docs, runs the **full nox
-   matrix across every supported Python** (this requires the dev VM with
-   Vagrant hosts up), regenerates `CHANGELOG.md` at the new version, bumps the
-   version in `pyproject.toml` and `uv.lock`, commits, tags `vX.Y.Z`, and
-   builds `dist/`.
+   `make release` runs, in this order: the Python static checks, the
+   **[tiered nox matrix across the supported Pythons](contributing.md#cross-version-testing-with-nox)**,
+   the web build with the
+   all-browser dashboard e2e and the TypeScript gate, the two matrix stages
+   (`release-matrix`, `release-kmodcov-matrix` — they commit), the release
+   campaign (`release-campaign` — every lane the default gates exclude, once
+   each; its contents are described under
+   [the last two rows are the point](architecture/quality-gates.md#the-last-two-rows-are-the-point)),
+   the docs and the import profile; only then does it regenerate
+   `CHANGELOG.md` at the new version, bump the version in `pyproject.toml`
+   and `uv.lock`, commit, tag `vX.Y.Z`, and build `dist/`. It needs the dev
+   VM with the lab VMs and the Zephyr guests up and **exclusive use of the
+   bed** (the campaign holds it), and the campaign adds about 14 minutes; a
+   red lane anywhere stops the release before any version commit (the two
+   matrix stages may already have committed a refreshed matrix; that commit
+   is correct and stays).
 
 3. **Push the tag:**
 

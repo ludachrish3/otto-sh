@@ -78,8 +78,9 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
     ),
     "OTTO_CONFORMANCE_CELLS": (
         "how many cells the conformance suite samples, an integer or `all` "
-        "(tests/conformance/_venue.py); set by hand -- nightly deliberately "
-        "runs at the default sample size (spec s4), so nothing in CI sets it"
+        "(tests/conformance/_venue.py); set by hand, by `make release-campaign` "
+        "(`all`) and by `make conformance-bed` -- nightly deliberately runs at "
+        "the default sample size (spec s4), so nothing in CI sets it"
     ),
     "OTTO_CONFORMANCE_OBSERVATIONS": (
         "redirects where the conformance suite writes its per-cell observation "

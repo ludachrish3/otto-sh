@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -366,23 +366,48 @@ changelog: ## (Build & Release) Regenerate the WHOLE of CHANGELOG.md from conven
 	@$(SAY) "git-cliff → CHANGELOG.md (whole file, released sections included)"
 	@git-cliff -o CHANGELOG.md
 
+# ═══ Release campaign ═══════════════════════════════════════════════════════
+# Every lane the default gates exclude, run ONCE, so a release loses no test
+# (issue #566): the stability tiers (all run, any red fails), the dashboard
+# replay soak, hermetic conformance over EVERY cell (the lane's default samples
+# 8), the BusyBox artifact tier (CI runs it per push; a release is cut locally
+# and runs it anyway — owner's call), and the chaos lanes LAST: they hold the
+# bed exclusively and `chaos-embedded` can wedge a board, so nothing bed-bound
+# follows them. One plain `@$(MAKE)` line per lane: make aborts at the first
+# non-zero line, so a red lane — or one that collected nothing (exit 5) — stops
+# the release right there. COUNT=1 throughout: completeness is a selection
+# property; multiplicity is nightly's (stability-unit ×100) and, for large
+# risky changes, scripts/stability_campaign.py's 1→3→10 ladder. Pinned by
+# tests/unit/test_tier_marker_invariants.py (G13) and exercised for real by
+# tests/unit/test_make_release_lanes.py; the release census in
+# tests/unit/test_lane_invariants.py proves no collected test is left out.
+release-campaign: ## (Build & Release) Run every lane the default gates exclude, once each: stability (all tiers, COUNT=1), dashboard-soak, hermetic conformance over EVERY cell, the BusyBox artifact tier, then chaos and chaos-embedded last. Invoked by `make release`; dev VM only (lab VMs + Zephyr guests). Measured at COUNT=1 on the dev VM: stability ~7 min, dashboard-soak ~1 min, conformance ~30 s, busybox ~15 s, chaos ~5 min, chaos-embedded ~15 s — the whole campaign ≈ 14 min (measured 2026-10-14 with dashboard-soak and chaos red: #382, #434, #640).
+	@$(SAY) "release campaign: every excluded lane, once (stability, soak, conformance=all, busybox, chaos)"
+	@$(MAKE) stability COUNT=1
+	@$(MAKE) dashboard-soak
+	@OTTO_CONFORMANCE_CELLS=all $(MAKE) conformance
+	@$(MAKE) busybox
+	@$(MAKE) chaos
+	@$(MAKE) chaos-embedded
+
 # WARNING: `make -n release` is NOT side-effect-free — the recipe is one
 # backslash-continued line containing $(MAKE), so GNU make executes it under
 # -n; the $(MAKE) sub-calls inherit -n and no-op, but the plain
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
 # CHANGELOG staged). Never dry-run this target.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) npm ci web/, Python static checks (check-python), otto_kmodcov toolchain proofs (release-kmodcov-matrix), docs, nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts, incl. merged coverage), profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
+release: ## (Build & Release) npm ci web/, Python static checks (check-python), nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox, chaos), docs, profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) web-install \
 		&& $(MAKE) check-python \
-		&& $(MAKE) release-matrix \
-		&& $(MAKE) release-kmodcov-matrix \
-		&& $(MAKE) docs \
 		&& $(LEAK_DETECT) $(MAKE) nox \
 		&& $(MAKE) web \
 		&& $(MAKE) dashboard-all \
 		&& $(MAKE) validate-ts \
+		&& $(MAKE) release-matrix \
+		&& $(MAKE) release-kmodcov-matrix \
+		&& $(MAKE) release-campaign \
+		&& $(MAKE) docs \
 		&& $(MAKE) profile \
 		&& NEW_VERSION="$$(uv run python scripts/release_bump.py)" \
 		&& $(SAY) "targeting v$$NEW_VERSION" \
@@ -1292,14 +1317,18 @@ chaos-embedded: ## Tier-3 chaos lane, zephyr console leg (console-client-death).
 	@$(SAY) "pytest chaos: zephyr console scenarios (leak detector on)"
 	@$(LEAK_DETECT) uv run nox -s chaos_embedded
 
-stability: ## Run the full stability/soak suite: no-VM concurrency, then real telnet/SSH (Unix + embedded). Runs all tiers even if an earlier one is RED. Requires lab VMs for tiers 2-3. Override iterations with COUNT=N.
-	@$(SAY) "Tier 1 — unit-level concurrency"
-	-@$(MAKE) stability-unit COUNT=$(COUNT)
-	@echo
-	@$(SAY) "Tier 2 — real telnet/SSH"
+# Informational: which lab VMs answer a ping, so a tier that dies at fixture
+# connect reads as "lab down" and not as a product failure. Its own target so
+# `make stability`'s behaviour test can stub it like a tier (16 hosts × 1 s on
+# a lab-less box is 16 s a test should not pay). Always exits 0. The jq path
+# reads lab.json's real shape (`elements[].hosts[].ip`); the old `.hosts[].ip`
+# errored and reported 0/0 on every run.
+lab-reachability: ## (Lab) Ping every lab VM in the tech1 lab and say how many answered. Informational; always exits 0.
 	@if command -v jq >/dev/null 2>&1; then \
 	    reachable=0; total=0; \
-	    for ip in $$(jq -r '.hosts[].ip' tests/_fixtures/lab_data/tech1/lab.json); do \
+	    ips=$$(jq -r '.elements[].hosts[].ip' tests/_fixtures/lab_data/tech1/lab.json) \
+	        || { echo "  lab-reachability: jq could not read tests/_fixtures/lab_data/tech1/lab.json" >&2; exit 0; }; \
+	    for ip in $$ips; do \
 	        total=$$((total+1)); \
 	        if ping -c 1 -W 1 $$ip >/dev/null 2>&1; then \
 	            reachable=$$((reachable+1)); \
@@ -1313,13 +1342,31 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 	else \
 	    echo "  jq not installed; skipping ping check (tests will fail fast at fixture connect if VMs are down)."; \
 	fi
-	@$(MAKE) stability-unix COUNT=$(COUNT)
-	@echo
-	@$(SAY) "Tier 2b — tunnel soak"
-	@$(MAKE) stability-tunnel $(if $(filter command line,$(origin COUNT)),COUNT=$(COUNT)) $(if $(filter command line,$(origin CYCLES)),CYCLES=$(CYCLES))
-	@echo
-	@$(SAY) "Tier 3 — cross-OS stability contract (includes embedded)"
-	@$(MAKE) stability-embedded COUNT=$(COUNT)
+
+# Every tier runs whatever the earlier ones did, and the target fails at the
+# END if any tier failed: a release (`make release-campaign`, #566) needs
+# "ran everything" AND "says no". Each tier's exit is captured by `||`, so a
+# killed tier (timeout's 124) counts like an assertion failure. One shell, so
+# `failed` survives between tiers. Pinned by tests/unit/test_make_release_lanes.py.
+stability: ## Run the full stability/soak suite: no-VM concurrency, then real telnet/SSH (Unix + embedded). Runs EVERY tier even when an earlier one is RED, and exits non-zero at the end naming the failed tiers. Requires lab VMs for tiers 2-3. Override iterations with COUNT=N.
+	@failed=""; \
+	$(SAY) "Tier 1 — unit-level concurrency"; \
+	$(MAKE) stability-unit COUNT=$(COUNT) || failed="$$failed stability-unit"; \
+	echo; \
+	$(SAY) "Tier 2 — real telnet/SSH"; \
+	$(MAKE) lab-reachability; \
+	$(MAKE) stability-unix COUNT=$(COUNT) || failed="$$failed stability-unix"; \
+	echo; \
+	$(SAY) "Tier 2b — tunnel soak"; \
+	$(MAKE) stability-tunnel $(if $(filter command line,$(origin COUNT)),COUNT=$(COUNT)) $(if $(filter command line,$(origin CYCLES)),CYCLES=$(CYCLES)) || failed="$$failed stability-tunnel"; \
+	echo; \
+	$(SAY) "Tier 3 — cross-OS stability contract (includes embedded)"; \
+	$(MAKE) stability-embedded COUNT=$(COUNT) || failed="$$failed stability-embedded"; \
+	if [ -n "$$failed" ]; then \
+	    echo "stability: FAILED tier(s):$$failed" >&2; \
+	    exit 1; \
+	fi; \
+	$(SAY) "stability: every tier green"
 
 # `repeat` names its trees for the same reason as the stability soaks above
 # (issue #429): only the three its `-m` can select from, so the busybox and

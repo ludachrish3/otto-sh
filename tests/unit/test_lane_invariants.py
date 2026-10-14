@@ -61,6 +61,10 @@ gate decides membership from real pytest collection, in a subprocess, because
 a static model of this repo's markers reported a live lane empty; the
 reasoning is in
 :func:`test_every_lane_leg_selects_at_least_one_test`.
+
+The release census at the end of the module holds ``make release``'s test
+surface equal to a literal manifest and proves every collected test is
+selected by some stage of it (issue #566).
 """
 
 import ast
@@ -703,7 +707,8 @@ import os
 def pytest_collection_finish(session):
     with open(os.environ["LANE_LEG_MARKER_DUMP"], "w", encoding="utf-8") as handle:
         for item in session.items:
-            handle.write(",".join(sorted({mark.name for mark in item.iter_markers()})) + "\n")
+            names = ",".join(sorted({mark.name for mark in item.iter_markers()}))
+            handle.write(item.nodeid + "\t" + names + "\n")
 '''
 
 # Only speed and hygiene, never membership: `-n0` so one process sees every
@@ -813,8 +818,16 @@ def _marker_matcher(markers: "frozenset[str]"):
     return matches
 
 
-def _collect_marker_sets(plugin_dir: Path, roots: "tuple[str, ...]") -> "list[frozenset[str]]":
-    """Collect *roots* for real in a child pytest, and return each item's markers.
+@dataclasses.dataclass(frozen=True)
+class _Item:
+    """One collected item: pytest's node id and the marker names it resolved."""
+
+    nodeid: str
+    markers: "frozenset[str]"
+
+
+def _collect_marker_sets(plugin_dir: Path, roots: "tuple[str, ...]") -> "list[_Item]":
+    """Collect *roots* for real in a child pytest, and return each item's node id and markers.
 
     A child process, never an in-process ``Config``: the recorded defect is
     that an in-process pytest ``Config`` built inside this suite inherits
@@ -859,10 +872,11 @@ def _collect_marker_sets(plugin_dir: Path, roots: "tuple[str, ...]") -> "list[fr
             f"membership without it.\nargv: {' '.join(argv)}\n"
             f"stdout tail:\n{completed.stdout[-2000:]}\nstderr tail:\n{completed.stderr[-2000:]}"
         )
-    return [
-        frozenset(name for name in line.split(",") if name)
-        for line in dump.read_text(encoding="utf-8").splitlines()
-    ]
+    items: "list[_Item]" = []
+    for line in dump.read_text(encoding="utf-8").splitlines():
+        nodeid, _, names = line.partition("\t")
+        items.append(_Item(nodeid, frozenset(name for name in names.split(",") if name)))
+    return items
 
 
 @pytest.fixture(scope="session")
@@ -876,9 +890,9 @@ def collect_marker_sets(tmp_path_factory: pytest.TempPathFactory):
     """
     plugin_dir = tmp_path_factory.mktemp("lane_leg_collect")
     (plugin_dir / f"{_DUMP_PLUGIN_MODULE}.py").write_text(_MARKER_DUMP_PLUGIN, encoding="utf-8")
-    collected: "dict[tuple[str, ...], list[frozenset[str]]]" = {}
+    collected: "dict[tuple[str, ...], list[_Item]]" = {}
 
-    def collect(roots: "tuple[str, ...]") -> "list[frozenset[str]]":
+    def collect(roots: "tuple[str, ...]") -> "list[_Item]":
         if roots not in collected:
             collected[roots] = _collect_marker_sets(plugin_dir, roots)
         return collected[roots]
@@ -908,7 +922,7 @@ def _lane_leg_offenders(legs: "list[_Leg]", collect) -> "list[str]":
             offenders.append(f"{leg} — those paths collect no tests at all")
             continue
         try:
-            hits = sum(1 for markers in collected if compiled.evaluate(_marker_matcher(markers)))
+            hits = sum(1 for item in collected if compiled.evaluate(_marker_matcher(item.markers)))
         except pytest.UsageError as exc:
             offenders.append(f"{leg} — this gate cannot evaluate the expression: {exc}")
             continue
@@ -1045,9 +1059,11 @@ def _count_leg_offenders(legs: "list[_Leg]", collect) -> "list[str]":
         if not all((_REPO / root).is_file() for root in leg.roots):
             continue
         compiled = Expression.compile(leg.expr)
-        tree_wide = sum(1 for markers in collect(()) if compiled.evaluate(_marker_matcher(markers)))
+        tree_wide = sum(
+            1 for item in collect(()) if compiled.evaluate(_marker_matcher(item.markers))
+        )
         named = sum(
-            1 for markers in collect(leg.roots) if compiled.evaluate(_marker_matcher(markers))
+            1 for item in collect(leg.roots) if compiled.evaluate(_marker_matcher(item.markers))
         )
         if named != tree_wide:
             offenders.append(
@@ -1302,3 +1318,684 @@ def test_the_serial_twin_scanner_refuses_a_shape_it_cannot_read() -> None:
     serial = _Leg("x", "serial_timing and (stability or browser)", ())
     with pytest.raises(pytest.UsageError, match="pure conjunction"):
         serial_twin_offenders([parallel, serial])
+
+
+# ── Release census ──────────────────────────────────────────────────────────
+#
+# "Releases lose no tests" (issue #566) has a mechanism, `make release-campaign`,
+# and this is its proof. Two halves:
+#
+# * RELEASE_LANES is a literal manifest of every pytest leg `make release`
+#   reaches, held EQUAL to what `release_legs()` finds by walking the Makefile
+#   from `release` (through `$(MAKE)` calls and prerequisites, into the nox
+#   sessions a reached recipe runs, on the interpreter it runs them on). The
+#   manifest is spelled out so a reader sees the release's test surface in one
+#   place; the equality keeps it honest in both directions.
+# * Every item pytest collects under `testpaths` must be selected by at least
+#   one manifest leg: the leg's roots contain the item's file and the leg's
+#   expression matches the item's markers (pytest's own compiler, as above).
+#
+# STATED BOUNDS. The census sees the HERMETIC collection: items that exist only
+# under a venue or plugin — the conformance bed venue's cells, the browser
+# engines' parametrisations — are covered by the LANE being required
+# (test_the_release_reaches_every_required_lane), not by item identity.
+# Selection, not execution: a skip or xfail inside a lane is that lane's
+# business. A reached leg selects by its roots and its `-m` ONLY: any narrowing
+# flag (`-k`, `--deselect`, `--ignore`, `--lf`, `-o testpaths=…`, …), whether
+# on the pytest line or forwarded through a nox `--`, is refused — forwarded
+# arguments are read literally, so a flag hidden in a `$(VAR)` there is as
+# invisible as a wrapper script. A pytest invocation with NO `-m` (lint-arch's
+# import-rule files) is a leg whose selector is everything under its roots,
+# spelled _ANY_MARKER.
+# The walker does not follow the recipes of FILE-target rules (`$(TS_E2E_RAW_STAMP)`,
+# `docs/_build/html/index.html`): a pytest lane reachable ONLY through one is
+# invisible to it — today both lead to a stage reached elsewhere (`dashboard`)
+# or to no pytest at all (sphinx). Everything the walker cannot read it REFUSES:
+# an unresolvable `$(VAR)`, a `$(MAKE)` goal that is no rule target, a nox line
+# in a shape other than `nox -s <sessions> [-- …]`, a `$(MAKE)` line naming two
+# goals. A nox run spelled through a variable or a wrapper script (`$(NOX) -s x`,
+# `scripts/run_nox.sh`) is INVISIBLE to it, as a pytest run hidden behind a
+# script is to every scanner here — no such spelling exists today.
+
+_MAKE_CALL = re.compile(r"\$\(MAKE\)\s+(?:--no-print-directory\s+)?([a-zA-Z0-9_.$()-]+)")
+_NOX_SESSIONS = re.compile(r"\bnox\s+-s\s+(.*?)(?:\s+--\s+(.*?))?\s*$")
+_NOX_WORD = re.compile(r"(?:^|\s)nox(?:\s|$)")
+# A pytest flag that selects LESS than the roots and `-m` say (or runs nothing):
+# a reached leg carrying one is refused, directly or forwarded through nox.
+_FILTER_FLAGS = (
+    "-k",
+    "--deselect",
+    "--ignore",
+    "--ignore-glob",
+    "--collect-only",
+    "--co",
+    "--lf",
+    "--last-failed",
+    "--sw",
+    "--stepwise",
+)
+_OVERRIDE_FLAGS = ("-o", "--override-ini")
+
+
+def _narrowing(tokens: "list[str]") -> "list[str]":
+    """The tokens of *tokens* that narrow pytest's selection past its roots and `-m`."""
+    found: "list[str]" = []
+    for index, token in enumerate(tokens):
+        attached = token.startswith((*(f"{f}=" for f in _FILTER_FLAGS), "-k"))
+        # `-o testpaths=x`, `-o=testpaths=x`, `-otestpaths=x` and the long spellings
+        overrides = index > 0 and tokens[index - 1] in _OVERRIDE_FLAGS
+        testpaths = (overrides and token.startswith("testpaths=")) or token.startswith(
+            tuple(f"{f}{sep}testpaths=" for f in _OVERRIDE_FLAGS for sep in ("", "="))
+        )
+        if token in _FILTER_FLAGS or attached or testpaths:
+            found.append(token)
+    return found
+
+
+_FOREACH = re.compile(r"\$\(foreach\s+(\w+),\$\(([A-Za-z_]+)\),([^)]*\$\(\w+\))\)")
+_ANY_MARKER = (
+    "not no_such_marker_ever"  # compiles; every item matches (the matcher knows no such name)
+)
+_RELEASE_EXEMPT: "frozenset[str]" = (
+    frozenset()
+)  # node ids no release stage runs, by OWNER decision only
+
+
+def _makefile_assignments(text: str) -> "dict[str, str]":
+    """``NAME := value`` / ``NAME ?= value`` / ``NAME = value`` at column 0, literally."""
+    return dict(re.findall(r"^([A-Za-z_][A-Za-z0-9_]*)\s*[:?]?=\s*(.*)$", text, re.MULTILINE))
+
+
+def _resolve(name: str, assignments: "dict[str, str]", where: str) -> str:
+    """*name* with every ``$(VAR)`` replaced from *assignments*; refuses what it cannot resolve."""
+    while "$(" in name:
+        variable = re.search(r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)", name)
+        known = variable is not None and variable.group(1) in assignments
+        assert known, (
+            f"{where}: `{name}` names a variable this reader cannot resolve from the "
+            f"Makefile's assignments — teach it the shape, never skip the stage"
+        )
+        name = name.replace(variable.group(0), assignments[variable.group(1)])
+    return name
+
+
+_RULE_LINE = re.compile(r"^([a-zA-Z0-9_.-]+):(?![=])([^#\n]*)", re.MULTILINE)
+# A token shaped like a goal name: no `=`, no `-` prefix, no `$(`, no shell separator.
+_GOAL_TOKEN = re.compile(r"[a-zA-Z0-9_.][a-zA-Z0-9_.-]*")
+
+
+def _makefile_prerequisites(text: str) -> "dict[str, list[str]]":
+    """Target -> the prerequisite names on its rule line, literally (``$(VAR)`` included).
+
+    The caller resolves variables and drops what resolves to a path; nothing is
+    dropped here, so a `release: $(STAGES)` cannot lose a stage silently.
+    """
+    out: "dict[str, list[str]]" = {}
+    for match in _RULE_LINE.finditer(text):
+        rest = match.group(2)
+        if "=" in rest or rest.lstrip().startswith("export "):
+            continue  # a target-specific variable line, not a rule
+        out.setdefault(match.group(1), []).extend(rest.split())
+    return out
+
+
+def make_reachable(start: str, text: str) -> "list[str]":
+    """Every target `make <start>` reaches, in first-seen order.
+
+    Through ``$(MAKE) x`` calls in the LIVE recipe lines (comments and
+    `$(SAY)` banners dropped, column-0 comments inside a recipe stepped over)
+    and the prerequisites on rule lines, every ``$(VAR)`` resolved. A name that
+    resolves to a path (`/`) is a file prerequisite and is not walked; every
+    other name must be a defined rule target, so a `$(MAKE) COUNT=3 stage`,
+    `$(MAKE) -s stage` or `$(MAKE) $@` is refused rather than walked wrongly.
+    A `$(MAKE) a b` line is refused too: this reader walks ONE goal per call
+    (the Makefile spells one per line), and inspects only the token DIRECTLY
+    after the goal — a goal-shaped one there is refused; a goal later on the
+    line (`$(MAKE) a VAR=1 b`) is not seen.
+    """
+    prereqs = _makefile_prerequisites(text)
+    assignments = _makefile_assignments(text)
+    targets = {match.group(1) for match in _RULE_LINE.finditer(text)}
+    seen: "list[str]" = []
+    queue = [(start, "the start")]
+    while queue:
+        target, origin = queue.pop(0)
+        if target in seen:
+            continue
+        assert target in targets, (
+            f"`{target}` ({origin}) is neither a rule target of the Makefile nor a path: a "
+            f"plain file prerequisite without a `/`, or a `$(MAKE)` goal this reader "
+            f"mis-read — teach it the shape, never skip it"
+        )
+        seen.append(target)
+        live = "\n".join(makefile_live_recipe(text, target))
+        calls = list(_MAKE_CALL.finditer(live))
+        for call in calls:
+            rest = live[call.end() :].split("\n", 1)[0].split()
+            second = rest[0] if rest and _GOAL_TOKEN.fullmatch(rest[0]) else None
+            assert second is None, (
+                f"`{target}` runs `$(MAKE) {call.group(1)} {second}` — two goals on one "
+                f"line; this reader walks one per call, so split the line"
+            )
+        found = [(name, f"a prerequisite of `{target}`") for name in prereqs.get(target, [])]
+        found += [(call.group(1), f"a `$(MAKE)` goal in `{target}`") for call in calls]
+        for name, where in found:
+            resolved = _resolve(name, assignments, f"`{target}`")
+            queue.extend((part, where) for part in resolved.split() if "/" not in part)
+    return seen
+
+
+def nox_sessions_run_by(
+    lines: "list[str]", assignments: "dict[str, str]"
+) -> "list[tuple[str, str | None]]":
+    """(session, python) for every nox session the recipe lines run.
+
+    A python of None means the session's own default interpreter.
+    """
+    found: "list[tuple[str, str | None]]" = []
+    for line in lines:
+        matches = list(_NOX_SESSIONS.finditer(line))
+        # `$(MAKE) nox` names a make GOAL, not the program; strip those first.
+        assert matches or not _NOX_WORD.search(_MAKE_CALL.sub("", line)), (
+            f"a recipe line runs nox in a shape this reader cannot read (only "
+            f"`nox -s <sessions> [-- …]` is): {line.strip()!r}"
+        )
+        for match in matches:
+            tail = match.group(1)
+            # Everything after `--` reaches pytest through session.posargs.
+            forwarded = _narrowing((match.group(2) or "").split())
+            assert not forwarded, (
+                f"nox forwards {forwarded} to pytest in {line.strip()!r}; a reached leg "
+                f"selects by its roots and `-m` only — a forwarded flag narrows what runs "
+                f"without changing either, so the census could not see the loss"
+            )
+            for each in _FOREACH.finditer(tail):
+                var, listname, body = each.groups()
+                expansion = " ".join(
+                    body.replace(f"$({var})", v)
+                    for v in _resolve(f"$({listname})", assignments, line.strip()).split()
+                )
+                tail = tail.replace(each.group(0), expansion)
+            for token in tail.split():
+                assert not token.startswith("-"), (
+                    f"nox option {token!r} after the session names in {line.strip()!r} — "
+                    f"it could pick the interpreter (`-p`) or the sessions (`-k`), and this "
+                    f"reader would credit the wrong legs"
+                )
+                resolved = _resolve(token, assignments, line.strip())
+                name, _, python = resolved.partition("-")
+                readable = re.fullmatch(r"[a-z][a-z0-9_]*", name) and (
+                    not python or re.fullmatch(r"\d+\.\d+", python)
+                )
+                assert readable, f"unreadable nox session token {resolved!r} in {line.strip()!r}"
+                if (name, python or None) not in found:
+                    found.append((name, python or None))
+    return found
+
+
+def _legs_including_markerless(
+    surface: str, invocations: "list[list[str]]", variables: "dict[str, str] | None" = None
+) -> "list[_Leg]":
+    """Like _legs_from_invocations, but a `-m`-less pytest is a leg over all of its roots.
+
+    EVERY reached leg, marked or not, is refused if it narrows past its roots
+    and `-m`: `-k`/`--deselect`/`--ignore`/`-o testpaths=` select less than
+    the row says while leaving the row unchanged, so neither the manifest
+    equality nor the item census could see the loss; `--collect-only`/`--lf`/
+    `--sw` run less than they select. A `-m`-less leg must further NAME its
+    roots: path-less, it would be `_ANY_MARKER` over testpaths — a row that
+    selects every item and makes the census vacuously green.
+    """
+    legs: "list[_Leg]" = []
+    for tokens in invocations:
+        argv = " ".join(tokens[tokens.index("pytest") :])
+        narrowing = _narrowing(tokens[tokens.index("pytest") :])
+        assert not narrowing, (
+            f"{surface}: `{argv}` narrows with {narrowing}; a reached leg selects by its "
+            f"roots and `-m` only — drop the flag, or teach the reader (and the census) "
+            f"what it deselects"
+        )
+        if "-m" in tokens:
+            legs += _legs_from_invocations(surface, [tokens], variables)
+            continue
+        roots = tuple(str(path.relative_to(_REPO)) for path in _selected_roots(tokens))
+        assert roots, (
+            f"{surface}: `{argv}` has no `-m` and names no path, so it is every item under "
+            f"testpaths — a row that would make the census vacuously green"
+        )
+        repeated = any(token == "--count" or token.startswith("--count=") for token in tokens)
+        legs.append(_Leg(surface, _ANY_MARKER, roots, repeated))
+    return legs
+
+
+def release_legs() -> "list[_Leg]":
+    """Every pytest leg `make release` reaches.
+
+    Labelled `Makefile:<target>` or `noxfile.py:<session>@<python>`.
+    """
+    text = (_REPO / _MAKEFILE).read_text()
+    variables = _makefile_marker_variables(text)
+    assignments = _makefile_assignments(text)
+    legs: "list[_Leg]" = []
+    for target in make_reachable("release", text):
+        live = makefile_live_recipe(text, target)
+        legs += _legs_including_markerless(
+            f"{_MAKEFILE}:{target}", _makefile_pytest_invocations("\n".join(live)), variables
+        )
+        for session, python in nox_sessions_run_by(live, assignments):
+            legs += _legs_including_markerless(
+                f"noxfile.py:{session}@{python or 'default'}",
+                _python_pytest_invocations(
+                    _REPO / "noxfile.py", resolve_names=True, scope=session, python=python
+                ),
+            )
+    return legs
+
+
+# The release's test surface, spelled out. Equal to release_legs() — see
+# test_the_manifest_is_exactly_what_the_release_reaches, whose failure message
+# lists the rows to add or drop. Roots are relative to the repo; () means
+# pyproject's testpaths. A nox surface carries the interpreter the release runs
+# it on ("@3.10"); "@default" is a session whose Python the recipe did not pick.
+_HOSTLESS_MIDDLE = (
+    "not integration and not embedded and not stability and not browser "
+    "and not busybox and not conformance and not kmodcov and not serial_timing "
+    "and not interpreter_agnostic"
+)
+_HOSTLESS_MIDDLE_SERIAL = (
+    "serial_timing and not integration and not embedded and not stability and not browser "
+    "and not busybox and not conformance and not kmodcov and not interpreter_agnostic"
+)
+_ALL = (
+    "not browser and not stability and not busybox and not conformance and not kmodcov "
+    "and not serial_timing"
+)
+_ALL_SERIAL = (
+    "serial_timing and not browser and not stability and not busybox and not conformance "
+    "and not kmodcov"
+)
+_LINT_ARCH_IMPORT_RULES = (
+    "tests/unit/test_patch_targets.py",
+    "tests/unit/test_no_import_time_lazy_exports.py",
+    "tests/unit/test_moved_name_spellings.py",
+    "tests/unit/test_internal_imports_skip_facades.py",
+)
+_LINT_ARCH_LAYER_AUDITS = (
+    "tests/unit/test_import_cycle_ratchet.py",
+    "tests/unit/test_tach_layers.py",
+    "tests/unit/test_dynamic_import_audit.py",
+    "tests/unit/test_monitor_service_reads_no_lab.py",
+)
+_STABILITY_UNIT_FILES = (
+    "tests/unit/host/test_app_shell_concurrency.py",
+    "tests/unit/host/test_session_concurrency.py",
+    "tests/unit/host/test_unix_host.py",
+    "tests/unit/monitor/test_collector_tunnel_soak.py",
+)
+_STABILITY_UNIX_FILES = (
+    "tests/integration/host/test_app_shell_stability_integration.py",
+    "tests/integration/host/test_host_stability_contract.py",
+    "tests/integration/host/test_proxy_user_stability_integration.py",
+    "tests/integration/host/test_session_stability_integration.py",
+)
+RELEASE_LANES: "tuple[_Leg, ...]" = (
+    # check-python → lint-arch: the import-rule and layer-audit pytest files, no `-m`.
+    _Leg("Makefile:lint-arch", _ANY_MARKER, _LINT_ARCH_IMPORT_RULES),
+    _Leg("Makefile:lint-arch", _ANY_MARKER, _LINT_ARCH_LAYER_AUDITS),
+    # release-matrix → conformance-bed: the whole conformance tree, BED venue.
+    _Leg("Makefile:conformance-bed", "conformance", ()),
+    # release-kmodcov-matrix → kmodcov: the toolchain proofs on the bed.
+    _Leg("Makefile:kmodcov", "kmodcov", ()),
+    # docs → doctest-src: the src doctests (no `-m`, cleared addopts), outside testpaths.
+    _Leg("Makefile:doctest-src", _ANY_MARKER, ("src/otto",)),
+    # nox → tests_all on the primary and canary Pythons: the full tree, parallel + serial.
+    _Leg("noxfile.py:tests_all@3.10", _ALL, ()),
+    _Leg("noxfile.py:tests_all@3.10", _ALL_SERIAL, ()),
+    _Leg("noxfile.py:tests_all@3.14", _ALL, ()),
+    _Leg("noxfile.py:tests_all@3.14", _ALL_SERIAL, ()),
+    # nox → tests_hostless on the middle Pythons: the trimmed tests/unit pair.
+    _Leg("noxfile.py:tests_hostless@3.11", _HOSTLESS_MIDDLE, ("tests/unit",)),
+    _Leg("noxfile.py:tests_hostless@3.11", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
+    _Leg("noxfile.py:tests_hostless@3.12", _HOSTLESS_MIDDLE, ("tests/unit",)),
+    _Leg("noxfile.py:tests_hostless@3.12", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
+    _Leg("noxfile.py:tests_hostless@3.13", _HOSTLESS_MIDDLE, ("tests/unit",)),
+    _Leg("noxfile.py:tests_hostless@3.13", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
+    # dashboard-all → dashboard: the two browser suites on every engine.
+    _Leg(
+        "Makefile:dashboard",
+        "browser and not soak",
+        ("tests/e2e/monitor/dashboard", "tests/e2e/cov/report_browser"),
+    ),
+    # release-campaign: every lane the per-change gates exclude, once each (COUNT=1).
+    _Leg("Makefile:stability-unit", "concurrency", _STABILITY_UNIT_FILES, repeated=True),
+    _Leg(
+        "Makefile:stability-unix",
+        "stability and integration and not embedded and not hops and not chaos",
+        _STABILITY_UNIX_FILES,
+        repeated=True,
+    ),
+    _Leg(
+        "Makefile:stability-tunnel",
+        "stability and hops",
+        ("tests/e2e/tunnel_stability",),
+        repeated=True,
+    ),
+    _Leg(
+        "Makefile:stability-embedded",
+        "stability and embedded and not chaos",
+        ("tests/integration/host/test_host_stability_contract.py",),
+        repeated=True,
+    ),
+    _Leg(
+        "Makefile:dashboard-soak",
+        "browser and soak",
+        ("tests/e2e/monitor/dashboard/test_replay_soak.py",),
+    ),
+    _Leg("Makefile:conformance", "conformance and not conformance_bed", ()),
+    _Leg("Makefile:busybox", "busybox", ()),
+    _Leg("noxfile.py:chaos@default", "chaos and not embedded", ("tests/e2e/chaos",)),
+    _Leg("noxfile.py:chaos_embedded@default", "chaos and embedded", ("tests/e2e/chaos",)),
+)
+
+# Pinned by reachability: lanes whose items the hermetic collection cannot show
+# (venue/plugin-dependent), the src doctests (no `-m`, cleared addopts), every
+# release-campaign lane — some are shadowed at item level (`concurrency` by
+# tests_all, hermetic conformance by the bed row), so only reachability pins
+# them — and the orchestrators that reach them (`release-campaign`, `stability`).
+_REQUIRED_LANES = (
+    "release-matrix",
+    "conformance-bed",
+    "release-kmodcov-matrix",
+    "kmodcov",
+    "dashboard-all",
+    "dashboard",
+    "docs",
+    "doctest-src",
+    "release-campaign",
+    "stability",
+    "stability-unit",
+    "stability-unix",
+    "stability-tunnel",
+    "stability-embedded",
+    "dashboard-soak",
+    "conformance",
+    "busybox",
+    "chaos",
+    "chaos-embedded",
+)
+
+
+def _manifest_diff(
+    rows: "tuple[_Leg, ...]", reached: "list[_Leg]"
+) -> "tuple[list[str], list[str]]":
+    """(reached but not in the manifest, in the manifest but not reached), sorted as strings."""
+    missing = sorted(str(leg) for leg in set(reached) - set(rows))
+    stale = sorted(str(leg) for leg in set(rows) - set(reached))
+    return missing, stale
+
+
+def _within(path: str, roots: "tuple[str, ...]") -> bool:
+    return not roots or any(
+        path == root or path.startswith(root.rstrip("/") + "/") for root in roots
+    )
+
+
+def _release_census_gaps(rows: "tuple[_Leg, ...]", collect) -> "list[str]":
+    """Node ids collected under testpaths that NO row selects.
+
+    A row selects an item when its roots contain the item's file AND its `-m`
+    expression matches the item's markers.
+    """
+    compiled = [(row, Expression.compile(row.expr)) for row in rows]
+    gaps: "list[str]" = []
+    for item in collect(()):
+        path = item.nodeid.split("::", 1)[0]
+        matcher = _marker_matcher(item.markers)
+        if not any(_within(path, row.roots) and expr.evaluate(matcher) for row, expr in compiled):
+            gaps.append(item.nodeid)
+    return gaps
+
+
+def test_the_manifest_is_exactly_what_the_release_reaches() -> None:
+    """Both directions: a row no stage runs is a lie; a reached leg with no row is a blind spot."""
+    missing, stale = _manifest_diff(RELEASE_LANES, release_legs())
+    drift = missing + stale
+    assert not drift, (
+        "RELEASE_LANES and the legs `make release` reaches differ.\n"
+        "Reached by the release but not in the manifest (add these rows):\n  "
+        + "\n  ".join(missing)
+        + "\nIn the manifest but reached by no release stage (drop these rows):\n  "
+        + "\n  ".join(stale)
+    )
+
+
+def test_the_manifest_diff_reports_each_direction() -> None:
+    """Positive control for both directions of the equality, on synthetic legs."""
+    a = _Leg("synthetic:a", "x", ())
+    b = _Leg("synthetic:b", "y", ("tests/unit",))
+    c = _Leg("synthetic:c", "z", ())
+    assert _manifest_diff((a, b), [a, c]) == ([str(c)], [str(b)])
+    assert _manifest_diff((a, b), [b, a]) == ([], [])
+
+
+def test_the_release_reaches_every_required_lane() -> None:
+    reached = make_reachable("release", (_REPO / _MAKEFILE).read_text())
+    missing = [target for target in _REQUIRED_LANES if target not in reached]
+    assert not missing, f"`make release` no longer reaches {missing}; reached: {reached}"
+
+
+def test_the_release_walker_reads_the_shapes_the_makefile_uses() -> None:
+    """Literal text, every shape the walker reads — and every shape it refuses.
+
+    Read: `$(MAKE) x`, `--no-print-directory`, a `$(MAKE)` after a column-0
+    comment inside the recipe (GNU make allows it; this Makefile does it), a
+    prerequisite, a `$(VAR)` prerequisite resolved to targets, a `$(VAR)` one
+    resolved to a file (not walked), a `$(VAR)` goal resolved, a tab-commented
+    `$(MAKE)` and a `$(SAY)` banner naming one (neither runs, neither walked),
+    and nox session tokens with a `$(foreach …)`.
+    Refused: a `$(VAR)` nobody defines, a `$(MAKE)` goal that is no rule target
+    (`COUNT=3 stage` captures `COUNT`), a plain-file prerequisite without a `/`
+    (each refusal names its origin), a `$(MAKE)` line naming two goals, a
+    nox line in another shape, a nox option after the session names, and a
+    narrowing flag forwarded to pytest after `--`.
+    """
+    text = (
+        "STAGE := two\n"
+        "MIDDLE := 3.11 3.12\n"
+        "EXTRA := four five\n"
+        "STAMP := reports/x/.stamp\n"
+        "one: pre $(EXTRA) $(STAMP)\n"
+        "\t@$(MAKE) $(STAGE)\n"
+        "# a column-0 comment inside the recipe\n"
+        "\t@$(MAKE) --no-print-directory three || true\n"
+        '\t@$(SAY) "next: $(MAKE) never"\n'
+        "\t# @$(MAKE) never\n"
+        "pre:\n"
+        "\t@echo pre\n"
+        "two:\n"
+        "\t@echo two\n"
+        "three:\n"
+        "\t@uv run nox -s tests_all-3.10 $(foreach v,$(MIDDLE),tests_hostless-$(v)) chaos"
+        " -- --count=1\n"
+        "four:\n"
+        "\t@echo four\n"
+        "five:\n"
+        "\t@echo five\n"
+        "never:\n"
+        "\t@echo never\n"
+        "bad:\n"
+        "\t@$(MAKE) $(UNDEFINED)\n"
+        "worse:\n"
+        "\t@$(MAKE) COUNT=3 two\n"
+        "nofile: plainfile\n"
+        "\t@echo nofile\n"
+        "twice:\n"
+        "\t@$(MAKE) two three\n"
+        "nox_k:\n"
+        "\t@uv run nox -k chromium\n"
+        "nox_p:\n"
+        "\t@uv run nox -s tests_hostless -p 3.11\n"
+        "nox_ignore:\n"
+        "\t@uv run nox -s chaos -- --ignore=tests/e2e/chaos/test_x.py\n"
+    )
+    assert make_reachable("one", text) == ["one", "pre", "four", "five", "two", "three"]
+    assignments = _makefile_assignments(text)
+    assert nox_sessions_run_by(makefile_live_recipe(text, "three"), assignments) == [
+        ("tests_all", "3.10"),
+        ("tests_hostless", "3.11"),
+        ("tests_hostless", "3.12"),
+        ("chaos", None),
+    ]
+    with pytest.raises(AssertionError, match="cannot resolve"):
+        make_reachable("bad", text)
+    with pytest.raises(AssertionError, match=r"`COUNT` \(a `\$\(MAKE\)` goal in `worse`\)"):
+        make_reachable("worse", text)
+    with pytest.raises(AssertionError, match=r"`plainfile` \(a prerequisite of `nofile`\)"):
+        make_reachable("nofile", text)
+    with pytest.raises(AssertionError, match="two goals on one line"):
+        make_reachable("twice", text)
+    with pytest.raises(AssertionError, match="shape this reader cannot read"):
+        nox_sessions_run_by(makefile_live_recipe(text, "nox_k"), assignments)
+    with pytest.raises(AssertionError, match="nox option '-p'"):
+        nox_sessions_run_by(makefile_live_recipe(text, "nox_p"), assignments)
+    with pytest.raises(AssertionError, match=r"nox forwards \['--ignore=tests/e2e/chaos"):
+        nox_sessions_run_by(makefile_live_recipe(text, "nox_ignore"), assignments)
+
+
+def test_the_session_reader_follows_the_interpreter() -> None:
+    """tests_hostless on 3.11 contributes the middle pair only.
+
+    On 3.10 it contributes the bookend pair, on 3.14 the canary pair. Compared
+    on the RAW tokens, not the `-m` text: the canary pair is the bookend
+    selection verbatim and differs only in its coverage flags, so only the
+    tokens can show that the `elif CANARY_PYTHON` branch (the constant-Name
+    lookup) was the one taken.
+    """
+    invocations = {
+        python: _python_pytest_invocations(
+            _REPO / "noxfile.py", resolve_names=True, scope="tests_hostless", python=python
+        )
+        for python in ("3.10", "3.11", "3.14")
+    }
+    assert all(len(pair) == 2 for pair in invocations.values()), invocations
+    tokens = {python: {t for argv in pair for t in argv} for python, pair in invocations.items()}
+    exprs = {
+        python: {argv[argv.index("-m") + 1] for argv in pair}
+        for python, pair in invocations.items()
+    }
+    # The floor gates coverage; the ceiling runs the same selection with it off.
+    assert "--cov-fail-under=94.75" in tokens["3.10"], tokens["3.10"]
+    assert "--no-cov" not in tokens["3.10"], tokens["3.10"]
+    assert "--no-cov" in tokens["3.14"], tokens["3.14"]
+    assert not [t for t in tokens["3.14"] if t.startswith("--cov-fail-under")], tokens["3.14"]
+    assert exprs["3.10"] == exprs["3.14"], (exprs["3.10"], exprs["3.14"])
+    # The middle trims the guards and the e2e tier; the bookends never mention the marker.
+    assert all("interpreter_agnostic" in e for e in exprs["3.11"]), exprs["3.11"]
+    assert not any("interpreter_agnostic" in e for e in exprs["3.10"]), exprs["3.10"]
+    assert "tests/e2e" in tokens["3.10"], tokens["3.10"]
+    assert "tests/e2e" not in tokens["3.11"], tokens["3.11"]
+
+
+def test_the_session_reader_refuses_a_ladder_it_cannot_resolve(tmp_path: Path) -> None:
+    """Synthetic noxfiles: every `session.python` shape but the top-level ladder is refused.
+
+    A ladder nested in a `with` survives the top-level pass with both branches
+    readable; `in (...)` is not `==`; `if session.posargs:` picks a branch this
+    reader cannot see. The last case is the complement: the real shape reads.
+    """
+    bundle = 'A = ("tests/unit", "-m", "not stability")\nB = ("tests/e2e", "-m", "stability")\n'
+    shapes = {
+        "membership": ("    if session.python in ('3.10', '3.14'):\n", "cannot resolve"),
+        "nested": (
+            "    with session.chdir('.'):\n        if session.python == '3.10':\n",
+            "cannot resolve",
+        ),
+        "posargs": ("    if session.posargs:\n", "cannot resolve"),
+        "non_str": ("    if session.python == 3.1:\n", "not a str"),
+    }
+    for name, (head, refusal) in shapes.items():
+        indent = "        " if name == "nested" else "    "
+        body = (
+            f"{head}{indent}    session.run('pytest', *A)\n{indent}else:\n"
+            f"{indent}    session.run('pytest', *B)\n"
+        )
+        probe = tmp_path / f"{name}.py"
+        probe.write_text(f"{bundle}def s(session):\n{body}")
+        with pytest.raises(AssertionError, match=refusal):
+            _python_pytest_invocations(probe, resolve_names=True, scope="s", python="3.10")
+    readable = tmp_path / "ladder.py"
+    readable.write_text(
+        f"{bundle}P = '3.10'\ndef s(session):\n    if session.python == P:\n"
+        "        session.run('pytest', *A)\n    else:\n        session.run('pytest', *B)\n"
+    )
+    found = _python_pytest_invocations(readable, resolve_names=True, scope="s", python="3.14")
+    assert found == [["pytest", "tests/e2e", "-m", "stability"]], found
+    # A run on the session's DEFAULT interpreter has nothing to resolve the ladder
+    # for; read with both branches it would credit a leg the run never executes.
+    with pytest.raises(AssertionError, match="cannot resolve"):
+        _python_pytest_invocations(readable, resolve_names=True, scope="s", python=None)
+
+
+def test_a_reached_leg_selects_by_roots_and_marker_only() -> None:
+    """Positive controls for the shapes `_legs_including_markerless` refuses.
+
+    A narrowing flag is refused on a MARKED leg as on a `-m`-less one: the
+    manifest row (roots, `-m`) would not change, so only this refusal sees it.
+    """
+    named = ["uv", "run", "pytest", "tests/unit/test_patch_targets.py", "-q", "--no-cov"]
+    marked = ["uv", "run", "pytest", "tests/unit", "-m", "not stability", "--no-cov"]
+    (leg,) = _legs_including_markerless("synthetic", [named])
+    assert leg == _Leg("synthetic", _ANY_MARKER, ("tests/unit/test_patch_targets.py",))
+    (leg,) = _legs_including_markerless("synthetic", [marked])
+    assert leg == _Leg("synthetic", "not stability", ("tests/unit",))
+    with pytest.raises(AssertionError, match="names no path"):
+        _legs_including_markerless("synthetic", [["uv", "run", "pytest", "-q"]])
+    for base in (named, marked):
+        for flag in _FILTER_FLAGS:
+            with pytest.raises(AssertionError, match="narrows with"):
+                _legs_including_markerless("synthetic", [[*base, flag, "x"]])
+            with pytest.raises(AssertionError, match="narrows with"):
+                _legs_including_markerless("synthetic", [[*base, f"{flag}=x"]])
+        for attached in ("-kfoo", "-otestpaths=tests/unit", "--override-ini=testpaths=x"):
+            with pytest.raises(AssertionError, match="narrows with"):
+                _legs_including_markerless("synthetic", [[*base, attached]])
+        for override in _OVERRIDE_FLAGS:
+            with pytest.raises(AssertionError, match="narrows with"):
+                _legs_including_markerless("synthetic", [[*base, override, "testpaths=x"]])
+    # `-o` overriding anything else is not a selection; `-p no:cacheprovider` is a plugin.
+    assert _legs_including_markerless(
+        "synthetic", [[*marked, "-o", "log_cli=true", "-p", "no:cacheprovider"]]
+    )
+
+
+@pytest.mark.xdist_group("lane_leg_membership")
+def test_every_collected_test_is_selected_by_a_release_stage(collect_marker_sets) -> None:
+    """The census.
+
+    If this reddens, a lane or a marker changed — never add to _RELEASE_EXEMPT
+    without the owner. Hermetic collection only: venue/plugin-only items (bed
+    cells, browser engines) are covered by `_REQUIRED_LANES`, not here — see
+    STATED BOUNDS at the top of this section.
+    """
+    all_gaps = _release_census_gaps(RELEASE_LANES, collect_marker_sets)
+    gaps = [gap for gap in all_gaps if gap not in _RELEASE_EXEMPT]
+    assert not gaps, (
+        f"{len(gaps)} collected test(s) are selected by NO stage of `make release` "
+        "(roots and -m of every manifest row considered):\n  "
+        + "\n  ".join(gaps[:60])
+        + ("\n  …" if len(gaps) > 60 else "")
+    )
+    unused = sorted(_RELEASE_EXEMPT - set(all_gaps))
+    assert not unused, f"_RELEASE_EXEMPT names tests some stage now runs; drop them: {unused}"
+
+
+@pytest.mark.xdist_group("lane_leg_membership")
+def test_the_release_census_reddens_on_a_dropped_lane(collect_marker_sets) -> None:
+    """Positive control: without the tunnel soak's row its tests are gaps; with every row, none."""
+    tunnel = [row for row in RELEASE_LANES if row.roots == ("tests/e2e/tunnel_stability",)]
+    assert tunnel, "the manifest no longer holds the stability-tunnel leg"
+    without = tuple(row for row in RELEASE_LANES if row not in tunnel)
+    gaps = _release_census_gaps(without, collect_marker_sets)
+    assert gaps, "dropping the tunnel row left no gap — the census cannot see the lane"
+    assert all(gap.startswith("tests/e2e/tunnel_stability/") for gap in gaps), gaps[:5]
+    assert _release_census_gaps(RELEASE_LANES, collect_marker_sets) == []
