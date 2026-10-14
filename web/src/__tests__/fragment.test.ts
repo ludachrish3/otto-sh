@@ -394,3 +394,38 @@ describe("tunnel fragments", () => {
     expect(s1).not.toBe(s0);
   });
 });
+
+// #382 twin: the flush did `session.metrics.push(...metrics)` (and the same
+// for log_events), which throws RangeError INSIDE the SSE flush — uncaught —
+// once a buffered batch passes V8's spread ceiling (~125k arguments on the
+// default stack).
+describe("applyFragment with more rows than V8 will spread into one call", () => {
+  const ROWS = 200_000;
+
+  it("appends every row and extends the session end", () => {
+    const s = synthSession({ hosts: 1, seriesPerHost: 1, ticks: 2, intervalS: 5 });
+    const before = s.metrics.length;
+    const t0 = s.endMs + 5000;
+    const metrics = Array.from({ length: ROWS }, (_, i) => ({
+      host: "h0",
+      label: "m0",
+      timestamp: new Date(t0 + i * 5000).toISOString(),
+      value: i,
+    }));
+    const logEvents = Array.from({ length: ROWS }, (_, i) => ({
+      timestamp: new Date(t0 + i * 5000).toISOString(),
+      host: "h0",
+    }));
+    // Premise: the spread ceiling is BELOW the batch size on this runtime, so
+    // a regression back to `push(...)` cannot pass here by accident.
+    expect(() => Math.max(...metrics.map(() => 0))).toThrow(RangeError);
+
+    const next = applyFragment(
+      s,
+      frag({ metrics: metrics as never, log_events: logEvents as never }),
+    );
+    expect(next.metrics.length).toBe(before + ROWS);
+    expect(next.logEvents.length).toBe(ROWS);
+    expect(next.endMs).toBe(t0 + (ROWS - 1) * 5000);
+  });
+});

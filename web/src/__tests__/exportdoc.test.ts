@@ -355,3 +355,46 @@ describe("timestamp validation (follow-up #5)", () => {
     expect(warnings).toHaveLength(0);
   });
 });
+
+// #382: `normalizeSession` found a session's last sample with
+// `Math.max(...metrics.map(...))`. V8 caps the number of spread arguments by
+// stack size (~125k on the default stack), so any session past that many rows
+// threw RangeError out of the parser — every boot hydrate, Import and
+// lapse→resync of a real run a few hours long died with an import banner.
+describe("a document with more rows than V8 will spread into one call", () => {
+  // 7 hosts x 13 labels x 2000 ticks is the replay soak's shape (#382); any
+  // real live run crosses this within hours.
+  const ROWS = 200_000;
+
+  it("parses, and endMs is the last sample", () => {
+    const t0 = Date.UTC(2026, 6, 12, 10, 0, 0);
+    const metrics = Array.from({ length: ROWS }, (_, i) =>
+      metric("h0", "m0", new Date(t0 + i * 5000).toISOString(), i),
+    );
+    // Premise: this runtime's spread ceiling is BELOW the document size, so a
+    // regression back to `Math.max(...)` cannot pass here by accident (vitest's
+    // forks pool runs on the default V8 stack; a bigger stack fails loudly here
+    // instead of letting the test pass vacuously).
+    expect(() => Math.max(...metrics.map(() => 0))).toThrow(RangeError);
+
+    const doc = {
+      format: 1,
+      sessions: [
+        {
+          id: "s",
+          start: new Date(t0).toISOString(),
+          lab: { hosts: [{ id: "h0", element: "h0" }] },
+          chart_map: { m0: "CPU" },
+          metrics,
+        },
+      ],
+    };
+    const result = parseExportDocument(JSON.stringify(doc));
+    expect(result.warnings).toEqual([]);
+    expect(result.sessions[0]?.endMs).toBe(t0 + (ROWS - 1) * 5000);
+    expect(result.sessions[0]?.metrics).toHaveLength(ROWS);
+    // The series slice had the same shape (`out.push(...sliceSeries(...))`):
+    // one series with more points than the spread ceiling must come back whole.
+    expect(metricsForSubject(result.sessions[0], "h0", null)).toHaveLength(ROWS);
+  });
+});

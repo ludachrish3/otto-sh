@@ -9,8 +9,8 @@ const BACKOFF_MS = [1000, 2000, 5000, 10_000, 30_000];
 // The fragment's array-typed fields (metrics/events/log_events/deleted_event_ids) —
 // see MonitorSessionFragment in export.gen.ts. Checked below so a fragment carrying
 // e.g. `metrics: "not an array"` is dropped rather than passed through to
-// applyFragment, which spreads them directly (`push(...metrics)`) with no further
-// validation — a string there would fan out into individual pushed characters.
+// applyFragment, which iterates them directly (`for (const m of metrics)`) with no
+// further validation — a string there would fan out into individual pushed characters.
 const ARRAY_FIELDS = ["metrics", "events", "log_events", "deleted_event_ids"] as const;
 
 /** Structural check. A malformed fragment is dropped, never fatal — one bad frame

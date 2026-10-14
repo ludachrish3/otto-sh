@@ -93,11 +93,17 @@ export function applyFragment(
   // Index arrays are mutated IN PLACE (O(batch)); the session object is replaced so
   // zustand re-renders. Copying the point arrays to get a new identity would make
   // every tick O(total run length) — the exact cost this design exists to remove.
+  // Loops, not `push(...batch)`: V8 caps spread arguments by stack size
+  // (~125k on the default stack), and a flush batch buffered behind a stalled
+  // main thread can be larger than that — the spread threw RangeError inside
+  // the flush, uncaught, and killed the stream (#382).
   if (metrics.length > 0) {
-    session.metrics.push(...metrics);
+    for (const m of metrics) session.metrics.push(m);
     appendToIndex(session.index, metrics);
   }
-  if (logEvents.length > 0) session.logEvents.push(...logEvents);
+  if (logEvents.length > 0) {
+    for (const e of logEvents) session.logEvents.push(e);
+  }
 
   let events = session.events;
   if (fragEvents.length > 0) {

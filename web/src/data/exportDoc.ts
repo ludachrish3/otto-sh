@@ -196,16 +196,24 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
     (e) => e.end_timestamp,
   );
   const logEvents = dropInvalidTimestamps(raw.log_events ?? [], "log event", raw.id, warnings);
-  // `metrics` above already excludes every NaN-timestamp row, so this
-  // Math.max can never itself resolve to NaN the way the raw array could —
-  // a single malformed sample among thousands used to poison the whole
-  // session's endMs (`Math.max` returns NaN if ANY argument is NaN, and
+  // `metrics` above already excludes every NaN-timestamp row, so this scan
+  // can never resolve to NaN the way the raw array could — a single
+  // malformed sample among thousands used to poison the whole session's
+  // endMs (the old `Math.max(...)` returns NaN if ANY argument is NaN, and
   // `raw.end != null ? ... : (lastSampleMs ?? startMs)` — `??` does NOT
   // catch NaN, only null/undefined — so it walked straight through here
   // and from there into sessionBounds/clampRange/presetRange and
   // seriesIndex's ascending `tsMs` arrays, see seriesIndex.ts).
-  const lastSampleMs =
-    metrics.length > 0 ? Math.max(...metrics.map((m) => parseTs(m.timestamp))) : null;
+  //
+  // A linear loop, not `Math.max(...metrics.map(...))`: V8 caps spread
+  // arguments by stack size (~125k on the default stack), so the spread
+  // threw RangeError on any session past that many rows — every boot
+  // hydrate, Import and lapse→resync of a run a few hours long (#382).
+  let lastSampleMs: number | null = null;
+  for (const m of metrics) {
+    const t = parseTs(m.timestamp);
+    if (lastSampleMs === null || t > lastSampleMs) lastSampleMs = t;
+  }
   const endMs = parsedEnd ?? lastSampleMs ?? startMs;
 
   const hostIds = new Set<string>();
@@ -352,7 +360,11 @@ export function metricsForSubject(
   // render. Now: only the subject's own series, sliced by binary search.
   const keys = session.index.keysByHost.get(subjectId);
   if (keys === undefined) return [];
+  // A loop, not `out.push(...slice)`: one series can hold more points than V8
+  // will spread into a single call (~125k on the default stack, #382).
   const out: MetricRecord[] = [];
-  for (const key of keys) out.push(...sliceSeries(session.index, key, range));
+  for (const key of keys) {
+    for (const m of sliceSeries(session.index, key, range)) out.push(m);
+  }
   return out;
 }
