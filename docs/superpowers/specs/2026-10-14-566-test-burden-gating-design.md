@@ -58,14 +58,14 @@ selection, not execution: skip/xfail outcomes are a lane's own business.
 red tier 2 stops tier 3 (plain `$(MAKE)` lines, Makefile:1316–1322). New: every tier runs, each rc is
 recorded, the target exits non-zero at the end if any failed, naming them.
 
-**A3 — `make release-campaign`,** a new stage (`scripts/stability_campaign.py`, the graduated
-COUNT 1→3→10 runner from the 2026-06-06 design, has a unit test but no Makefile or workflow caller; two
-pins read the file — the bed-knob guard, test_tier_marker_invariants.py:1799, and
-`test_the_stability_campaign_spells_no_lane_of_its_own`, :2129 — so it is WIRED, not deleted: the stage
-drives the tiers through it at COUNT=1, which also retires its "mirrors the Makefile" drift risk): `stability COUNT=1`, `chaos`, `chaos-embedded`,
+**A3 — `make release-campaign`,** a new stage, a plain recipe of `$(MAKE)` lines: `stability COUNT=1`,
 `dashboard-soak`, `conformance` (hermetic, `OTTO_CONFORMANCE_CELLS=all`), `busybox` (artifact tier;
-cache-warm). COUNT=1 because "no tests lost" is a selection property; soak multiplicity stays nightly's
-job (Q3). `conformance-bed` is already `release-matrix`.
+cache-warm), then `chaos` and `chaos-embedded` LAST (exclusive bed; `chaos-embedded` can wedge a board).
+COUNT=1 because "no tests lost" is a selection property; soak multiplicity stays nightly's job (Q3).
+`scripts/stability_campaign.py` (the graduated 1→3→10 ladder) is NOT wired into the release and is not
+deleted: the owner keeps it as the opt-in campaign "for large, risky changes where the test burden is
+worth the cost" (2026-10-14); its two pins (test_tier_marker_invariants.py:1799, :2129) stay as they are.
+`conformance-bed` is already `release-matrix`.
 
 **A4 — release order** (also Phase C): coverage-stamp check (C2, ~1 s — a stale stamp must not be found
 after a 7–33 min budget delta) → check-python → budget-delta (C1) → nox-release (C2) → web → dashboard-all → validate-ts → release-matrix → release-kmodcov-matrix →
