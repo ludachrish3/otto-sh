@@ -15,13 +15,21 @@ from otto.host.options import NcOptions, TelnetOptions
 from otto.host.unix_host import UnixHost
 from scripts.build_busybox_guest_images import GUEST_TABLE
 from tests._fixtures.labdata import (
+    element_for,
     element_of,
     entry_of,
     flat_hosts,
     flatten_lab_doc,
+    host_data,
     lab_data_path,
 )
 from tests.conftest import BUSYBOX_GUEST_NES
+from tests.e2e.chaos._bed import (
+    BUSYBOX_CHAOS_ELEMENT,
+    BUSYBOX_CHAOS_HOST_ID,
+    BUSYBOX_HOP_ELEMENT,
+    busybox_target,
+)
 
 BUSYBOX_LINK_ELEMENT = "bb1350"
 """The one guest whose wire to test1 is DECLARED as a link -- the chaos lane's
@@ -213,3 +221,27 @@ def test_the_declared_tap_link_names_both_ends_the_builder_provisions():
         f"expected exactly one declared {guest.tap} <-> {guest.element}:eth0 link, "
         f"found {len(declared)}: {declared}"
     )
+
+
+def test_chaos_busybox_target_names_the_host_the_loader_builds():
+    """The chaos lane's guest target must aim at the id otto's own loader
+    derives from the committed bb1350 record — element name off the ELEMENT,
+    board/slot off the ENTRY — and at the hop's management address and first
+    cred. ``host_data`` strips the element keys (labdata ``entry_of``), so a
+    target that reads ``guest["element"]`` dies at fixture setup with
+    ``KeyError`` before any bed I/O (#434); this pin fails the same way, with
+    no bed in the room.
+    """
+    target = busybox_target()
+    loaded = create_host_from_dict(
+        host_data(BUSYBOX_CHAOS_ELEMENT),
+        lab_name="busybox",
+        element=element_for(BUSYBOX_CHAOS_ELEMENT),
+    )
+    assert target.host_id == loaded.id
+    assert target.host_id == BUSYBOX_CHAOS_HOST_ID  # the link endpoint spelling, `bb1350-qemu`
+    assert target.lab == "busybox"
+    hop = host_data(BUSYBOX_HOP_ELEMENT)
+    assert target.ssh_host == hop["ip"]
+    assert target.ssh_username == hop["creds"][0]["login"]
+    assert target.ssh_password == hop["creds"][0]["password"]

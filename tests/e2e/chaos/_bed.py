@@ -294,7 +294,9 @@ def busybox_target() -> ChaosTarget:
     return ChaosTarget(
         sut_dir=REPO_E2E,
         lab="busybox",
-        host_id=make_host_id(guest["element"], guest.get("board"), guest.get("slot")),
+        host_id=make_host_id(
+            element_for(BUSYBOX_CHAOS_ELEMENT).name, guest.get("board"), guest.get("slot")
+        ),
         ssh_host=hop["ip"],
         ssh_port=22,
         ssh_username=cred["login"],
