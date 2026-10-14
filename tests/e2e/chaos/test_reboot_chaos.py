@@ -42,6 +42,7 @@ from tests._fixtures.bed_hygiene import diff_snapshots, format_hygiene_report, s
 from tests._fixtures.tunnel_bed import cli_sut_dir, observe_tunnel_processes
 from tests.e2e.chaos._bed import (
     assert_eth2_netem_free,
+    closed_unix_link_target,
     probe_text,
     run_probe,
     tunnel_target,
@@ -200,7 +201,10 @@ def test_reboot_x_link_repair_idempotent(tmp_path):
     means: netem gone on test2, still present on test1, until `repair --all`.
     """
     link_id = unix_link_id()
-    link_target = make_bed_target("test1")
+    # A CLOSED unix lab: tech1's own `unix` also loads the bb1350 TAP link
+    # through test1 with its far end absent, and `repair --all` files that
+    # as a failure by design (#473) -- the reboot below still aims at the bed.
+    link_target = closed_unix_link_target(tmp_path)
     imp_xdir = tmp_path / "impair"
     imp_xdir.mkdir()
     imp = spawn_otto(

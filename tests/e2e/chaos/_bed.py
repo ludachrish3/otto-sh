@@ -23,6 +23,7 @@ import dataclasses
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 from otto.config.lab import Lab
 from otto.context import OttoContext, set_context
@@ -30,7 +31,7 @@ from otto.host.factory import create_host_from_dict
 from otto.host.login_proxy import Cred
 from otto.host.remote_host import make_host_id
 from otto.host.unix_host import UnixHost
-from otto.link.derive import addressing_from_dict, resolve_declared_links
+from otto.link.derive import addressing_from_dict, raw_endpoint_host_ids, resolve_declared_links
 from otto.logger.mode import LogMode
 from otto.result import Result
 from tests._fixtures._host_pool import lease_unix_host
@@ -44,7 +45,7 @@ from tests._fixtures.labdata import (
     lab_data_path,
 )
 from tests._fixtures.run_state import preserved_run_state
-from tests._fixtures.tunnel_bed import assert_reachable, build_bed_host
+from tests._fixtures.tunnel_bed import assert_reachable, build_bed_host, cli_sut_dir
 from tests.e2e._otto_subprocess import REPO_E2E
 from tests.integration.chaos._target import ChaosTarget, make_bed_target
 
@@ -188,6 +189,34 @@ def tunnel_target(sut_dir) -> ChaosTarget:
         ssh_client_key=None,
         ssh_password=cred["password"],
     )
+
+
+def unix_link_entries() -> list[dict[str, Any]]:
+    """tech1's raw link entries whose BOTH ends are the unix pair the chaos lane dirties.
+
+    Filtered by endpoint pair, never by list index (see ``declared_link_id``
+    for why): the bb1350 TAP link also touches test1, and a lab that carried
+    it would be exactly the half-outside shape ``repair --all`` is documented
+    to fail on. Raw entries, not resolved ``Link``s, because the consumer is
+    ``lab_json_v2``, which writes a document for otto to load.
+    """
+    data = json.loads(lab_data_path().read_text())
+    return [e for e in data["links"] if set(raw_endpoint_host_ids(e)) == {"test1", "test2"}]
+
+
+def closed_unix_link_target(tmp_path: Path) -> ChaosTarget:
+    """ChaosTarget for CLI-driven link commands on a CLOSED unix lab.
+
+    ``make_bed_target("test1")`` loads tech1's ``unix`` verbatim, which (by the
+    derived-membership rule, lab-config.md "Lab membership is derived") also
+    loads the ``bb1350-qemu--test1`` link with its far end absent, so an honest
+    ``link repair --all`` exits 1 there by design (docs/cli/link/repair.md,
+    "When one end is out of scope"). This SUT loads test1+test2 and only the
+    link between them, so the sweep's exit code answers the question the
+    link chaos scenarios ask. Pinned hostless by
+    ``tests/unit/test_chaos_link_lab_scope.py``.
+    """
+    return tunnel_target(cli_sut_dir(tmp_path, links=unix_link_entries()))
 
 
 def assert_eth2_netem_free(what: str) -> None:

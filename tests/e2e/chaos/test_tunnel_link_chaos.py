@@ -34,13 +34,13 @@ from tests._fixtures.labdata import host_data
 from tests._fixtures.tunnel_bed import cli_sut_dir, observe_tunnel_processes
 from tests.e2e.chaos._bed import (
     assert_eth2_netem_free,
+    closed_unix_link_target,
     probe_text,
     run_probe,
     tunnel_target,
     unix_link_id,
 )
 from tests.integration.chaos._driver import BANNER, spawn_otto
-from tests.integration.chaos._target import make_bed_target
 
 pytestmark = [
     pytest.mark.chaos,
@@ -363,10 +363,15 @@ def test_sigkill_mid_impair_recovers_via_repair_all(tmp_path):
     impairment-free qdiscs on the trio.
     """
     link_id = unix_link_id()
-    target = make_bed_target("test1")
+    # A CLOSED unix lab: tech1's own `unix` also loads the bb1350 TAP link
+    # through test1 with its far end absent, and `repair --all` files that
+    # as a failure by design (#473).
+    target = closed_unix_link_target(tmp_path)
+    imp_xdir = tmp_path / "impair"
+    imp_xdir.mkdir()
     p = spawn_otto(
         ["link", "impair", link_id, "--loss", "50", "--expire", "60"],
-        xdir=tmp_path,
+        xdir=imp_xdir,
         target=target,
         extra_env=_WIDE_CONSOLE_ENV,
     )

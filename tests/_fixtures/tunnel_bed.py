@@ -16,7 +16,9 @@ import json
 import shlex
 import socket
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
@@ -404,13 +406,18 @@ def random_outfile() -> str:
     return f"/tmp/otto_tunnel_e2e_{uuid.uuid4().hex}.out"
 
 
-def cli_sut_dir(tmp_path: Path) -> Path:
+def cli_sut_dir(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) -> Path:
     """Scaffold a sut dir for CLI-driven tunnel tests: real unix lab + declared containers.
 
     Extracted verbatim (2026-07-17) from
     ``tests/e2e/test_tunnel_e2e.py::_cli_cycle_sut_dir`` so
     ``tests/e2e/tunnel_stability/`` can reuse the same CLI-facing SUT without
-    duplicating it. Two deliberate properties:
+    duplicating it. *links* are raw ``lab.json`` link entries written into the
+    document as declared; the default declares none, because a tunnel is
+    routed by ``--hosts`` and never by the lab's topology
+    (docs/cli/tunnel/add.md). The link chaos scenarios pass the one unix link
+    (``tests.e2e.chaos._bed.closed_unix_link_target``). Two deliberate
+    properties:
 
     - The host entries are the tech1 fixture's, verbatim — INCLUDING the
       declared ``eth2``/``192.168.1.x`` data-plane interfaces. Unlike the
@@ -439,7 +446,7 @@ def cli_sut_dir(tmp_path: Path) -> Path:
     for host in hosts:
         if host["element"] == "test2":
             host["docker_priority"] = 10
-    doc = lab_json_v2(hosts)
+    doc = lab_json_v2(hosts, links)
     # Each declared lab's reservable set is restated rather than hoisted, and
     # DERIVED rather than spelled out: tech1 names every one of these hosts'
     # reservation identifier after its element, so this reproduces the union
