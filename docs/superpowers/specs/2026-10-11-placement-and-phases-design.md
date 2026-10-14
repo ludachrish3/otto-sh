@@ -179,6 +179,18 @@ from becoming a general service locator.
 | composed repos | `otto.declared` | `otto.bootstrap` | `publish_composed`, `clear_composed` |
 | bootstrap initiator | `otto.declared` | `otto.bootstrap` (root), at import | `install_initiator` |
 | first-party actions | `otto.instruction_catalog` | `otto.project.actions` | `declare_first_party_actions` |
+| completion snapshot | `otto.registry` | `otto.cli.main` | `set_completion_names` |
+| completion snapshot withdrawal | `otto.registry` | `otto.bootstrap`'s `invalidate` | `clear_completion_names` |
+
+**Amended by P5, 2026-10-14.** Building P5 changed this section, and §3.5, §3.9 and §3.13, in
+these places. Here it added the last two rows. The CLI's completion
+snapshot moved from `otto.bootstrap` into `otto.registry`, a foundation module every command
+resolution already loads, and `otto.bootstrap` re-exports its reader, `get_completion_names`.
+The reason: `cli/main.py` reads the snapshot function-locally. Had that read gone through the
+root, the root's new imports would have ridden onto the nine verb `--help` surfaces, +8 file
+operations each; read from `otto.registry`, those surfaces decline by −4 instead. The snapshot
+has two writes, so it takes two rows, each with its own single writer: the CLI entry installs it
+and `invalidate` withdraws it.
 
 ### 2.2 Module → layer map (end state, 77 tach modules)
 
@@ -754,6 +766,9 @@ Building the hosts runs the provider gate (`host/factory.py:311-317`, `:335-336`
 `host/product.py:864-870`).
 - Today the gate starts bootstrap and may narrow.
 - Now it admits, and the provider runs on every host of that lab.
+- Because nothing composes in that process, the repos' init modules do not run, so their
+  `[[products]]`/`[[dev_tools]]` entries and the providers they register attach to no host
+  either (amended by P5, 2026-10-14).
 
 The CLI imports `otto.bootstrap`, and every public entry point that can start composition loads
 it when resolved (§3.12), so they behave exactly as today.
@@ -769,6 +784,24 @@ it when resolved (§3.12), so they behave exactly as today.
   - `host/product.py:861-864` names `otto.declared.scope_for_repo`;
   - `config/scope.py:725-726`'s `otto.config.fleet` reference is updated in P9a.
 - **Declared in tach:** `otto.config.scope`, `otto.models.dependencies`, `otto.declared`.
+
+**Amended by P5, 2026-10-14.** Building P5 changed this section in these places:
+- **The error types' readers.** `otto.bootstrap` re-exports the four types, the same objects.
+  The call-time readers in `config/fleet.py`, `context.py` and `cli/monitor.py` import
+  `ProjectScopeError` from `otto.config.scope`, so patching the owner reaches every raise and
+  `except` but the root's own. `config/dependencies.py` and `session/{errors,projects}.py`
+  keep the re-export until P9b re-points them (§3.9). `config → bootstrap` stays in `BASELINE`.
+  `BootstrapWarning` moves with the others; it sits in `bootstrap.py:60-104`.
+- **A third `scope_for_repo` importer.** `docker/resolve.py` also imports it at module scope and
+  re-points to `otto.declared`. Its tests patch the consumer's binding and stay.
+- **Who sees D2** is every path that builds a lab-stamped host, not only `otto.lab:load_lab`:
+  `otto:load_lab`, a `LabRepository`'s loader, `create_host_from_dict(..., lab_name=…)` and the
+  container hosts `otto.docker.compose` stamps from their parent. The commit footer and the
+  bootstrap page name each one.
+- **Two slots, one record.** The composed repos and the initiator live on the one `_composition`
+  record, so `test_slot_installers.py` lists it as each slot's table.
+- **The completion snapshot** moves to `otto.registry` (§2.1), so the root's new imports cost no
+  surface anything (§4.2).
 
 ### 3.6 Settings types and helpers move down (P6)
 
@@ -911,11 +944,13 @@ once P5 has landed.
   the root before it builds its own context. These land in the same commit as the re-points
   above, which are what would otherwise change their behavior.
 - **`otto.bootstrap` keeps the composition root:** `bootstrap()`; the `[os_profiles]` and
-  providing-repo checks; `invalidate`, which clears the catalog, the discovery cache and the
-  completion names; and the completion-names snapshot, which only the CLI reads. It moves up to
-  the **root** layer and imports `otto.project` normally, function-locally inside `bootstrap()`:
-  `otto.project.actions.declare()` before any repo init (P2's first-party slot) and
-  `otto.project.commands.check_project_instruction_options()` after them, read off the module at
+  providing-repo checks; and `invalidate`, which clears the catalog, the discovery cache and the
+  completion names. The completion-names snapshot, which only the CLI reads, lives in
+  `otto.registry` since P5 (§2.1); `invalidate` clears it through `clear_completion_names`.
+  `otto.bootstrap` moves up to the **root** layer and imports `otto.project` normally,
+  function-locally inside `bootstrap()`: `otto.project.actions.declare()` before any repo init
+  (P2's first-party slot) and `otto.project.commands.check_project_instruction_options()` after
+  them, read off the module at
   call time so a caller may still substitute it (`bootstrap.py:378-383`). The two by-name
   `importlib.import_module` calls go, and with them the audit's last transitional entries.
 - **The initiator** is installed when `otto.bootstrap` is imported, as since P5. Every public route
@@ -1202,9 +1237,9 @@ so a fixture that imports it would hide exactly the case §3.12 protects.
 
 | landing | state and its owner after the landing | fixture change |
 |---|---|---|
-| P5 | `otto.declared`: the published complete and in-progress results and the initiator slot (new); `otto.bootstrap`: its four globals, still its own | Snapshot both owners; stop importing `otto.bootstrap`; add the slot invariant and `no_composition_root`. |
-| P9a | `otto.declared`: `_result` and `_in_progress` (one home now); `otto.bootstrap`: `_discovered`, `_completion_names` | `_result` and `_in_progress` are read at `otto.declared`. The test helpers that set them (`tests/_fixtures/bootstrap_seam.py`, `tests/integration/conftest.py`, `tests/unit/bootstrap/test_bootstrap.py`) re-point. Patches migrate with their consumers (rule below): a patch of a moved accessor re-points to `otto.declared` in the landing whose consumer re-points. In P9a that is the CLI's readers of `get_repos`, `get_ordered_repos` and `is_bootstrapped`, and the coverage, suite, monitor and docker readers of `current_repos` and `current_ordered_repos` (patched today at `otto.config.fleet`). Patches whose consumer keeps the `otto.bootstrap` alias until P9b stay: `tests/unit/session/test_logs.py:91-94` patches `otto.bootstrap.get_repos`, which `session/logs.py:57-61` reads. Patches of `otto.bootstrap.bootstrap` stay in every landing: it is not a re-export, and the initiator looks it up at call time. |
-| P9b | `otto.config.repo`: `_discovered`; `otto.bootstrap`: `_completion_names` | `_discovered` is read at `otto.config.repo`. The remaining staged patches move with their consumers, in the same commit: `test_logs.py:91-94` to `otto.declared.get_repos` (with `session/logs.py:57`), and patches of `discover`, `get_env` and `discovered_teardown_deadline` to `otto.config.repo` (with the CLI, `context.py:1230` and `env/manage.py:302`). |
+| P5 | `otto.declared`: the published complete and in-progress results and the initiator slot (new); `otto.bootstrap`: `_discovered`, `_result` and `_in_progress`, still its own; `otto.registry`: `_COMPLETION_SNAPSHOT`, formerly `otto.bootstrap`'s `_completion_names` (§2.1) | Snapshot both owners; stop importing `otto.bootstrap`; add the slot invariant and `no_composition_root`. |
+| P9a | `otto.declared`: `_result` and `_in_progress` (one home now); `otto.bootstrap`: `_discovered`; `otto.registry`: `_COMPLETION_SNAPSHOT` (since P5) | `_result` and `_in_progress` are read at `otto.declared`. The test helpers that set them (`tests/_fixtures/bootstrap_seam.py`, `tests/integration/conftest.py`, `tests/unit/bootstrap/test_bootstrap.py`) re-point. Patches migrate with their consumers (rule below): a patch of a moved accessor re-points to `otto.declared` in the landing whose consumer re-points. In P9a that is the CLI's readers of `get_repos`, `get_ordered_repos` and `is_bootstrapped`, and the coverage, suite, monitor and docker readers of `current_repos` and `current_ordered_repos` (patched today at `otto.config.fleet`). Patches whose consumer keeps the `otto.bootstrap` alias until P9b stay: `tests/unit/session/test_logs.py:91-94` patches `otto.bootstrap.get_repos`, which `session/logs.py:57-61` reads. Patches of `otto.bootstrap.bootstrap` stay in every landing: it is not a re-export, and the initiator looks it up at call time. |
+| P9b | `otto.config.repo`: `_discovered`; `otto.registry`: `_COMPLETION_SNAPSHOT` (since P5) | `_discovered` is read at `otto.config.repo`. The remaining staged patches move with their consumers, in the same commit: `test_logs.py:91-94` to `otto.declared.get_repos` (with `session/logs.py:57`), and patches of `discover`, `get_env` and `discovered_teardown_deadline` to `otto.config.repo` (with the CLI, `context.py:1230` and `env/manage.py:302`). |
 
 `tests/unit/test_env_hermeticity.py`, which re-runs the historical poisoner/victim pair, must stay
 green at each of the three landings.
@@ -1336,6 +1371,15 @@ surfaces are +0 on every minor, no bucket moved, and base and tip each reproduce
 removed imports were function-local in `_auto_up`, which ran only when a placeholder's probe
 found nothing, and no measured surface constructs a placeholder.
 
+**P5, measured (amended by P5, 2026-10-14).** Row P5's predicted growth does not appear. The
+only surfaces that loaded `otto.bootstrap` without `models.settings` were the nine verb `--help`
+surfaces, which reached it through `cli/main.py`'s function-local completion read. P5 moves the
+completion snapshot to `otto.registry` (§2.1), so those nine stop loading the root and decline by
+4 file operations on every minor (−1 `otto:*`, −2 `otto:bootstrap`, −1 its bytecode). Every other
+surface is +0. Three base-vs-tip pairs agreed. The only difference between runs was one
+operation on 3.10 `host_local_exec` that alternated between the `fd` and `other` buckets at an
+unchanged total, in either direction, so it is noise, not the change.
+
 ### 4.3 Package ancestors
 
 Importing a carved module runs every ancestor `__init__`, so every ancestor of a carved module
@@ -1359,6 +1403,12 @@ Ancestors this covers:
 Each carve adds an `IMPORT_MUST_NOT_LOAD` row to `tests/unit/test_import_contracts.py`. For
 example, `import otto.config.scope` loads no `otto.*` module beyond `otto`, `otto.config`,
 `otto.config.env`, `otto.config.scope` and its declared dependencies.
+
+**Amended by P5, 2026-10-14.** The carved modules' rows are the P3 amendment's
+`IMPORT_ONLY_DECLARED` form, not `IMPORT_MUST_NOT_LOAD`. The example above needs an ancestor
+allowance, added as `ancestor_eager_imports`: the top-level relative imports of each ancestor
+`__init__`, which the ast-grep rule keeps stdlib-only. A pin checks that `otto.config`'s eager
+imports are exactly `otto.config.env`.
 
 ## 5. Enforcement
 
@@ -1561,6 +1611,12 @@ No landing grows the ratchet. With every file owned, the whole-tree cycle goes 2
 
 P3 and P4 delete only 2 and 1 ratchet edges. They stay separate because they touch different
 subsystems.
+
+**Amended by P5, 2026-10-14.** The real tree confirms row P5: the cycle is 11 modules and 31
+in-cycle edges (59 modules, 291 edges, 48 layered), and `BASELINE` lost exactly Appendix A's
+thirteen P5 edges. P5's commit is also marked breaking: D2 changes behavior on a taught public
+path, and the owner's 2026-10-12 rule marks any behavior change, so P4 is not the only marked
+commit.
 
 **Phases re-checked under the revised S5-1.** P1 is now split (above), and P9's split follows
 cohesion rather than the shrink. The carve-with-the-fix rule (§5.1) stays, because carving
