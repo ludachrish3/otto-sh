@@ -60,7 +60,8 @@ recorded, the target exits non-zero at the end if any failed, naming them.
 
 **A3 — `make release-campaign`,** a new stage, a plain recipe of `$(MAKE)` lines: `stability COUNT=1`,
 `dashboard-soak`, `conformance` (hermetic, `OTTO_CONFORMANCE_CELLS=all`), `busybox` (artifact tier;
-cache-warm), then `chaos` and `chaos-embedded` LAST (exclusive bed; `chaos-embedded` can wedge a board).
+cache-warm), then `chaos` and `chaos-embedded` LAST (exclusive bed; `chaos-embedded` can wedge a board)
+— the chaos clause is superseded by Q9: the chaos lanes are not in the campaign.
 COUNT=1 because "no tests lost" is a selection property; soak multiplicity stays nightly's job (Q3).
 `scripts/stability_campaign.py` (the graduated 1→3→10 ladder) is NOT wired into the release and is not
 deleted: the owner keeps it as the opt-in campaign "for large, risky changes where the test burden is
@@ -71,7 +72,8 @@ worth the cost" (2026-10-14); its two pins (test_tier_marker_invariants.py:1799,
 after a 7–33 min budget delta) → check-python → budget-delta (C1) → nox-release (C2) → web → dashboard-all → validate-ts → release-matrix → release-kmodcov-matrix →
 release-campaign → docs → bump → wheel-check. Matrices before docs (the schema JSONs are Sphinx inputs;
 pins test_support_matrix.py:4060, test_kmodcov_matrix.py:444). Chaos lanes last among bed lanes (exclusive
-bed; `chaos-embedded` can wedge a board, so nothing bed-bound follows it). `make -n release` stays unsafe
+bed; `chaos-embedded` can wedge a board, so nothing bed-bound follows it) — superseded by Q9, the chaos
+lanes are not in the release at all. `make -n release` stays unsafe
 as today (documented).
 
 **Cost.** Unmeasured: no JUnit for the stability/chaos lanes exists on disk. First implementation step
@@ -280,3 +282,11 @@ Fable final review before the full gate.
 - Q7 `tests/unit/shim/test_refresh_spawn.py` and `test_differential.py` lose the `interpreter_agnostic`
   mark (B1a); `tests_unit_repeat` ignores the differential.
 - Q8 `busybox` stays in the release campaign ("it's not run often").
+- Q9 (2026-10-15, after Phase A landed and the first two bed runs of `make chaos`) The chaos lanes LEAVE the
+  release campaign: `chaos` and `chaos-embedded` are on-demand targets only. Rationale: a red there is
+  as often a bed finding as a product defect (each of the 2026-10-14 runs stranded a lab VM in its firmware
+  after a warm reboot), and a release must not wait on that. Phase A's census keeps its proof with the
+  exemption list non-empty: `_RELEASE_EXEMPT_LANES` names the two chaos legs beside this reason, and a test
+  holds every exempt row to covering tests the release rows miss AND being reached by no release stage.
+  "Releases lose no tests" now reads "every collected test is in the release OR in the owner's stated
+  exemption". #643 (low priority) tracks a scheduled dev-VM chaos run so the lane keeps producing signal.
