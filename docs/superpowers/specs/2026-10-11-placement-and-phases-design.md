@@ -209,7 +209,6 @@ The `depends_on` column is simulator-derived (§1.1); real tach confirms it land
 | foundation | `otto.instruction_catalog` | 1 | errors, registry |
 | foundation | `otto.invocation` | 1 | — |
 | foundation | `otto.kmodcov` | 3 | version |
-| foundation | `otto.labs.errors` | 1 | errors |
 | foundation | `otto.layout` | 1 | — |
 | foundation | `otto.lifecycle` | 1 | invocation, logger |
 | foundation | `otto.link.impairer` | 1 | link.params, registry |
@@ -230,7 +229,6 @@ The `depends_on` column is simulator-derived (§1.1); real tach confirms it land
 | specs | `otto.config.user_settings` | 1 | config.home, models |
 | specs | `otto.models` | 10 | declared, host, layout, link.impairer, logger, models.base, models.dependencies, utils, version |
 | topology | `otto.check` | 10 | errors, host, logger, result, version |
-| topology | `otto.lab.model` | 1 | host, labs.errors, link |
 | topology | `otto.link` | 12 | check, errors, host, lifecycle, link.impairer, link.netem, link.params, logger, models, result |
 | topology | `otto.monitor.broadcast` | 1 | — |
 | topology | `otto.monitor.errors` | 1 | errors |
@@ -246,35 +244,37 @@ The `depends_on` column is simulator-derived (§1.1); real tach confirms it land
 | topology | `otto.tunnel` | 14 | check, errors, host, lifecycle, logger, models, registry |
 | sources | `otto.creds` | 6 | errors, models, models.base, registry, utils |
 | sources | `otto.inventory` | 12 | config.home, config.user_settings, creds, errors, host, models, models.base, registry, tls, utils |
-| sources | `otto.labs` | 10 | host, inventory, lab.model, labs.errors, link, models, models.base, registry, utils |
+| sources | `otto.labs` | 10 | host, inventory, link, models, models.base, registry, utils |
 | sources | `otto.reservations` | 10 | active_run, errors, host, models, models.base, registry, utils |
-| composition | `otto.config` | 14 | config.home, config.scope, errors, host, instruction_catalog, inventory, labs, labs.errors, link, models, models.base, models.dependencies, registry, reservations, utils |
+| composition | `otto.config` | 14 | config.home, config.scope, errors, host, instruction_catalog, inventory, labs, link, models, models.base, models.dependencies, registry, reservations, utils |
 | composition | `otto.env` | 4 | config, config.home, errors, models.dependencies, version |
-| run | `otto.context.state` | 1 | active_run, config, config.scope, declared, host, invocation, lab.model, params, reservations, session.dependencies, session.errors, session.lab, session.projects |
-| run | `otto.docker` | 11 | active_run, config, config.scope, declared, errors, host, lab.model, lifecycle, logger, models, registry, result, utils |
-| run | `otto.lab.fleet` | 1 | config.scope, context.state, host, lab.model |
+| run | `otto.context.state` | 1 | active_run, config, config.scope, declared, host, invocation, labs, params, reservations, session.dependencies, session.errors, session.lab, session.projects |
+| run | `otto.docker` | 11 | active_run, config, config.scope, declared, errors, host, lifecycle, logger, models, registry, result, utils |
+| run | `otto.lab.fleet` | 1 | config.scope, context.state, host |
 | run | `otto.session.activation` | 1 | config.scope, models.dependencies, session.errors |
 | run | `otto.session.dependencies` | 1 | config.scope, env, session.errors |
 | run | `otto.session.errors` | 1 | errors |
-| run | `otto.session.lab` | 1 | docker, inventory, labs, labs.errors, session.errors |
+| run | `otto.session.lab` | 1 | docker, inventory, labs, session.errors |
 | run | `otto.session.logs` | 1 | declared, host, logger, session.errors |
 | run | `otto.session.projects` | 1 | config.scope, models.dependencies, session.errors |
-| workflows | `otto.init` | 9 | config, config.user_settings, errors, host, inventory, kmodcov, labs, labs.errors, models, models.base, utils |
+| workflows | `otto.init` | 9 | config, config.user_settings, errors, host, inventory, kmodcov, labs, models, models.base, utils |
 | workflows | `otto.instructions` | 1 | context.state, instruction_catalog, params, project, session.activation |
 | workflows | `otto.monitor` | 10 | _webassets, config.scope, console, context.state, declared, errors, filesystem, host, lab.fleet, link, logger, models, monitor.broadcast, monitor.errors, monitor.event_ops, monitor.events, monitor.formats, monitor.parsers, monitor.snmp, monitor.store, monitor.tls, result, tunnel, utils |
 | workflows | `otto.project` | 8 | config.scope, context.state, errors, host, instruction_catalog, layout, link, models.dependencies, params, registry, result, tunnel, utils |
 | root | `otto.bootstrap` | 1 | config, config.scope, declared, errors, host, models, project, registry |
 | root | `otto.coverage` | 47 | _webassets, bootstrap, config, config.scope, context.state, declared, errors, host, lab.fleet, layout, models.base, result, utils, version |
-| root | `otto.suite` | 11 | bootstrap, config, config.home, config.scope, context.state, coverage, declared, errors, host, invocation, lab.fleet, lab.model, lifecycle, models, monitor, monitor.errors, params, project, registry, utils, version |
+| root | `otto.suite` | 11 | bootstrap, config, config.home, config.scope, context.state, coverage, declared, errors, host, invocation, lab.fleet, labs, lifecycle, models, monitor, monitor.errors, params, project, registry, utils, version |
 | entry | `otto` | 1 | — |
 | entry | `otto.__main__` | 1 | _shim |
 | entry | `otto._shim` | 1 | _shim_complete, cli, version |
-| entry | `otto.cli` | 28 | _shim_complete, bootstrap, check, config, config.home, config.scope, config.user_settings, context.state, coverage, declared, docker, env, errors, host, init, instruction_catalog, instructions, inventory, invocation, kmodcov, lab.fleet, lab.model, lifecycle, link, link.params, logger, models, models.dependencies, monitor, monitor.errors, params, project, registry, reservations, result, session.activation, session.dependencies, session.errors, session.lab, session.logs, session.projects, suite, tunnel, utils, version |
+| entry | `otto.cli` | 28 | _shim_complete, bootstrap, check, config, config.home, config.scope, config.user_settings, context.state, coverage, declared, docker, env, errors, host, init, instruction_catalog, instructions, inventory, invocation, kmodcov, lab.fleet, labs, lifecycle, link, link.params, logger, models, models.dependencies, monitor, monitor.errors, params, project, registry, reservations, result, session.activation, session.dependencies, session.errors, session.lab, session.logs, session.projects, suite, tunnel, utils, version |
 | entry | `otto.context` | 1 | bootstrap |
-| entry | `otto.examples` | 9 | otto, host, inventory, lab.model, labs, models, monitor.parsers, reservations |
+| entry | `otto.examples` | 9 | otto, host, inventory, labs, models, monitor.parsers, reservations |
 | entry | `otto.lab` | 1 | — |
 | entry | `otto.session` | 1 | bootstrap |
-| entry | `otto.testing` | 3 | bootstrap, context.state, creds, host, inventory, invocation, lab.model, labs, labs.errors, models, models.base, reservations, result, suite |
+| entry | `otto.testing` | 3 | bootstrap, context.state, creds, host, inventory, invocation, labs, models, models.base, reservations, result, suite |
+
+**Amended by P7, 2026-10-15.** `otto.lab.model` and `otto.labs.errors` are not modules: the lab model lives with its loader in `otto.labs.loader` (§3.7). The end state has two fewer layered modules (§5.2).
 
 In the end state every file is owned and every module layered. There are no static upward edges,
 and the graph **between declared tach modules** has no cycle. Imports inside one tach module are
@@ -293,8 +293,7 @@ other, and both stay inside `otto.monitor`.
   of the ancestor rule (§4.3).
 - **`otto.lab` is a facade with no dependencies.** Its `__init__` holds only `TYPE_CHECKING`
   imports and a lazy table (`lab/__init__.py:36-49`), so it sits in entry. Its implementation is
-  `otto.lab.model` (topology) and `otto.lab.fleet` (run); `load_lab` lives in `otto.labs.loader`
-  (sources).
+  `otto.labs.loader` (`Lab`, `load_lab`; sources) and `otto.lab.fleet` (run).
 - **`otto.monitor` is the monitor facade and the monitor service, one tach module at workflows.**
   Its `__init__` exports the live runner (workflows), so under S5-5's rule the module that owns it
   sits at workflows. The service files stay in that module with it: the collector runtime
@@ -856,6 +855,39 @@ it when resolved (§3.12), so they behave exactly as today.
 - **Tests:** `tests/unit/test_import_contracts.py:49-50`, `:184` and `:193`;
   `tests/unit/test_patch_targets.py:137` and `:165`.
 - **Carved:** `otto.labs.errors`.
+
+**Amended by P7, 2026-10-15.** Building P7 changed this section in these places:
+- **`Lab` stays with its loader in `otto.labs.loader`; there is no `otto.lab.model`.**
+  `git mv config/lab.py labs/loader.py` moved the whole module: `Lab`, `split_lab_names`,
+  `LAB_SEPARATOR`, `_describe`, `load_lab` and `_json_source`. Chosen by measurement (D-P7-2,
+  §4.2): `otto.lab.model` grew 21 CLI surfaces by 12 to 16 file operations (it loads `otto.lab`'s
+  package and the model on every lab-loading and tracked surface); the loader's module grows none.
+  The module's imports stay standard-library-only at import time.
+- **The fleet and the compose verbs import `Lab` for type checking only.** `config/fleet.py` and
+  `docker/compose.py` use `Lab` only in annotations, so they import it under `TYPE_CHECKING` and
+  quote those 14 annotations: reaching the fleet or a docker verb loads no lab-model module, and no
+  public name grows (D-P7-2: fix the growth at its source). `typing.get_type_hints` on those 14
+  functions, 5 of them public, now needs the type-only names supplied (D-P7-3, unmarked).
+- **`otto.labs.errors` is not carved.** It existed so a topology-layer `otto.lab.model` could
+  raise the repository errors without importing `otto.labs`; with the model in `otto.labs`, every
+  reader of the errors sits at or above the sources layer.
+- **Re-pointed:** every one of the 32 import sites in `src/` and the 138 in the tests; the lazy
+  tables at `otto/__init__.py:85` and `lab/__init__.py:42-43`, `:48-49`.
+- **Tests:** the citations `test_patch_targets.py:137`, `:165` and `test_import_contracts.py:184`,
+  `:193` name the fleet (`otto.config.fleet`, P9a), not this module. P7 re-points
+  `test_import_contracts.py:52` and the two patch strings `cli/test_main.py:115` and
+  `config/test_fleet_of_interest.py:384`. The guards that named the module follow it: the
+  moved-name scan's gone-module table, the CLI heavy-import ban (`otto.labs.loader`, every
+  spelling), `backend-construction-through-entry`'s `files:` path (a new test fails a rule that
+  names a path that does not exist), the monitor service's lab ban, and two import contracts that
+  keep the fleet and `compose_up` from loading the model.
+- **Edges:** `labs`, `session` and `testing` drop `otto.config`; `cli`, `context` and `suite`
+  declare `otto.labs` for the lab model they already imported at run time. All are downward and
+  outside the cycle.
+- **Not breaking (D-P6-1, applied as D-P7-1; D-P7-3).** `__all__`, the golden and the public
+  paths `otto.lab.Lab`, `otto.lab.load_lab` and `otto.load_lab` are unchanged. `otto.config.lab`
+  was a retired deep path (§3.10) and no longer imports; `Lab`'s `__module__`, pickle path, class
+  repr and the module's logger name are `otto.labs.loader`.
 
 ### 3.8 Active-run contract (P8)
 
@@ -1420,6 +1452,21 @@ reproduced of 143 (both runs). On BASE, `otto.config.repo` loads on 26 of the 38
 surfaces and `otto.models.settings` on exactly the same 26; the home was chosen against six
 measured candidates (§3.6).
 
+**P7, measured (amended by P7, 2026-10-15).** Row P7 holds on the harness: neutral. `config.lab`
+loaded on no protected surface (on 21 others: the eight lab-loading surfaces, the eleven tracked
+verbs, `tracked_host_probe` and `tracked_host_power`). Harness, base `cfb1c05cd` vs
+the landing, two runs per minor: 3.10: 38 surfaces, 0 changed; 3.11: 38 surfaces, 0 changed; 3.12: 38 surfaces, 0 changed; 3.13: 38 surfaces, 0 changed; 3.14: 38 surfaces, 0 changed. On every minor the surfaces that load the lab model moved
+four operations from `otto:config` to `otto:labs` at an unchanged total, reproduced in both runs
+(21 surfaces on 3.10: `dispatch_local_warm`, `dispatch_repo_warm`, `host_local_exec`, `host_local_get`,
+`host_local_put`, `host_ssh_exec`, `host_ssh_login`, `test_repo` and the thirteen `tracked_*` verbs;
+on 3.10 `host_local_exec` also swaps one `other` operation for one `fd`); the per-surface lines are
+in the squash message. No decline. Outside the harness, on every minor 3.10–3.14, fresh processes,
+twice each, with the same deltas on every minor; on 3.10: from otto.lab import Lab: otto 5 -> 4, modules 43 -> 42, file ops 39 -> 38; from otto.lab import load_lab: otto 5 -> 4, modules 43 -> 42, file ops 39 -> 38; from otto import load_lab: otto 4 -> 3, modules 42 -> 41, file ops 38 -> 37; import otto.labs: otto 2 -> 2, modules 25 -> 25, file ops 22 -> 22; from otto.labs import LabRepository: otto 3 -> 3, modules 34 -> 34, file ops 30 -> 30; from otto.lab import get_lab: otto 22 -> 21, modules 118 -> 117, file ops 105 -> 104; and every public name of
+`otto.lab`, `otto.labs`, `otto.config` and each namespace that reaches the lab model or the fleet:
+3.10 SUMMARY 0 grow, 0 allowed, 51 shrink, 63 unchanged, 0 failed, 0 not reproduced of 114; 3.11 SUMMARY 0 grow, 0 allowed, 51 shrink, 63 unchanged, 0 failed, 0 not reproduced of 114; 3.12 SUMMARY 0 grow, 0 allowed, 51 shrink, 63 unchanged, 0 failed, 0 not reproduced of 114; 3.13 SUMMARY 0 grow, 0 allowed, 51 shrink, 63 unchanged, 0 failed, 0 not reproduced of 114; 3.14 SUMMARY 0 grow, 0 allowed, 51 shrink, 63 unchanged, 0 failed, 0 not reproduced of 114. Nothing grows: the fleet and the compose verbs import `Lab` for
+type checking only, so a library user reaching them loads one module fewer, and every shrink is
+locked at its measured delta (D-P7-2).
+
 ### 4.3 Package ancestors
 
 Importing a carved module runs every ancestor `__init__`, so every ancestor of a carved module
@@ -1483,6 +1530,8 @@ replaces with their final ones.
 | after | P1a | P1b | P2 | P3 | P4 | P5 | P6 | P7 | P8 | P9a | P9b |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | modules layered | 19 | 35 | 39 | 43 | 43 | 48 | 54 | 57 | 59 | 65 | 77 |
+
+**Amended by P7, 2026-10-15.** P7 layers `otto.labs` alone (55, not 57): no module is carved for the lab model (§3.7). The later columns assumed `otto.lab.model` and `otto.labs.errors`; without them they are two lower (P8 57, P9a 63, P9b 75) unless a later landing carves a module this map does not show. Each landing confirms its own column, as P7 did; `tests/unit/test_dynamic_import_audit.py`'s `LAYERED_AT` rows for P8, P9a and P9b are amended by the landing that reaches them.
 
 The model finds no layer violation at any landing.
 
@@ -1646,7 +1695,7 @@ No landing grows the ratchet. With every file owned, the whole-tree cycle goes 2
 - P5 needs P4: `host` leaves the cycle only once `host → docker` is gone. P4 can sit anywhere
   before P5; it stays fourth, next to the phase that depends on it;
 - P8's `reservations → host` is legal only after `host` leaves the cycle in P5;
-- P7's `lab.model → host, link` needs P5 and P6;
+- P7's layering of `otto.labs` needs `host` (P5) and `inventory`, `link`, `models` (P6) out of the cycle;
 - P9a needs P8's active run; P9b needs P9a's accessors in their owner, and moves the root up
   last: `otto.bootstrap` can import `otto.project` statically only once nothing below root still
   imports `otto.bootstrap`, which is first true in P9b.
@@ -1661,6 +1710,8 @@ path, and the owner's 2026-10-12 rule marks any behavior change, so P4 is not th
 commit.
 
 **Amended by P6, 2026-10-14.** The real tree confirms row P6: the cycle is 7 modules and 16 in-cycle edges (61 modules, 304 edges, 54 layered, §5.2), and `BASELINE` lost exactly Appendix A's fifteen P6 edges. The move alone (before the carve) already took creds, link and models out (8 / 20); the carve took the inventory. P6's commit is not marked.
+
+**Amended by P7, 2026-10-15.** The real tree confirms row P7: the cycle is 6 modules and 12 in-cycle edges (61 modules, 304 edges, 55 layered, §5.2), and `BASELINE` lost exactly Appendix A's four P7 edges. Row P7's 'tach modules declared' is none (§3.7). The order note for P7 now reads: P7's layering of `otto.labs` needs `host` (P5) and `inventory`, `link`, `models` (P6) out of the cycle. P7's commit is not marked.
 
 **Phases re-checked under the revised S5-1.** P1 is now split (above), and P9's split follows
 cohesion rather than the shrink. The carve-with-the-fix rule (§5.1) stays, because carving
@@ -1683,8 +1734,12 @@ shrink artifact. No other phase had been bent to stay shrink-only, so none chang
 | D2 | **Owner, 2026-10-11: (a) admit.** With `otto.bootstrap` never imported, `scope_for_repo` admits. The alternative, a by-name import of `otto.bootstrap` from foundation, would have been an upward exception. | §3.5 |
 | D-P2-1 | **Owner, 2026-10-12, re-confirmed the same day:** approve the catalog's exact +4 footprint on `completion_repo_handover` and the 23 named non-protected surfaces; any other growth, or a listed surface that does not grow, stops the landing. | §4.2 |
 | D-P6-1 | **Owner, 2026-10-14:** P6 is unmarked; a moved class's `__module__` — and with it the pickle path and repr — is an implementation detail, as in P3. | §3.6, §4.1 |
+| D-P7-2 | **Controller, 2026-10-15:** the lab model stays with its loader in `otto.labs.loader`, and the fleet and the compose verbs import it for type checking only: the import-budget rule (fix growth at its source) leaves no growth anywhere. Variants A–D measured. | §3.7, §4.2 |
+| D-P7-3 | **Owner, 2026-10-15: unmarked.** `typing.get_type_hints` on 14 functions (5 public: `compose_up`, `compose_down`, `composed`, `get_lab`, `fleet_of_interest`) now needs the type-only `Lab` supplied; runtime hint resolution of these signatures is an implementation detail, like D-P6-1's `__module__`. Precedent: 19 of 45 already raised; #645. | §3.7 |
 
 **Amended by P6, 2026-10-14.** D-P6-1 added; P6's settings-type home was chosen by measurement (§3.6, §4.2), not ruled.
+
+**Amended by P7, 2026-10-15.** D-P7-2 and D-P7-3 added. D-P6-1 decided P7's marking of the move (unmarked) without a new question.
 
 **Decided in the design by evidence, not by the owner**
 - `CredSpec` lives in `models.base` (§3.3).
