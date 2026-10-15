@@ -22,11 +22,29 @@ installed them ends (its config's cleanup): a later top-level session in the
 same process runs as unfrozen as the first. A nested session's config finds
 the entry points already wrapped and neither wraps them again nor restores
 them. A window inside a window (a nested session that starts another) does
-nothing: the outermost owns the freeze. The guard is the interpreter's own
-counter, :func:`gc.get_freeze_count`, because a nested session may import a
-fresh copy of this module. Measured on the same heap, the
-file above spends 44 s instead of 72 s, of which the closing collections are
+nothing: the outermost owns the freeze. Measured on the same heap, the file
+above spends 44 s instead of 72 s, of which the closing collections are
 about 30 s.
+
+**How a window knows one is open.** The open window is recorded on the
+collector itself (:data:`WINDOW_OPEN`, an attribute present on the :mod:`gc`
+module only while a window is open; :func:`window_open` reads it), not in this
+module, because a nested session may import a fresh copy of this module and
+every copy shares the one :mod:`gc` module. Nested sessions normally call the
+outer module's wrappers anyway (:func:`install` leaves an already-wrapped entry
+point alone), but a direct :func:`frozen_outer_heap` call from a fresh copy
+inside an open window is safe too: it sees the flag and does nothing, where a
+second freeze and thaw would unfreeze the outer window's heap halfway through
+its session. The freeze count cannot serve as the guard: CPython 3.12 freezes
+its own startup heap (``gc.get_freeze_count()`` is about 375 in a bare
+interpreter, 0 on 3.10, 3.11, 3.13 and 3.14), and a guard relative to a
+startup count captured at import would be captured afresh, mid-window, by a
+fresh copy of this module. The permanent generation is all-or-nothing, so on
+3.12 a window's :func:`gc.unfreeze` also thaws those startup objects; that is
+harmless (they are ordinary long-lived objects the collector walks on every
+other interpreter) and is accepted, not a bug to fix. So "unfrozen" means no
+window is open and the freeze count is no greater than it was before any
+window opened, never a freeze count of 0.
 
 **What a window delays, and why it hides nothing.** While the heap is frozen,
 the cyclic collector does not look at anything that existed when the window
@@ -56,13 +74,12 @@ from typing import Any, Protocol
 
 import pytest
 
+WINDOW_OPEN = "otto_test_frozen_window_open"
+"""The attribute a window sets on its collector while it is open, and removes when it closes."""
+
 
 class GcControl(Protocol):
-    """The four :mod:`gc` functions a window uses; the :mod:`gc` module itself satisfies it."""
-
-    def get_freeze_count(self) -> int:
-        """How many objects are in the permanent generation."""
-        ...
+    """The three :mod:`gc` functions a window uses; the :mod:`gc` module itself satisfies it."""
 
     def freeze(self) -> None:
         """Move every tracked object into the permanent generation."""
@@ -77,6 +94,11 @@ class GcControl(Protocol):
         ...
 
 
+def window_open(collector: GcControl = gc) -> bool:
+    """Whether a window (from any copy of this module) has *collector*'s heap frozen."""
+    return bool(getattr(collector, WINDOW_OPEN, False))
+
+
 @contextlib.contextmanager
 def frozen_outer_heap(collector: GcControl = gc) -> Iterator[bool]:
     """Freeze the heap for the block, then thaw and collect, unless a window is already open.
@@ -86,19 +108,34 @@ def frozen_outer_heap(collector: GcControl = gc) -> Iterator[bool]:
     exception is the one that propagates: a failing closing collection
     cannot replace it.
     """
-    if collector.get_freeze_count():
+    if window_open(collector):
         yield False
         return
-    collector.freeze()
     try:
+        collector.freeze()
+        setattr(collector, WINDOW_OPEN, True)
         yield True
     except BaseException:
-        collector.unfreeze()
+        _thaw(collector)
         with contextlib.suppress(Exception):
             collector.collect()
         raise
-    collector.unfreeze()
+    _thaw(collector)
     collector.collect()
+
+
+def _thaw(collector: GcControl) -> None:
+    """Unfreeze *collector*'s heap and remove the open mark, even if the unfreeze fails.
+
+    Safe when the freeze never happened or the mark was never set (an
+    interrupt between them): an unfreeze of an empty permanent generation
+    does nothing, and an absent mark stays absent.
+    """
+    try:
+        collector.unfreeze()
+    finally:
+        with contextlib.suppress(AttributeError):
+            delattr(collector, WINDOW_OPEN)
 
 
 class FrozenWindow:

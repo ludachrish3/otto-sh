@@ -5,6 +5,7 @@ delays (never drops).
 """
 
 import gc
+import importlib.util
 import os
 import subprocess
 import sys
@@ -13,22 +14,48 @@ from collections.abc import Callable
 import _pytest.pytester
 import pytest
 
-from tests._fixtures._gc_freeze import FrozenWindow, frozen_outer_heap, install
+from tests._fixtures import _gc_freeze
+from tests._fixtures._gc_freeze import FrozenWindow, frozen_outer_heap, install, window_open
 from tests._fixtures.paths import PROJECT_ROOT
 from tests.unit.suite._inner import INNER_ARGS
 
 pytest_plugins = ["pytester"]
 
+STARTUP_FREEZE_COUNT = gc.get_freeze_count()
+"""What the interpreter itself froze, read at collection, before any window opened.
+
+CPython 3.12 freezes its startup heap (about 375 objects); 3.10, 3.11, 3.13
+and 3.14 freeze nothing. A window's thaw drops 3.12's count to 0, so
+"unfrozen" is a count no greater than this, never a count of 0. On 3.12,
+once any earlier window has thawed the count to 0, the ``<=`` half of
+:func:`_assert_unfrozen` is trivially true and ``window_open()`` does the
+real work.
+"""
+
+
+def _assert_unfrozen(baseline: int) -> None:
+    """No window of ours is open, and nothing beyond *baseline* (the interpreter's) is frozen."""
+    assert not window_open(), "a window is still open"
+    assert gc.get_freeze_count() <= baseline, "objects beyond the baseline are still frozen"
+
 
 class _RecordingGc:
-    """Stands in for :mod:`gc`: records each call, and counts what a freeze holds."""
+    """Stands in for :mod:`gc`: records each call, and counts what a freeze holds.
+
+    *frozen* is what was frozen before any window (the interpreter's own); a
+    thaw empties the permanent generation, as :func:`gc.unfreeze` does.
+    """
 
     def __init__(self, frozen: int) -> None:
         self.frozen = frozen
         self.calls: list[str] = []
 
     def get_freeze_count(self) -> int:
-        self.calls.append("get_freeze_count")
+        """What the real :mod:`gc` reports; unrecorded, since a window need not read it.
+
+        Kept so a guard that read the count (as one once did) sees *frozen*,
+        and the interpreter-frozen baseline test fails for that reason.
+        """
         return self.frozen
 
     def freeze(self) -> None:
@@ -52,6 +79,14 @@ class _FailingCollect(_RecordingGc):
         raise RuntimeError("the closing collection failed")
 
 
+class _InterruptedAfterFreeze(_RecordingGc):
+    """A collector whose freeze completes, then an interrupt lands before the window is marked."""
+
+    def freeze(self) -> None:
+        super().freeze()
+        raise KeyboardInterrupt
+
+
 class _CleanupRecorder:
     """Stands in for a ``pytest.Config``: keeps the cleanups ``install`` registers."""
 
@@ -68,7 +103,19 @@ def test_a_window_freezes_for_its_block_then_thaws_and_collects():
     with frozen_outer_heap(recording) as froze:
         recording.calls.append("block")
     assert froze is True
-    assert recording.calls == ["get_freeze_count", "freeze", "block", "unfreeze", "collect"]
+    assert recording.calls == ["freeze", "block", "unfreeze", "collect"]
+    assert not window_open(recording)
+
+
+def test_a_window_freezes_over_a_heap_the_interpreter_froze_at_startup():
+    """CPython 3.12 starts with its startup heap frozen; that is no window of ours."""
+    recording = _RecordingGc(frozen=375)
+    with frozen_outer_heap(recording) as froze:
+        recording.calls.append("block")
+    assert froze is True
+    assert recording.calls == ["freeze", "block", "unfreeze", "collect"]
+    assert recording.frozen == 0
+    assert not window_open(recording)
 
 
 def test_a_window_thaws_and_collects_when_its_block_raises():
@@ -77,6 +124,7 @@ def test_a_window_thaws_and_collects_when_its_block_raises():
         raise RuntimeError("nested session blew up")
     assert recording.calls[-2:] == ["unfreeze", "collect"]
     assert recording.frozen == 0
+    assert not window_open(recording)
 
 
 def test_a_failing_closing_collection_never_hides_the_blocks_exception():
@@ -89,6 +137,7 @@ def test_a_failing_closing_collection_never_hides_the_blocks_exception():
         raise ValueError("the nested session failed")
     assert failing.calls[-2:] == ["unfreeze", "collect"]
     assert failing.frozen == 0
+    assert not window_open(failing)
 
 
 def test_a_failing_closing_collection_after_a_clean_block_is_raised():
@@ -100,31 +149,68 @@ def test_a_failing_closing_collection_after_a_clean_block_is_raised():
     ):
         pass
     assert failing.frozen == 0
+    assert not window_open(failing)
+
+
+def test_an_interrupt_during_the_freeze_leaves_no_window_open():
+    """A stuck open mark would silently turn every later window into a no-op."""
+    interrupted = _InterruptedAfterFreeze(frozen=0)
+    with pytest.raises(KeyboardInterrupt), frozen_outer_heap(interrupted):
+        pytest.fail("the block ran although the freeze was interrupted")
+    assert interrupted.calls == ["freeze", "unfreeze", "collect"]
+    assert interrupted.frozen == 0
+    assert not window_open(interrupted)
 
 
 def test_a_window_inside_a_window_leaves_the_freeze_to_the_outer_one():
     """A thaw here would unfreeze the outer window's heap halfway through its session."""
-    recording = _RecordingGc(frozen=5)
-    with frozen_outer_heap(recording) as froze:
-        recording.calls.append("block")
-    assert froze is False
-    assert recording.calls == ["get_freeze_count", "block"]
+    recording = _RecordingGc(frozen=0)
+    with frozen_outer_heap(recording) as outer:
+        with frozen_outer_heap(recording) as inner:
+            recording.calls.append("block")
+        assert window_open(recording), "the inner window closed the outer one"
+    assert (outer, inner) == (True, False)
+    assert recording.calls == ["freeze", "block", "unfreeze", "collect"]
+
+
+def test_a_fresh_copy_of_the_module_sees_the_open_window():
+    """A nested session may import its own copy of the module; its window must still nest."""
+    spec = importlib.util.spec_from_file_location("_gc_freeze_fresh_copy", _gc_freeze.__file__)
+    assert spec is not None
+    assert spec.loader is not None
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)
+    assert fresh.frozen_outer_heap is not frozen_outer_heap
+    recording = _RecordingGc(frozen=0)
+    with frozen_outer_heap(recording) as outer:
+        with fresh.frozen_outer_heap(recording) as inner:
+            recording.calls.append("block")
+        assert fresh.window_open(recording)
+    assert (outer, inner) == (True, False)
+    assert recording.calls == ["freeze", "block", "unfreeze", "collect"]
 
 
 def test_the_outer_session_runs_unfrozen():
     """Only nested sessions run frozen; this session's own objects are collected as ever."""
-    assert gc.get_freeze_count() == 0
+    _assert_unfrozen(STARTUP_FREEZE_COUNT)
 
 
 def test_pytest_main_runs_inside_a_window(monkeypatch):
     window = pytest.main
     assert getattr(window, "freezes_the_outer_heap", False)
-    seen: list[int] = []
-    monkeypatch.setattr(window, "run", lambda *_a, **_k: seen.append(gc.get_freeze_count()) or 0)
+    before = gc.get_freeze_count()
+    seen: list[tuple[bool, int]] = []
+
+    def inside(*_a: object, **_k: object) -> int:
+        seen.append((window_open(), gc.get_freeze_count()))
+        return 0
+
+    monkeypatch.setattr(window, "run", inside)
     assert pytest.main([]) == 0
     assert len(seen) == 1
-    assert seen[0] > 0
-    assert gc.get_freeze_count() == 0
+    assert seen[0][0], "pytest.main ran outside a window"
+    assert seen[0][1] > before, "the window froze nothing"
+    _assert_unfrozen(before)
 
 
 def test_a_cycle_dropped_inside_a_window_is_finalized_before_pytest_main_returns(monkeypatch):
@@ -201,7 +287,12 @@ def test_a_second_top_level_session_in_one_process_runs_unfrozen(tmp_path):
         "def pytest_configure(config):\n    install(config)\n"
     )
     (project / "test_unfrozen.py").write_text(
-        "import gc\n\n\ndef test_unfrozen():\n    assert gc.get_freeze_count() == 0\n"
+        "import gc\n\n"
+        "from tests._fixtures._gc_freeze import window_open\n\n"
+        "STARTUP_FREEZE_COUNT = gc.get_freeze_count()\n\n\n"
+        "def test_unfrozen():\n"
+        "    assert not window_open()\n"
+        "    assert gc.get_freeze_count() <= STARTUP_FREEZE_COUNT\n"
     )
     driver = tmp_path / "driver.py"
     driver.write_text(_SEQUENTIAL_DRIVER)
@@ -220,7 +311,14 @@ def test_a_second_top_level_session_in_one_process_runs_unfrozen(tmp_path):
 
 def test_a_pytester_session_runs_frozen_and_the_heap_is_thawed_after(pytester):
     assert getattr(_pytest.pytester.main, "freezes_the_outer_heap", False)
-    pytester.makepyfile("import gc\n\ndef test_inner():\n    assert gc.get_freeze_count() > 0\n")
+    before = gc.get_freeze_count()
+    pytester.makepyfile(
+        "import gc\n\n"
+        "from tests._fixtures._gc_freeze import window_open\n\n\n"
+        "def test_inner():\n"
+        "    assert window_open()\n"
+        f"    assert gc.get_freeze_count() > {before}\n"
+    )
     result = pytester.runpytest_inprocess(*INNER_ARGS)
     result.assert_outcomes(passed=1)
-    assert gc.get_freeze_count() == 0
+    _assert_unfrozen(before)
