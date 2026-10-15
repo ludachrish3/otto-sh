@@ -126,7 +126,9 @@ jobs:
       # Same tree as ci.yml's `tests` job, so the same artifact dependency:
       # tests/unit/test_support_matrix.py spawns a hermetic conformance run
       # whose BusyBox cells are built from the artifacts, and this job repeats
-      # that `nox_count` times (default 5) per Python. Same rule — exact key on
+      # that `nox_count` times (default 5) on the 3.10 leg — the module is
+      # `interpreter_agnostic`, so every other leg deselects it; the cache step
+      # stays on every leg, harmlessly. Same rule — exact key on
       # the pins, no `restore-keys`, detection stays in ci.yml's `busybox` job,
       # which is where the rationale is written.
       - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)

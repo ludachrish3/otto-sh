@@ -214,14 +214,20 @@ def test_scanner_sees_every_override_and_fails_loud_on_the_unparseable() -> None
 _SERIAL_LEG_TOKEN = '"serial_timing and '
 
 # The module-level constant pairs noxfile.py may spell a serial_timing
-# exclusion in: (parallel bundle, its -n0 twin). The bookend pair is what CI
-# and the primary Python run; the canary pair is the same selection with
-# coverage off, and the middle pair is the interior Pythons' trim
-# (tests/unit/test_python_matrix_tiering.py pins that it narrows its twin).
+# exclusion in: (parallel bundle, its -n0 twin) — every catch-all session's
+# primary and non-primary pairs (the non-primary ones deselect the
+# `interpreter_agnostic` family and run coverage off —
+# tests/unit/test_python_matrix_tiering.py pins both).
 _CONSTANT_PAIRS = (
+    ("UNIT_TEST_ARGS", "UNIT_SERIAL_ARGS"),
+    ("UNIT_NONPRIMARY_TEST_ARGS", "UNIT_NONPRIMARY_SERIAL_ARGS"),
+    ("INTEGRATION_TEST_ARGS", "INTEGRATION_SERIAL_ARGS"),
+    ("INTEGRATION_NONPRIMARY_TEST_ARGS", "INTEGRATION_NONPRIMARY_SERIAL_ARGS"),
     ("HOSTLESS_TEST_ARGS", "HOSTLESS_SERIAL_ARGS"),
     ("HOSTLESS_CANARY_TEST_ARGS", "HOSTLESS_CANARY_SERIAL_ARGS"),
     ("HOSTLESS_MIDDLE_TEST_ARGS", "HOSTLESS_MIDDLE_SERIAL_ARGS"),
+    ("TESTS_ALL_TEST_ARGS", "TESTS_ALL_SERIAL_ARGS"),
+    ("TESTS_ALL_NONPRIMARY_TEST_ARGS", "TESTS_ALL_NONPRIMARY_SERIAL_ARGS"),
 )
 
 _SERIAL_TIMING_TESTS = {
@@ -1618,6 +1624,14 @@ _ALL_SERIAL = (
     "serial_timing and not browser and not stability and not busybox and not conformance "
     "and not kmodcov"
 )
+_ALL_NONPRIMARY = (
+    "not browser and not stability and not busybox and not conformance and not kmodcov "
+    "and not serial_timing and not interpreter_agnostic"
+)
+_ALL_NONPRIMARY_SERIAL = (
+    "serial_timing and not browser and not stability and not busybox and not conformance "
+    "and not kmodcov and not interpreter_agnostic"
+)
 _LINT_ARCH_IMPORT_RULES = (
     "tests/unit/test_patch_targets.py",
     "tests/unit/test_no_import_time_lazy_exports.py",
@@ -1652,11 +1666,13 @@ RELEASE_LANES: "tuple[_Leg, ...]" = (
     _Leg("Makefile:kmodcov", "kmodcov", ()),
     # docs → doctest-src: the src doctests (no `-m`, cleared addopts), outside testpaths.
     _Leg("Makefile:doctest-src", _ANY_MARKER, ("src/otto",)),
-    # nox → tests_all on the primary and canary Pythons: the full tree, parallel + serial.
+    # nox → tests_all on the primary (the family included, instrumented) and
+    # the canary (the family deselected — it runs on the primary only, #566
+    # Q2 — and coverage off): the full tree, parallel + serial.
     _Leg("noxfile.py:tests_all@3.10", _ALL, ()),
     _Leg("noxfile.py:tests_all@3.10", _ALL_SERIAL, ()),
-    _Leg("noxfile.py:tests_all@3.14", _ALL, ()),
-    _Leg("noxfile.py:tests_all@3.14", _ALL_SERIAL, ()),
+    _Leg("noxfile.py:tests_all@3.14", _ALL_NONPRIMARY, ()),
+    _Leg("noxfile.py:tests_all@3.14", _ALL_NONPRIMARY_SERIAL, ()),
     # nox → tests_hostless on the middle Pythons: the trimmed tests/unit pair.
     _Leg("noxfile.py:tests_hostless@3.11", _HOSTLESS_MIDDLE, ("tests/unit",)),
     _Leg("noxfile.py:tests_hostless@3.11", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
@@ -1885,9 +1901,9 @@ def test_the_session_reader_follows_the_interpreter() -> None:
 
     On 3.10 it contributes the bookend pair, on 3.14 the canary pair. Compared
     on the RAW tokens, not the `-m` text: the canary pair is the bookend
-    selection verbatim and differs only in its coverage flags, so only the
-    tokens can show that the `elif CANARY_PYTHON` branch (the constant-Name
-    lookup) was the one taken.
+    selection minus the family and minus coverage, so only the tokens can
+    show that the `elif CANARY_PYTHON` branch (the constant-Name lookup) was
+    the one taken.
     """
     invocations = {
         python: _python_pytest_invocations(
@@ -1901,13 +1917,16 @@ def test_the_session_reader_follows_the_interpreter() -> None:
         python: {argv[argv.index("-m") + 1] for argv in pair}
         for python, pair in invocations.items()
     }
-    # The floor gates coverage; the ceiling runs the same selection with it off.
+    # The floor gates coverage; the ceiling runs with it off.
     assert "--cov-fail-under=94.75" in tokens["3.10"], tokens["3.10"]
     assert "--no-cov" not in tokens["3.10"], tokens["3.10"]
     assert "--no-cov" in tokens["3.14"], tokens["3.14"]
     assert not [t for t in tokens["3.14"] if t.startswith("--cov-fail-under")], tokens["3.14"]
-    assert exprs["3.10"] == exprs["3.14"], (exprs["3.10"], exprs["3.14"])
-    # The middle trims the guards and the e2e tier; the bookends never mention the marker.
+    # The ceiling runs the floor's selection minus the family: each 3.14 expression is a
+    # 3.10 one plus exactly `not interpreter_agnostic` (#566: the family runs on the primary only).
+    trimmed = {f"{e} and not interpreter_agnostic" for e in exprs["3.10"]}
+    assert exprs["3.14"] == trimmed, (exprs["3.10"], exprs["3.14"])
+    # The middle trims the guards and the e2e tier; the PRIMARY never mentions the marker.
     assert all("interpreter_agnostic" in e for e in exprs["3.11"]), exprs["3.11"]
     assert not any("interpreter_agnostic" in e for e in exprs["3.10"]), exprs["3.10"]
     assert "tests/e2e" in tokens["3.10"], tokens["3.10"]
@@ -2063,3 +2082,27 @@ def test_the_release_census_reddens_on_a_dropped_lane(collect_marker_sets) -> No
     assert gaps, "dropping the tunnel row left no gap — the census cannot see the lane"
     assert all(gap.startswith("tests/e2e/tunnel_stability/") for gap in gaps), gaps[:5]
     assert _release_census_gaps(every_row, collect_marker_sets) == []
+
+
+@pytest.mark.xdist_group("lane_leg_membership")
+def test_the_family_runs_on_the_primary_interpreter_only_in_the_nox_rows(
+    collect_marker_sets,
+) -> None:
+    """Every `interpreter_agnostic` item is selected by a `noxfile.py:…@3.10` row and by no
+    `noxfile.py:…@<other>` row: the family runs once per gate set, on the primary (#566 Q2)."""
+    nox_rows = [row for row in RELEASE_LANES if row.surface.startswith("noxfile.py:")]
+    primary_rows = tuple(row for row in nox_rows if row.surface.endswith("@3.10"))
+    other_rows = tuple(row for row in nox_rows if not row.surface.endswith("@3.10"))
+    assert primary_rows, [str(r) for r in nox_rows]
+    assert other_rows, [str(r) for r in nox_rows]
+    family = [
+        item.nodeid for item in collect_marker_sets(()) if "interpreter_agnostic" in item.markers
+    ]
+    assert family, "no family item collected (guard misparse?)"
+    # One census pass per row set (each walks the whole tree), not one per item.
+    primary_gaps = set(_release_census_gaps(primary_rows, collect_marker_sets))
+    other_gaps = set(_release_census_gaps(other_rows, collect_marker_sets))
+    not_on_primary = [n for n in family if n in primary_gaps]
+    assert not not_on_primary, not_on_primary[:10]
+    selected_elsewhere = [n for n in family if n not in other_gaps]
+    assert not selected_elsewhere, selected_elsewhere[:10]

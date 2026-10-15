@@ -33,11 +33,12 @@ PRIMARY_PYTHON = "3.10"
 # mirrors this value (hand-kept, like PRIMARY_PYTHON).
 CANARY_PYTHON = "3.14"
 
-# The two interpreters that run EVERYTHING: the floor and the ceiling. The
-# floor gates coverage (HOSTLESS_*_ARGS below), the ceiling runs the same
-# selection with coverage off (HOSTLESS_CANARY_*_ARGS), and the versions
-# between run the trimmed pair (HOSTLESS_MIDDLE_*_ARGS). Pinned to be exactly
-# min/max of PYTHON_VERSIONS by tests/unit/test_python_matrix_tiering.py.
+# The floor and the ceiling. The floor runs everything and gates coverage
+# (HOSTLESS_*_ARGS below); the ceiling runs every product test with the
+# `interpreter_agnostic` family deselected and coverage off
+# (HOSTLESS_CANARY_*_ARGS); the versions between run the trimmed pair
+# (HOSTLESS_MIDDLE_*_ARGS). Pinned to be exactly min/max of PYTHON_VERSIONS by
+# tests/unit/test_python_matrix_tiering.py.
 BOOKEND_PYTHONS = (PRIMARY_PYTHON, CANARY_PYTHON)
 
 # JUnit XML is written into a per-target subdirectory of reports/junit/ named
@@ -168,19 +169,21 @@ HOSTLESS_SERIAL_ARGS = (
     "--cov-fail-under=94.75",
 )
 
-# The CANARY Python's pair: the bookend selection verbatim, coverage off. Same
-# paths, same marker expressions (`interpreter_agnostic` and the e2e tier
-# included — the newest interpreter runs everything the primary does), only
-# the coverage flags differ: no `--cov-fail-under`, no `--cov-append`, and
-# `--no-cov` instead. tests/unit/test_python_matrix_tiering.py pins that this
-# pair is the bookend pair minus exactly those flags.
+# The CANARY Python's pair: the bookend selection minus the family, coverage
+# off. Same paths (the e2e tier included — the newest interpreter runs every
+# product test the primary does), the same clauses plus `not
+# interpreter_agnostic` (the family runs on the primary only, #566 Q2), and
+# `--no-cov` in place of the gating flags.
+# tests/unit/test_python_matrix_tiering.py pins that this pair is the bookend
+# pair minus exactly those two things.
 HOSTLESS_CANARY_TEST_ARGS = (
     "tests/unit",
     "tests/e2e",
     "-m",
     (
         "not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance and not kmodcov and not serial_timing"
+        "and not busybox and not conformance and not kmodcov and not serial_timing "
+        "and not interpreter_agnostic"
     ),
     "--no-cov",
 )
@@ -190,7 +193,7 @@ HOSTLESS_CANARY_SERIAL_ARGS = (
     "-m",
     (
         "serial_timing and not integration and not embedded and not stability and not browser "
-        "and not busybox and not conformance and not kmodcov"
+        "and not busybox and not conformance and not kmodcov and not interpreter_agnostic"
     ),
     "-n0",
     "--no-cov",
@@ -200,12 +203,12 @@ HOSTLESS_CANARY_SERIAL_ARGS = (
 # BOOKEND_PYTHONS). Measured 2026-09-11: a full hostless leg is ~1,420 s of CPU
 # per interior Python, and 65 % of it is work whose subject is not otto under
 # THIS interpreter — the tests/e2e tier (real `otto` subprocesses, real `pip`
-# venv builds), the repo-policy guards that re-collect the whole tree in a
-# subprocess, and the shim differential's 25,000-case corpus. Those prove the
-# same thing on every Python, so the interior legs run the tests/unit tier
-# with `interpreter_agnostic` deselected and coverage off; the bookends keep
-# the full selection above. Each middle expression carries EVERY clause of its
-# bookend twin plus the trim, and the bookend pair never mentions the marker
+# venv builds) and the repo-policy guards that re-collect the whole tree in a
+# subprocess. Those prove the same thing on every Python, so the interior legs
+# run the tests/unit tier with `interpreter_agnostic` deselected and coverage
+# off; the primary keeps the full selection above; the canary keeps the paths
+# but drops the family too. Each middle expression carries EVERY clause of its
+# bookend twin plus the trim, and the primary pair never mentions the marker
 # (a mention there would stop those tests running anywhere in the matrix) —
 # both pinned by tests/unit/test_python_matrix_tiering.py, and the constant
 # pairing itself by tests/unit/test_lane_invariants.py's serial-leg scanner.
@@ -245,27 +248,134 @@ HOSTLESS_MIDDLE_SERIAL_ARGS = (
 DASHBOARD_MARKER_EXPR = "browser and not soak"
 
 
+# ── The catch-all sessions' bundles. The `interpreter_agnostic` family (tests
+# whose subject is the repository, its build files or a generated corpus) runs
+# on PRIMARY_PYTHON only: it proves the same thing on every Python and already
+# runs, instrumented, in `make coverage` (#566 Q2). Every non-primary bundle
+# deselects it and runs with coverage off. Each `*_TEST_ARGS` has a
+# `*_SERIAL_ARGS` twin carrying the same clauses with `serial_timing` flipped
+# (tests/unit/test_lane_invariants.py's serial-leg scanner); the per-session
+# branching and the trim are pinned by tests/unit/test_python_matrix_tiering.py.
+UNIT_TEST_ARGS = (
+    "tests/unit",
+    "-m",
+    "not stability and not busybox and not conformance and not kmodcov and not serial_timing",
+)
+UNIT_SERIAL_ARGS = (
+    "tests/unit",
+    "-m",
+    "serial_timing and not stability and not busybox and not conformance and not kmodcov",
+    "-n0",
+    "--cov-append",
+)
+UNIT_NONPRIMARY_TEST_ARGS = (
+    "tests/unit",
+    "-m",
+    (
+        "not stability and not busybox and not conformance and not kmodcov and not serial_timing "
+        "and not interpreter_agnostic"
+    ),
+    "--no-cov",
+)
+UNIT_NONPRIMARY_SERIAL_ARGS = (
+    "tests/unit",
+    "-m",
+    (
+        "serial_timing and not stability and not busybox and not conformance and not kmodcov "
+        "and not interpreter_agnostic"
+    ),
+    "-n0",
+    "--no-cov",
+)
+INTEGRATION_TEST_ARGS = (
+    "tests/unit",
+    "tests/integration",
+    "-m",
+    "not stability and not busybox and not conformance and not kmodcov and not serial_timing",
+)
+INTEGRATION_SERIAL_ARGS = (
+    "tests/unit",
+    "tests/integration",
+    "-m",
+    "serial_timing and not stability and not busybox and not conformance and not kmodcov",
+    "-n0",
+    "--cov-append",
+)
+INTEGRATION_NONPRIMARY_TEST_ARGS = (
+    "tests/unit",
+    "tests/integration",
+    "-m",
+    (
+        "not stability and not busybox and not conformance and not kmodcov and not serial_timing "
+        "and not interpreter_agnostic"
+    ),
+    "--no-cov",
+)
+INTEGRATION_NONPRIMARY_SERIAL_ARGS = (
+    "tests/unit",
+    "tests/integration",
+    "-m",
+    (
+        "serial_timing and not stability and not busybox and not conformance and not kmodcov "
+        "and not interpreter_agnostic"
+    ),
+    "-n0",
+    "--no-cov",
+)
+TESTS_ALL_TEST_ARGS = (
+    "-m",
+    (
+        "not browser and not stability and not busybox and not conformance and not kmodcov "
+        "and not serial_timing"
+    ),
+    "--cov-fail-under=0",
+)
+TESTS_ALL_SERIAL_ARGS = (
+    "-m",
+    (
+        "serial_timing and not browser and not stability and not busybox and not conformance "
+        "and not kmodcov"
+    ),
+    "-n0",
+    "--cov-append",
+    "--cov-fail-under=92",
+)
+TESTS_ALL_NONPRIMARY_TEST_ARGS = (
+    "-m",
+    (
+        "not browser and not stability and not busybox and not conformance and not kmodcov "
+        "and not serial_timing and not interpreter_agnostic"
+    ),
+    "--no-cov",
+)
+TESTS_ALL_NONPRIMARY_SERIAL_ARGS = (
+    "-m",
+    (
+        "serial_timing and not browser and not stability and not busybox and not conformance "
+        "and not kmodcov and not interpreter_agnostic"
+    ),
+    "-n0",
+    "--no-cov",
+)
+
+
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
 def tests_unit(session: nox.Session) -> None:
-    """Run the unit *level* tier (tests/unit only; no testbed) under each Python."""
-    session.run(
-        "pytest",
-        "tests/unit",
-        "-m",
-        "not stability and not busybox and not conformance and not kmodcov and not serial_timing",
-        _junitxml(session, "nox-unit"),
-        *session.posargs,
-    )
-    session.run(
-        "pytest",
-        "tests/unit",
-        "-m",
-        "serial_timing and not stability and not busybox and not conformance and not kmodcov",
-        "-n0",
-        "--cov-append",
-        _junitxml(session, "nox-unit-serial"),
-        *session.posargs,
-    )
+    """Run the unit *level* tier (tests/unit only; no testbed) under each Python.
+
+    The PRIMARY_PYTHON runs the full pair; every other interpreter runs the
+    pair with the `interpreter_agnostic` family deselected and coverage off
+    (see the bundle comment above). Bundles are named so the lane scanners
+    read them.
+    """
+    parallel_junit = _junitxml(session, "nox-unit")
+    serial_junit = _junitxml(session, "nox-unit-serial")
+    if session.python == PRIMARY_PYTHON:
+        session.run("pytest", *UNIT_TEST_ARGS, parallel_junit, *session.posargs)
+        session.run("pytest", *UNIT_SERIAL_ARGS, serial_junit, *session.posargs)
+    else:
+        session.run("pytest", *UNIT_NONPRIMARY_TEST_ARGS, parallel_junit, *session.posargs)
+        session.run("pytest", *UNIT_NONPRIMARY_SERIAL_ARGS, serial_junit, *session.posargs)
 
 
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
@@ -274,28 +384,18 @@ def tests_integration(session: nox.Session) -> None:
 
     Cumulative directory-based level: needs the full lab (the integration tier
     includes the Linux-VM, Zephyr, and Docker tests). No coverage gate — a single
-    environment exercises only a slice of otto.
+    environment exercises only a slice of otto. The PRIMARY_PYTHON runs the
+    full pair; every other interpreter deselects the `interpreter_agnostic`
+    family and runs coverage off (see the bundle comment above).
     """
-    session.run(
-        "pytest",
-        "tests/unit",
-        "tests/integration",
-        "-m",
-        "not stability and not busybox and not conformance and not kmodcov and not serial_timing",
-        _junitxml(session, "nox-integration"),
-        *session.posargs,
-    )
-    session.run(
-        "pytest",
-        "tests/unit",
-        "tests/integration",
-        "-m",
-        "serial_timing and not stability and not busybox and not conformance and not kmodcov",
-        "-n0",
-        "--cov-append",
-        _junitxml(session, "nox-integration-serial"),
-        *session.posargs,
-    )
+    parallel_junit = _junitxml(session, "nox-integration")
+    serial_junit = _junitxml(session, "nox-integration-serial")
+    if session.python == PRIMARY_PYTHON:
+        session.run("pytest", *INTEGRATION_TEST_ARGS, parallel_junit, *session.posargs)
+        session.run("pytest", *INTEGRATION_SERIAL_ARGS, serial_junit, *session.posargs)
+    else:
+        session.run("pytest", *INTEGRATION_NONPRIMARY_TEST_ARGS, parallel_junit, *session.posargs)
+        session.run("pytest", *INTEGRATION_NONPRIMARY_SERIAL_ARGS, serial_junit, *session.posargs)
 
 
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
@@ -308,7 +408,8 @@ def tests_hostless(session: nox.Session) -> None:
     to. Auto-includes any future no-testbed e2e test.
 
     Tiered by interpreter: the PRIMARY_PYTHON runs the full pair with the
-    coverage gate, the CANARY_PYTHON the same selection with coverage off, and
+    coverage gate, the CANARY_PYTHON the same paths with the
+    `interpreter_agnostic` family deselected and coverage off, and
     the interior versions the trimmed HOSTLESS_MIDDLE pair (see its comment for
     what is trimmed and why). The junit group names are shared, so
     reports/junit/nox-hostless/<session>.xml is one file per Python either way.
@@ -404,14 +505,19 @@ def tests_unit_repeat(session: nox.Session) -> None:
         # `not interpreter_agnostic`: this session hunts state that leaks from
         # one test into the next, and the interpreter-agnostic guards hold no
         # registry state to leak — they read build files and spawn child
-        # pytests. Repeating them doubles the two most expensive shapes in the
-        # tree (the subprocess collections, and the shim differential — one
-        # test, ~4 min single-process) for a question they cannot answer. CI
+        # pytests. Repeating them doubles the subprocess collections, the most
+        # expensive shape left in the family, for a question they cannot answer. CI
         # measured this job at 22 min, the longest in the workflow. Pinned by
         # tests/unit/test_python_matrix_tiering.py.
         "-m",
         "not stability and not busybox and not conformance and not kmodcov "
         "and not interpreter_agnostic",
+        # The shim differential is interpreter-DEPENDENT (it runs the
+        # completion shim the user's Python executes against Typer in-process),
+        # so it is not in the family and runs on every Python in the matrix.
+        # It is still one test of ~4 min single-process: this session keeps it
+        # out by path. Pinned by tests/unit/test_python_matrix_tiering.py.
+        "--ignore=tests/unit/shim/test_differential.py",
         # Clearing addopts must still re-state `-p no:tach`: the override drops
         # pyproject's entry whole, and that flag is the only thing protecting
         # plugin LOAD from issue #193 (the conftest stub seeds too late).
@@ -535,31 +641,24 @@ def tests_all(session: nox.Session) -> None:
     instead. `stability` is excluded because those tests are bed-hostile
     (the SIGSTOP-wedge test stops test2's sshd; any other worker's fresh
     ssh to test2 then times out) — they own the bed only in the dedicated
-    `make stability-tunnel` lane. Coverage threshold is 92% (combined
-    line+branch, like every floor here) — below ``make coverage``'s 95.5%
+    `make stability-tunnel` lane.
+
+    On the PRIMARY_PYTHON the coverage threshold is 92 % (combined
+    line+branch, like every floor here) — below ``make coverage``'s 95.5 %
     because this browser-excluded session omits the dashboard --cov-append
-    fold-in (see the module-level coverage-floor note).
+    fold-in (see the module-level coverage-floor note). Every other
+    interpreter runs with coverage off and the `interpreter_agnostic` family
+    deselected (#566: the family runs on the primary only; owner ruling 5: no
+    canary floor).
     """
-    session.run(
-        "pytest",
-        "-m",
-        "not browser and not stability and not busybox and not conformance and not kmodcov "
-        "and not serial_timing",
-        "--cov-fail-under=0",
-        _junitxml(session, "nox"),
-        *session.posargs,
-    )
-    session.run(
-        "pytest",
-        "-m",
-        "serial_timing and not browser and not stability and not busybox and not conformance "
-        "and not kmodcov",
-        "-n0",
-        "--cov-append",
-        "--cov-fail-under=92",
-        _junitxml(session, "nox-all-serial"),
-        *session.posargs,
-    )
+    parallel_junit = _junitxml(session, "nox")
+    serial_junit = _junitxml(session, "nox-all-serial")
+    if session.python == PRIMARY_PYTHON:
+        session.run("pytest", *TESTS_ALL_TEST_ARGS, parallel_junit, *session.posargs)
+        session.run("pytest", *TESTS_ALL_SERIAL_ARGS, serial_junit, *session.posargs)
+    else:
+        session.run("pytest", *TESTS_ALL_NONPRIMARY_TEST_ARGS, parallel_junit, *session.posargs)
+        session.run("pytest", *TESTS_ALL_NONPRIMARY_SERIAL_ARGS, serial_junit, *session.posargs)
 
 
 @nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])

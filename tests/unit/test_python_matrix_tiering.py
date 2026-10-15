@@ -1,19 +1,24 @@
-"""The cross-Python matrix is tiered: bookends run everything, the middle runs the product.
+"""The cross-Python matrix is tiered: the PRIMARY runs everything, the rest run the product.
 
-``make nox`` runs the full suite on the PRIMARY (3.10, the floor) and CANARY
-(3.14, the newest) interpreters, and a hostless leg on the versions between.
+``make nox`` runs the full suite on the PRIMARY (3.10, the floor), every
+product test (the suite minus the ``interpreter_agnostic`` family) on the
+CANARY (3.14, the newest), and a hostless leg on the versions between.
 Measured on 2026-09-11, that hostless leg cost ~1,420 s of CPU per interior
 Python, and 65 % of it was work whose subject is not otto-under-THIS-
 interpreter at all: the ``tests/e2e`` tier (real ``otto`` subprocesses,
-real ``pip`` venv builds), the repo-policy guards that re-collect the whole
-tree in a subprocess, and the shim differential's 25,000-case corpus. Those
-tests prove the same thing on every Python, so the interior versions now run
-the ``tests/unit`` tier with the ``interpreter_agnostic`` marker deselected,
-and the bookends keep the full hostless selection.
+real ``pip`` venv builds) and the repo-policy guards that re-collect the
+whole tree in a subprocess. Those tests prove the same thing on every
+Python, so the PRIMARY runs everything; every other interpreter, the 3.14
+canary included, deselects the ``interpreter_agnostic`` family (#566 Q2:
+the family proves the same thing on every Python and stays in ``make
+coverage`` on 3.10). The interior versions also drop the ``tests/e2e``
+tier; the canary keeps it. Every catch-all session (``tests_unit``,
+``tests_integration``, ``tests_hostless``, ``tests_all``) branches the same
+way.
 
 This module pins the shape so the trim can neither widen (a middle leg that
 grows back the e2e tier, or drops a clause its bookend twin carries) nor
-leak (the marker reaching a bookend expression, which would stop running
+leak (the marker reaching a primary expression, which would stop running
 those tests ANYWHERE in the matrix). The marker's contract is stated by the
 last guard: a carrier must declare it at module level and live under
 ``tests/unit``, the only tree the middle legs name — a carrier elsewhere is
@@ -47,15 +52,16 @@ _MIDDLE_PAIR = ("HOSTLESS_MIDDLE_TEST_ARGS", "HOSTLESS_MIDDLE_SERIAL_ARGS")
 _COVERAGE_FLAGS = ("--cov-append", "--cov-fail-under=", "--no-cov")
 
 # The carriers whose cost is the reason the trim exists. Measured 2026-09-11
-# on the 3.11 hostless leg: 85 s, 58 s, 31 s, 26 s and 249 s respectively.
+# on the 3.11 hostless leg: 85 s, 58 s, 31 s and 26 s. The shim differential
+# (249 s) left the family on 2026-10-15 (#566 B1a: its subject is the
+# interpreter); tests_unit_repeat keeps it out by --ignore instead.
 # A carrier that loses its marker silently gives the interior legs that cost
-# back; naming these five here makes that a red instead.
+# back; naming these four here makes that a red instead.
 _LOAD_BEARING_CARRIERS = (
     "unit/test_support_matrix.py",
     "unit/test_conformance_bed.py",
     "unit/test_lane_invariants.py",
     "unit/test_tier_marker_invariants.py",
-    "unit/shim/test_differential.py",
 )
 
 
@@ -147,21 +153,47 @@ def test_the_middle_pair_narrows_its_bookend_twin(noxfile_tree: ast.Module) -> N
         assert "--cov-append" not in middle, f"{middle_name} appends to a report it never writes"
 
 
+_CATCH_ALL = {
+    # session -> (primary pair, non-primary pairs)
+    "tests_unit": (
+        ("UNIT_TEST_ARGS", "UNIT_SERIAL_ARGS"),
+        (("UNIT_NONPRIMARY_TEST_ARGS", "UNIT_NONPRIMARY_SERIAL_ARGS"),),
+    ),
+    "tests_integration": (
+        ("INTEGRATION_TEST_ARGS", "INTEGRATION_SERIAL_ARGS"),
+        (("INTEGRATION_NONPRIMARY_TEST_ARGS", "INTEGRATION_NONPRIMARY_SERIAL_ARGS"),),
+    ),
+    "tests_hostless": (_BOOKEND_PAIR, (_CANARY_PAIR, _MIDDLE_PAIR)),
+    "tests_all": (
+        ("TESTS_ALL_TEST_ARGS", "TESTS_ALL_SERIAL_ARGS"),
+        (("TESTS_ALL_NONPRIMARY_TEST_ARGS", "TESTS_ALL_NONPRIMARY_SERIAL_ARGS"),),
+    ),
+}
+
+
 def canary_gaps(bookend: "list[str]", canary: "list[str]") -> "list[str]":
-    """Why *canary* is not *bookend* with coverage switched off and nothing else.
+    """Why *canary* is not *bookend* minus coverage and minus the family, and nothing else.
 
     Pure, so the red arm is testable without editing noxfile.py. The canary
-    interpreter runs the FULL selection (paths, marker expression, every other
-    flag) — only the coverage flags may differ, and it must carry ``--no-cov``
-    and none of the gating flags.
+    interpreter runs the bookend selection (paths, every other flag) with
+    exactly two differences: the coverage flags are gone (it carries
+    ``--no-cov`` and no gating flag) and its ``-m`` carries ``not
+    interpreter_agnostic`` as one more clause — the family runs on the
+    PRIMARY interpreter only (#566 Q2).
     """
 
     def strip(tokens: "list[str]") -> "list[str]":
-        return [t for t in tokens if not t.startswith(_COVERAGE_FLAGS)]
+        return [
+            t for t in tokens if not t.startswith(_COVERAGE_FLAGS) and t != _marker_expr(tokens)
+        ]
 
     gaps: "list[str]" = []
     if strip(canary) != strip(bookend):
-        gaps.append(f"canary differs from its bookend twin beyond coverage: {strip(canary)}")
+        gaps.append(f"canary differs from its bookend twin beyond coverage and -m: {strip(canary)}")
+    if _clauses(_marker_expr(canary)) != _clauses(_marker_expr(bookend)) | {f"not {_MARKER}"}:
+        gaps.append(
+            f"canary -m is not its bookend's plus `not {_MARKER}`: {_marker_expr(canary)!r}"
+        )
     if "--no-cov" not in canary:
         gaps.append("canary leg still instruments coverage")
     if any(t.startswith(("--cov-append", "--cov-fail-under=")) for t in canary):
@@ -169,27 +201,32 @@ def canary_gaps(bookend: "list[str]", canary: "list[str]") -> "list[str]":
     return gaps
 
 
-def test_the_canary_pair_is_its_bookend_twin_without_coverage(noxfile_tree: ast.Module) -> None:
+def test_the_canary_pair_is_its_bookend_twin_without_coverage_or_the_family(
+    noxfile_tree: ast.Module,
+) -> None:
     bundles = _bundles(noxfile_tree)
     for bookend_name, canary_name in zip(_BOOKEND_PAIR, _CANARY_PAIR, strict=True):
         assert canary_gaps(bundles[bookend_name], bundles[canary_name]) == [], canary_name
         assert "tests/e2e" in _roots(bundles[canary_name]), f"{canary_name} lost the e2e tier"
-        assert _MARKER not in _marker_expr(bundles[canary_name])
 
 
 def test_the_canary_scanner_observes_red() -> None:
     bookend = ["tests/unit", "-m", "not busybox", "--cov-fail-under=94.75"]
-    assert canary_gaps(bookend, ["tests/unit", "-m", "not busybox", "--no-cov"]) == []
-    gaps = canary_gaps(bookend, ["tests/unit", "-m", "not busybox", "--cov-fail-under=94.75"])
+    good = ["tests/unit", "-m", f"not busybox and not {_MARKER}", "--no-cov"]
+    assert canary_gaps(bookend, good) == []
+    gaps = canary_gaps(bookend, ["tests/unit", "-m", "not busybox", "--no-cov"])
+    assert len(gaps) == 1, gaps
+    assert "plus `not" in gaps[0], gaps
+    gaps = canary_gaps(
+        bookend, ["tests/unit", "-m", f"not busybox and not {_MARKER}", "--cov-fail-under=94.75"]
+    )
     assert gaps == [
         "canary leg still instruments coverage",
         "canary leg carries a coverage gate it never measures",
     ]
-    gaps = canary_gaps(bookend, ["tests/unit", "-m", "not busybox and not x", "--no-cov"])
-    assert len(gaps) == 1
-    assert "beyond coverage" in gaps[0]
-    gaps = canary_gaps(bookend, ["tests/unit", "-m", "not busybox"])
-    assert gaps == ["canary leg still instruments coverage"]
+    gaps = canary_gaps(bookend, ["tests/e2e", "-m", f"not busybox and not {_MARKER}", "--no-cov"])
+    assert len(gaps) == 1, gaps
+    assert "beyond coverage" in gaps[0], gaps
 
 
 def test_the_trim_scanner_observes_red() -> None:
@@ -255,29 +292,362 @@ def test_the_hostless_session_runs_each_pair_on_its_own_pythons(
         assert expected in seen, f"the invocation scanner does not see {bundle}: {expected}"
 
 
-def test_the_isolation_repeat_deselects_the_marker(noxfile_tree: ast.Module) -> None:
+def _session_def(tree: ast.Module, name: str) -> ast.FunctionDef:
+    return next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def _is_python_eq(test: ast.expr, name: str) -> bool:
+    """``session.python == <name>`` exactly: one Eq, ``.python`` on the left, the Name right."""
+    return (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Attribute)
+        and test.left.attr == "python"
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Eq)
+        and isinstance(test.comparators[0], ast.Name)
+        and test.comparators[0].id == name
+    )
+
+
+def _starred_bundles(stmts: "list[ast.stmt]") -> "list[tuple[str, ...]]":
+    """The bundle NAMES each ``session.run("pytest", …)`` call in *stmts* stars.
+
+    One tuple per call, in source order, holding every starred Name directly
+    in that call's arguments (``*session.posargs`` is an attribute, not a
+    Name, so it is not counted). Invocation boundaries are kept on purpose:
+    one call starring two bundles is one pytest run in which the second
+    ``-m`` wins, not a pair. A bundle reached through a local
+    (``local = NAME; session.run(…, *local)``) is returned as the local's
+    name, so it never equals the expected bundle and the branch mismatches.
+    """
+    out: "list[tuple[str, ...]]" = []
+    for stmt in stmts:
+        for node in ast.walk(stmt):
+            if (
+                isinstance(node, ast.Call)
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "pytest"
+            ):
+                out.append(
+                    tuple(
+                        a.value.id
+                        for a in node.args
+                        if isinstance(a, ast.Starred) and isinstance(a.value, ast.Name)
+                    )
+                )
+    return out
+
+
+def _per_call(pair: "tuple[str, ...]") -> "list[tuple[str, ...]]":
+    """*pair* as the per-call shape a branch must have: one bundle per pytest call."""
+    return [(bundle,) for bundle in pair]
+
+
+def catch_all_branch_gaps(
+    session: ast.FunctionDef,
+    bundles: "dict[str, list[str]]",
+    primary_pair: "tuple[str, str]",
+    non_primary_pairs: "tuple[tuple[str, str], ...]",
+) -> "list[str]":
+    """Why *session* does not run its primary pair on the primary and a non-primary one elsewhere.
+
+    Pure over the AST, so the red arm is testable on synthetic source. The ladder
+    must be ``if session.python == PRIMARY_PYTHON:`` (an Eq against that Name — a
+    ``!=`` or an ``in`` would swap the bodies' meaning and the reader refuses it).
+    Every ``session.run("pytest", …)`` call stars exactly one bundle Name, and
+    the calls of the primary body, in order, are exactly the primary pair; every
+    other branch (an ``elif session.python == <Name>:`` or the final ``else``)
+    runs exactly one non-primary pair the same way, and together the
+    non-primary branches run every non-primary pair. Every non-primary bundle
+    carries ``not interpreter_agnostic`` as its LAST ``-m`` clause and
+    ``--no-cov`` and no coverage gate; no primary bundle mentions the marker.
+    """
+    gaps: "list[str]" = []
+    ladders = [n for n in session.body if isinstance(n, ast.If)]
+    if len(ladders) != 1:
+        return [f"{session.name}: expected one top-level `if`, found {len(ladders)}"]
+    ladder = ladders[0]
+    if not _is_python_eq(ladder.test, "PRIMARY_PYTHON"):
+        gaps.append(f"{session.name}: the ladder does not test `session.python == PRIMARY_PYTHON`")
+    branches: "list[list[tuple[str, ...]]]" = []
+    rest = ladder.orelse
+    while rest:
+        if len(rest) == 1 and isinstance(rest[0], ast.If):
+            branch = rest[0]
+            comparator = (
+                branch.test.comparators[0] if isinstance(branch.test, ast.Compare) else None
+            )
+            if not (isinstance(comparator, ast.Name) and _is_python_eq(branch.test, comparator.id)):
+                gaps.append(f"{session.name}: an elif that is not `session.python == <Name>`")
+            branches.append(_starred_bundles(branch.body))
+            rest = branch.orelse
+        else:
+            branches.append(_starred_bundles(rest))
+            rest = []
+    primary = _starred_bundles(ladder.body)
+    for call in (*primary, *(call for calls in branches for call in calls)):
+        if len(call) != 1:
+            gaps.append(
+                f"{session.name}: one pytest call stars {list(call)} — "
+                "exactly one bundle per call (a second -m overrides the first)"
+            )
+    if primary != _per_call(primary_pair):
+        gaps.append(f"{session.name}: PRIMARY branch runs {primary}, not {_per_call(primary_pair)}")
+    expected = [_per_call(pair) for pair in non_primary_pairs]
+    if sorted(branches) != sorted(expected):
+        gaps.append(f"{session.name}: non-primary branches run {branches}, not {expected}")
+    for bundle in primary_pair:
+        if bundle in bundles and _MARKER in _marker_expr(bundles[bundle]):
+            gaps.append(f"{bundle} mentions `{_MARKER}` — the primary must run the family")
+    for pair in non_primary_pairs:
+        for bundle in pair:
+            tokens = bundles.get(bundle, [])
+            clauses = (
+                [c.strip() for c in _marker_expr(tokens).split(" and ")] if "-m" in tokens else []
+            )
+            if f"not {_MARKER}" not in clauses:
+                gaps.append(f"{bundle} runs the family off the primary")
+            elif clauses[-1] != f"not {_MARKER}":
+                gaps.append(f"{bundle} does not carry `not {_MARKER}` as its last clause")
+            if "--no-cov" not in tokens:
+                gaps.append(f"{bundle} instruments coverage off the primary")
+            if any(t.startswith(("--cov-append", "--cov-fail-under=")) for t in tokens):
+                gaps.append(f"{bundle} carries a coverage gate it never measures")
+    return gaps
+
+
+def test_every_catch_all_session_runs_the_family_on_the_primary_only(
+    noxfile_tree: ast.Module,
+) -> None:
+    """Each catch-all session runs the family on PRIMARY_PYTHON only.
+
+    The primary pair on PRIMARY_PYTHON (family included, never mentioned), a
+    non-primary pair on every other interpreter, as starred NAMES. Read from
+    the AST per branch (the flat invocation scan cannot tell the right pair per
+    Python from all pairs always), then cross-checked against the scanner's own
+    per-interpreter read, which is what the lane gates consume.
+    """
+    bundles = _bundles(noxfile_tree)
+    for name, (primary_pair, non_primary_pairs) in _CATCH_ALL.items():
+        session = _session_def(noxfile_tree, name)
+        assert catch_all_branch_gaps(session, bundles, primary_pair, non_primary_pairs) == [], name
+        for python, pairs in (
+            ("3.10", (primary_pair,)),
+            ("3.12", non_primary_pairs),
+            ("3.14", non_primary_pairs),
+        ):
+            exprs = {
+                _marker_expr(t)
+                for t in _python_pytest_invocations(
+                    _NOXFILE, resolve_names=True, scope=name, python=python
+                )
+                if "-m" in t
+            }
+            if python == "3.10":
+                expected = {_marker_expr(bundles[b]) for pair in pairs for b in pair}
+                assert exprs == expected, (name, python)
+                assert not any(_MARKER in e for e in exprs), (name, python)
+            else:
+                assert exprs, (name, python)
+                assert all(f"not {_MARKER}" in _clauses(e) for e in exprs), (name, python, exprs)
+
+
+_SYNTHETIC = """
+PRIMARY_PYTHON = "3.10"
+CANARY_PYTHON = "3.14"
+P_TEST_ARGS = ("tests/unit", "-m", "not busybox and not serial_timing")
+P_SERIAL_ARGS = ("tests/unit", "-m", "serial_timing and not busybox", "-n0", "--cov-append")
+N_TEST_ARGS = (
+    "tests/unit",
+    "-m",
+    "not busybox and not serial_timing and not interpreter_agnostic",
+    "--no-cov",
+)
+N_SERIAL_ARGS = (
+    "tests/unit",
+    "-m",
+    "serial_timing and not busybox and not interpreter_agnostic",
+    "-n0",
+    "--no-cov",
+)
+def s(session):
+    if session.python {op} PRIMARY_PYTHON:
+        session.run("pytest", *{a}, *session.posargs)
+        session.run("pytest", *{b}, *session.posargs)
+{elif_}    else:
+{non_primary}
+"""
+
+_SYNTHETIC_ELIF = """\
+    elif {test}:
+        session.run("pytest", *N_TEST_ARGS, *session.posargs)
+        session.run("pytest", *N_SERIAL_ARGS, *session.posargs)
+"""
+
+
+def _synthetic(
+    op: str = "==",
+    a: str = "P_TEST_ARGS",
+    b: str = "P_SERIAL_ARGS",
+    c: str = "N_TEST_ARGS",
+    d: str = "N_SERIAL_ARGS",
+    alias: str = "",
+    elif_test: str = "",
+    one_call: bool = False,
+) -> "tuple[ast.FunctionDef, dict[str, list[str]]]":
+    """A one-session noxfile; *elif_test* adds an ``elif`` branch running the N pair.
+
+    *one_call* renders the non-primary branch as ONE call starring both
+    bundles — the shape whose second ``-m`` silently wins at runtime.
+    """
+    if one_call:
+        non_primary = f'        session.run("pytest", *{c}, *{d}, *session.posargs)'
+    else:
+        non_primary = (
+            f'        {alias}session.run("pytest", *{c}, *session.posargs)\n'
+            f'        session.run("pytest", *{d}, *session.posargs)'
+        )
+    elif_ = _SYNTHETIC_ELIF.format(test=elif_test) if elif_test else ""
+    tree = ast.parse(_SYNTHETIC.format(op=op, a=a, b=b, elif_=elif_, non_primary=non_primary))
+    return _session_def(tree, "s"), _bundles(tree)
+
+
+_ONE_CALL_GAP = "one pytest call stars ['N_TEST_ARGS', 'N_SERIAL_ARGS']"
+
+
+def test_the_catch_all_scanner_observes_red() -> None:
+    pp, npp = ("P_TEST_ARGS", "P_SERIAL_ARGS"), (("N_TEST_ARGS", "N_SERIAL_ARGS"),)
+    assert catch_all_branch_gaps(*_synthetic(), pp, npp) == []
+    (gap,) = catch_all_branch_gaps(*_synthetic(op="!="), pp, npp)
+    assert "does not test" in gap
+    swapped = _synthetic(a="N_TEST_ARGS", b="N_SERIAL_ARGS", c="P_TEST_ARGS", d="P_SERIAL_ARGS")
+    gaps = catch_all_branch_gaps(*swapped, pp, npp)
+    assert any("PRIMARY branch runs" in g for g in gaps), gaps
+    assert any("non-primary branches run" in g for g in gaps), gaps
+    aliased = _synthetic(alias="local = N_TEST_ARGS\n        ", c="local")
+    gaps = catch_all_branch_gaps(*aliased, pp, npp)
+    assert any("non-primary branches run" in g for g in gaps), gaps
+    # One call starring both bundles: at runtime the second -m wins and only
+    # the serial leg runs. Read flat across calls, it would pass as the pair.
+    gaps = catch_all_branch_gaps(*_synthetic(one_call=True), pp, npp)
+    assert any(_ONE_CALL_GAP in g for g in gaps), gaps
+    assert any("non-primary branches run" in g for g in gaps), gaps
+    # Two top-level ladders.
+    session, bundles = _synthetic()
+    session.body = session.body * 2
+    assert catch_all_branch_gaps(session, bundles, pp, npp) == [
+        "s: expected one top-level `if`, found 2"
+    ]
+    # An elif against a string literal, not a Name; the Name form is green.
+    two = npp * 2
+    canary = _synthetic(elif_test="session.python == CANARY_PYTHON")
+    assert catch_all_branch_gaps(*canary, pp, two) == []
+    (gap,) = catch_all_branch_gaps(*_synthetic(elif_test='session.python == "3.12"'), pp, two)
+    assert "an elif that is not" in gap
+    # The bundle contents, one mutation each, each naming its own gap only.
+    tail = f"not busybox and not {_MARKER}"
+    for name, tokens, expected in (
+        (
+            "N_SERIAL_ARGS",
+            ["tests/unit", "-m", "serial_timing and not busybox", "-n0", "--no-cov"],
+            "N_SERIAL_ARGS runs the family off the primary",
+        ),
+        (
+            "P_TEST_ARGS",
+            ["tests/unit", "-m", f"not busybox and not serial_timing and not {_MARKER}"],
+            f"P_TEST_ARGS mentions `{_MARKER}` — the primary must run the family",
+        ),
+        (
+            "N_TEST_ARGS",
+            ["tests/unit", "-m", tail],
+            "N_TEST_ARGS instruments coverage off the primary",
+        ),
+        (
+            "N_TEST_ARGS",
+            ["tests/unit", "-m", tail, "--no-cov", "--cov-append"],
+            "N_TEST_ARGS carries a coverage gate it never measures",
+        ),
+        (
+            "N_TEST_ARGS",
+            ["tests/unit", "-m", tail, "--no-cov", "--cov-fail-under=92"],
+            "N_TEST_ARGS carries a coverage gate it never measures",
+        ),
+        (
+            "N_TEST_ARGS",
+            [
+                "tests/unit",
+                "-m",
+                f"not busybox and not {_MARKER} and not serial_timing",
+                "--no-cov",
+            ],
+            f"N_TEST_ARGS does not carry `not {_MARKER}` as its last clause",
+        ),
+    ):
+        session, bundles = _synthetic()
+        bundles[name] = tokens
+        assert catch_all_branch_gaps(session, bundles, pp, npp) == [expected], (name, tokens)
+
+
+def test_non_primary_serial_twins_carry_the_trim(noxfile_tree: ast.Module) -> None:
+    """A serial twin's clauses are its parallel twin's with `serial_timing` flipped.
+
+    So the trim cannot be dropped on the serial leg alone (the family's
+    serial_timing members would then run on every interpreter).
+    """
+    bundles = _bundles(noxfile_tree)
+    for primary_pair, non_primary_pairs in _CATCH_ALL.values():
+        for test_name, serial_name in (primary_pair, *non_primary_pairs):
+            parallel = _clauses(_marker_expr(bundles[test_name]))
+            serial = _clauses(_marker_expr(bundles[serial_name]))
+            assert serial == (parallel - {"not serial_timing"}) | {"serial_timing"}, (
+                test_name,
+                serial_name,
+            )
+
+
+_DIFFERENTIAL = "tests/unit/shim/test_differential.py"
+
+
+def test_the_isolation_repeat_deselects_the_marker_and_ignores_the_differential(
+    noxfile_tree: ast.Module,
+) -> None:
     """``tests_unit_repeat`` exists to catch state leaking between tests; the
-    interpreter-agnostic guards hold no registry state and the differential
-    is one test, so repeating them buys nothing — and CI measured that job at
-    22 min, the longest in the workflow, with the differential alone ~8 min
-    of it. The session still selects by path and still carries every
-    exclusion it had; this pins only that the marker joined them.
+    interpreter-agnostic guards hold no registry state, so repeating them buys
+    nothing — CI measured that job at 22 min, the longest in the workflow. The
+    shim differential is no longer in the family (its result DOES depend on the
+    interpreter: it runs the completion shim the user's Python executes), so
+    the session keeps it out by path instead: one test, ~4 min single-process,
+    ~8 min repeated. The session still selects by path and still carries every
+    exclusion it had; this pins the marker clause and the ignore.
     """
     session = next(
         node
         for node in noxfile_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "tests_unit_repeat"
     )
-    exprs = [
-        _marker_expr(tokens)
+    repeats = [
+        tokens
         for tokens in _python_pytest_invocations(_NOXFILE, resolve_names=True)
         if "-m" in tokens and "--count=2" in tokens
     ]
-    assert len(exprs) == 1, f"expected one --count=2 invocation, found {exprs}"
-    assert f"not {_MARKER}" in _clauses(exprs[0]), exprs[0]
+    assert len(repeats) == 1, f"expected one --count=2 invocation, found {repeats}"
+    (tokens,) = repeats
+    assert f"not {_MARKER}" in _clauses(_marker_expr(tokens)), tokens
+    assert f"--ignore={_DIFFERENTIAL}" in tokens, (
+        f"tests_unit_repeat no longer ignores {_DIFFERENTIAL}: the differential left the "
+        "family (it is interpreter-dependent), so only the ignore keeps it out of the repeat"
+    )
     assert "tests/unit" in {
         node.value for node in ast.walk(session) if isinstance(node, ast.Constant)
     }, "tests_unit_repeat no longer names tests/unit"
+
+
+def test_the_shim_tests_are_not_in_the_family() -> None:
+    """Both results depend on the interpreter — the opposite of the marker's meaning."""
+    for rel in (_DIFFERENTIAL, "tests/unit/shim/test_refresh_spawn.py"):
+        names = _module_pytestmark_names(ast.parse((PROJECT_ROOT / rel).read_text()))
+        assert _MARKER not in names, f"{rel} carries `{_MARKER}` again"
 
 
 def test_the_make_nox_target_keeps_the_middle_on_the_hostless_session() -> None:

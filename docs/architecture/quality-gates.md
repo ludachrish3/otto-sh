@@ -260,7 +260,7 @@ job that enforces it on push.
 | tsc | `typecheck-ts` | — | `check-ts` |
 | vendored-source hash | `check-ts` | — | `check-ts` |
 | vitest + unit coverage floor | `coverage-ts-unit` | — | `check-ts` |
-| pytest (hostless matrix) | `coverage-hostless` | `tests_hostless` | `tests` (3.10–3.14; the full selection on the 3.10 + 3.14 bookends, with the coverage floor on 3.10 only (3.14 runs it uninstrumented, `HOSTLESS_CANARY_TEST_ARGS`), the trimmed `tests/unit` tier minus `interpreter_agnostic` on 3.11–3.13 — see `noxfile.py`'s `HOSTLESS_MIDDLE_TEST_ARGS`) |
+| pytest (hostless matrix) | `coverage-hostless` | `tests_hostless` | `tests` (3.10–3.14; the full selection on 3.10 with the coverage floor, the same paths minus the `interpreter_agnostic` family and without coverage on 3.14 (`HOSTLESS_CANARY_TEST_ARGS`), the trimmed `tests/unit` tier minus the family on 3.11–3.13 (`HOSTLESS_MIDDLE_TEST_ARGS`) — the family runs on the primary only, see [the cross-Python matrix](testing.md#other-axes-typescript-doctests-cross-python)) |
 | public-API golden: `tests/unit/api_snapshot/public_api.txt` is, byte for byte, the API dump of the tree (`scripts/api_snapshot.py`) | `check-api-snapshot` | via `tests_hostless` | `tests` — enforced by `tests/unit/api_snapshot/test_public_api_snapshot.py` |
 | public-API dump invariance: the dump regenerated on each supported Python, under its own `PYTHONHASHSEED`, from runtime dependencies alone, is byte-identical to the golden | — | `api_dump_invariance` | `api-dump-invariance` (3.10–3.14) |
 | breaking marks: each commit's golden is its own regenerated dump, and a commit that breaks the public API carries a `!` or a `BREAKING CHANGE:` footer (`scripts/check_breaking_marks.py`) | `check-breaking`, and pulled in by `lint-arch` | — (it needs a commit range; see `noxfile.py`'s `lint`) | `lint-python` |
@@ -292,7 +292,8 @@ because the full run needs lab VMs. A contributor reading only
 
 `make release` does not reach it either — and the near miss is worth being
 precise about. Release runs `make nox`, whose `tests_all` session carries its
-own `--cov-fail-under=92`: a real coverage gate, but a lower one, because
+own `--cov-fail-under=92` on its 3.10 leg (every other interpreter's leg runs
+`--no-cov`): a real coverage gate, but a lower one, because
 that session excludes the `browser` marker and so omits the dashboard
 `--cov-append` fold-in that `coverage-python` gets from its `dashboard`
 prerequisite. The 95.5 floor is reached only through `make coverage`, and

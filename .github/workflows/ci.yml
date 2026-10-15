@@ -76,9 +76,10 @@ jobs:
       # This job merely CONSUMES them. Ten tests in
       # `tests/unit/test_support_matrix.py` drive a real hermetic conformance run,
       # and the hermetic venue builds its BusyBox cells from these artifacts — so
-      # an unreachable artifact source reds a DEFAULT-gate job, on the two
-      # bookend Pythons (the interior versions deselect that module — it is
-      # `interpreter_agnostic`; see noxfile.py HOSTLESS_MIDDLE_TEST_ARGS), for a
+      # an unreachable artifact source reds a DEFAULT-gate job, on the
+      # PRIMARY Python only (every other version deselects that module — it is
+      # `interpreter_agnostic`; see noxfile.py's HOSTLESS_CANARY_* and
+      # HOSTLESS_MIDDLE_* bundles, which this job's `tests_hostless` runs), for a
       # reason with nothing to do with the change under test. That is issue
       # #261, when busybox.net alone was that source (the release mirror now
       # answers first — see tests/_fixtures/busybox.py):
@@ -109,7 +110,8 @@ jobs:
         run: uv run nox -s tests_hostless-${{ matrix.python }}
 
   # Repeat the tests/unit tree twice in one process (minus the stateless
-  # `interpreter_agnostic` guards — see noxfile.py) to catch tests that
+  # `interpreter_agnostic` guards and the ~4 min shim differential, which it
+  # ignores by path — see noxfile.py) to catch tests that
   # leak process-global state — registry singletons (INSTRUCTIONS, LOADER_CLASSES,
   # CLI_COMMANDS, SUITES), tmp-path imports, or otto.cli.* module identity. Such a
   # leak passes the single-pass `tests` job above but breaks on the second run, so

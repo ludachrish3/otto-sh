@@ -316,20 +316,24 @@ Three more axes sit alongside level/resource, each narrower in scope:
 - **Cross-Python matrix.** otto's floor is Python 3.10 and its ceiling is
   3.14. `make nox-unit` re-runs the no-VM unit tier across all five
   versions — the fastest safe cross-version check. `make nox` tiers this
-  further: the full suite on the 3.10 floor and the 3.14 canary (where
-  version-specific deprecation warnings show up first), and a *trimmed*
-  hostless slice on the versions between — the `tests/unit` tier with the
-  `interpreter_agnostic` modules deselected and coverage off. That marker
-  names tests whose subject is the repository, its build files or a
-  generated corpus rather than otto running under a particular interpreter
-  (the lane and tier guards, the support-matrix and conformance-bed
-  plumbing, the shim differential); together with the `tests/e2e` tier,
-  which drives real `otto` subprocesses and `pip` venv builds, they were
-  65 % of an interior leg's CPU and prove the same thing on every Python.
-  The bookends still run all of it (coverage is gated on the 3.10 floor
-  only; see `noxfile.py`), and the trim is pinned to be a strict
-  narrowing by `tests/unit/test_python_matrix_tiering.py`. `make nox-full`
-  is the complete matrix, all tiers on all five Pythons, at roughly 5×
+  further: the full suite on the 3.10 floor (coverage-gated); every
+  product test on the 3.14 canary (where version-specific deprecation
+  warnings show up first); a *trimmed* hostless slice on the versions
+  between — the `tests/unit` tier with coverage off. One
+  family runs on 3.10 only, in every nox session and in `make coverage`:
+  the `interpreter_agnostic` modules, whose subject is the repository, its
+  build files or a generated corpus rather than otto under a particular
+  interpreter (the lane and tier guards, the support-matrix and
+  conformance-bed plumbing). They prove the same thing on every Python,
+  so every other interpreter deselects them — the 3.14 canary included —
+  which means a family test red only on 3.14 is not something the matrix
+  looks for, by decision ([#566](https://github.com/ludachrish3/otto-sh/issues/566)).
+  The shim differential is NOT in the family: it runs the completion shim
+  the user's interpreter executes, so it runs on every Python (and
+  `make nox-unit-repeat` keeps it out by path). The shape is pinned by
+  `tests/unit/test_python_matrix_tiering.py`: the primary pair never
+  mentions the marker, every non-primary pair deselects it and runs
+  coverage off. `make nox-full` is the complete matrix at roughly 5×
   `make nox`'s wall clock.
 
 ## The host axis space: what a bed host *is*

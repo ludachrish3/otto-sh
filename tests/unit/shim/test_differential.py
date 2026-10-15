@@ -24,8 +24,6 @@ from otto.config.completion_tree import build_shim_payload
 from otto.config.repo import PYTEST_CONFIG_NAMES
 from tests._fixtures.shim_repo import make_shim_repo
 
-pytestmark = pytest.mark.interpreter_agnostic
-
 EXPECTED_HANDOVER_REASONS = {
     "live",  # a completer that must run product code (a live source)
     "list fragment past its first separator",  # `--hosts dut1,` : live past the separator

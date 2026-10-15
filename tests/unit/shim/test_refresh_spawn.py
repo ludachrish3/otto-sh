@@ -21,8 +21,6 @@ import pytest
 from otto import _shim_complete as sc
 from otto.config import completion_cache as cc
 
-pytestmark = pytest.mark.interpreter_agnostic
-
 
 @pytest.fixture
 def popen(monkeypatch) -> list[tuple[tuple, dict]]:

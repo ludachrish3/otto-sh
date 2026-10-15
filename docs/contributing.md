@@ -580,7 +580,7 @@ what you want to exercise:
 |----------|------------|------------|
 | Unit tier only (level) | `make coverage-unit` (pinned) / `make nox-unit` (all Pythons) | none |
 | Unit + integration tiers (level) | `make coverage-integration` / `make nox-integration` | full lab |
-| No-testbed CI gate (tests/unit + no-VM e2e) | `make coverage-hostless` (pinned) / `make nox-hostless` (full on the 3.10 + 3.14 bookends, coverage-gated on 3.10 only, trimmed `tests/unit` minus `interpreter_agnostic` on 3.11–3.13) | none |
+| No-testbed CI gate (tests/unit + no-VM e2e) | `make coverage-hostless` (pinned) / `make nox-hostless` (full on 3.10, coverage-gated; minus the `interpreter_agnostic` family on every other Python — see [the cross-Python matrix](architecture/testing.md#other-axes-typescript-doctests-cross-python)) | none |
 | Full coverage gate (all tiers, excludes `stability`) | `make coverage` | lab VMs |
 | Unix VMs, incl. multi-hop (resource) | `make coverage-unix` / `make nox-unix` | test1/test2/test3 |
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
@@ -768,10 +768,10 @@ default). To exercise the full matrix the way CI does — Python 3.10
 through 3.14 — use `nox`:
 
 ```bash
-make nox-unit                      # unit level tier across all Pythons (no VMs)
-make nox-integration               # unit + integration tiers across all Pythons (full lab)
-make nox                           # tiered matrix: full suite on 3.10 (floor) + 3.14 (warning canary), trimmed hostless on 3.11-3.13 (needs VMs)
-make nox-full                      # complete full-suite matrix, all Pythons (needs VMs; ~2.5x nox)
+make nox-unit                      # unit level tier across all Pythons (no VMs; family on 3.10 only)
+make nox-integration               # unit + integration tiers across all Pythons (full lab; family on 3.10 only)
+make nox                           # tiered matrix: full suite on 3.10 (floor); every product test, minus the interpreter_agnostic family, on 3.14 (warning canary); trimmed hostless on 3.11-3.13 (needs VMs)
+make nox-full                      # every tier on all Pythons; the interpreter_agnostic family on 3.10 only (needs VMs)
 uv run nox -s tests_hostless-3.10  # the no-testbed CI gate under one Python
 uv run nox -s tests_unit-3.14 -- -k test_session   # forward args to pytest
 uv run nox --list                  # show every available session
