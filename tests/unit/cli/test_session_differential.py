@@ -108,7 +108,8 @@ import typer
 from typer.testing import CliRunner
 
 from otto import bootstrap as bs
-from otto.config.repo import TOML_SETTINGS_PATH, Repo
+from otto.config.repo import Repo
+from otto.config.scope import TOML_SETTINGS_PATH
 from otto.declared import publish_composed
 from tests._fixtures.labdata import lab_data_dir, write_lab_json
 from tests._fixtures.rootoptions import make_root_options

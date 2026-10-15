@@ -6,11 +6,19 @@ so that bugs in functions like ``_get_literal_values`` and ``is_literal``
 cannot hide behind mocked callers.
 """
 
+import os
+from pathlib import Path
 from typing import Literal
 
 import pytest
 
-from otto.utils import _get_literal_values, complete_separated_list, is_literal, split_on
+from otto.utils import (
+    _get_literal_values,
+    complete_separated_list,
+    is_literal,
+    split_on,
+    split_path_list,
+)
 
 # Sample Literal aliases used purely as fixtures for the utility functions
 # below. The host term/transfer selectors are now plain ``str`` (the registries
@@ -118,3 +126,22 @@ class TestCompleteSeparatedList:
         assert complete_separated_list(["x", "y"], "x,") == ["x,y"]
         # A `+` is NOT: it is an ordinary character, so nothing completes it.
         assert complete_separated_list(["x", "y"], "x+") == []
+
+
+# ── split_path_list ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("", []),
+        ("/a", ["/a"]),
+        ("/a,/b", ["/a", "/b"]),
+        (f"/a{os.pathsep}/b", ["/a", "/b"]),
+        (f"/a, /b {os.pathsep} /c", ["/a", " /b ", " /c"]),
+        (f",/a,,{os.pathsep}/b,", ["/a", "/b"]),
+        ("  ,  ", ["  ", "  "]),
+    ],
+)
+def test_split_path_list_splits_and_drops_only_empties(value: str, expected: list[str]) -> None:
+    assert split_path_list(value) == [Path(p) for p in expected]

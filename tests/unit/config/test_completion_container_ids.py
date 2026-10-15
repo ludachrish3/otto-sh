@@ -15,7 +15,8 @@ that mismatch is the point, not incidental naming.
 from pathlib import Path
 
 from otto.config.completion_cache import collect_host_ids
-from otto.config.repo import DockerCompose, DockerSettings, DockerUseCase, Repo
+from otto.config.repo import Repo
+from otto.config.scope import DockerCompose, DockerSettings, DockerUseCase
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 

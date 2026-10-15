@@ -276,7 +276,8 @@ def test_answer_or_reason_never_raises(monkeypatch):
 
 def test_schema_constants_track_the_product():
     from otto.config import collected_tests as ct
-    from otto.config.repo import TOML_SETTINGS_PATH, selectable_names
+    from otto.config.repo import selectable_names
+    from otto.config.scope import TOML_SETTINGS_PATH
 
     assert sc.SCHEMA == cc.SCHEMA_VERSION
     assert sc.TABLE_SCHEMA == ct.RECORDS_SCHEMA_VERSION

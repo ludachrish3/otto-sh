@@ -119,7 +119,7 @@ layer = "entry"
 # ensure_lab_context builds the context on it.
 # otto._shim_complete: cache.py's inspect verbs read the shim's own answer
 # (inspect_shim, inspect_tests).
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies"]
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings"]
 
 [[modules]]
 path = "otto.config"
@@ -136,12 +136,12 @@ depends_on = [
     # completion_cache resolves the process inventory function-locally, twice:
     # `_inventory_fingerprint` mixes its freshness signal into the digest and
     # `_enumerate_host_summaries` passes it to the enumeration, so a referenced
-    # host completes (spec 2026-08-28 host-inventory §11). This edge CLOSES A
-    # NEW CYCLE — otto.inventory imports otto.config for the user settings
-    # file — so it is a mutually-importing pair, and it brought otto.inventory
-    # into the import cycle. Lazy at both ends, which buys import cost and
-    # nothing else: tach and the cycle ratchet both count a function-scope
-    # import as an edge.
+    # host completes (spec 2026-08-28 host-inventory §11). A downward edge:
+    # otto.inventory reads the user settings file and the home through
+    # otto.config.user_settings and otto.config.home, modules of their own, and
+    # the settings file's name from the foundation otto.config.scope, so it
+    # imports nothing else of otto.config (spec 2026-10-11 placement-and-phases
+    # §3.6).
     "otto.inventory",
     # DEBT: survives on fleet.py's DEFAULT_COMMAND_TIMEOUT (Tier 1.7),
     # lab.py's RemoteHost/slug/builtin_hosts, and repo.py's os_profile
@@ -158,19 +158,48 @@ depends_on = [
     "otto.registry",
     "otto.config.scope",
     "otto.models.dependencies",
+    # otto.utils: the completion cache's collection child splits the path-list
+    # variables with the one separator split_path_list uses.
+    "otto.utils",
+    # otto.config.home: the completion cache lives in the workspace home.
+    "otto.config.home",
 ]
+
+[[modules]]
+path = "otto.config.home"
+layer = "specs"
+# otto's user-level home and the workspace key that shards it: the one owner of
+# every path under ~/.otto (spec 2026-10-11 placement-and-phases §2.2, §3.6).
+# A module of its own, so the inventory and the suite read it without importing
+# otto.config. It reads OTTO_HOME and OTTO_SUT_DIRS through the env settings
+# model, and normalizes the workspace slug, inside its functions. Its ancestor
+# otto/config/__init__.py stays lazy (§4.3) bar one eager import,
+# otto.config.env, so importing this module loads that too.
+depends_on = ["otto.models", "otto.models.dependencies"]
 
 [[modules]]
 path = "otto.config.scope"
 layer = "foundation"
-# The one membership predicate, its config and resolver, and the composition
-# root's error types (spec 2026-10-11 placement-and-phases §3.5). Foundation,
-# so the host layer's ingest gate and otto.declared may import it. Its
+# The one membership predicate, its config and resolver, the composition
+# root's error types (spec 2026-10-11 placement-and-phases §3.5), and the
+# runtime settings types the repo loader holds and the settings specs build
+# (§3.6). Foundation, so the host layer's ingest gate and otto.declared may
+# import it. Its
 # ancestor otto/config/__init__.py stays lazy (§4.3) bar one eager import,
 # otto.config.env, so importing this module loads that too.
 # otto.models.dependencies is read inside the functions that normalize a repo
 # name.
 depends_on = ["otto.errors", "otto.models.dependencies"]
+
+[[modules]]
+path = "otto.config.user_settings"
+layer = "specs"
+# The user-level ~/.otto/settings.toml, read through its settings model, under
+# the home otto.config.home owns (spec 2026-10-11 placement-and-phases §2.2,
+# §3.6). A module of its own, so the inventory reads the user file without
+# importing otto.config. Its ancestor's one eager import, otto.config.env,
+# loads with it (§4.3).
+depends_on = ["otto.config.home", "otto.models"]
 
 [[modules]]
 path = "otto.console"
@@ -232,6 +261,7 @@ depends_on = [
 
 [[modules]]
 path = "otto.creds"
+layer = "sources"
 # The creds-store seam (spec 2026-09-06 creds-store §5). Sits BENEATH
 # otto.inventory, which imports it function-locally from the bootstrap path;
 # this package never imports otto.inventory — one-way by construction. Every
@@ -308,6 +338,9 @@ layer = "workflows"
 depends_on = [
     "otto.errors",
     "otto.config",
+    # otto.config.scope: TOML_SETTINGS_PATH, the settings file the doctor checks
+    # and the scaffolder writes.
+    "otto.config.scope",
     "otto.utils",
     "otto.models",
     "otto.models.base",
@@ -315,6 +348,8 @@ depends_on = [
     "otto.inventory",
     "otto.host",
     "otto.kmodcov",
+    # otto.config.user_settings: the doctor reads the user settings file.
+    "otto.config.user_settings",
 ]
 
 [[modules]]
@@ -402,23 +437,21 @@ depends_on = [
 
 [[modules]]
 path = "otto.inventory"
+layer = "sources"
 # otto.host: InventoryRef lives beside LabInfo on the host so the host package
 # does not import upward into this one. This list is what the package imports
 # TODAY, per this file's ratchet contract. The snapshot cache (2026-08-28,
-# §9.5) added NO edge: it reaches otto.config.home for the cache directory —
-# an edge already declared below — and logs through the stdlib `logging`
-# module, not otto.logger, because it is a library warning on a load path and
-# not console output otto formats.
-# otto.config: config.py reads ~/.otto/settings.toml through
-# otto.config.user_settings (one owner for the user file). This was one-way
-# until 2026-08-28: `Repo.inventory_settings` is a plain dict accessor, so
-# nothing in otto.config HAD to import back. Threading the inventory through
-# the loaders changed that — otto.config.completion_cache now calls
-# `build_inventory` for the completion digest and the host enumeration (§11),
-# making config<->inventory a mutually-importing pair. Both directions are
-# function-local imports, so neither module pays the other's import cost, but
-# the CYCLE IS REAL and is declared on otto.config's side too. Do not restore
-# the "one-way by construction" claim without first removing that call.
+# §9.5) reaches otto.config.home for the cache directory and logs through the
+# stdlib `logging` module, not otto.logger, because it is a library warning on
+# a load path and not console output otto formats.
+# otto.config.home, otto.config.user_settings: config.py reads
+# ~/.otto/settings.toml through otto.config.user_settings (one owner for the
+# user file) and the snapshot cache directory through otto.config.home. Each is
+# a module of its own in the specs layer (spec 2026-10-11 placement-and-phases
+# §3.6), and the settings file's name comes from the foundation module
+# otto.config.scope, so this package imports nothing else of otto.config.
+# otto.config imports it back: otto.config.completion_cache calls `build_inventory` for the
+# completion digest and the host enumeration (§11), a downward edge now.
 # otto.utils: compile_inventory anchors [inventory] paths through the same
 # `anchor_path` every other settings path goes through — one authority for the
 # rule, not a copy.
@@ -433,7 +466,9 @@ path = "otto.inventory"
 # trust and request-timeout bound. Module-level import; otto.tls itself is a
 # stdlib-only leaf at import time.
 depends_on = [
-    "otto.config",
+    "otto.config.home",
+    "otto.config.scope",
+    "otto.config.user_settings",
     "otto.creds",
     "otto.errors",
     "otto.host",
@@ -493,6 +528,7 @@ depends_on = ["otto.invocation", "otto.logger"]
 
 [[modules]]
 path = "otto.link"
+layer = "topology"
 # NOTE: no otto.tunnel here — the packages are fully decoupled via
 # otto.host.daemon (July finding a1/a3, FIXED). Keep it that way.
 # otto.link.params, otto.link.impairer, otto.link.netem: the impairment
@@ -532,22 +568,23 @@ depends_on = ["otto.console"]
 
 [[modules]]
 path = "otto.models"
+layer = "specs"
 depends_on = [
     "otto.utils",
     "otto.models.base",
     # models/jsonschema.py lists the registered impairer names in the JSON
     # Schema.
     "otto.link.impairer",
-    # ALLOWED LAZILY ONLY, at three kinds of site: to_runtime() bodies import
-    # config.repo at function scope, LoggingConfigSpec's removed-`capture`
+    # ALLOWED LAZILY ONLY, and the one otto.config module models reads: the
+    # runtime settings types live in the foundation module otto.config.scope
+    # (spec 2026-10-11 placement-and-phases §3.6). to_runtime() bodies import
+    # them at function scope, and LoggingConfigSpec's removed-`capture`
     # validator imports TOML_SETTINGS_PATH inside its error branch (so the
     # cutover message can name the settings file that carried the dead key —
-    # spec 2026-08-30 §4.3), and OttoEnvSettings' sut_dirs validator imports
-    # config.env.split_path_list (one parser for OTTO_SUT_DIRS). All are
-    # function scope; the module-scope ban is
-    # enforced by ast-grep (models-no-module-scope-config-import) since tach
-    # cannot distinguish scope.
-    "otto.config",
+    # spec 2026-08-30 §4.3). The module-scope ban is enforced by ast-grep
+    # (models-no-module-scope-config-import) since tach cannot distinguish
+    # scope.
+    "otto.config.scope",
     "otto.logger",
     # (models -> coverage edge removed 2026-08-03: validate_color moved to
     # otto.models.color, closing the layer inversion.)
@@ -801,7 +838,7 @@ layer = "root"
 #
 # No loop: otto.project no longer imports otto.cli (thin-CLI item 1).
 # otto.invocation: the runner sweep (suite/loops.py) reads the run policy's teardown deadline.
-depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope"]
+depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope", "otto.config.home"]
 
 [[modules]]
 path = "otto.testing"

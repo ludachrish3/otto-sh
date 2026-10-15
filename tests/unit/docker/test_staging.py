@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from otto.config.repo import DockerCompose
+from otto.config.scope import DockerCompose
 from otto.docker.staging import (
     _relative_bind_sources,
     stage_compose_files,

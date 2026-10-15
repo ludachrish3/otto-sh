@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from otto.config.repo import MonitorSettings
+from otto.config.scope import MonitorSettings
 from otto.monitor.errors import MonitorTlsError, ReviewSourceError
 from otto.monitor.review import load_review_document, serve_review
 from tests._fixtures.fake_repo import fake_repo

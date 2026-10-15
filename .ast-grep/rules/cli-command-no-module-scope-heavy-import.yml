@@ -32,8 +32,9 @@ note: >
       error names MountNotFoundError/RawLandingError/SessionSetupError);
     - otto.config.fleet/lab/repo: cli.docker, cli.host, cli.monitor,
       cli.callbacks, cli.link, cli.tunnel (also spelled as otto.config's lazy
-      Repo/Docker*/MonitorSettings and otto.lab's lazy Lab/load_lab/get_lab/
-      get_host/all_hosts/...);
+      Repo and otto.lab's lazy Lab/load_lab/get_lab/get_host/all_hosts/...).
+      otto.config's lazy Docker*/MonitorSettings stay banned with Repo: a
+      command reads them from the repo it loads, in its body;
     - otto.context: cli.test, cli.host;
     - the top-level otto package's lazy names for the entries above (its
       context and fleet/lab names, and `options`, which is pydantic's

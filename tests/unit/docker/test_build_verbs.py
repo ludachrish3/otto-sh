@@ -155,7 +155,7 @@ async def test_two_repos_may_declare_names_that_share_a_staging_key(install, bui
 
 @pytest.mark.asyncio
 async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds, tmp_path):
-    from otto.config.repo import DockerImage
+    from otto.config.scope import DockerImage
     from otto.docker.build import build_command
     from tests.conftest import active_context
 

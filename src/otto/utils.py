@@ -2,14 +2,16 @@
 
 Among others: the :class:`Status` enum, the CLI overlays (:class:`Arg`,
 :class:`Opt`, ``Exclude``) and :func:`cli_exposed`, path anchoring
-(:func:`anchor_path`), the ``cache_ttl`` grammar (:func:`parse_cache_ttl`), the
-monitor collection-interval floor (:data:`MIN_INTERVAL_SECONDS`), list-option
+(:func:`anchor_path`), path-list splitting (:func:`split_path_list`), the
+``cache_ttl`` grammar (:func:`parse_cache_ttl`), the monitor
+collection-interval floor (:data:`MIN_INTERVAL_SECONDS`), list-option
 splitting and completion helpers, the dry-run headlines, and deadline polling
 (:func:`wait_for`, :func:`wait_for_async`).
 """
 
 import inspect
 import math
+import os
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -57,6 +59,27 @@ def anchor_path(value: Path, root: Path, *, quote: bool = True) -> Path:
         what = str(value) if quote else "its leading '~'"
         raise ValueError(f"cannot expand {what}: {e}") from e
     return value if value.is_absolute() else root / value
+
+
+# Path-list env vars (e.g. OTTO_SUT_DIRS) historically accepted only commas,
+# but the standard Unix convention is os.pathsep (':' on Linux). Accept both
+# so users can use whichever feels natural — and so callers building lists
+# via os.pathsep.join(...) work without surprises.
+_PATH_LIST_SEP = re.compile(rf"[,{re.escape(os.pathsep)}]")
+
+
+def split_path_list(value: str) -> list[Path]:
+    """Split a path-list env value (``OTTO_SUT_DIRS``) into its paths.
+
+    Entries are separated by commas or :data:`os.pathsep`, either or both,
+    and empty entries are dropped. Nothing else is touched: whitespace is
+    part of an entry (``/a, /b`` names ``" /b"``), exactly as the
+    completion-cache environment and the console-script shim split the same
+    variable. The loader and ``otto init``'s "is this repo already on the
+    list" check both read the variable through here, so they cannot disagree
+    about what it names.
+    """
+    return [Path(entry) for entry in _PATH_LIST_SEP.split(value) if entry]
 
 
 _TTL = re.compile(r"\A(?:0|([1-9]\d*)([mhd]))\Z")

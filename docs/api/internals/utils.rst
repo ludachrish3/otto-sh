@@ -9,6 +9,8 @@ and the reference can link them. The public names are on :doc:`/api/utils`.
 
 .. autofunction:: otto.utils.anchor_path
 
+.. autofunction:: otto.utils.split_path_list
+
 .. autofunction:: otto.utils.parse_cache_ttl
 
 .. autodata:: otto.utils.MIN_INTERVAL_SECONDS

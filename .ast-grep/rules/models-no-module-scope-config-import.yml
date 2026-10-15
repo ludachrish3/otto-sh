@@ -4,7 +4,7 @@ severity: error
 message: models/ may import otto.config only lazily (inside a function body). A module-scope import recreates the models<->config cycle.
 note: >
   The runtime edge is allowed and declared in tach.toml (otto.models ->
-  otto.config, "ALLOWED LAZILY ONLY"); this rule pins the scope restriction
+  otto.config.scope, "ALLOWED LAZILY ONLY"); this rule pins the scope restriction
   tach cannot see. TYPE_CHECKING-guarded imports are exempt (the if_statement
   carve-out below).
 files:

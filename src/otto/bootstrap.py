@@ -252,7 +252,7 @@ def _contain_data_profile_errors(repos: "list[Repo]", errors: list[BootstrapErro
     if not any(repo.os_profiles for repo in repos):
         # Nothing to check: the module that checks stays unimported.
         return
-    from .config.repo import TOML_SETTINGS_PATH
+    from .config.scope import TOML_SETTINGS_PATH
     from .host.os_profile import check_data_profiles
 
     for repo in repos:
@@ -279,7 +279,8 @@ def discover() -> DiscoveryResult:
     global _discovered  # noqa: PLW0603 — module-level singleton/cache
     if _discovered is None:
         from .config.env import load_otto_env
-        from .config.repo import TOML_SETTINGS_PATH, Repo
+        from .config.repo import Repo
+        from .config.scope import TOML_SETTINGS_PATH
 
         env = load_otto_env()
         repos: list[Repo] = []

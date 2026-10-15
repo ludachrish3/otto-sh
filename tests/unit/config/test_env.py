@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 import pytest
 
@@ -9,7 +8,6 @@ from otto.config.env import (
     SUT_DIRS_ENV_VAR,
     XDIR_ENV_VAR,
     load_otto_env,
-    split_path_list,
 )
 
 
@@ -84,22 +82,6 @@ def test_env_xdir_value() -> None:
     """Notify users if this test fails or if its logic changes because this is an external interface."""  # noqa: E501 — intentional descriptive docstring
 
     assert XDIR_ENV_VAR == "OTTO_XDIR"
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ("", []),
-        ("/a", ["/a"]),
-        ("/a,/b", ["/a", "/b"]),
-        (f"/a{os.pathsep}/b", ["/a", "/b"]),
-        (f"/a, /b {os.pathsep} /c", ["/a", " /b ", " /c"]),
-        (f",/a,,{os.pathsep}/b,", ["/a", "/b"]),
-        ("  ,  ", ["  ", "  "]),
-    ],
-)
-def test_split_path_list_splits_and_drops_only_empties(value: str, expected: list[str]) -> None:
-    assert split_path_list(value) == [Path(p) for p in expected]
 
 
 def test_the_loader_reads_sut_dirs_through_split_path_list(monkeypatch, tmp_path) -> None:

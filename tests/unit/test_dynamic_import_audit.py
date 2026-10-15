@@ -939,7 +939,7 @@ COMPOSITION_ROOT = "otto/bootstrap.py"
 # The landings of spec 2026-10-11 placement-and-phases §6, in order. Each
 # landing sets CURRENT_LANDING to its own name in its commit.
 LANDINGS = ["P1a", "P1b", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9a", "P9b"]
-CURRENT_LANDING = "P5"
+CURRENT_LANDING = "P6"
 
 # What the declared graph shows once each landing is in: the modules with a
 # layer (spec 2026-10-11 placement-and-phases §5.2, "modules layered") and the
@@ -1015,6 +1015,14 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     # The composition root's by-name imports of the project layer.
     ("otto/bootstrap.py", "otto.project.actions", ROOT_BY_NAME),
     ("otto/bootstrap.py", "otto.project.commands", ROOT_BY_NAME),
+    # The otto.config facade's settings types, from the foundation scope module.
+    ("otto/config/__init__.py", "otto.config.scope:DockerCompose", FACADE_BINDING),
+    ("otto/config/__init__.py", "otto.config.scope:DockerImage", FACADE_BINDING),
+    ("otto/config/__init__.py", "otto.config.scope:DockerSettings", FACADE_BINDING),
+    ("otto/config/__init__.py", "otto.config.scope:MonitorSettings", FACADE_BINDING),
+    # ... and the user settings file's names, from their module of its own.
+    ("otto/config/__init__.py", "otto.config.user_settings:load_user_settings", FACADE_BINDING),
+    ("otto/config/__init__.py", "otto.config.user_settings:user_settings_path", FACADE_BINDING),
     (
         "otto/coverage/__init__.py",
         "otto.config.coverage_settings:CoverageConfigError",

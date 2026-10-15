@@ -8,8 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.config.lab import Lab
-from otto.config.repo import MonitorSettings
-from otto.config.scope import EmptySelectionError
+from otto.config.scope import EmptySelectionError, MonitorSettings
 from otto.context import OttoContext
 from otto.host.element import Element
 from otto.host.factory import create_host_from_dict

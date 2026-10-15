@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, call, patch
 
 import pytest
 
-from otto.config.repo import DockerUseCase
+from otto.config.scope import DockerUseCase
 from otto.docker import deployment as observe_deployment
 from otto.docker import observe as observe_mod
 from otto.docker.deployment import UseCaseResolution

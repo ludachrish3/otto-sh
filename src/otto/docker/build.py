@@ -11,7 +11,8 @@ import shlex
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from ..config.repo import DockerImage, Repo
+from ..config.repo import Repo
+from ..config.scope import DockerImage
 from ..host.host import Host, is_dry_run
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status

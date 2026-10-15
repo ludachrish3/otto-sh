@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from otto.config.repo import DockerUseCase
+from otto.config.scope import DockerUseCase
 from otto.docker.resolve import (
     UseCaseResolutionError,
     declared_use_cases,

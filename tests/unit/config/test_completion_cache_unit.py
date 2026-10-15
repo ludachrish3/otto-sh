@@ -1363,7 +1363,7 @@ def _cache_repo(tmp_path: Path, name: str = "sut") -> MagicMock:
 
 
 def _use_case(name: str):
-    from otto.config.repo import DockerUseCase
+    from otto.config.scope import DockerUseCase
 
     return DockerUseCase(name=name, composes=("core",))
 

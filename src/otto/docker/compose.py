@@ -19,7 +19,8 @@ from collections.abc import AsyncIterator, Iterable
 from dataclasses import replace
 
 from ..config.lab import Lab
-from ..config.repo import DockerCompose, Repo
+from ..config.repo import Repo
+from ..config.scope import DockerCompose
 from ..host.docker_host import DockerContainerHost, compose_container_probe
 from ..host.errors import HostCommandError
 from ..host.factory import apply_providers

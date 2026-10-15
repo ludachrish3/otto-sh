@@ -11,6 +11,16 @@ the 2026-10-04 manifest spec's D1). The five repo accessors (``get_repos``,
 from ``otto.lab``, and otto's own code from the defining module
 (``otto.config.fleet``, ``otto.config.lab``).
 
+Two more sets moved with spec
+``docs/superpowers/specs/2026-10-11-placement-and-phases-design.md`` §3.6. The
+runtime settings types and the settings file's location (``SETTINGS_FILENAME``,
+``TOML_SETTINGS_PATH``, ``ARCHIVE_SUFFIXES``, ``DockerImage``,
+``DockerCompose``, ``DockerUseCase``, ``DockerSettings``,
+``MonitorSettings``) left ``otto.config.repo`` for ``otto.config.scope``;
+users keep the public path ``otto.config.<name>`` for the four the package
+exports. The path-list splitter (``split_path_list``, ``_PATH_LIST_SEP``) left
+``otto.config.env`` for ``otto.utils``.
+
 An old spelling fails loudly at most call sites, but not everywhere. Six
 readers import an accessor inside a broad ``except``, where a stale import
 degrades silently instead of raising
@@ -61,19 +71,42 @@ FLEET = frozenset(
         "run_on_all_hosts",
     }
 )
+SETTINGS = frozenset(
+    {
+        "SETTINGS_FILENAME",
+        "TOML_SETTINGS_PATH",
+        "ARCHIVE_SUFFIXES",
+        "DockerImage",
+        "DockerCompose",
+        "DockerUseCase",
+        "DockerSettings",
+        "MonitorSettings",
+    }
+)
+SPLITTER = frozenset({"split_path_list", "_PATH_LIST_SEP"})
 DELETED = "otto.config.bootstrapped"
 # old home -> the moved names it no longer has
 OLD_HOMES: dict[str, frozenset[str]] = {
     "otto.config": ACCESSORS | FLEET,
     DELETED: ACCESSORS,
+    "otto.config.repo": SETTINGS,
+    "otto.config.env": SPLITTER,
 }
 FACADE = "otto.lab"
-_MOVED = "|".join(sorted(OLD_HOMES["otto.config"]))
-_OLD_IN_TEXT = re.compile(
-    rf"otto\.config\.bootstrapped\b"
-    rf"|\botto\.config\.({_MOVED})\b"
-    rf"|\bfrom\s+(otto\.|\.+)config(\.bootstrapped)?\s+import\s+[^\n]*\b({_MOVED})\b"
-)
+
+
+def _old_in_text(homes: "dict[str, frozenset[str]]") -> "re.Pattern[str]":
+    """A string naming a moved name at an old home: dotted, or in a generated import."""
+    spellings = [r"otto\.config\.bootstrapped\b"]
+    for home, names in homes.items():
+        moved = "|".join(sorted(names))
+        package = re.escape(home.removeprefix("otto."))
+        spellings.append(rf"\b{re.escape(home)}\.({moved})\b")
+        spellings.append(rf"\bfrom\s+(otto\.|\.+){package}\s+import\s+[^\n]*\b({moved})\b")
+    return re.compile("|".join(spellings))
+
+
+_OLD_IN_TEXT = _old_in_text(OLD_HOMES)
 _DYNAMIC_IMPORT = re.compile(r"(?:importlib\.)?import_module\(['\"]([\w.]+)['\"]\)")
 
 
@@ -211,7 +244,9 @@ def test_no_otto_code_or_test_names_a_moved_name_at_its_old_home():
     assert not offenders, (
         f"{len(offenders)} old spelling(s) of a moved name; import each from its new home "
         "(otto.bootstrap for the repo accessors; otto.config.fleet / otto.config.lab inside otto, "
-        "otto.lab in tests and docs, for the lab and fleet names). A line marked (a facade) "
+        "otto.lab in tests and docs, for the lab and fleet names; otto.config.scope for the "
+        "settings types and the settings file's location; otto.utils for the path-list "
+        "splitter). A line marked (a facade) "
         "is re-pointed by scripts/facade_sweep.py --apply when it is a from-import "
         "(tests/unit/test_internal_imports_skip_facades.py):\n  " + "\n  ".join(offenders)
     )
@@ -302,6 +337,24 @@ class TestTheScanSeesEverySpelling:
             "from ..config.lab import load_lab\n"
         )
         assert self.lines(source) == [1, 2, 3, 4]
+
+    def test_the_settings_types_and_the_splitter_at_their_old_homes(self):
+        source = (
+            "from otto.config.repo import DockerImage, Repo\n"
+            "from .repo import TOML_SETTINGS_PATH\n"
+            "from .env import split_path_list\n"
+            'monkeypatch.setattr("otto.config.env._PATH_LIST_SEP", f)\n'
+            '_LAZY_EXPORTS = {"DockerImage": ("otto.config.repo", "DockerImage")}\n'
+            "import otto.config.repo as r\n"
+            "r.MonitorSettings\n"
+            'CODE = "from otto.config.repo import ARCHIVE_SUFFIXES\\n"\n'
+            "from otto.config.repo import Repo, selectable_names\n"
+            "from otto.config.scope import TOML_SETTINGS_PATH, DockerImage\n"
+            "from otto.utils import split_path_list\n"
+            'FINE = "otto.config.repo.Repo"\n'
+            "r.Repo\n"
+        )
+        assert self.lines(source, "otto.config.collected_tests") == [1, 2, 3, 4, 5, 7, 8]
 
     def test_otto_code_never_imports_the_otto_lab_facade(self):
         source = (

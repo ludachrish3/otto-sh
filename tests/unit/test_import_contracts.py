@@ -94,11 +94,19 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     # --- Shared modules every command imports. ---
     # The command tree imports otto.config for every `--help`; none reads a repo.
     "import otto.config": ["otto.config.repo", "otto.config.version"],
+    # The repo loader reads the settings types from the foundation module
+    # otto.config.scope, so importing it (`from otto.config import Repo`) loads
+    # no settings model and no pydantic.
+    "import otto.config.repo": ["otto.models.settings", "pydantic"],
     # Command modules take constants from otto.utils; only wait_for_async
     # needs asyncio, and it already runs on a loop.
     "import otto.utils": ["asyncio"],
     # Every command reads settings; only one that loads a lab needs host code.
+    # The specs read the runtime settings types from otto.config.scope only
+    # inside the functions that build them, so reading settings loads nothing
+    # of otto.config (spec 2026-10-11 placement-and-phases §3.6).
     "import otto.models.settings": [
+        "otto.config",
         "otto.host.specs",
         "otto.models.inventory",
         "otto.host.unix_host",
@@ -256,13 +264,22 @@ IMPORT_ONLY_DECLARED: dict[str, list[str]] = {
     "otto.link.params": [],
     # The leaf otto.host and otto.models share: OttoModel, CredSpec, Cred.
     "otto.models.base": [],
-    # The scope predicate and the composition root's error types, below every
-    # layer; it normalizes repo names inside its functions.
+    # The scope predicate, the composition root's error types and the runtime
+    # settings types, below every layer; it normalizes repo names inside its
+    # functions.
     "otto.config.scope": ["otto.models.dependencies"],
     # The declared-entry core and the composed-repos catalog. It never loads
     # otto.bootstrap: the root fills its initiator slot from above.
     "otto.declared": ["otto.config.scope", "otto.invocation"],
     "otto.models.dependencies": [],
+    # The shared helpers every layer reads, the OTTO_SUT_DIRS splitter among them.
+    "otto.utils": [],
+    # The user's home and the user settings file, carved out of otto.config into
+    # the specs layer, so the inventory reads them without otto.config. The home
+    # reads the env settings model and normalizes the workspace slug inside its
+    # functions.
+    "otto.config.home": ["otto.models", "otto.models.dependencies"],
+    "otto.config.user_settings": [],
 }
 
 # Runs in the child. It records, for each watched module, the frames that

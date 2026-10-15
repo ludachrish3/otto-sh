@@ -126,8 +126,12 @@ into `Repo` objects ({doc}`../lifecycle`); their tables (`[docker]`,
 `[reservations]`, `[coverage]`, `[[os_profiles]]`, `[host_preferences]`) each
 have spec models. `otto.models.settings` must not import `otto.config` at
 module scope, or validation would drag the app bootstrap into every boundary
-crossing; it defers the config imports it needs to function bodies. The
-ast-grep rule `models-no-module-scope-config-import` enforces it.
+crossing. The one `otto.config` module it reads is the foundation module
+`otto.config.scope`, where the runtime types its specs build live, and it
+reads from it only inside function bodies: the `to_runtime()` builders and
+one validator's error branch. `tach.toml` declares
+no other `otto.models` → `otto.config` edge, and the ast-grep rule
+`models-no-module-scope-config-import` bans a module-scope one.
 
 ## Where labs come from: the labs package
 
@@ -268,7 +272,7 @@ startup ({doc}`../utilities/logging`).
 - {mod}`otto.host.specs` — `HostSpec`, `UnixHostSpec`, `EmbeddedHostSpec`:
   the spec half of the spec → runtime pattern
 - {mod}`otto.models.settings` — settings-table spec models, including
-  `OttoEnvSettings`, which imports `otto.config` only lazily
+  `OttoEnvSettings`
 - {mod}`otto.host.factory` — `create_host_from_dict`, the fixed
   construction order
 - {mod}`otto.host.os_profile` — `OsProfile`, the base-family → host-class

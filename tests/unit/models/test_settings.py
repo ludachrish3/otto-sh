@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from otto.config.repo import DockerCompose, DockerImage, DockerSettings
+from otto.config.scope import DockerCompose, DockerImage, DockerSettings
 from otto.models.settings import (
     DockerComposeSpec,
     DockerImageSpec,
@@ -528,7 +528,7 @@ def test_docker_spec_fields_match_runtime_dataclass():
     """
     import dataclasses
 
-    from otto.config.repo import DockerCompose, DockerImage, DockerSettings
+    from otto.config.scope import DockerCompose, DockerImage, DockerSettings
     from otto.models.settings import (
         DockerSettingsSpec,
     )

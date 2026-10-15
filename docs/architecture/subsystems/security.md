@@ -119,8 +119,9 @@ syntax.
 - {class}`~otto.models.settings.MonitorSettingsSpec` — the `[monitor]`
   boundary spec (`tls_cert`/`tls_key`, `~` expansion, the
   key-without-cert validation error)
-- {mod}`otto.config.repo` — `MonitorSettings`, the runtime dataclass
-  `MonitorSettingsSpec.to_runtime()` builds
+- {mod}`otto.config.scope` — `MonitorSettings`, the runtime dataclass
+  `MonitorSettingsSpec.to_runtime()` builds and the repo loader holds (its
+  public path is `otto.config.MonitorSettings`)
 - {mod}`otto.monitor.tls` — `resolve_monitor_tls`, which resolves the
   declaration across every configured repo and raises `MonitorTlsError` for a
   missing or unloadable cert/key file or a multi-repo disagreement;

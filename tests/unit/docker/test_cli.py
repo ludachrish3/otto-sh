@@ -13,7 +13,8 @@ import typer
 from otto.cli import docker as docker_cli
 from otto.config import fleet as fleet_mod
 from otto.config.lab import Lab
-from otto.config.repo import DockerUseCase, Repo
+from otto.config.repo import Repo
+from otto.config.scope import DockerUseCase
 from otto.docker.deployment import UseCaseStack
 from otto.docker.observe import DockerVerbError
 from otto.docker.reports import BuildReport, ImageBuild, RepoBuild, TeardownReport

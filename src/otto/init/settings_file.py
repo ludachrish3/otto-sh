@@ -10,7 +10,7 @@ from typing import Any
 
 import tomli
 
-from ..config.repo import TOML_SETTINGS_PATH
+from ..config.scope import TOML_SETTINGS_PATH
 
 
 def settings_path(root: Path) -> Path:

@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 from .errors import MonitorTlsError
 
 if TYPE_CHECKING:
-    from ..config.repo import MonitorSettings, Repo
+    from ..config.repo import Repo
+    from ..config.scope import MonitorSettings
 
 
 def resolve_monitor_tls(repos: "Sequence[Repo]") -> "MonitorSettings | None":

@@ -60,15 +60,21 @@ pytestmark = pytest.mark.interpreter_agnostic
 # otto.declared and otto.models.dependencies became foundation modules of their own: the host
 # layer imports nothing of otto.config but the scope predicate (spec 2026-10-11
 # placement-and-phases §3.5).
+# otto.models, otto.creds and otto.link left it when the runtime settings types and the
+# settings file's location moved from otto.config.repo into the foundation module
+# otto.config.scope, and the OTTO_SUT_DIRS splitter from otto.config.env into otto.utils:
+# otto.models reads nothing of otto.config but the scope module (spec 2026-10-11
+# placement-and-phases §3.6).
+# otto.inventory left it when otto.config.home and otto.config.user_settings became modules of
+# their own in the specs layer: the inventory reads the user's home and settings file without
+# importing otto.config, bar the foundation scope module that names the settings file
+# (spec 2026-10-11 placement-and-phases §3.6).
 BASELINE: dict[str, list[str]] = {
     "otto.bootstrap": ["otto.config"],
     "otto.config": [
         "otto.bootstrap",
         "otto.context",
-        "otto.inventory",
         "otto.labs",
-        "otto.link",
-        "otto.models",
         "otto.reservations",
     ],
     "otto.context": [
@@ -77,18 +83,13 @@ BASELINE: dict[str, list[str]] = {
         "otto.reservations",
         "otto.session",
     ],
-    "otto.creds": ["otto.models"],
-    "otto.docker": ["otto.config", "otto.models"],
-    "otto.inventory": ["otto.config", "otto.creds", "otto.models"],
-    "otto.labs": ["otto.config", "otto.inventory", "otto.link", "otto.models"],
-    "otto.link": ["otto.models"],
-    "otto.models": ["otto.config"],
-    "otto.reservations": ["otto.config", "otto.models"],
+    "otto.docker": ["otto.config"],
+    "otto.labs": ["otto.config"],
+    "otto.reservations": ["otto.config"],
     "otto.session": [
         "otto.bootstrap",
         "otto.config",
         "otto.docker",
-        "otto.inventory",
         "otto.labs",
     ],
 }

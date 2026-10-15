@@ -28,7 +28,7 @@ import pytest
 
 from otto.config import collected_tests as tr
 from otto.config import completion_cache as cc
-from otto.config.repo import TOML_SETTINGS_PATH
+from otto.config.scope import TOML_SETTINGS_PATH
 from tests._fixtures.sutrepo import make_sut_repo
 
 _T = tr.RecordedTest

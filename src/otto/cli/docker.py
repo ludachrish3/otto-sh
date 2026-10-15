@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine
 
     from ..config.completion_cache import ObservedDockerState
-    from ..config.repo import DockerUseCase
+    from ..config.scope import DockerUseCase
     from ..docker.deployment import UseCaseStack
     from ..docker.observe import LogsTarget, ObserveReport
     from ..docker.reports import BuildReport, HostReport

@@ -163,7 +163,7 @@ def _checked(name: str, problems: list[str], *, detail: str = "") -> AreaVerdict
 
 def _data_profile_problems(repo: "Repo") -> list[str]:
     """Check *repo*'s ``[os_profiles]`` tables as the loader does after init."""
-    from ..config.repo import TOML_SETTINGS_PATH
+    from ..config.scope import TOML_SETTINGS_PATH
     from ..host.os_profile import check_data_profiles
 
     try:

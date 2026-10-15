@@ -18,12 +18,8 @@ import pytest
 
 from otto import declared as declared_mod
 from otto.config.lab import Lab
-from otto.config.repo import (
-    DockerCompose,
-    DockerUseCase,
-    Repo,
-)
-from otto.config.scope import ProjectScopeConfig
+from otto.config.repo import Repo
+from otto.config.scope import DockerCompose, DockerUseCase, ProjectScopeConfig
 from otto.declared import DeclaredEntry
 from otto.docker.compose import (
     _repo_parent_host,
@@ -2075,7 +2071,7 @@ async def test_stage_image_context_fails_when_the_dir_cannot_be_prepared(tmp_pat
     holding a file the user deleted locally and produce an image that
     carries a file the user already deleted.
     """
-    from otto.config.repo import DockerImage
+    from otto.config.scope import DockerImage
     from otto.docker.staging import stage_image_context
 
     df = tmp_path / "Dockerfile"

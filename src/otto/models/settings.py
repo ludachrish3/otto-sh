@@ -5,11 +5,12 @@ runtime objects (``DockerSettings``/``DockerImage``/``DockerCompose`` frozen
 dataclasses, ``OsProfile``, the reservation backend) via ``to_runtime()`` — the
 same two-type split the option/host specs use.
 
-Config isolation: this module must NOT import from ``otto.config`` at module
-scope (ast-grep rule ``models-no-module-scope-config-import``) — doing so
-triggers ``config/__init__``'s app bootstrap. Runtime types from
-``config.repo`` are imported lazily inside ``to_runtime()`` and under
-``TYPE_CHECKING`` for annotations only.
+Config isolation: this module imports nothing from ``otto.config`` at module
+scope (ast-grep rule ``models-no-module-scope-config-import``), so loading the
+specs loads no ``otto.config`` module. The runtime types it builds live in the
+foundation module :mod:`otto.config.scope` (spec 2026-10-11
+placement-and-phases §3.6); they are imported inside ``to_runtime()``, and
+under ``TYPE_CHECKING`` for annotations only.
 """
 
 import re
@@ -51,13 +52,13 @@ from ..host.option_specs import (
     UserlandOptionsSpec,
 )
 from ..logger.levels import LEVEL_NAMES
-from ..utils import anchor_path, parse_cache_ttl
+from ..utils import anchor_path, parse_cache_ttl, split_path_list
 from .base import OttoModel
 from .color import validate_color
 from .dependencies import clauses_satisfiable, normalize_name, parse_dependency_entry
 
 if TYPE_CHECKING:
-    from ..config.repo import (
+    from ..config.scope import (
         DockerCompose,
         DockerImage,
         DockerSettings,
@@ -137,7 +138,7 @@ class DockerImageSpec(OttoModel):
 
     def to_runtime(self) -> "DockerImage":
         """Build the ``DockerImage`` runtime dataclass from the validated spec fields."""
-        from ..config.repo import DockerImage
+        from ..config.scope import DockerImage
 
         image = DockerImage(
             name=self.name,
@@ -193,7 +194,7 @@ class DockerComposeSpec(OttoModel):
 
     def to_runtime(self) -> "DockerCompose":
         """Build the ``DockerCompose`` runtime dataclass from the validated spec fields."""
-        from ..config.repo import DockerCompose
+        from ..config.scope import DockerCompose
 
         return DockerCompose(
             name=self.effective_name,
@@ -243,7 +244,7 @@ class DockerUseCaseSpec(OttoModel):
 
     def to_runtime(self) -> "DockerUseCase":
         """Build the ``DockerUseCase`` runtime dataclass from the validated spec fields."""
-        from ..config.repo import DockerUseCase
+        from ..config.scope import DockerUseCase
 
         return DockerUseCase(
             name=self.name,
@@ -304,7 +305,7 @@ class DockerSettingsSpec(OttoModel):
 
     def to_runtime(self) -> "DockerSettings":
         """Build the ``DockerSettings`` runtime dataclass from the validated spec fields."""
-        from ..config.repo import DockerSettings
+        from ..config.scope import DockerSettings
 
         return DockerSettings(
             images=tuple(i.to_runtime() for i in self.images),
@@ -338,7 +339,7 @@ class MonitorSettingsSpec(OttoModel):
 
     def to_runtime(self) -> "MonitorSettings":
         """Build the ``MonitorSettings`` runtime dataclass from the validated spec fields."""
-        from ..config.repo import MonitorSettings
+        from ..config.scope import MonitorSettings
 
         return MonitorSettings(tls_cert=self.tls_cert, tls_key=self.tls_key)
 
@@ -469,7 +470,7 @@ class LoggingConfigSpec(OttoModel):
                 # Lazy, and only on this error path: this module must not import
                 # otto.config at module scope (module docstring; ast-grep rule
                 # models-no-module-scope-config-import).
-                from ..config.repo import TOML_SETTINGS_PATH
+                from ..config.scope import TOML_SETTINGS_PATH
 
                 where = f"{Path(sut_dir) / TOML_SETTINGS_PATH}: "
             raise ValueError(
@@ -1149,7 +1150,7 @@ class OttoEnvSettings(BaseSettings):
 
     # NoDecode: stop pydantic-settings from JSON-decoding the env string for this
     # "complex" (list) field, so the raw OTTO_SUT_DIRS value reaches the
-    # ``_split_path_list`` validator below (``otto.config.env.split_path_list``).
+    # ``_split_path_list`` validator below (``otto.utils.split_path_list``).
     sut_dirs: Annotated[list[Path], NoDecode] = []
     lab: str | None = None
     xdir: Path | None = None
@@ -1167,8 +1168,5 @@ class OttoEnvSettings(BaseSettings):
     @classmethod
     def _split_path_list(cls, v: object) -> object:
         if isinstance(v, str):
-            # Function scope: models may not import otto.config at module scope.
-            from ..config.env import split_path_list
-
             return split_path_list(v)
         return v

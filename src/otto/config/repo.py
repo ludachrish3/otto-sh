@@ -15,7 +15,7 @@ from typing import (
 
 import tomli
 
-from .scope import ProjectScopeConfig
+from .scope import TOML_SETTINGS_PATH, DockerSettings, MonitorSettings, ProjectScopeConfig
 from .version import Version
 
 if TYPE_CHECKING:
@@ -33,120 +33,6 @@ if TYPE_CHECKING:
     from .dependencies import ResolvedDependency
 
 logger = logging.getLogger(__name__)
-
-SETTINGS_FILENAME = "settings.toml"
-TOML_SETTINGS_PATH = Path(".otto") / SETTINGS_FILENAME
-
-
-ARCHIVE_SUFFIXES = (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz")
-"""Context file names docker reads as a tar archive on ``docker build -``."""
-
-
-@dataclass(frozen=True)
-class DockerImage:
-    """A Dockerfile-built image declared by a project."""
-
-    name: str
-    """The image repository name docker sees, verbatim; no tag."""
-
-    dockerfile: Path
-    """Absolute path to the Dockerfile."""
-
-    context: Path
-    """Absolute path to the build context directory."""
-
-    target: str | None = None
-    """Optional multi-stage build target."""
-
-    build_args: tuple[tuple[str, str], ...] = ()
-    """Frozen list of (name, value) build args. Tuples (not dicts) so the
-    container is hashable and order is preserved."""
-
-    dockerfile_in_archive: str = ""
-    """For an archive ``context``: the Dockerfile's path inside the archive, as written."""
-
-    @property
-    def is_archive(self) -> bool:
-        """True when ``context`` is a tar archive given to docker unopened."""
-        return self.context.name.endswith(ARCHIVE_SUFFIXES)
-
-
-@dataclass(frozen=True)
-class DockerCompose:
-    """A docker-compose file contributed by a project."""
-
-    path: Path
-    """Absolute path to the compose YAML file."""
-
-    services: tuple[str, ...] = ()
-    """Service names declared in the compose file.
-
-    Authoritative, not a hint: this is the list container hosts are registered
-    from, and it is what lets tab-completion synthesize ids without parsing
-    YAML on the completion fast path. The legacy per-repo ``compose_up`` path
-    additionally compares it with ``docker compose config --services`` once the
-    stack is up and warns on drift; the use-case deploy path registers from the
-    declaration alone.
-    """
-
-    name: str = ""
-    """Handle use-case fragments reference; the spec fills the path stem when unset."""
-
-    users: tuple[tuple[str, str], ...] = ()
-    """Frozen, sorted (service, user) pairs from ``users = {...}``: the declared
-    default access user per service. Tuples rather than a dict so the container
-    stays hashable, matching ``build_args``. Values go to docker verbatim."""
-
-
-@dataclass(frozen=True)
-class DockerUseCase:
-    """One ``[[docker.use_cases]]`` fragment (spec §3.1): the atom of participation.
-
-    A use-case deploys on one parent (the ``--parent`` it is given, or the
-    lab's default by the one rule), so a fragment says nothing about where.
-    """
-
-    name: str
-    """Use-case this fragment belongs to; same name across repos = one use-case."""
-    composes: "tuple[str, ...]"
-    """Handles into this repo's [[docker.composes]]."""
-    provides: "str | None" = None
-    """Capability this fragment offers to the provider competition (spec §4)."""
-    priority: int = 0
-    """Competition rank; higher wins; only meaningful with provides."""
-    env: "dict[str, str]" = field(default_factory=dict)
-    """Channel-1 static env; values may use ``${otto:...}`` fact refs (spec §6)."""
-    pass_env: "tuple[str, ...]" = ()
-    """Allowlisted variable names copied from the invoking user's shell."""
-
-
-@dataclass(frozen=True)
-class DockerSettings:
-    """Per-repo docker configuration parsed from `[docker]` in `settings.toml`."""
-
-    images: tuple[DockerImage, ...] = ()
-    """Images this project knows how to build."""
-
-    composes: tuple[DockerCompose, ...] = ()
-    """Compose files this project contributes."""
-
-    use_cases: tuple[DockerUseCase, ...] = ()
-    """`[[docker.use_cases]]` fragments this project contributes."""
-
-
-@dataclass(frozen=True)
-class MonitorSettings:
-    """Per-repo monitor configuration parsed from `[monitor]` in `settings.toml`.
-
-    ``tls_cert``/``tls_key`` point at a PEM certificate/key on the machine that
-    runs ``otto monitor`` (conventionally under ``~/.otto/tls/`` — the
-    committed settings value is shared team-wide, so it must not name a
-    machine-local absolute path). ``tls_key`` may stay ``None`` when the cert
-    PEM bundles the private key.
-    """
-
-    tls_cert: Path | None = None
-    tls_key: Path | None = None
 
 
 def selectable_names(classes: list[str], name: str) -> list[str]:

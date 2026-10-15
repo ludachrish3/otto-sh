@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.repo import MonitorSettings, Repo
+from otto.config.repo import Repo
+from otto.config.scope import MonitorSettings
 from otto.monitor.errors import MonitorTlsError
 from otto.monitor.tls import resolve_monitor_tls
 from tests._fixtures.fake_repo import fake_repo

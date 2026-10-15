@@ -2368,7 +2368,8 @@ def _collect_child_command(home: Path) -> _ChildCommand | None:
     """
     import sys
 
-    from .env import _PATH_LIST_SEP, HOME_ENV_VAR, SUT_DIRS_ENV_VAR, XDIR_ENV_VAR
+    from ..utils import _PATH_LIST_SEP
+    from .env import HOME_ENV_VAR, SUT_DIRS_ENV_VAR, XDIR_ENV_VAR
 
     otto_bin = Path(sys.executable).parent / "otto"
     if not otto_bin.exists():

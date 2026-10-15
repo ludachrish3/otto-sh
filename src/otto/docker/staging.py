@@ -29,7 +29,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config.repo import DockerCompose, DockerImage
+from ..config.scope import DockerCompose, DockerImage
 from ..host.errors import HostCommandError, HostUnreachableError
 from ..host.host import Host, is_dry_run
 from ..result import CommandNotRunError, CommandResult

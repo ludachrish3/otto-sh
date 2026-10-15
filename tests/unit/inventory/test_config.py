@@ -688,7 +688,7 @@ def test_build_inventory_names_each_repos_settings_file_as_its_origin(tmp_path):
     never checked it — mutating the origin to ``str(repo.sut_dir)`` stayed
     green.
     """
-    from otto.config.repo import TOML_SETTINGS_PATH
+    from otto.config.scope import TOML_SETTINGS_PATH
 
     a = _inventory_file(tmp_path, "a.json")
     b = _inventory_file(tmp_path, "b.json")

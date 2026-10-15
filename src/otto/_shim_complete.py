@@ -60,7 +60,7 @@ DOCKER_OBSERVED_CONTAINERS_TTL_SECONDS = 15 * 60
 DOCKER_OBSERVED_IMAGES_TTL_SECONDS = 24 * 60 * 60
 """The two TTLs of ``__docker_observed__``, each sub-entry judged against its own."""
 SETTINGS_RELPATH = os.path.join(".otto", "settings.toml")
-"""``otto.config.repo.TOML_SETTINGS_PATH``: the ``settings`` stat of a table's ``env``."""
+"""``otto.config.scope.TOML_SETTINGS_PATH``: the ``settings`` stat of a table's ``env``."""
 COLLECT_LOCK_FILENAME = ".completion_collect.lock"
 COLLECT_LOCK_STALE_SECONDS = 15 + 30
 COLLECT_COOLDOWN_FILENAME = ".completion_collect.failed"

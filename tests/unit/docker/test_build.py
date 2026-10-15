@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from otto.config.repo import DockerImage
+from otto.config.scope import DockerImage
 from otto.docker.build import BuildOptions, _build_one, build_command, image_references
 from otto.result import CommandResult, Result
 from otto.utils import Status

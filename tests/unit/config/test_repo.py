@@ -1,10 +1,12 @@
 import sys
 import textwrap
+import typing
 from pathlib import Path
 
 import pytest
 
-from otto.config.repo import Repo
+from otto.config import DockerSettings, MonitorSettings
+from otto.config.repo import CompiledSettings, Repo
 from otto.host.element import Element
 from tests._fixtures.mockrepo import MockRepo
 from tests._fixtures.paths import TESTS_ROOT
@@ -392,3 +394,27 @@ class TestOsProfilesIntegration:
         assert type(host.command_frame).__name__ == "ZephyrInlineRetcodeFrame"
         # filesystem stays per-host:
         assert isinstance(host.filesystem, FatRamFileSystem)
+
+
+@pytest.mark.parametrize("cls", [Repo, CompiledSettings], ids=lambda cls: cls.__name__)
+def test_settings_field_annotations_resolve_at_runtime(cls):
+    """``typing.get_type_hints`` resolves the settings fields of the repo dataclasses.
+
+    The settings types the fields name live in another module, and the loader
+    binds them at module scope, so a tool that reads the annotations at runtime
+    (a dataclass serializer, a schema generator) gets the classes, not a NameError.
+    Only those two fields are resolved, in the loader's own module globals: other
+    fields name types imported for type checking only (``list["PendingLabSource"]``),
+    which Python 3.14 resolves inside the generic where 3.10 left the string alone.
+    """
+
+    class SettingsFields:
+        __annotations__ = {
+            field: cls.__annotations__[field] for field in ("docker_settings", "monitor_settings")
+        }
+
+    SettingsFields.__module__ = cls.__module__
+    hints = typing.get_type_hints(SettingsFields)
+
+    assert hints["docker_settings"] is DockerSettings
+    assert hints["monitor_settings"] is MonitorSettings

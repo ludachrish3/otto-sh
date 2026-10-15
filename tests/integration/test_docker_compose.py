@@ -17,7 +17,8 @@ import pytest
 import pytest_asyncio
 
 from otto.config.lab import Lab
-from otto.config.repo import DockerCompose, Repo
+from otto.config.repo import Repo
+from otto.config.scope import DockerCompose
 from otto.docker import build_images, compose_down, compose_up, composed
 from otto.docker.compose import get_user_compose_project
 from otto.host.docker_host import DockerContainerHost

@@ -94,7 +94,8 @@ from .completion_cache import (
     _cache_path,
     ancestor_conftests,
 )
-from .repo import TOML_SETTINGS_PATH, pytest_config_paths, selectable_names
+from .repo import pytest_config_paths, selectable_names
+from .scope import TOML_SETTINGS_PATH
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator

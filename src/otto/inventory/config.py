@@ -405,7 +405,7 @@ def build_inventory(
     # Deferred: see the module docstring. TOML_SETTINGS_PATH rather than a
     # hand-spelled ".otto"/"settings.toml" — one owner for where a repo's
     # settings live, so a relocation cannot leave this error text lying.
-    from ..config.repo import TOML_SETTINGS_PATH
+    from ..config.scope import TOML_SETTINGS_PATH
     from ..config.user_settings import load_user_settings
 
     declarations = [

@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from otto.config.lab import Lab
-from otto.config.repo import DockerCompose
+from otto.config.scope import DockerCompose
 from otto.docker import deployment as deploy_mod
 from otto.docker import resolve as resolve_mod
 from otto.docker.adapter import AdapterResult

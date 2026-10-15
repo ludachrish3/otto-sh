@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .dependencies import ResolvedDependency as ResolvedDependency
-    from .repo import DockerCompose as DockerCompose
-    from .repo import DockerImage as DockerImage
-    from .repo import DockerSettings as DockerSettings
-    from .repo import MonitorSettings as MonitorSettings
     from .repo import Repo as Repo
+    from .scope import DockerCompose as DockerCompose
+    from .scope import DockerImage as DockerImage
+    from .scope import DockerSettings as DockerSettings
+    from .scope import MonitorSettings as MonitorSettings
     from .user_settings import load_user_settings as load_user_settings
     from .user_settings import user_settings_path as user_settings_path
     from .version import Version as Version
@@ -53,11 +53,15 @@ __all__ = [
 # brings the TOML parser, .scope, .version and .corpus_snapshot, and the
 # command tree imports this package to build every `--help`, which reads no
 # repo. MEASURED: eager, they were 200 of `otto --help`'s 1379 file operations.
+# The settings types (Docker*, MonitorSettings) live in the foundation module
+# otto.config.scope, which the repo loader and the settings specs both read
+# (spec 2026-10-11 placement-and-phases §3.6); importing one loads that module
+# alone, not the repo loader.
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
-    "DockerCompose": ("otto.config.repo", "DockerCompose"),
-    "DockerImage": ("otto.config.repo", "DockerImage"),
-    "DockerSettings": ("otto.config.repo", "DockerSettings"),
-    "MonitorSettings": ("otto.config.repo", "MonitorSettings"),
+    "DockerCompose": ("otto.config.scope", "DockerCompose"),
+    "DockerImage": ("otto.config.scope", "DockerImage"),
+    "DockerSettings": ("otto.config.scope", "DockerSettings"),
+    "MonitorSettings": ("otto.config.scope", "MonitorSettings"),
     "Repo": ("otto.config.repo", "Repo"),
     "Version": ("otto.config.version", "Version"),
     "ResolvedDependency": ("otto.config.dependencies", "ResolvedDependency"),

@@ -255,7 +255,7 @@ def _sut_dirs_var() -> str:
 
 def _already_active(root: Path, sut_dirs: str) -> bool:
     """Return True when *sut_dirs* (an ``OTTO_SUT_DIRS`` value) already names *root*."""
-    from ..config.env import split_path_list
+    from ..utils import split_path_list
 
     return any(entry.resolve() == root for entry in split_path_list(sut_dirs))
 
