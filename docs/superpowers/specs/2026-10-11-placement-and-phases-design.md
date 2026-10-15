@@ -813,6 +813,33 @@ it when resolved (§3.12), so they behave exactly as today.
 - **Carved:** `otto.config.home`, `otto.config.user_settings`.
 - New edges `bootstrap → models` and `config → utils` are outside the cycle by then.
 
+**Amended by P6, 2026-10-14.** Building P6 changed this section in these places:
+- **The settings types live in `otto.config.scope`, not `otto.models.settings`.** Chosen by
+  measurement: it is the only tested candidate that satisfies both constraints: it keeps
+  `typing.get_type_hints(Repo)` and
+  `get_type_hints(CompiledSettings)` resolving and grows no harness surface and no public name.
+  `otto.config.scope` is a foundation module already loaded wherever `otto.config.repo` is, so the
+  repo loader imports the three names it uses at module scope for free; `otto.models.settings`
+  reads the types inside the functions that build them, where it read `otto.config.repo` before.
+  A `models.settings` or `models.base` home made `from otto.config import DockerSettings`,
+  `otto.docker`'s builders and ten public `otto.init` names load pydantic, and a new pydantic-free
+  module cost a file on every path that reads settings (§4.2). `otto.config.scope` now holds three
+  topics: the scope predicate, the composition root's errors and these types.
+- **§2.2's map gains three edges to `otto.config.scope`:** `otto.models` (in place of
+  `otto.config`, inside functions only; the ast-grep rule `models-no-module-scope-config-import`
+  still bans a module-scope one), `otto.inventory` and `otto.init` (`TOML_SETTINGS_PATH`).
+  `bootstrap → models` is not needed: `otto.bootstrap` reads `TOML_SETTINGS_PATH` from
+  `otto.config.scope`, which it already declared. `config → utils` is the completion cache's
+  collection child reading `_PATH_LIST_SEP`.
+- **The carve declares more edges than §6 lists.** Declaring `otto.config.home` and
+  `otto.config.user_settings` re-attributes imports tach had counted as `otto.config`:
+  `config`, `cli` and `suite` → `config.home`; `cli`, `init` → `config.user_settings`; `inventory`
+  → both, in place of `otto.config`. Each is in §2.2's end-state map.
+- **One splitter, two copies.** `otto._shim_complete` keeps its own stdlib-only `_PATH_LIST_SEP`:
+  the console-script shim may import nothing of otto.
+- **Not breaking (D-P6-1).** No declared `__all__` changes. A moved class's `__module__`, and with it
+  the pickle path and the class repr, is an implementation detail, as in P3; the commit is unmarked.
+
 ### 3.7 Lab model and loader (P7)
 
 `otto.lab` gets its implementation (spec 1 D1).
@@ -885,7 +912,7 @@ forbids cycles.
   result calls the initiator, the mechanism P5 gave `scope_for_repo`, through one reader,
   `declared.compose()`: the complete result if published, else the in-progress one (the reentrant
   answer of `bootstrap.py:325-335`), else the initiator. `otto.declared` is foundation, already
-  loaded wherever `otto.bootstrap` is (`models/settings.py:42`), so no file is added.
+  loaded wherever `otto.bootstrap` is (`models/settings.py:44`), so no file is added.
 - **Every public name stays.** `otto.bootstrap` re-exports what moved, so `__all__`
   (`bootstrap.py:44`) and the golden lines (`public_api.txt:3-47`) are unchanged, and each
   re-export is the same object as its owner's.
@@ -1336,7 +1363,7 @@ dispatch harness. Each statement below is a hypothesis; the measurement decides.
 | P2 | On `completion_repo_handover`, a swap: the handover loads `instruction_catalog` instead of `instructions`. The four project importers re-point, and `cli/run.py`, now the only module-scope importer of the face, is not on the handover. File operations are measured. | Re-point any protected surface still importing the face. |
 | P3 | Neutral: no module is added (the impairer contract joins `params`), and `otto.host` is already loaded wherever `models/host.py` was (`:76-81`). | — |
 | P4 | A decline where a container host was touched while stopped: `otto.docker.resolve`, `deployment` and `compose` are no longer imported by the host. No protected surface changes. | — |
-| P5 | Neutral where `models.settings` is loaded, which already imports `otto.declared` (`models/settings.py:42`). A surface that loads `otto.bootstrap` without `models.settings` gains `otto.declared`; the measurement names any such surface. | A protected-surface growth goes to the owner before landing. |
+| P5 | Neutral where `models.settings` is loaded, which already imports `otto.declared` (`models/settings.py:44`). A surface that loads `otto.bootstrap` without `models.settings` gains `otto.declared`; the measurement names any such surface. | A protected-surface growth goes to the owner before landing. |
 | P6 | Neutral: `models.settings` is loaded wherever `config.repo` is. | Home the types in `models.base`. |
 | P7 | Neutral if `config.lab` is on no protected surface; otherwise +1 (`otto.lab.model`). The quoted annotation keeps the model off the loader's module scope. | — |
 | P8 | +1 leaf (`active_run`) wherever `otto.context` loads. Named, non-protected surfaces: the dispatch surfaces, `run` and `test`. | — |
@@ -1380,13 +1407,26 @@ surface is +0. Three base-vs-tip pairs agreed. The only difference between runs 
 operation on 3.10 `host_local_exec` that alternated between the `fd` and `other` buckets at an
 unchanged total, in either direction, so it is noise, not the change.
 
+**P6, measured (amended by P6, 2026-10-14).** Row P6 holds: neutral. Harness, base `6dc06ed21` vs
+the landing, two runs per minor: 3.10: 38 surfaces, 0 changed; 3.11: 38 surfaces, 0 changed; 3.12:
+38 surfaces, 0 changed; 3.13: 38 surfaces, 0 changed; 3.14: 38 surfaces, 0 changed. No bucket moved
+at an unchanged total. No decline.
+Outside the harness, on 3.10, fresh processes, twice: import otto.config.repo: otto 7 -> 7, modules
+54 -> 54, file ops 48 -> 48; from otto.config import Repo: otto 7 -> 7, modules 54 -> 54, file ops
+48 -> 48; from otto.config import DockerSettings: otto 7 -> 5, modules 54 -> 43, file ops 48 -> 39;
+and every public name of `otto.docker`, `otto.config`, `otto.models`, `otto.monitor` and each
+namespace that reaches a moved name: SUMMARY 0 grow, 14 shrink, 129 unchanged, 0 failed, 0 not
+reproduced of 143 (both runs). On BASE, `otto.config.repo` loads on 26 of the 38
+surfaces and `otto.models.settings` on exactly the same 26; the home was chosen against six
+measured candidates (§3.6).
+
 ### 4.3 Package ancestors
 
 Importing a carved module runs every ancestor `__init__`, so every ancestor of a carved module
 stays lazy. Its runtime body holds only `TYPE_CHECKING` imports, a PEP 562 table, and the
 stdlib-only eager imports that `.ast-grep/rules/lazy-package-init-stays-lazy.yml:65-75` pins.
 Today that is `config/__init__.py:21` importing `.env`, which is stdlib-only (`config/env.py:3-6`).
-P5 and P6 only remove names from `config/env.py`.
+P5 and P6 only remove names from `config/env.py`. (P6 removed `split_path_list`, `_PATH_LIST_SEP` and the `os`/`re` imports; `config/env.py` stays stdlib-only.)
 
 Ancestors this covers:
 - `otto/config` (scope, home, user_settings);
@@ -1409,6 +1449,8 @@ example, `import otto.config.scope` loads no `otto.*` module beyond `otto`, `ott
 allowance, added as `ancestor_eager_imports`: the top-level relative imports of each ancestor
 `__init__`, which the ast-grep rule keeps stdlib-only. A pin checks that `otto.config`'s eager
 imports are exactly `otto.config.env`.
+
+**Amended by P6, 2026-10-14.** `otto.config.home` and `otto.config.user_settings` get `IMPORT_ONLY_DECLARED` rows (`otto.models` and `otto.models.dependencies` held to function scope for the home), and `otto.utils` gets one too. `otto.models.settings` is not a tach module, so its row is the `IMPORT_CONTRACTS` forbidden form: it loads no `otto.config`. `IMPORT_CONTRACTS["import otto.config.repo"]` pins that the repo loader loads no settings model.
 
 ## 5. Enforcement
 
@@ -1618,6 +1660,8 @@ thirteen P5 edges. P5's commit is also marked breaking: D2 changes behavior on a
 path, and the owner's 2026-10-12 rule marks any behavior change, so P4 is not the only marked
 commit.
 
+**Amended by P6, 2026-10-14.** The real tree confirms row P6: the cycle is 7 modules and 16 in-cycle edges (61 modules, 304 edges, 54 layered, §5.2), and `BASELINE` lost exactly Appendix A's fifteen P6 edges. The move alone (before the carve) already took creds, link and models out (8 / 20); the carve took the inventory. P6's commit is not marked.
+
 **Phases re-checked under the revised S5-1.** P1 is now split (above), and P9's split follows
 cohesion rather than the shrink. The carve-with-the-fix rule (§5.1) stays, because carving
 earlier would only add `BASELINE` entries. P4's place before P5 is a real dependency, not a
@@ -1638,6 +1682,9 @@ shrink artifact. No other phase had been bent to stay shrink-only, so none chang
 | S5-6 | **Owner, 2026-10-11, on the S5-5 review:** no public behavior change beyond S5-4 and D2. The draft decision D3 (composing reads raise when the root was never loaded) is withdrawn; the composing entry points load the root when resolved instead. | §3.12 |
 | D2 | **Owner, 2026-10-11: (a) admit.** With `otto.bootstrap` never imported, `scope_for_repo` admits. The alternative, a by-name import of `otto.bootstrap` from foundation, would have been an upward exception. | §3.5 |
 | D-P2-1 | **Owner, 2026-10-12, re-confirmed the same day:** approve the catalog's exact +4 footprint on `completion_repo_handover` and the 23 named non-protected surfaces; any other growth, or a listed surface that does not grow, stops the landing. | §4.2 |
+| D-P6-1 | **Owner, 2026-10-14:** P6 is unmarked; a moved class's `__module__` — and with it the pickle path and repr — is an implementation detail, as in P3. | §3.6, §4.1 |
+
+**Amended by P6, 2026-10-14.** D-P6-1 added; P6's settings-type home was chosen by measurement (§3.6, §4.2), not ruled.
 
 **Decided in the design by evidence, not by the owner**
 - `CredSpec` lives in `models.base` (§3.3).
