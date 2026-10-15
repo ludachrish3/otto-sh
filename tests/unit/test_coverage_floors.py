@@ -35,7 +35,9 @@ Same shape as ``test_declared_harness_bounds.py``: the value is read from the
 build file where it is declared, never restated here. The readers strip
 comment lines and refuse duplicate declarations, because a regex that reads
 the first match is one commented-out experiment away from reading the wrong
-number.
+number. ``noxfile_floors`` is the exception: it is an inventory, returning
+every floor it finds and refusing nothing; the "only floor in the noxfile"
+claim lives in ``test_the_primary_hostless_pair_carries_the_noxfile_s_only_floor``.
 """
 
 import re
@@ -43,6 +45,8 @@ import re
 import pytest
 
 from tests._fixtures.paths import PROJECT_ROOT
+
+pytestmark = pytest.mark.interpreter_agnostic
 
 _FULL_COVERAGE_FLOOR = 95.5
 _HOSTLESS_COVERAGE_FLOOR = 94.75
@@ -76,6 +80,34 @@ def noxfile_hostless_serial_floor(text: str) -> float:
     assert matches, "HOSTLESS_SERIAL_ARGS carries no --cov-fail-under"
     assert len(matches) == 1, f"HOSTLESS_SERIAL_ARGS carries {len(matches)} floors: {matches}"
     return float(matches[0])
+
+
+def noxfile_floors(text: str) -> "dict[str, list[float]]":
+    """Every ``--cov-fail-under`` the noxfile carries, keyed by its ``*_ARGS`` tuple.
+
+    Only live lines count (a commented-out floor is neither a gate nor a
+    duplicate), and only floors inside a module-level ``NAME = (...)`` tuple:
+    that is the one shape the sessions run (``session.run("pytest", *NAME, …)``,
+    pinned by ``test_python_matrix_tiering``). A floor outside a bundle is
+    outside the shape those pins police, so it is listed under its own key,
+    ``"<outside a bundle>"``, for the only-floor pin to see.
+    """
+    live = _live_lines(text)
+    floors: "dict[str, list[float]]" = {}
+    covered: "list[tuple[int, int]]" = []
+    for block in re.finditer(r"^([A-Z_]+_ARGS)\s*=\s*\((.*?)^\)", live, re.MULTILINE | re.DOTALL):
+        covered.append(block.span())
+        found = [float(x) for x in re.findall(r"--cov-fail-under=(\d+(?:\.\d+)?)", block.group(2))]
+        if found:
+            floors[block.group(1)] = found
+    outside = [
+        float(m.group(1))
+        for m in re.finditer(r"--cov-fail-under=(\d+(?:\.\d+)?)", live)
+        if not any(start <= m.start() < end for start, end in covered)
+    ]
+    if outside:
+        floors["<outside a bundle>"] = outside
+    return floors
 
 
 def coveragerc_branch(text: str) -> bool:
@@ -202,3 +234,43 @@ def test_the_floor_readers_fail_loud_on_the_shapes_they_must_not_guess() -> None
     assert coveragerc_precision("[run]\nprecision = 0\n[report]\n; note\nprecision = 2\n") == 2
     with pytest.raises(AssertionError, match="sets no precision"):
         coveragerc_precision("[report]\n; precision = 2\n[html]\n")
+
+
+def test_the_primary_hostless_pair_carries_the_noxfile_s_only_floor() -> None:
+    """One floor in the noxfile: CI's, on the primary's hostless pair; all else uninstrumented.
+
+    ``tests_all`` used to gate at 92 on its 3.10 leg — a second, lower reading
+    of the selection ``make coverage`` already gates at 95.5 on the same
+    tree, minus the browser fold-in — and the release ran it. Owner ruling 5
+    (#566): no canary floor; the 92 floor goes. With it the primary leg's
+    instrumentation goes too: a report nothing reads costs ~14 % of a leg.
+    The hostless primary pair keeps CI's floor (the parallel twin's ``0``
+    is the "judge the fold after the serial leg appends" idiom).
+    """
+    text = (PROJECT_ROOT / "noxfile.py").read_text()
+    assert noxfile_floors(text) == {
+        "HOSTLESS_TEST_ARGS": [0.0],
+        "HOSTLESS_SERIAL_ARGS": [noxfile_hostless_serial_floor(text)],
+    }, (
+        "the noxfile carries a coverage floor outside the primary hostless pair: "
+        f"{noxfile_floors(text)}. The release trusts the coverage stamp for the primary "
+        "and runs every other leg uninstrumented; a floor elsewhere is a second gate "
+        "nobody reads (or a leg instrumented for nothing)"
+    )
+
+
+def test_the_floor_reader_sees_every_bundle_and_what_lies_outside_one() -> None:
+    synthetic = (
+        'HOSTLESS_TEST_ARGS = (\n    "--cov-fail-under=0",\n)\n'
+        'HOSTLESS_SERIAL_ARGS = (\n    "-n0",\n    # "--cov-fail-under=90",\n'
+        '    "--cov-fail-under=94.75",\n)\n'
+        'TESTS_ALL_SERIAL_ARGS = (\n    "--cov-append",\n    "--cov-fail-under=92",\n)\n'
+        'def session(s):\n    s.run("pytest", "--cov-fail-under=80")\n'
+    )
+    assert noxfile_floors(synthetic) == {
+        "HOSTLESS_TEST_ARGS": [0.0],
+        "HOSTLESS_SERIAL_ARGS": [94.75],
+        "TESTS_ALL_SERIAL_ARGS": [92.0],
+        "<outside a bundle>": [80.0],
+    }
+    assert noxfile_floors('X_ARGS = (\n    "-n0",\n)\n') == {}

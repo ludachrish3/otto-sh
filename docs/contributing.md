@@ -442,6 +442,39 @@ present would be just as wrong as gating the browser lanes without it.
 `git push` to `main` runs this automatically via `.githooks/pre-push`; use
 `git push --no-verify` to skip it deliberately.
 
+### The coverage stamp
+
+`make coverage` leaves a **stamp** when every leg passes: a small JSON file
+under the clone's common git dir (`.git/otto-coverage-stamps/<tree>.json`,
+shared by every worktree) naming the committed tree it gated
+(`git rev-parse HEAD^{tree}`), the primary interpreter it ran under, the
+threshold and selection, and a digest of the built web assets. `make release`
+checks the stamp first and, when HEAD's tree has no valid one, runs
+`make coverage` itself before any test stage, and before any stage that
+commits, and checks again; its own matrix
+(`make nox-release`) then covers 3.11–3.14 only, because the primary's
+session is what the stamp proves.
+
+The stamp is a committed-tree contract, like `make gate-fresh`: a run over
+modified or staged tracked files, over an untracked file under `src/` or a
+`testpaths` root in `pyproject.toml` (the live checkout would import it),
+under a venv on anything but the primary interpreter, or with ANY variable
+on the make command line (`BUMP=` and `NEW_VERSION=` excepted — they are the
+release's own; an environment `PYTEST_ADDOPTS` is simply cleared) still runs
+every leg and is **not stamped** — the first lines of the run say why. An
+untracked file anywhere else (`tests/_fixtures/`, `scripts/`) does not
+block the stamp; the run lists it, and you should add it before you gate,
+because the legs may import it while the committed tree lacks it. Only
+`make coverage` stamps: `make all` and `make validate` run the same coverage
+legs but leave no stamp. Commit, then `make coverage`, and the release will
+find the stamp.
+
+The release reads the same rules. A dirty tree, a non-primary venv or a
+command-line variable stops the release at once; only a missing or
+mismatched stamp runs `make coverage`. So `make release` with any
+command-line variable but `BUMP=` or `NEW_VERSION=` is refused before any
+test stage runs, rather than gated at a custom setting and released.
+
 ## Keeping your branch up to date
 
 Always rebase, never merge, so history stays linear:
@@ -770,7 +803,7 @@ through 3.14 — use `nox`:
 ```bash
 make nox-unit                      # unit level tier across all Pythons (no VMs; family on 3.10 only)
 make nox-integration               # unit + integration tiers across all Pythons (full lab; family on 3.10 only)
-make nox                           # tiered matrix: full suite on 3.10 (floor); every product test, minus the interpreter_agnostic family, on 3.14 (warning canary); trimmed hostless on 3.11-3.13 (needs VMs)
+make nox                           # tiered matrix: full suite on 3.10 (the oldest supported interpreter; uninstrumented — the floor is make coverage's); every product test, minus the interpreter_agnostic family, on 3.14 (warning canary); trimmed hostless on 3.11-3.13 (needs VMs)
 make nox-full                      # every tier on all Pythons; the interpreter_agnostic family on 3.10 only (needs VMs)
 uv run nox -s tests_hostless-3.10  # the no-testbed CI gate under one Python
 uv run nox -s tests_unit-3.14 -- -k test_session   # forward args to pytest
@@ -1050,10 +1083,13 @@ make coverage
 ```
 
 Any `make coverage-*` target writes the HTML report to `reports/coverage/html`
-on its final pytest leg. A bare `pytest` run (or a nox session) prints the
-`term-missing` console report only — the HTML tree is asked for per lane, not
-by `pyproject.toml`'s `addopts`, so the ten legs a release drives do not each
-rewrite it.
+on its final pytest leg. A bare `pytest` run prints the `term-missing`
+console report only. Nox sessions run with coverage off and print none
+(the one exception is `tests_hostless` on the primary Python, which keeps
+the CI floor — see the coverage-floors note at the top of `noxfile.py`). The
+HTML tree is asked for per lane, not by `pyproject.toml`'s `addopts`, so the
+release legs (the ones the census in `tests/unit/test_lane_invariants.py`
+enumerates) do not each rewrite it.
 
 ### Manually
 

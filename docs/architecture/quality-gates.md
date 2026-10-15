@@ -278,7 +278,7 @@ job that enforces it on push.
 | browser e2e | `dashboard` (Chromium; `dashboard-all` for all three) | `dashboard` (all three, serially) | `dashboard` (one parallel job per engine) |
 | docs | `docs` | `docs` | `docs` |
 | vendored-UI upstream drift | — | — | `untitledui-drift.yml` (its own workflow) |
-| Python coverage floor (95.5, lines + branches) | `coverage`, `validate`, `all` | — | **not in CI** — local only; `release` runs a lower 92 floor via `nox -s tests_all` |
+| Python coverage floor (95.5, lines + branches) | `coverage`, `validate`, `all` | — | **not in CI** — local only; `release` trusts the coverage stamp (`make coverage` passed on the released tree under this venv, with these assets) or runs `make coverage` itself first |
 | chaos / stability lanes | `chaos`, `chaos-embedded`, `stability*`; `release-campaign` runs the stability tiers once inside `make release`, never the chaos lanes (see below) | `chaos`, `chaos_embedded` | **not in `ci.yml`** — nightly runs the no-VM legs only |
 
 ### The last two rows are the point
@@ -290,17 +290,34 @@ the *hostless* slice at 94.75 (`coverage-hostless` / the `tests` job),
 because the full run needs lab VMs. A contributor reading only
 `.github/workflows/ci.yml` would conclude the 95.5 floor is enforced on push.
 
-`make release` does not reach it either — and the near miss is worth being
-precise about. Release runs `make nox`, whose `tests_all` session carries its
-own `--cov-fail-under=92` on its 3.10 leg (every other interpreter's leg runs
-`--no-cov`): a real coverage gate, but a lower one, because
-that session excludes the `browser` marker and so omits the dashboard
-`--cov-append` fold-in that `coverage-python` gets from its `dashboard`
-prerequisite. The 95.5 floor is reached only through `make coverage`, and
-through `make validate` / `make all`, which invoke it via `COVERAGE_TARGET`
-(default `coverage-python`; `make ci` overrides it to `coverage-hostless`).
-So in practice the 95.5 floor is enforced by you, before you hand the work
-over.
+`make release` reaches it through the **coverage stamp**. `make coverage`
+records, under the clone's common git dir, that every leg passed on the
+committed tree (`HEAD^{tree}`), under the primary interpreter (3.10 — a venv
+rebuilt on another CPython is refused), at the declared threshold and
+selection, against the built web assets; `make release` checks that stamp
+first and, finding none for HEAD's tree (or one written under another patch
+release of the primary, other assets, or a different gate), runs `make coverage` itself
+before any test stage, and before any stage that commits — then checks again,
+so a run the stamp refused ends the release there. The release's own matrix,
+`make nox-release`, then runs the canary and the middle versions only: the
+primary's session was the selection the stamp already proves (it used to run
+again under a lower 92 floor nobody read,
+[#566](https://github.com/ludachrish3/otto-sh/issues/566)). A run over a
+modified or staged tracked file, an untracked file under `src/` or a test
+root, or with ANY variable on the make command line (`BUMP=` and
+`NEW_VERSION=` excepted — they are the release's own) still runs every leg
+and is simply not stamped — `scripts/coverage_stamp.py` says why, and
+`tests/unit/scripts/test_coverage_stamp.py` pins each refusal. The release
+check applies the same rules, and tells the two kinds of "no" apart: a
+dirty tree, a non-primary venv or a command-line variable stops the release
+at once; only a missing or mismatched stamp runs `make coverage`. So
+`make release` with any other command-line variable is refused before any
+test stage, rather than run unstamped and stopped at the re-check. Outside the
+release, the 95.5 floor is also reached through `make validate` / `make all`,
+which invoke it via `COVERAGE_TARGET` (default `coverage-python`; `make ci`
+overrides it to `coverage-hostless`). So the 95.5 floor is enforced by you
+before you hand the work over, and the release will not take your word for
+it.
 
 **The chaos and stability lanes are not in CI either.** They are bed-hostile
 by construction — they SIGKILL sessions, reboot hosts, and hold a lease on

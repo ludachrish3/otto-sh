@@ -13,6 +13,7 @@ MEASURED 2026-09-24, twice, on real releases: when a release failed after
 that most needed a line got none.
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -134,3 +135,27 @@ def test_a_tag_that_was_already_at_head_is_not_a_success(tmp_path):
 
     last = _last_line(result)
     assert last.startswith("FAILED:"), result.stdout
+
+
+def _watcher_stages(script: str) -> "list[str]":
+    """The words of the script's ``STAGES=( … )`` array, backslash continuations joined."""
+    match = re.search(r"^STAGES=\(([^)]*)\)", script.replace("\\\n", " "), re.MULTILINE)
+    assert match is not None, "the watcher has no STAGES=( … ) array"
+    return match.group(1).split()
+
+
+def _release_make_goals(makefile: str) -> "list[str]":
+    """The ``$(MAKE) <goal>`` words of the ``release:`` recipe, in recipe order."""
+    match = re.search(r"^release:[^\n]*\n((?:\t[^\n]*\n)+)", makefile, re.MULTILINE)
+    assert match is not None, "the Makefile has no `release:` rule with a recipe"
+    return re.findall(r"\$\(MAKE\)\s+([a-zA-Z0-9_.-]+)", match.group(1))
+
+
+def test_the_watcher_s_stages_are_the_release_recipe_s_make_goals_in_order():
+    """``STAGE:`` lines name the release's gates; a stale list names stages that no longer run."""
+    red = _release_make_goals("release: ## x\n\t@$(MAKE) a \\\n\t\t&& $(MAKE) b\n")
+    assert red == ["a", "b"]
+    assert _watcher_stages("STAGES=(b \\\n        a)\n") != red, "order must be compared"
+    goals = _release_make_goals((PROJECT_ROOT / "Makefile").read_text())
+    assert goals.count("coverage") == 1, goals
+    assert _watcher_stages(_SCRIPT.read_text()) == goals

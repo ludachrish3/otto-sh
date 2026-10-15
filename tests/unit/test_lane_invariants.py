@@ -1616,12 +1616,12 @@ _HOSTLESS_MIDDLE_SERIAL = (
     "serial_timing and not integration and not embedded and not stability and not browser "
     "and not busybox and not conformance and not kmodcov and not interpreter_agnostic"
 )
-_ALL = (
-    "not browser and not stability and not busybox and not conformance and not kmodcov "
+_COVERAGE = (
+    "not stability and not browser and not busybox and not conformance and not kmodcov "
     "and not serial_timing"
 )
-_ALL_SERIAL = (
-    "serial_timing and not browser and not stability and not busybox and not conformance "
+_COVERAGE_SERIAL = (
+    "serial_timing and not stability and not browser and not busybox and not conformance "
     "and not kmodcov"
 )
 _ALL_NONPRIMARY = (
@@ -1666,14 +1666,18 @@ RELEASE_LANES: "tuple[_Leg, ...]" = (
     _Leg("Makefile:kmodcov", "kmodcov", ()),
     # docs → doctest-src: the src doctests (no `-m`, cleared addopts), outside testpaths.
     _Leg("Makefile:doctest-src", _ANY_MARKER, ("src/otto",)),
-    # nox → tests_all on the primary (the family included, instrumented) and
-    # the canary (the family deselected — it runs on the primary only, #566
-    # Q2 — and coverage off): the full tree, parallel + serial.
-    _Leg("noxfile.py:tests_all@3.10", _ALL, ()),
-    _Leg("noxfile.py:tests_all@3.10", _ALL_SERIAL, ()),
+    # `release` runs `coverage_stamp.py check || $(MAKE) coverage` first: when
+    # HEAD's tree carries no valid stamp the release runs `make coverage`
+    # itself (Q5), so the coverage-python legs are release legs — the
+    # family's only release selection since Phase B (3.14 deselects it).
+    _Leg("Makefile:coverage-python", _COVERAGE, ()),
+    _Leg("Makefile:coverage-python", _COVERAGE_SERIAL, ()),
+    # nox-release → tests_all on the canary only (the family deselected —
+    # it runs on the primary only, #566 Q2 — and coverage off); the primary's
+    # session is what the stamp proves.
     _Leg("noxfile.py:tests_all@3.14", _ALL_NONPRIMARY, ()),
     _Leg("noxfile.py:tests_all@3.14", _ALL_NONPRIMARY_SERIAL, ()),
-    # nox → tests_hostless on the middle Pythons: the trimmed tests/unit pair.
+    # nox-release → tests_hostless on the middle Pythons: the trimmed tests/unit pair.
     _Leg("noxfile.py:tests_hostless@3.11", _HOSTLESS_MIDDLE, ("tests/unit",)),
     _Leg("noxfile.py:tests_hostless@3.11", _HOSTLESS_MIDDLE_SERIAL, ("tests/unit",)),
     _Leg("noxfile.py:tests_hostless@3.12", _HOSTLESS_MIDDLE, ("tests/unit",)),
@@ -1741,6 +1745,12 @@ _RELEASE_EXEMPT_LANES: "tuple[_Leg, ...]" = (
 _REQUIRED_LANES = (
     "release-matrix",
     "conformance-bed",
+    # the stamp fallback: `make coverage` must stay reachable from `release`, and
+    # its stamp prologue with it
+    "coverage",
+    "coverage-stamp-start",
+    "coverage-python",
+    "nox-release",
     "release-kmodcov-matrix",
     "kmodcov",
     "dashboard-all",
@@ -2085,15 +2095,28 @@ def test_the_release_census_reddens_on_a_dropped_lane(collect_marker_sets) -> No
 
 
 @pytest.mark.xdist_group("lane_leg_membership")
-def test_the_family_runs_on_the_primary_interpreter_only_in_the_nox_rows(
+def test_the_family_runs_on_the_primary_interpreter_only_in_the_release_rows(
     collect_marker_sets,
 ) -> None:
-    """Every `interpreter_agnostic` item is selected by a `noxfile.py:…@3.10` row and by no
-    `noxfile.py:…@<other>` row: the family runs once per gate set, on the primary (#566 Q2)."""
+    """Every `interpreter_agnostic` item is selected by a primary row and by no
+    `noxfile.py:…@<other>` row: the family runs once per gate set, on the primary (#566 Q2).
+
+    The primary rows are any `noxfile.py:…@3.10` row and the `Makefile:coverage-python`
+    rows: since `make release` trusts the coverage stamp in place of the primary's nox
+    session, `make coverage` is the release's primary run, and the stamp refuses one
+    made under any interpreter but `$(NOX_PRIMARY)` (scripts/coverage_stamp.py)."""
     nox_rows = [row for row in RELEASE_LANES if row.surface.startswith("noxfile.py:")]
-    primary_rows = tuple(row for row in nox_rows if row.surface.endswith("@3.10"))
+    primary_rows = tuple(
+        row
+        for row in RELEASE_LANES
+        if row.surface == "Makefile:coverage-python"
+        or (row.surface.startswith("noxfile.py:") and row.surface.endswith("@3.10"))
+    )
     other_rows = tuple(row for row in nox_rows if not row.surface.endswith("@3.10"))
-    assert primary_rows, [str(r) for r in nox_rows]
+    assert primary_rows, (
+        "no primary row (neither `Makefile:coverage-python` nor `noxfile.py:…@3.10`) in "
+        f"RELEASE_LANES: {[str(r) for r in RELEASE_LANES]}"
+    )
     assert other_rows, [str(r) for r in nox_rows]
     family = [
         item.nodeid for item in collect_marker_sets(()) if "interpreter_agnostic" in item.markers

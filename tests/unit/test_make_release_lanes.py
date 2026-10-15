@@ -169,3 +169,266 @@ def test_a_red_or_empty_lane_aborts_the_campaign_and_nothing_after_it_runs(
     assert _targets_called(log) == list(_CAMPAIGN[: _CAMPAIGN.index(lane) + 1]), _targets_called(
         log
     )
+
+
+# `make coverage` is stamped (scripts/coverage_stamp.py): the stamp's prologue
+# is the first prerequisite, its epilogue the one recipe line, so a red leg
+# (make aborts) never reaches `finish` and the stamp `start` deleted stays
+# deleted. The script's own behaviour is pinned in
+# tests/unit/scripts/test_coverage_stamp.py; this is the wiring.
+#
+# ANY command-line variable marks the run (the legs expand far more than the
+# four gate variables — junitxml, LEAK_DETECT, TIMEOUT_CMD, …), so the
+# samples are a few gate variables, two recipe fragments and an arbitrary
+# name; BUMP and NEW_VERSION, the release's own knobs, are the allowlist.
+_OVERRIDE_SAMPLES = (
+    "COVERAGE_THRESHOLD",
+    "PYTEST_ADDOPTS",
+    "junitxml",
+    "LEAK_DETECT",
+    "ANY_NAME_AT_ALL",
+)
+
+
+def _overridden(stdout: str) -> "list[str]":
+    """The names a dry-run's `coverage_stamp.py start` line marks `--overridden`, sorted."""
+    return sorted(re.findall(r"--overridden (\S+)", stdout))
+
+
+def _rule(text: str, target: str) -> "tuple[list[str], list[str]]":
+    """(prerequisites, recipe lines) of *target*'s rule WITH a recipe.
+
+    Comments and `##` help are dropped. A target may own several rule lines
+    (`coverage: export override PYTEST_ADDOPTS :=` is a target-specific
+    variable, no recipe follows it); the one with the
+    recipe is the rule. The recipe group is `+`, so a recipe-less line never
+    matches and the search moves on to the next `target:` line.
+    """
+    live = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    pattern = rf"^{re.escape(target)}:([^#\n]*)(?:##[^\n]*)?\n((?:\t.*\n)+)"
+    match = re.search(pattern, live + "\n", re.MULTILINE)
+    assert match is not None, f"Makefile has no `{target}` rule with a recipe"
+    return match.group(1).split(), [
+        line.strip() for line in match.group(2).splitlines() if line.strip()
+    ]
+
+
+def test_the_rule_reader_skips_a_target_specific_variable_line():
+    text = "x: export override V :=\nx: a b ## help\n\t@one\n\t@two\n\ny:\n\t@none\n"
+    assert _rule(text, "x") == (["a", "b"], ["@one", "@two"])
+    assert _rule(text, "y") == ([], ["@none"])
+    with pytest.raises(AssertionError, match="no `z` rule"):
+        _rule("z: export V := 1\n", "z")
+
+
+def test_make_coverage_is_stamped_at_its_start_and_its_end():
+    text = (PROJECT_ROOT / "Makefile").read_text()
+    prerequisites, recipe = _rule(text, "coverage")
+    assert prerequisites == ["coverage-stamp-start", "coverage-python", "coverage-ts"], (
+        prerequisites
+    )
+    assert recipe == ["@$(COVERAGE_STAMP) finish"], recipe
+    dist, start = _rule(text, "coverage-stamp-start")
+    assert dist == ["$(DASHBOARD_DIST)", "$(COVAPP_DIST)"], (
+        "the assets digest is taken at start, so the dist rules must have run before it"
+    )
+    assert start == [
+        (
+            "@$(COVERAGE_STAMP) start $(COVERAGE_STAMP_GATE)"
+            ' --workers "$(COVERAGE_WORKERS)" $(COVERAGE_STAMP_OVERRIDES)'
+        )
+    ], start
+    # `override` is load-bearing: a plain target-specific `export VAR :=` loses
+    # to `make coverage PYTEST_ADDOPTS=--no-cov` (measured, GNU make 4.3).
+    assert re.search(r"^coverage: export override PYTEST_ADDOPTS :=\s*$", text, re.MULTILINE), (
+        "an ambient or command-line PYTEST_ADDOPTS could narrow the selection the stamp names; "
+        "`make coverage` must clear it with `export override`"
+    )
+    gate = (
+        r'^COVERAGE_STAMP_GATE = --threshold "\$\(COVERAGE_THRESHOLD\)" '
+        r'--selection "\$\(M_COVERAGE\)" '
+        r'--browsers "\$\(DASHBOARD_BROWSERS\)" --primary "\$\(NOX_PRIMARY\)"\s*$'
+    )
+    assert re.search(gate, text, re.MULTILINE)
+    # Every command-line variable, by name, from $(MAKEOVERRIDES) — which an
+    # `export override` cannot hide (it turns $(origin) into `override`) and
+    # MAKEFLAGS carries into the `$(MAKE) coverage` fallback.
+    for line in (
+        r"^COVERAGE_STAMP_HARMLESS := BUMP NEW_VERSION\s*$",
+        (
+            r"^COVERAGE_STAMP_OVERRIDE_NAMES = \$\(sort \$\(foreach a,\$\(MAKEOVERRIDES\),"
+            r"\$\(if \$\(findstring =,\$\(a\)\),\$\(firstword \$\(subst =, ,\$\(a\)\)\)\)\)\)\s*$"
+        ),
+        (
+            r"^COVERAGE_STAMP_OVERRIDES = \$\(foreach n,\$\(filter-out "
+            r"\$\(COVERAGE_STAMP_HARMLESS\),\$\(COVERAGE_STAMP_OVERRIDE_NAMES\)\),"
+            r"--overridden \$\(n\)\)\s*$"
+        ),
+    ):
+        assert re.search(line, text, re.MULTILINE), f"the Makefile lost {line!r}"
+
+
+def test_a_command_line_pytest_addopts_does_not_reach_the_stamped_legs(tmp_path: Path):
+    """Neither an environment nor a COMMAND-LINE `PYTEST_ADDOPTS` reaches the prerequisites.
+
+    The probe Makefile includes the real one and appends one prerequisite to
+    `coverage` whose `+`-prefixed recipe runs even under `-n` and prints the
+    variable; `coverage`'s own target-specific `export override` is what the
+    probe inherits, so this proves the real line. Under `-n` every pytest leg
+    is printed, not run; the `$(MAKE)` lines (dist, TS stamp) run the stub.
+    Measured on GNU make 4.3: without `override` this prints `ADDOPTS=[--no-cov]`.
+    """
+    stub, _log = _stub_make(tmp_path, {})
+    probe = tmp_path / "Probe.mk"
+    probe.write_text(
+        f"include {PROJECT_ROOT / 'Makefile'}\n"
+        "coverage: addopts-probe\n"
+        "addopts-probe:\n"
+        '\t+@echo "ADDOPTS=[$$PYTEST_ADDOPTS]"\n'
+    )
+    env = {k: v for k, v in os.environ.items() if k not in {"MAKEFLAGS", "MFLAGS", "MAKELEVEL"}}
+    env["PYTEST_ADDOPTS"] = "-k nothing"
+    completed = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "-n",
+            "-f",
+            str(probe),
+            "coverage",
+            "PYTEST_ADDOPTS=--no-cov",
+            f"MAKE={stub}",
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        env=env,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "ADDOPTS=[]" in completed.stdout, completed.stdout
+    assert "--no-cov" not in completed.stdout.replace("PYTEST_ADDOPTS=--no-cov", ""), (
+        completed.stdout
+    )
+
+
+def test_every_coverage_python_leg_selects_m_coverage():
+    """The stamp records `$(M_COVERAGE)` as the selection; the legs must run exactly that."""
+    text = (PROJECT_ROOT / "Makefile").read_text()
+    _, legs = _rule(text, "coverage-python")
+    selections = re.findall(r'-m "([^"]+)"', "\n".join(legs))
+    assert selections == [
+        "$(M_COVERAGE) and not serial_timing",
+        "serial_timing and $(M_COVERAGE)",
+    ], selections
+
+
+@pytest.mark.parametrize("variable", _OVERRIDE_SAMPLES)
+def test_a_command_line_override_reaches_the_stamp_start(tmp_path: Path, variable: str):
+    """`make coverage COVERAGE_THRESHOLD=50` is green at a gate the stamp would misdescribe.
+
+    `make -n` prints the expanded command without running it (the dist rules'
+    `$(MAKE) web`, if stale, runs the stub), so this proves the
+    $(MAKEOVERRIDES) reading for real. The stub's own `MAKE=<stub>` is a
+    command-line variable too, so it is always marked — proof, every time,
+    that an arbitrary name is caught — and the other samples never are.
+    """
+    stub, _log = _stub_make(tmp_path, {})
+    with_override = _run_make(stub, "-n", "coverage-stamp-start", f"{variable}=zzz")
+    assert with_override.returncode == 0, with_override.stderr
+    assert _overridden(with_override.stdout) == sorted(["MAKE", variable]), with_override.stdout
+    plain = _run_make(stub, "-n", "coverage-stamp-start")
+    assert _overridden(plain.stdout) == ["MAKE"], plain.stdout
+    assert "coverage_stamp.py start" in plain.stdout
+
+
+def test_the_release_s_own_knobs_do_not_withhold_the_stamp(tmp_path: Path):
+    """`make release BUMP=minor` must still be able to trust (and make) a stamp."""
+    stub, _log = _stub_make(tmp_path, {})
+    completed = _run_make(stub, "-n", "coverage-stamp-start", "BUMP=minor", "NEW_VERSION=1.2.3")
+    assert completed.returncode == 0, completed.stderr
+    assert "coverage_stamp.py start" in completed.stdout, completed.stdout
+    assert _overridden(completed.stdout) == ["MAKE"], completed.stdout
+
+
+def test_a_command_line_variable_is_marked_inside_the_coverage_context(tmp_path: Path):
+    """`make coverage PYTEST_ADDOPTS=…`: the invocation a per-name `$(origin …)` test got wrong.
+
+    `coverage`'s target-specific `export override PYTEST_ADDOPTS :=` is
+    inherited by `coverage-stamp-start` and turns the variable's origin into
+    `override`, so an origin test saw no command-line value there;
+    $(MAKEOVERRIDES) still lists it. The probe includes the real Makefile and
+    dry-runs `coverage` itself, so the start line printed is the one a real
+    `make coverage PYTEST_ADDOPTS=--no-cov` would run.
+    """
+    stub, _log = _stub_make(tmp_path, {})
+    probe = tmp_path / "Probe.mk"
+    probe.write_text(f"include {PROJECT_ROOT / 'Makefile'}\n")
+    env = {k: v for k, v in os.environ.items() if k not in {"MAKEFLAGS", "MFLAGS", "MAKELEVEL"}}
+    completed = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "-n",
+            "-f",
+            str(probe),
+            "coverage",
+            "PYTEST_ADDOPTS=--no-cov",
+            f"MAKE={stub}",
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        env=env,
+    )
+    assert completed.returncode == 0, completed.stderr
+    starts = [line for line in completed.stdout.splitlines() if "coverage_stamp.py start" in line]
+    assert len(starts) == 1, completed.stdout
+    assert "--overridden PYTEST_ADDOPTS" in starts[0], starts[0]
+
+
+def _phony_targets(text: str) -> "set[str]":
+    """Every whole token of the Makefile's `.PHONY:` lines, backslash continuations joined."""
+    joined = text.replace("\\\n", " ")
+    tokens: "set[str]" = set()
+    for match in re.finditer(r"^\.PHONY:([^\n]*)", joined, re.MULTILINE):
+        tokens.update(match.group(1).split())
+    return tokens
+
+
+def test_every_stamp_and_release_target_is_phony():
+    """A file named `coverage` or `release` in the checkout must not make its target up to date."""
+    assert "nox-release" not in _phony_targets(".PHONY: nox-releasenox-full\n"), (
+        "the reader must take whole tokens, not substrings of a merged one"
+    )
+    assert "b" in _phony_targets(".PHONY: a \\\n\tb\n"), "a continued .PHONY line must be read"
+    phony = _phony_targets((PROJECT_ROOT / "Makefile").read_text())
+    missing = {"coverage", "coverage-stamp-start", "nox-release", "release"} - phony
+    assert not missing, f"not .PHONY: {sorted(missing)}"
+
+
+def test_an_environment_value_is_not_an_override(tmp_path: Path):
+    """`?=` takes an environment value as the declared default.
+
+    Only the command line marks the run: the stub's `MAKE=<stub>` is on it,
+    so it is marked; `DASHBOARD_BROWSERS`, from the environment, is not.
+    """
+    stub, _log = _stub_make(tmp_path, {})
+    env = {k: v for k, v in os.environ.items() if k not in {"MAKEFLAGS", "MFLAGS", "MAKELEVEL"}}
+    env["DASHBOARD_BROWSERS"] = "firefox"
+    completed = subprocess.run(
+        ["make", "--no-print-directory", "-n", "coverage-stamp-start", f"MAKE={stub}"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        env=env,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert '--browsers "firefox"' in completed.stdout, completed.stdout
+    assert "--overridden DASHBOARD_BROWSERS" not in completed.stdout, completed.stdout
+    assert "--overridden MAKE" in completed.stdout, completed.stdout

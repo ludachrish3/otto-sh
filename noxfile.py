@@ -62,24 +62,22 @@ nox.options.default_venv_backend = "uv"
 nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 
 # Coverage floors — every one a COMBINED line+branch number, since .coveragerc
-# measures branches (`branch = true`). tests_hostless gates at 94.75 on the
-# PRIMARY Python — the Makefile's CI_COVERAGE_THRESHOLD, and the floor `make
-# coverage-hostless` enforces on the same test selection, so it's the same
-# number; tests/unit/test_coverage_floors.py holds the pair equal and both
-# above their codified minimums (the Makefile comment on COVERAGE_THRESHOLD
-# has the measurements). The CANARY and interior Pythons run with coverage
-# OFF: the canary's job is "does otto still work on the newest interpreter",
-# the floor is already enforced on the primary, and the interior's trimmed
-# selection cannot meet it anyway. Instrumenting a leg whose report nothing
-# reads costs it ~14 % of wall time (the canary session measured 552 s with
-# coverage, 473 s without) for no reader.
-# tests_all gates at 92, BELOW `make coverage`'s 95.5 (COVERAGE_THRESHOLD):
-# `make coverage` folds the dashboard browser process's Python coverage in via
-# --cov-append, which these browser-excluded nox sessions don't, so their
-# achievable number is lower (measured 2026-09-11 the fold-in is worth under
-# 0.01 of a point — 95.80% with it, 95.80% without — so the gap between the two
-# floors is headroom, not the browser lane).
-# Revisit tests_all if COVERAGE_THRESHOLD or that fold-in changes.
+# measures branches (`branch = true`). ONE floor lives here: tests_hostless
+# gates at 94.75 on the PRIMARY Python — the Makefile's CI_COVERAGE_THRESHOLD,
+# and the floor `make coverage-hostless` enforces on the same selection, so
+# it's the same number; tests/unit/test_coverage_floors.py holds the pair
+# equal, both above their codified minimums (the Makefile comment on
+# COVERAGE_THRESHOLD has the measurements), and holds this to be the ONLY
+# floor in the file. Every other leg runs with coverage OFF: the canary's job
+# is "does otto still work on the newest interpreter", the interior's trimmed
+# selection cannot meet a floor, and tests_all's primary leg is the selection
+# `make coverage` already gates at 95.5 on the same tree — the coverage stamp
+# (scripts/coverage_stamp.py) is the release's evidence of that run. tests_all
+# used to carry a second, lower floor of its own (92: the same run minus the
+# dashboard --cov-append fold-in) that the release read; owner ruling 5
+# (#566) deleted it, and with it the leg's instrumentation. Instrumenting a
+# leg whose report nothing reads costs it ~14 % of wall time (the canary
+# session measured 552 s with coverage, 473 s without) for no reader.
 
 # `not busybox and not conformance` rides every catch-all selector below, for
 # reasons unrelated to the bed and spelled out in full above the Makefile's
@@ -328,7 +326,7 @@ TESTS_ALL_TEST_ARGS = (
         "not browser and not stability and not busybox and not conformance and not kmodcov "
         "and not serial_timing"
     ),
-    "--cov-fail-under=0",
+    "--no-cov",
 )
 TESTS_ALL_SERIAL_ARGS = (
     "-m",
@@ -337,8 +335,7 @@ TESTS_ALL_SERIAL_ARGS = (
         "and not kmodcov"
     ),
     "-n0",
-    "--cov-append",
-    "--cov-fail-under=92",
+    "--no-cov",
 )
 TESTS_ALL_NONPRIMARY_TEST_ARGS = (
     "-m",
@@ -643,13 +640,12 @@ def tests_all(session: nox.Session) -> None:
     ssh to test2 then times out) — they own the bed only in the dedicated
     `make stability-tunnel` lane.
 
-    On the PRIMARY_PYTHON the coverage threshold is 92 % (combined
-    line+branch, like every floor here) — below ``make coverage``'s 95.5 %
-    because this browser-excluded session omits the dashboard --cov-append
-    fold-in (see the module-level coverage-floor note). Every other
-    interpreter runs with coverage off and the `interpreter_agnostic` family
-    deselected (#566: the family runs on the primary only; owner ruling 5: no
-    canary floor).
+    Uninstrumented on every interpreter (`--no-cov`): the primary leg's
+    selection is what ``make coverage`` gates at 95.5 % on the same tree,
+    and a second floor here was a lower reading of the same run that only
+    the release read (owner ruling 5, #566: deleted). Every other
+    interpreter also deselects the `interpreter_agnostic` family — it runs
+    on the primary only.
     """
     parallel_junit = _junitxml(session, "nox")
     serial_junit = _junitxml(session, "nox-all-serial")

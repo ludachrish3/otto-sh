@@ -46,9 +46,10 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JUNIT_DIR="$REPO/reports/junit"
 POLL_SECONDS="${POLL_SECONDS:-20}"
 
-# The gates of the `release` target, in the order the recipe chains them.
-STAGES=(clean-dist web-install check-python release-matrix release-kmodcov-matrix \
-        docs nox web dashboard-all validate-ts profile wheel-check build)
+# The gates of the `release` target, in the order the recipe chains them
+# (its `$(MAKE) <goal>` words; pinned by tests/unit/scripts/test_watch_release.py).
+STAGES=(clean-dist web-install coverage check-python nox-release web dashboard-all \
+        validate-ts release-matrix release-kmodcov-matrix release-campaign docs wheel-check)
 
 usage() { sed -n '2,/^# Two traps/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 

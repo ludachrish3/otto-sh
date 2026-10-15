@@ -316,9 +316,10 @@ Three more axes sit alongside level/resource, each narrower in scope:
 - **Cross-Python matrix.** otto's floor is Python 3.10 and its ceiling is
   3.14. `make nox-unit` re-runs the no-VM unit tier across all five
   versions — the fastest safe cross-version check. `make nox` tiers this
-  further: the full suite on the 3.10 floor (coverage-gated); every
-  product test on the 3.14 canary (where version-specific deprecation
-  warnings show up first); a *trimmed* hostless slice on the versions
+  further: the full suite on 3.10, the oldest supported interpreter
+  (uninstrumented: the coverage floor is `make coverage`'s); every product
+  test on the 3.14 canary (where version-specific deprecation warnings show
+  up first); a *trimmed* hostless slice on the versions
   between — the `tests/unit` tier with coverage off. One
   family runs on 3.10 only, in every nox session and in `make coverage`:
   the `interpreter_agnostic` modules, whose subject is the repository, its
@@ -729,8 +730,10 @@ and lab growth.
 `--cov-append` first); the hostless CI gate (`make coverage-hostless`,
 `nox -s tests_hostless`) enforces a lower 94.75, because it deliberately
 exercises only the slice of otto that needs no VM at all and can't reach
-the full-run number. `nox -s tests_all`'s browser-excluded matrix sits at 92
-for the same reason — it never folds in the dashboard lane's coverage. Every
+the full-run number. `nox -s tests_all` runs with coverage off on every
+interpreter: its primary leg is the selection `make coverage` already gates,
+so a second floor there was a lower reading of the same run (deleted,
+[#566](https://github.com/ludachrish3/otto-sh/issues/566)). Every
 one of these is a *combined* line-and-branch number: `.coveragerc` measures
 branches, so the console report carries `Branch` / `BrPart` columns next to
 `Stmts` / `Miss`, and an `if` whose `else` arm no test reaches costs the

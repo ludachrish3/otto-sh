@@ -2189,11 +2189,54 @@ def test_the_release_campaign_runs_after_the_matrices_and_before_the_docs():
     """
     order = _make_invocations(_makefile_recipes()["release"])
     for earlier, later in (
-        ("nox", "release-matrix"),
+        ("nox-release", "release-matrix"),
         ("validate-ts", "release-matrix"),
         ("release-matrix", "release-kmodcov-matrix"),
         ("release-kmodcov-matrix", "release-campaign"),
         ("release-campaign", "docs"),
+    ):
+        assert order.index(earlier) < order.index(later), (
+            f"{earlier} must precede {later}; stages: {order}"
+        )
+
+
+def test_the_release_trusts_the_coverage_stamp_and_runs_no_duplicate_stage():
+    """G13c: the stamp check comes first, its fallback is `coverage`, and three stages are gone.
+
+    #566 C2/C4: `nox` (whose 3.10 session repeated `make coverage`'s
+    selection) is `nox-release` (3.11 to 3.14 only); `profile` (its 38 checks
+    run inside the coverage selection) and the trailing `build` (`wheel-check`
+    already builds and checks the wheel that is published) leave. The
+    fallback runs `make coverage` BEFORE any stage that commits (the
+    matrices) — Q5. Propagation is make's own: a red `make coverage` ends the
+    `&&` chain.
+    """
+    release = _makefile_recipes()["release"]
+    order = _make_invocations(release)
+    for stage in ("nox", "profile", "build"):
+        assert stage not in order, f"`make release` still runs `{stage}`: {order}"
+    # Recipes are read UNEXPANDED: the pin quotes the variable references (and
+    # `$$?`, make's escape for the shell's `$?`). Both checks are told the
+    # command-line variables, so a stamp cannot vouch for a release whose
+    # later stages a `PYTEST_ADDOPTS=` would narrow. `check` exits 2 for a
+    # refusal no stamp can cure (dirt, a foreign venv, a command-line
+    # variable): `[ $$? -eq 1 ]` is then false and the release stops at
+    # once; 1 (no or a mismatched stamp) runs `make coverage` and re-checks,
+    # so a run the stamp withheld ends the chain there instead of releasing.
+    fallback = (
+        r"\( \$\(COVERAGE_STAMP\) check \$\(COVERAGE_STAMP_GATE\) \$\(COVERAGE_STAMP_OVERRIDES\) "
+        r"\|\| \{ \[ \$\$\? -eq 1 \] && \$\(MAKE\) coverage && \$\(COVERAGE_STAMP\) check "
+        r"\$\(COVERAGE_STAMP_GATE\) \$\(COVERAGE_STAMP_OVERRIDES\); \} \)"
+    )
+    assert re.search(fallback, release), (
+        "the release must run `check || { [ $? -eq 1 ] && make coverage && check; }` — exit 2 "
+        "stops at once, and the second check is what refuses a run the stamp withheld"
+    )
+    for earlier, later in (
+        ("coverage", "check-python"),
+        ("check-python", "nox-release"),
+        ("nox-release", "web"),
+        ("coverage", "release-matrix"),
     ):
         assert order.index(earlier) < order.index(later), (
             f"{earlier} must precede {later}; stages: {order}"

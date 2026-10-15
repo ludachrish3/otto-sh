@@ -229,6 +229,38 @@ def test_the_canary_scanner_observes_red() -> None:
     assert "beyond coverage" in gaps[0], gaps
 
 
+_TESTS_ALL_PRIMARY = ("TESTS_ALL_TEST_ARGS", "TESTS_ALL_SERIAL_ARGS")
+
+
+def instrumentation_gaps(name: str, tokens: "list[str]") -> "list[str]":
+    """Why bundle *name* is not uninstrumented: no ``--no-cov``, or a ``--cov-*`` flag."""
+    gaps: "list[str]" = []
+    if "--no-cov" not in tokens:
+        gaps.append(f"{name} instruments coverage")
+    if any(t.startswith("--cov-") for t in tokens):
+        gaps.append(f"{name} carries a coverage flag it never applies")
+    return gaps
+
+
+def test_tests_all_runs_uninstrumented_on_the_primary_too(noxfile_tree: ast.Module) -> None:
+    """The primary session is what `make coverage` gates; a report here has no reader (#566 C3)."""
+    bundles = _bundles(noxfile_tree)
+    for name in _TESTS_ALL_PRIMARY:
+        assert instrumentation_gaps(name, bundles[name]) == [], bundles[name]
+
+
+def test_the_instrumentation_reader_observes_red() -> None:
+    assert instrumentation_gaps("X", ["-m", "not browser", "--no-cov"]) == []
+    assert instrumentation_gaps("X", ["-m", "not browser"]) == ["X instruments coverage"]
+    assert instrumentation_gaps("X", ["-m", "not browser", "--no-cov", "--cov-append"]) == [
+        "X carries a coverage flag it never applies"
+    ]
+    assert instrumentation_gaps("X", ["--cov-fail-under=0"]) == [
+        "X instruments coverage",
+        "X carries a coverage flag it never applies",
+    ]
+
+
 def test_the_trim_scanner_observes_red() -> None:
     bookend = "not integration and not busybox and not serial_timing"
     assert middle_trim_gaps(bookend, f"{bookend} and not {_MARKER}") == []
@@ -659,6 +691,27 @@ def test_the_make_nox_target_keeps_the_middle_on_the_hostless_session() -> None:
     assert "tests_hostless-$(v)" in recipe.group(1), recipe.group(1)
     assert re.search(r"^NOX_MIDDLE\s*:?=\s*3\.11 3\.12 3\.13\s*$", live, re.MULTILINE), (
         "NOX_MIDDLE is no longer the three interior versions"
+    )
+
+
+def test_the_make_nox_release_target_runs_no_primary_session() -> None:
+    """``make nox-release`` is the release's matrix once `make coverage` has stamped the tree.
+
+    The primary's full session is the selection the stamp already proves,
+    so the target runs the canary's ``tests_all`` and the middle versions'
+    ``tests_hostless`` and nothing on ``$(NOX_PRIMARY)`` (#566 ruling 4).
+    """
+    text = (PROJECT_ROOT / "Makefile").read_text()
+    live = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    recipe = re.search(r"^nox-release:.*?\n((?:\t.*\n)+)", live, re.MULTILINE)
+    assert recipe is not None, "Makefile has no `nox-release` recipe"
+    body = recipe.group(1)
+    assert "tests_all-$(NOX_CANARY)" in body, body
+    assert "tests_hostless-$(v)" in body, body
+    assert "$(NOX_PRIMARY)" not in body, body
+    assert "tests_all-3.10" not in body, body
+    assert not re.search(r"\btests_all\b(?!-)", body), (
+        f"a bare tests_all would run every interpreter: {body}"
     )
 
 

@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help all ci nox nox-release nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -123,7 +123,8 @@ CI_COVERAGE_THRESHOLD := 94.75
 # the extra worker overlaps that wait. Measured on a 4-CPU, 7 GB VM, main-leg
 # wall time over two runs per count: 4 workers 806 s (792/819), 5 workers 763 s
 # (777/749), 6 workers 745 s (749/742) -- but +2 left under 1 GB of RAM free,
-# too thin, so +1. Override with `make coverage COVERAGE_WORKERS=N`.
+# too thin, so +1. Override with `make coverage COVERAGE_WORKERS=N` (a
+# command-line variable: the run is then not stamped — see `coverage`).
 # CPU count: nproc, else getconf, else sysctl (stock macOS has only the last two), else 1.
 COVERAGE_WORKERS ?= $(shell n=$$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); echo $$((n + 1)))
 
@@ -187,6 +188,12 @@ STABILITY_TUNNEL_CYCLES := $(if $(filter command line,$(origin CYCLES)),$(CYCLES
 M_UNIX := integration and not embedded and not stability and not chaos and not kmodcov
 M_EMBEDDED := embedded and not stability and not chaos and not kmodcov
 M_HOSTLESS := not integration and not embedded and not stability and not browser and not busybox and not conformance and not kmodcov
+# The coverage-python selection. One variable, because the coverage stamp
+# (scripts/coverage_stamp.py) records the selection `make coverage` gated and
+# the Makefile passes it there: two spellings would let the stamp describe a
+# selection the legs did not run. The serial twin is `serial_timing and
+# $(M_COVERAGE)`; the parallel leg appends `and not serial_timing`.
+M_COVERAGE := not stability and not browser and not busybox and not conformance and not kmodcov
 
 # `not busybox` rides every CATCH-ALL selector below (and this one), for a
 # reason unrelated to the bed: that tier downloads real artifacts from
@@ -394,13 +401,30 @@ release-campaign: ## (Build & Release) Run every lane the default gates exclude,
 # backslash-continued line containing $(MAKE), so GNU make executes it under
 # -n; the $(MAKE) sub-calls inherit -n and no-op, but the plain
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
-# CHANGELOG staged). Never dry-run this target.
+# CHANGELOG staged). Never dry-run this target. The stamp check runs for real
+# under -n too (it only reads). When no valid stamp exists its
+# `$(MAKE) coverage` fallback inherits -n and no-ops, so the re-check fails
+# and the dry run stops there; when a valid stamp DOES exist, nothing stops
+# it, and the dry run goes on to the version bump — one more reason never to
+# dry-run this target.
+#
+# The stamp check's exit status says what to do (scripts/coverage_stamp.py):
+# 0 — HEAD's tree carries a valid stamp, trust it; 1 — no stamp, or one that
+# does not match (tree, assets, gate), so run `make coverage` and check
+# again; 2 — a refusal no stamp can cure (a dirty tree, a venv on anything
+# but the primary, a command-line variable other than BUMP=/NEW_VERSION=),
+# so `[ $$? -eq 1 ]` is false and the release stops at once, before forty
+# minutes of a run that could not be stamped. Both checks are told the
+# command-line variables ($(COVERAGE_STAMP_OVERRIDES)): a stamp vouches for
+# the declared gate, not for a release whose later stages a
+# `PYTEST_ADDOPTS=-k …` would narrow.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) npm ci web/, Python static checks (check-python), nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs, profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
+release: ## (Build & Release) npm ci web/, the coverage stamp check (HEAD's committed tree passed `make coverage` under this venv — else run it now, before anything commits), Python static checks (check-python), nox-release (3.11–3.14; the primary's session is what the stamp proves), build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs, then changelog, bump, wheel-check (which builds dist/) (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) web-install \
+		&& ( $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES) || { [ $$? -eq 1 ] && $(MAKE) coverage && $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES); } ) \
 		&& $(MAKE) check-python \
-		&& $(LEAK_DETECT) $(MAKE) nox \
+		&& $(LEAK_DETECT) $(MAKE) nox-release \
 		&& $(MAKE) web \
 		&& $(MAKE) dashboard-all \
 		&& $(MAKE) validate-ts \
@@ -408,7 +432,6 @@ release: ## (Build & Release) npm ci web/, Python static checks (check-python), 
 		&& $(MAKE) release-kmodcov-matrix \
 		&& $(MAKE) release-campaign \
 		&& $(MAKE) docs \
-		&& $(MAKE) profile \
 		&& NEW_VERSION="$$(uv run python scripts/release_bump.py)" \
 		&& $(SAY) "targeting v$$NEW_VERSION" \
 		&& $(SAY) "git-cliff → CHANGELOG.md (tagged v$$NEW_VERSION)" \
@@ -417,7 +440,6 @@ release: ## (Build & Release) npm ci web/, Python static checks (check-python), 
 		&& $(SAY) "bump-my-version → v$$NEW_VERSION" \
 		&& bump-my-version bump --verbose --allow-dirty --new-version "$$NEW_VERSION" \
 		&& $(MAKE) wheel-check \
-		&& $(MAKE) build \
 		&& echo \
 		&& echo "Regenerated CHANGELOG.md, bumped version, tagged, and built dist/." \
 		&& echo "Pushing the tag fires .github/workflows/release.yml, which builds," \
@@ -480,9 +502,13 @@ NOX_PRIMARY := 3.10
 NOX_CANARY := 3.14
 NOX_MIDDLE := 3.11 3.12 3.13
 
-nox: ## Run the full suite on the PRIMARY (3.10, floor, coverage-gated, the `interpreter_agnostic` family included) and the CANARY (3.14, newest — version-specific warnings; the family deselected, no coverage) Pythons, and the trimmed hostless slice on the middle versions. Requires dev VM with Vagrant hosts up. Not used by CI. Full cross-version matrix: `make nox-full`. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
+nox: ## Run the full suite on the PRIMARY (3.10, the oldest supported interpreter, the `interpreter_agnostic` family included; uninstrumented — the coverage floor is `make coverage`'s) and the CANARY (3.14, newest — version-specific warnings; the family deselected, no coverage) Pythons, and the trimmed hostless slice on the middle versions. Requires dev VM with Vagrant hosts up. Not used by CI. Full cross-version matrix: `make nox-full`. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
 	@$(SAY) "nox: full suite on $(NOX_PRIMARY) + $(NOX_CANARY), trimmed hostless on $(NOX_MIDDLE) (x$(NOX_COUNT))"
 	@uv run nox -s tests_all-$(NOX_PRIMARY) tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
+
+nox-release: ## (Build & Release) The release's cross-version matrix, once `make coverage` has stamped the tree: every product test minus the `interpreter_agnostic` family, uninstrumented, on the CANARY ($(NOX_CANARY)); the trimmed hostless slice on $(NOX_MIDDLE). Never the primary — the stamp is its evidence (scripts/coverage_stamp.py). Dev VM only (Vagrant hosts up). Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
+	@$(SAY) "nox (release): full suite on $(NOX_CANARY), trimmed hostless on $(NOX_MIDDLE) (x$(NOX_COUNT))"
+	@uv run nox -s tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
 
 nox-full: ## Run the FULL test suite (all environments) on 3.10 and every product test (minus the `interpreter_agnostic` family, no coverage) on 3.11–3.14 — the complete matrix. Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
 	@$(SAY) "nox: FULL matrix — every suite on 3.10, every product test on 3.11–3.14 (x$(NOX_COUNT))"
@@ -780,9 +806,9 @@ build: ## (Build & Release) Build the project with uv
 # Pinned by tests/unit/test_coverage_html_placement.py.
 coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95.5 gate (lines + branches); the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
 	@$(SAY) "pytest: all tiers, pinned Python (browser lane folded in)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "not stability and not browser and not busybox and not conformance and not kmodcov and not serial_timing" -n $(COVERAGE_WORKERS) --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "$(M_COVERAGE) and not serial_timing" -n $(COVERAGE_WORKERS) --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(COVERAGE_THRESHOLD)% lines+branches on the full fold)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and not stability and not browser and not busybox and not conformance and not kmodcov" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-python-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and $(M_COVERAGE)" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-python-serial)
 	@$(SAY) "unit outliers, the ten slowest files (a report, never a gate; all of them: make unit-outliers)"
 	@-$(call unit_outliers,--top 10)
 
@@ -798,7 +824,49 @@ unit-outliers: ## (Quality) Report the unit tree's slow tests (>= UNIT_OUTLIERS_
 	@$(SAY) "unit outliers from $(UNIT_OUTLIERS_XML) (a report, never a gate)"
 	@-$(call unit_outliers,)
 
-coverage: coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 95.5 floor over lines and branches) + coverage-ts (merged vitest+e2e floor). The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
+# `make coverage` is STAMPED. scripts/coverage_stamp.py records, under the
+# clone's common git dir, that every leg passed on the committed tree
+# (HEAD^{tree}), under the PRIMARY interpreter ($(NOX_PRIMARY) — a venv
+# rebuilt on another CPython is refused), at the declared gate, against the
+# built web assets — and `make release` trusts that stamp in place of
+# re-running the primary nox session (it runs `make coverage` itself when no
+# valid stamp exists). The prologue is the FIRST prerequisite (it deletes the
+# tree's previous stamp: make aborts at the first red leg, so that is the only
+# place a failed run can drop it; it digests the web assets AFTER the dist
+# rules — its own prerequisites — so the digest names what the legs import);
+# the epilogue is the one recipe line, reached only when every prerequisite
+# passed, and it requires tree, dirt, interpreter and assets to equal the
+# prologue's. A run over a dirty tree, or with ANY variable on the make
+# command line but the release's own BUMP= and NEW_VERSION=
+# ($(MAKEOVERRIDES) below), still runs every leg and is simply not stamped —
+# the stamp describes the declared gate on a committed tree, nothing else.
+# An ambient PYTEST_ADDOPTS is cleared for the stamped legs with a
+# target-specific `export override` (inherited by every prerequisite; plain
+# `export` would LOSE to `make coverage PYTEST_ADDOPTS=…` on the command line
+# — measured), so an environment `-k`/`-m` cannot narrow the selection the
+# stamp names. A command-line PYTEST_ADDOPTS still rides MAKEFLAGS into the
+# recursive makes (`$(MAKE) dashboard`), where it wins; like every other
+# command-line variable it is listed in $(MAKEOVERRIDES), so the legs run
+# and the stamp is withheld. Wiring pinned by
+# tests/unit/test_make_release_lanes.py; the script by
+# tests/unit/scripts/test_coverage_stamp.py.
+COVERAGE_STAMP := uv run python scripts/coverage_stamp.py
+COVERAGE_STAMP_GATE = --threshold "$(COVERAGE_THRESHOLD)" --selection "$(M_COVERAGE)" --browsers "$(DASHBOARD_BROWSERS)" --primary "$(NOX_PRIMARY)"
+# Every variable given on the command line, by name — whatever it is. The
+# legs expand far more than the four gate variables (junitxml, LEAK_DETECT,
+# TIMEOUT_CMD, PYTEST_TIMEOUT, BROWSER_WORKERS, …), so the honest rule is
+# "any command-line variable makes this run not the declared gate", with an
+# allowlist for the release's own knobs. $(MAKEOVERRIDES) lists them all,
+# keeps them through a target-specific `export override` (which turns a
+# variable's $(origin) into `override`), and reaches the `$(MAKE) coverage`
+# fallback through MAKEFLAGS; an environment value never appears in it.
+COVERAGE_STAMP_HARMLESS := BUMP NEW_VERSION
+COVERAGE_STAMP_OVERRIDE_NAMES = $(sort $(foreach a,$(MAKEOVERRIDES),$(if $(findstring =,$(a)),$(firstword $(subst =, ,$(a))))))
+COVERAGE_STAMP_OVERRIDES = $(foreach n,$(filter-out $(COVERAGE_STAMP_HARMLESS),$(COVERAGE_STAMP_OVERRIDE_NAMES)),--overridden $(n))
+
+coverage: export override PYTEST_ADDOPTS :=
+coverage: coverage-stamp-start coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 95.5 floor over lines and branches) + coverage-ts (merged vitest+e2e floor), then STAMP the committed tree (scripts/coverage_stamp.py) so `make release` can trust this run instead of repeating its primary nox session. The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
+	@$(COVERAGE_STAMP) finish
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
 	@$(SAY) "pytest: tests/unit (no gate)"
@@ -862,6 +930,12 @@ WEB_SRCS := $(shell find web/src -type f) \
 
 $(DASHBOARD_DIST) $(COVAPP_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
 	@$(MAKE) web
+
+# The stamp's prologue runs after the dist rules (its prerequisites) so the
+# assets digest it records is the one the Python legs import; `coverage`
+# lists it first, before coverage-python. See the stamp note above `coverage`.
+coverage-stamp-start: $(DASHBOARD_DIST) $(COVAPP_DIST) ## (internal) The stamped run's prologue: drop the tree's previous stamp, record the tree, the interpreter, the built assets, and anything that forbids stamping it (dirt, a foreign interpreter, any command-line variable but BUMP= and NEW_VERSION=)
+	@$(COVERAGE_STAMP) start $(COVERAGE_STAMP_GATE) --workers "$(COVERAGE_WORKERS)" $(COVERAGE_STAMP_OVERRIDES)
 
 # Merged-TS-coverage inputs. The browser lane (dashboard) dumps raw Chromium
 # V8 coverage (tests/_fixtures/_ts_coverage.py); its recipe touches the raw
