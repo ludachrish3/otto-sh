@@ -168,7 +168,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up Node
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
       - uses: astral-sh/setup-uv@v10.2.0
@@ -405,7 +405,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up Node
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
       - name: web/ static gates (Biome check + tsc) + vitest unit coverage floor
@@ -483,7 +483,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up Node
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
       - uses: astral-sh/setup-uv@v10.2.0
@@ -529,7 +529,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up Node
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
       - uses: astral-sh/setup-uv@v10.2.0
