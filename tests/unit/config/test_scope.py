@@ -6,7 +6,6 @@ import textwrap
 import pytest
 from pydantic import ValidationError
 
-from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.config.scope import (
     ProjectScopeConfig,
@@ -18,6 +17,7 @@ from otto.config.scope import (
 )
 from otto.context import OttoContext
 from otto.host.element import Element
+from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.scoping import verdict
 from tests._fixtures.sutrepo import make_sut_repo

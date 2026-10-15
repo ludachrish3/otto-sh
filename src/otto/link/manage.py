@@ -65,7 +65,7 @@ from .sentinel import (
 if TYPE_CHECKING:
     from ipaddress import IPv4Interface
 
-    from ..config.lab import Lab
+    from ..labs.loader import Lab
 
 _IMPAIR_HOST_TIMEOUT = 30.0
 VERIFY_FAILED = "post-apply verify failed"

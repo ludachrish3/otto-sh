@@ -2,7 +2,7 @@
 
 import pytest
 
-from otto.config.lab import LAB_SEPARATOR, split_lab_names
+from otto.labs.loader import LAB_SEPARATOR, split_lab_names
 
 
 def test_separator_is_plus():

@@ -100,8 +100,8 @@ import typer
 from typer.testing import CliRunner
 
 from otto import options
-from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
+from otto.labs.loader import Lab
 from otto.params import register_options
 
 

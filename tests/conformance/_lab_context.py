@@ -81,9 +81,9 @@ import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.host.factory import create_host_from_dict
+from otto.labs.loader import Lab
 from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_data_path
 
 # The name the venue's lab answers to. It reaches a reader in two places: the
@@ -142,7 +142,7 @@ def hop_targets(tech: str) -> "list[str]":
 
 
 def bed_lab(tech: str) -> Lab:
-    """A :class:`~otto.config.lab.Lab` holding every hop target *tech* names.
+    """A :class:`~otto.labs.loader.Lab` holding every hop target *tech* names.
 
     The hop targets ONLY. A lab carrying all sixteen bed hosts would resolve
     the same hops and say something this venue does not mean: the cell's own

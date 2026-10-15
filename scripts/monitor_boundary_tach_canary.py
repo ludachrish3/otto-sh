@@ -50,6 +50,7 @@ FILES = [
     "otto/lab/__init__.py",
     "otto/lab/fleet.py",
     "otto/labs/__init__.py",
+    "otto/labs/loader.py",
     "otto/tunnel/__init__.py",
     "otto/tunnel/records.py",
     "otto/models/__init__.py",
@@ -69,12 +70,16 @@ MODULES = {
     "otto.contexts": [],
     "otto.lab": [],
     "otto.labs": [],
+    "otto.labs.loader": [],
     "otto.tunnel": [],
     "otto.models": [],
     "otto.monitor.live": [],
     "otto.monitor": ["otto", "otto.errors", "otto.models", "otto.contexts", "otto.labs"],
 }
-"""The toy tach modules: ``otto.monitor`` may import anything but the banned ones."""
+"""The toy tach modules: ``otto.monitor`` may import anything but the banned ones.
+
+``otto.labs.loader`` is a module of its own here, so tach bans it while allowing
+the rest of ``otto.labs``, as the test does."""
 
 
 @dataclass

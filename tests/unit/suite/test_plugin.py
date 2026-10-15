@@ -868,9 +868,9 @@ def test_class_scoped_plugin_fixtures_warn_nothing(tmp_path) -> None:
     exactly as one on a test class does. That is why the plugin fixtures are
     staticmethods reaching their plugin through ``request.config.stash``.
     """
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.invocation import RunPolicy
+    from otto.labs.loader import Lab
     from otto.suite.layout import ArtifactLayout
     from otto.suite.pytest_plugin import OttoFixturesPlugin
 

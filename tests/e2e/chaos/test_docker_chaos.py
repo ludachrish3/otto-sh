@@ -35,13 +35,13 @@ from collections.abc import Iterator
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.docker import build_images, compose_down, compose_up, composed
 from otto.docker.staging import cleanup_project
 from otto.host.docker_host import DockerContainerHost
 from otto.host.host import Host
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.bed_hygiene import (

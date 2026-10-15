@@ -51,7 +51,7 @@ async def test_sweep_loop_skips_a_host_another_loop_now_owns():
         other.close()
 
 
-from otto.config.lab import Lab
+from otto.labs.loader import Lab
 
 
 def _lab_with(*ne_names: str) -> Lab:
@@ -94,8 +94,8 @@ def test_get_host_unknown_id_sentinel_lab_appends_open_context_breadcrumb():
     otto.open_context(lab=...)`` — and ONLY for that sentinel lab."""
     import pytest
 
-    from otto.config.lab import Lab
     from otto.context import LIBRARY_LAB_NAME
+    from otto.labs.loader import Lab
 
     assert LIBRARY_LAB_NAME == "<library>"
     ctx = OttoContext(lab=Lab(name=LIBRARY_LAB_NAME))
@@ -382,7 +382,7 @@ async def test_open_context_loads_the_lab_with_the_process_inventory(tmp_path, m
 @pytest.mark.asyncio
 async def test_run_on_all_hosts_accepts_option_overrides():
     """ctx.run_on_all_hosts/do_for_all_hosts accept *_options kwargs without error."""
-    from otto.config.lab import Lab
+    from otto.labs.loader import Lab
 
     lab = Lab(name="t")
     h = _FakeRunHost("h1")

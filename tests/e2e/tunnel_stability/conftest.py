@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.config.lab import Lab
 from otto.host.connections import teardown_step
+from otto.labs.loader import Lab
 from otto.tunnel import remove_tunnel
 from tests._fixtures.fd_watermark import (
     _fd_watermark,  # noqa: F401 — imported fixture, registered by name

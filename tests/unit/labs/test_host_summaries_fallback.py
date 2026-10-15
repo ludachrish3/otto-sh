@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
 from otto.labs import LabNotFoundError, SupportsHostSummaries, host_summaries, list_host_ids
+from otto.labs.loader import Lab
 
 _CREDS = [{"login": "u", "password": "p"}]
 
@@ -68,7 +68,7 @@ def test_fallback_summarizes_every_host(minimal_repo):
     """The fallback enumerates through load_lab, so ids are constructed ones.
 
     Exactly the backend's own hosts — a backend's ``load_lab`` returns only
-    its data (otto's ``local`` is injected later, by ``config.lab.load_lab``),
+    its data (otto's ``local`` is injected later, by ``labs.loader.load_lab``),
     so nothing is filtered on the way through.
     """
     summaries = host_summaries(minimal_repo)

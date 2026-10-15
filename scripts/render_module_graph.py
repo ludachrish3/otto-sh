@@ -122,7 +122,7 @@ def load_graph(path: Path = TACH_TOML) -> ModuleGraph:
 def module_of(path: str) -> str:
     """Return the dotted module a file under ``src/`` defines.
 
-    *path* is relative to ``src/``: ``otto/config/lab.py`` is ``otto.config.lab``,
+    *path* is relative to ``src/``: ``otto/labs/loader.py`` is ``otto.labs.loader``,
     and a trailing ``__init__`` is dropped, so ``otto/lab/__init__.py`` is ``otto.lab``.
     """
     parts = path.removesuffix(".py").split("/")

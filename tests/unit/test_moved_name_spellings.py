@@ -9,7 +9,7 @@ the 2026-10-04 manifest spec's D1). The five repo accessors (``get_repos``,
 (``load_lab``, ``get_lab``, ``get_host``, ``all_hosts``, ``do_for_all_hosts``,
 ``run_on_all_hosts``) left the ``otto.config`` package: users import them
 from ``otto.lab``, and otto's own code from the defining module
-(``otto.config.fleet``, ``otto.config.lab``).
+(``otto.config.fleet``, ``otto.labs.loader``).
 
 Two more sets moved with spec
 ``docs/superpowers/specs/2026-10-11-placement-and-phases-design.md`` §3.6. The
@@ -21,6 +21,12 @@ users keep the public path ``otto.config.<name>`` for the four the package
 exports. The path-list splitter (``split_path_list``, ``_PATH_LIST_SEP``) left
 ``otto.config.env`` for ``otto.utils``.
 
+One module moved whole with that spec's §3.7: the lab model and its loader
+(``Lab``, ``LAB_SEPARATOR``, ``split_lab_names``, ``_describe``, ``load_lab``,
+``_json_source``) left ``otto.config.lab`` for ``otto.labs.loader``. Like the
+deleted ``otto.config.bootstrapped``, the old module is gone, so any import of
+it, and any string naming it, is an old spelling.
+
 An old spelling fails loudly at most call sites, but not everywhere. Six
 readers import an accessor inside a broad ``except``, where a stale import
 degrades silently instead of raising
@@ -31,12 +37,13 @@ are never imported by a unit lane. So this scan reads every ``.py`` file under
 
 - ``from <old home> import <moved name>``, absolute or relative, including
   ``from . import get_repos`` inside ``otto.config`` itself;
-- any import of ``otto.config.bootstrapped``;
+- any import of a module that is gone (``otto.config.bootstrapped``, ``otto.config.lab``);
 - ``<old home>.<moved name>`` through a name bound to the old home
   (``import otto.config``, ``import otto.config as cm``, ``from otto import config``);
 - a lazy-table entry ``("<old home>", "<moved name>")``;
 - a string that names a moved name at its old home: a patch target
-  (``"otto.config.get_repos"``) or generated code (``"from otto.config import get_repos"``);
+  (``"otto.config.get_repos"``) or generated code (``"from otto.config import get_repos"``),
+  or that names a module that is gone;
 - in otto's own code (not the shipped examples, which are taught code), any import of the
   ``otto.lab`` facade or a lazy-table entry naming it. This is the broader form, for that one
   facade, of ``tests/unit/test_internal_imports_skip_facades.py``'s rule, whose
@@ -44,6 +51,7 @@ are never imported by a unit lane. So this scan reads every ``.py`` file under
 """
 
 import ast
+import importlib.util
 import re
 from pathlib import Path
 
@@ -84,11 +92,26 @@ SETTINGS = frozenset(
     }
 )
 SPLITTER = frozenset({"split_path_list", "_PATH_LIST_SEP"})
-DELETED = "otto.config.bootstrapped"
+LAB = frozenset(
+    {
+        "Lab",
+        "LAB_SEPARATOR",
+        "split_lab_names",
+        "_describe",
+        "load_lab",
+        "_json_source",
+    }
+)
+# Modules that are gone -> the moved names they held. Any import of one, and any string
+# naming one, is an old spelling.
+GONE: dict[str, frozenset[str]] = {
+    "otto.config.bootstrapped": ACCESSORS,
+    "otto.config.lab": LAB,
+}
 # old home -> the moved names it no longer has
 OLD_HOMES: dict[str, frozenset[str]] = {
     "otto.config": ACCESSORS | FLEET,
-    DELETED: ACCESSORS,
+    **GONE,
     "otto.config.repo": SETTINGS,
     "otto.config.env": SPLITTER,
 }
@@ -96,8 +119,12 @@ FACADE = "otto.lab"
 
 
 def _old_in_text(homes: "dict[str, frozenset[str]]") -> "re.Pattern[str]":
-    """A string naming a moved name at an old home: dotted, or in a generated import."""
-    spellings = [r"otto\.config\.bootstrapped\b"]
+    """A string naming a moved name at an old home, or a module that is gone."""
+    spellings = [rf"\b{re.escape(module)}\b" for module in GONE]
+    for module in GONE:  # a generated import of a gone module from its parent package
+        parent, _, leaf = module.removeprefix("otto.").rpartition(".")
+        package = re.escape(parent)
+        spellings.append(rf"\bfrom\s+(otto\.|\.+){package}\s+import\s+[^\n]*\b{leaf}\b")
     for home, names in homes.items():
         moved = "|".join(sorted(names))
         package = re.escape(home.removeprefix("otto."))
@@ -108,6 +135,11 @@ def _old_in_text(homes: "dict[str, frozenset[str]]") -> "re.Pattern[str]":
 
 _OLD_IN_TEXT = _old_in_text(OLD_HOMES)
 _DYNAMIC_IMPORT = re.compile(r"(?:importlib\.)?import_module\(['\"]([\w.]+)['\"]\)")
+
+
+def _gone(module: str) -> bool:
+    """Whether *module* is a gone module or one of its submodules."""
+    return any(module == gone or module.startswith(gone + ".") for gone in GONE)
 
 
 def _module_of(path: Path) -> str:
@@ -138,7 +170,7 @@ class _OldSpellings(ast.NodeVisitor):
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            if alias.name == DELETED or alias.name.startswith(DELETED + "."):
+            if _gone(alias.name):
                 self.found.append((node.lineno, f"import {alias.name}"))
             elif alias.asname and alias.name in OLD_HOMES:
                 self.aliases[alias.asname] = alias.name
@@ -151,9 +183,7 @@ class _OldSpellings(ast.NodeVisitor):
         if source is not None:
             names = [alias.name for alias in node.names]
             moved = sorted(set(names) & OLD_HOMES.get(source, frozenset()))
-            if source == DELETED or (
-                f"{source}.bootstrapped" == DELETED and "bootstrapped" in names
-            ):
+            if _gone(source) or any(f"{source}.{name}" in GONE for name in names):
                 self.found.append((node.lineno, f"from {source} import {', '.join(names)}"))
             elif moved:
                 self.found.append((node.lineno, f"from {source} import {', '.join(moved)}"))
@@ -243,13 +273,20 @@ def test_no_otto_code_or_test_names_a_moved_name_at_its_old_home():
         offenders += [f"{rel}:{line} {what}" for line, what in found]
     assert not offenders, (
         f"{len(offenders)} old spelling(s) of a moved name; import each from its new home "
-        "(otto.bootstrap for the repo accessors; otto.config.fleet / otto.config.lab inside otto, "
+        "(otto.bootstrap for the repo accessors; otto.config.fleet / otto.labs.loader inside otto, "
         "otto.lab in tests and docs, for the lab and fleet names; otto.config.scope for the "
         "settings types and the settings file's location; otto.utils for the path-list "
         "splitter). A line marked (a facade) "
         "is re-pointed by scripts/facade_sweep.py --apply when it is a from-import "
         "(tests/unit/test_internal_imports_skip_facades.py):\n  " + "\n  ".join(offenders)
     )
+
+
+def test_a_gone_module_does_not_import():
+    """A module whose names all moved is deleted, not left behind as a second home."""
+    assert "otto.config.lab" in GONE  # the check below cannot pass on an empty table
+    still = [module for module in GONE if importlib.util.find_spec(module) is not None]
+    assert still == [], f"these modules should be gone, but still import: {still}"
 
 
 class TestTheScanSeesEverySpelling:
@@ -336,7 +373,7 @@ class TestTheScanSeesEverySpelling:
             "from ..config.fleet import get_lab\n"
             "from ..config.lab import load_lab\n"
         )
-        assert self.lines(source) == [1, 2, 3, 4]
+        assert self.lines(source) == [1, 2, 3, 4, 6]
 
     def test_the_settings_types_and_the_splitter_at_their_old_homes(self):
         source = (
@@ -355,6 +392,26 @@ class TestTheScanSeesEverySpelling:
             "r.Repo\n"
         )
         assert self.lines(source, "otto.config.collected_tests") == [1, 2, 3, 4, 5, 7, 8]
+
+    def test_the_lab_module_that_moved_whole_in_every_spelling(self):
+        """``otto.config.lab`` is gone: its names live in ``otto.labs.loader``."""
+        source = (
+            "from otto.config.lab import Lab\n"
+            "from ..config.lab import load_lab, split_lab_names\n"
+            "import otto.config.lab\n"
+            "import otto.config.lab as lab\n"
+            "from otto.config import lab\n"
+            'monkeypatch.setattr("otto.config.lab.load_lab", f)\n'
+            'CODE = "import otto.config.lab\\n"\n'
+            'CODE = "from otto.config import lab\\n"\n'
+            "CODE = 'from ..config import Lab, lab'\n"
+            "from otto.labs.loader import Lab, load_lab\n"
+            "from ..labs.loader import LAB_SEPARATOR\n"
+            'FINE = "otto.config.labels"\n'
+            'FINE = "from otto.config import labels"\n'
+            "otto.labs.loader.load_lab\n"
+        )
+        assert self.lines(source) == [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
     def test_otto_code_never_imports_the_otto_lab_facade(self):
         source = (

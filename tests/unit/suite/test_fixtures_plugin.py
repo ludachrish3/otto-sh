@@ -11,10 +11,10 @@ from unittest.mock import MagicMock
 import pytest
 from typing_extensions import Self
 
-from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.errors import EnsureStateError
 from otto.invocation import RunPolicy
+from otto.labs.loader import Lab
 from otto.params import OptionsSource
 from otto.result import CommandNotRunError, Result
 from otto.suite.layout import ArtifactLayout

@@ -12,7 +12,7 @@ from ..models.monitor import TunnelRecord
 from .discovery import DiscoveredTunnel, TunnelNotMeasuredError, discover_tunnels
 
 if TYPE_CHECKING:
-    from ..config.lab import Lab
+    from ..labs.loader import Lab
 
 
 class TunnelScanFailedError(OttoError, RuntimeError):

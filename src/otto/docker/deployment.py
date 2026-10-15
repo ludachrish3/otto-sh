@@ -55,9 +55,9 @@ from .staging import (
 )
 
 if TYPE_CHECKING:
-    from ..config.lab import Lab
     from ..config.repo import Repo
     from ..config.scope import DockerCompose
+    from ..labs.loader import Lab
     from ..result import CommandResult
     from .resolve import SelectedFragment
 

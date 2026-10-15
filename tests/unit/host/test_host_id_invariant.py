@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.lab import load_lab
 from otto.host.builtin_hosts import builtin_host_ids
 from otto.host.command_frame import FRAME_CLASSES, register_command_frame
 from otto.host.docker_host import DockerContainerHost
@@ -14,6 +13,7 @@ from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.loader import load_lab
 from otto.logger.mode import LogMode
 from tests._fixtures.gs_example import import_gs_example
 from tests._fixtures.paths import PROJECT_ROOT, ensure_custom_hosts_on_path
@@ -40,7 +40,7 @@ def _zephyr_inline_frame() -> None:
 def _composed_ids(path: Path) -> list[str]:
     """The id of every host the REAL loader builds from *path*, across all its labs.
 
-    Through :func:`~otto.config.lab.load_lab`, so inventory resolution,
+    Through :func:`~otto.labs.loader.load_lab`, so inventory resolution,
     ``ElementSpec.to_element`` and the ``os_profile`` merge all run exactly as
     they do for a user. The example project's init module is imported first
     because its hosts name the session setups it registers.

@@ -40,7 +40,6 @@ from typer.testing import CliRunner
 
 from otto import options
 from otto.cli.run import build_instruction_app, instruction, run_app
-from otto.config.lab import Lab
 from otto.context import OttoContext
 from otto.instruction_catalog import (
     FIRST_PARTY_INSTRUCTIONS,
@@ -51,6 +50,7 @@ from otto.instruction_catalog import (
     ProjectInstructionError,
 )
 from otto.instructions import run_instruction
+from otto.labs.loader import Lab
 from otto.params import OptionsCollisionError
 from otto.project import (
     Cleanliness,

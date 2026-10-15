@@ -50,7 +50,7 @@ from .options import ConsoleOptions, SshOptions, TelnetOptions
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
 
-    from ..config.lab import Lab
+    from ..labs.loader import Lab
     from .command_frame import CommandFrame
     from .connections import ConnectionManager
     from .element import Element

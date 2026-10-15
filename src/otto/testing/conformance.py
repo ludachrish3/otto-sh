@@ -37,12 +37,12 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from ..config.lab import Lab
 from ..creds.protocol import CredsStore
 from ..host.remote_host import RemoteHost
 from ..inventory.errors import InventoryKeyError
 from ..inventory.protocol import Inventory
 from ..labs.errors import LabNotFoundError
+from ..labs.loader import Lab
 from ..labs.protocol import HostSummary, LabRepository, SupportsHostSummaries, logins_of_creds
 from ..models.base import CredSpec
 from ..models.inventory import (
@@ -103,7 +103,7 @@ def assert_lab_repository_conforms(
     """Assert *repo* satisfies the :class:`~otto.labs.protocol.LabRepository` contract.
 
     Runs structural rules unconditionally; for every listed lab, asserts it
-    loads to a valid :class:`~otto.config.lab.Lab`; asserts an unknown
+    loads to a valid :class:`~otto.labs.loader.Lab`; asserts an unknown
     name raises :class:`~otto.labs.LabNotFoundError`. When *expected_labs*
     is given, also asserts each appears in ``list_labs()`` and loads. Raises a
     single :class:`AssertionError` aggregating every violated rule.
@@ -354,7 +354,7 @@ def _expect_host_summaries_conform(
         f"but no load_lab() produces them — completion would offer ids that cannot dispatch",
     )
 
-    # No built-in exemption: ``local`` is injected by ``config.lab.load_lab``,
+    # No built-in exemption: ``local`` is injected by ``labs.loader.load_lab``,
     # never by a backend, so it is not in `constructed` to begin with. Excusing
     # it would only ever excuse a backend that defines its OWN ``local`` —
     # which otto explicitly allows, and which ``otto.labs.host_summaries``

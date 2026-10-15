@@ -1,8 +1,8 @@
 """load_lab injects a built-in `local` host into every lab, backend-agnostically."""
 
-from otto.config.lab import Lab, load_lab
 from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, make_builtin_local_host
 from otto.host.host import BaseHost
+from otto.labs.loader import Lab, load_lab
 
 
 class _StubRepo:

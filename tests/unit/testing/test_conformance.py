@@ -98,7 +98,7 @@ class TestLabRepositoryConformance:
         and this backend is otherwise perfectly conforming: the aggregate
         must name the missing keyword and nothing else.
         """
-        from otto.config.lab import Lab
+        from otto.labs.loader import Lab
 
         class NoInventoryKeyword:
             def load_lab(self, name, preferences=None):
@@ -122,7 +122,7 @@ class TestLabRepositoryConformance:
         every set agrees) and TypeErrors in the shell. The asserter itself used
         to call it with no arguments, which is why this backend used to pass.
         """
-        from otto.config.lab import Lab
+        from otto.labs.loader import Lab
 
         class NoKeywordOnSummaries:
             def load_lab(self, name, preferences=None, inventory=None):
@@ -144,7 +144,7 @@ class TestLabRepositoryConformance:
     def test_a_conforming_host_summaries_backend_is_called_by_keyword(self):
         """The asserter's own call shape: keyword ``inventory=``, never positional
         — pinned so the check cannot drift back to the shape it certified wrongly."""
-        from otto.config.lab import Lab
+        from otto.labs.loader import Lab
 
         calls: list = []
 
@@ -182,7 +182,7 @@ class TestLabRepositoryConformance:
     def test_load_lab_raises_on_idempotency_recall_records_not_crashes(self):
         """A backend whose load_lab raises on the second call (idempotency re-call)
         must produce an aggregated AssertionError, not propagate the raw exception."""
-        from otto.config.lab import Lab
+        from otto.labs.loader import Lab
 
         class RaisesOnSecondCall:
             def __init__(self):
@@ -687,7 +687,7 @@ def _lab_repo(*, summaries=True, ghost_id=False):
     be one ``load_lab`` produces" rule, so the "present but not expected"
     direction is proved by a double that FAILS rather than one that passes.
     """
-    from otto.config.lab import Lab
+    from otto.labs.loader import Lab
 
     class Repo:
         def load_lab(self, name, preferences=None, inventory=None):

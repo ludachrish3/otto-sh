@@ -95,7 +95,7 @@ from .sandbox import (
 )
 
 if TYPE_CHECKING:
-    from ..config.lab import Lab
+    from ..labs.loader import Lab
 
 FEATURES = [
     "read-back", "delay", "jitter", "loss", "duplicate", "reorder",

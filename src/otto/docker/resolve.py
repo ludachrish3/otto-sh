@@ -17,10 +17,10 @@ from ..declared import scope_for_repo
 from ..errors import OttoError
 
 if TYPE_CHECKING:
-    from ..config.lab import Lab
     from ..config.repo import Repo
     from ..config.scope import DockerUseCase
     from ..host.unix_host import UnixHost
+    from ..labs.loader import Lab
 
 
 class UseCaseResolutionError(OttoError, ValueError):

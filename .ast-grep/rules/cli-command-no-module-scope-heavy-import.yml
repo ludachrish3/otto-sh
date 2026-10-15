@@ -30,9 +30,10 @@ note: >
     - otto.host.errors/unix_host/remote_host: cli.cov, cli.docker, cli.host
       (also spelled as otto.host's lazy UnixHost/RemoteHost/OsType and its
       error names MountNotFoundError/RawLandingError/SessionSetupError);
-    - otto.config.fleet/lab/repo: cli.docker, cli.host, cli.monitor,
-      cli.callbacks, cli.link, cli.tunnel (also spelled as otto.config's lazy
-      Repo and otto.lab's lazy Lab/load_lab/get_lab/get_host/all_hosts/...).
+    - otto.config.fleet/repo and otto.labs.loader (the lab model and its
+      loader): cli.docker, cli.host, cli.monitor, cli.callbacks, cli.link,
+      cli.tunnel (also spelled as otto.config's lazy Repo, otto.labs' loader
+      submodule and otto.lab's lazy Lab/load_lab/get_lab/get_host/all_hosts/...).
       otto.config's lazy Docker*/MonitorSettings stay banned with Repo: a
       command reads them from the repo it loads, in its body;
     - otto.context: cli.test, cli.host;
@@ -62,7 +63,7 @@ utils:
   # (`..x` from src/otto/cli/, `...x` from a package under it), optionally
   # followed by a submodule.
   denied-module-path:
-    regex: '^(asyncio|pydantic|rich\.table|(\.{2,}|otto\.)(coverage\.(reporter|merge|store|tree|errors)|host\.(errors|unix_host|remote_host)|config\.(fleet|lab|repo)|context|docker))(\.[\w.]+)?$'
+    regex: '^(asyncio|pydantic|rich\.table|(\.{2,}|otto\.)(coverage\.(reporter|merge|store|tree|errors)|host\.(errors|unix_host|remote_host)|config\.(fleet|repo)|labs\.loader|context|docker))(\.[\w.]+)?$'
 rule:
   all:
   - any:
@@ -72,7 +73,7 @@ rule:
         any:
         - kind: dotted_name
         - kind: aliased_import
-        regex: '^(asyncio|pydantic|rich\.table|otto\.(coverage\.(reporter|merge|store|tree|errors)|host\.(errors|unix_host|remote_host)|config\.(fleet|lab|repo)|context|docker))(\.[\w.]+)?(\s+as\s+\w+)?$'
+        regex: '^(asyncio|pydantic|rich\.table|otto\.(coverage\.(reporter|merge|store|tree|errors)|host\.(errors|unix_host|remote_host)|config\.(fleet|repo)|labs\.loader|context|docker))(\.[\w.]+)?(\s+as\s+\w+)?$'
     # from asyncio import ... / from ..config.fleet import ... / from ..docker import ...
     - kind: import_from_statement
       has:
@@ -113,7 +114,7 @@ rule:
           any:
           - kind: dotted_name
           - kind: aliased_import
-          regex: '^(fleet|lab|repo|Repo|DockerCompose|DockerImage|DockerSettings|MonitorSettings)(\s+as\s+\w+)?$'
+          regex: '^(fleet|repo|Repo|DockerCompose|DockerImage|DockerSettings|MonitorSettings)(\s+as\s+\w+)?$'
     - kind: import_from_statement
       all:
       - has:
@@ -124,6 +125,16 @@ rule:
           - kind: dotted_name
           - kind: aliased_import
           regex: '^(Lab|load_lab|get_lab|get_host|all_hosts|do_for_all_hosts|run_on_all_hosts|fleet_of_interest)(\s+as\s+\w+)?$'
+    - kind: import_from_statement
+      all:
+      - has:
+          field: module_name
+          regex: '^(\.{2,}|otto\.)labs$'
+      - has:
+          any:
+          - kind: dotted_name
+          - kind: aliased_import
+          regex: '^(loader)(\s+as\s+\w+)?$'
     - kind: import_from_statement
       all:
       - has:

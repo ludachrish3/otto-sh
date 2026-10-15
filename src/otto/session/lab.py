@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any
 from .errors import LabBuildError
 
 if TYPE_CHECKING:
-    from ..config.lab import Lab
     from ..config.repo import Repo
+    from ..labs.loader import Lab
 
 
 def merge_host_preferences(repos: "list[Repo]") -> dict[str, dict[str, Any]]:
@@ -56,8 +56,8 @@ def build_lab(repos: "list[Repo]", labs: list[str]) -> "Lab":
     """
     if not labs:
         raise LabBuildError("no lab selected: name one or more labs", field="labs", kind="no_labs")
-    from ..config.lab import load_lab
     from ..labs.errors import LabNotFoundError, LabRepositoryError
+    from ..labs.loader import load_lab
     from ..labs.sources import build_lab_sources
 
     try:

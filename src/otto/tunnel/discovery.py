@@ -20,7 +20,7 @@ from .model import ProcKey, Tunnel
 from .sentinel import SENTINEL_PREFIX, ParsedSentinel, parse_sentinel
 
 if TYPE_CHECKING:
-    from ..config.lab import Lab
+    from ..labs.loader import Lab
 
 logger = logging.getLogger(__name__)
 

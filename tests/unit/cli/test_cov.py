@@ -375,9 +375,9 @@ class TestCovReportSuccess:
     def test_report_defaults_into_the_invocation_output_dir(
         self, cov_tree, mock_run_report, tmp_path
     ):
-        from otto.config.lab import Lab
         from otto.context import OttoContext, reset_context, set_context
         from otto.invocation import RunPolicy
+        from otto.labs.loader import Lab
 
         mock, _ = mock_run_report
         run_dir = tmp_path / "xdir" / "cov" / "20260703_120000_000_report"
@@ -407,9 +407,9 @@ class TestCovReportSuccess:
         assert mock.call_args.kwargs["overwrite"] is True
 
     def test_report_without_an_output_dir_or_dir_fails_naming_dir(self, cov_tree, mock_run_report):
-        from otto.config.lab import Lab
         from otto.context import OttoContext, reset_context, set_context
         from otto.invocation import RunPolicy
+        from otto.labs.loader import Lab
 
         mock, _ = mock_run_report
         token = set_context(OttoContext(lab=Lab(name="t"), policy=RunPolicy(output_dir=None)))

@@ -895,7 +895,7 @@ if str(GS_EXAMPLE / "libs") not in sys.path:
 from otto import Status
 from otto.utils import complete_marker_expression, complete_separated_list, split_on
 from otto.result import CommandResult, Result, Results
-from otto.config.lab import split_lab_names
+from otto.labs.loader import split_lab_names
 from otto.host.local_host import LocalHost
 from otto.monitor.parsers import human_readable
 from otto.registry import Registry

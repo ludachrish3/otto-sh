@@ -214,7 +214,7 @@ def test_a_value_is_shown_unless_its_repr_is_the_default_one():
 
 def test_an_attribute_takes_the_module_of_the_class_that_holds_it():
     assert owner_module("otto.tunnel.TunnelCheckReport.dest_proof") == "otto.tunnel.check"
-    assert owner_module("otto.lab.Lab.component_names") == "otto.config.lab"
+    assert owner_module("otto.lab.Lab.component_names") == "otto.labs.loader"
     assert owner_module("otto.no_such_module.Thing.attr") is None
 
 

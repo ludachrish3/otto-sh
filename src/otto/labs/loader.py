@@ -1,4 +1,19 @@
-"""Lab dataclass and lab-loading utilities for assembling a host registry from lab data."""
+"""The lab model and its loader: :class:`Lab`, the ``+`` that combines labs, and :func:`load_lab`.
+
+A :class:`Lab` holds a named lab's hosts and declared links, and ``+`` merges
+labs into one. :func:`split_lab_names` and :data:`LAB_SEPARATOR` are the one
+grammar for a ``+``-combined lab selection. :func:`load_lab` builds a lab from
+lab names through a lab source (by default the ``json`` backend over
+``search_paths``), stamps each host with the component lab it came from, and
+injects the built-in ``local`` host. The public paths are :class:`otto.lab.Lab`,
+:func:`otto.lab.load_lab` and :func:`otto.load_lab`.
+
+The module sits in ``otto.labs``, beside the lab sources it drives (spec
+2026-10-11 placement-and-phases §3.7). Its runtime imports are the standard
+library's: the host classes, the link derivation and the lab sources are
+imported inside the functions that use them, so importing it, or naming
+``otto.lab.Lab``, loads no host code.
+"""
 
 from dataclasses import (
     dataclass,
@@ -15,8 +30,8 @@ from typing import (
 if TYPE_CHECKING:
     from ..host.host import Host
     from ..inventory.protocol import Inventory
-    from ..labs.protocol import LabRepository
     from ..link.model import Link
+    from .protocol import LabRepository
 
 
 LAB_SEPARATOR = "+"
@@ -148,8 +163,8 @@ class Lab:
 
         existing = self.hosts.get(host.id)
         if existing is not None:
-            # lazy: collision path only; keeps otto.config.lab's import light
-            from ..labs.errors import LabRepositoryError
+            # lazy: collision path only; keeps this module's import light
+            from .errors import LabRepositoryError
 
             hint = ""
             if isinstance(existing, RemoteHost) and isinstance(host, RemoteHost):
@@ -249,8 +264,8 @@ def _json_source(search_paths: list[Path]) -> "LabRepository":
     No repo is selected on this path, so its hosts see no repo data profiles.
     """
     from ..host.os_profile import ProfileContext
-    from ..labs.registry import LAB_REPOSITORIES
-    from ..labs.sources import LabSourceEnv
+    from .registry import LAB_REPOSITORIES
+    from .sources import LabSourceEnv
 
     prepared = LAB_REPOSITORIES.prepare(
         "json",
@@ -330,14 +345,11 @@ def load_lab(
             lab_names = labnames
 
     if repository is None:
-        # Imported inside the call rather than at module scope (where it used
-        # to sit, below the Lab class, to dodge json_repository's circular
-        # import back to Lab): `otto.labs.json_repository` imports
-        # `otto.host.factory`, so a module-level edge here put the whole
-        # 46-module otto.host.* subtree on every surface that so much as named
-        # `otto.config`. The function scope solves the cycle too, so the
-        # post-class placement and its noqa pair are both gone.
-        from ..labs.composite import CompositeLabRepository, LabSource
+        # Imported inside the call, as every collaborator here is: the json
+        # backend a source builds imports `otto.host.factory`, and importing
+        # this module (or naming `otto.lab.Lab`) must not load the otto.host.*
+        # subtree on a surface that never loads a lab.
+        from .composite import CompositeLabRepository, LabSource
 
         # One json source still goes through the composite: lab existence and
         # the declared-but-memberless rule live there and nowhere else. A
@@ -353,7 +365,9 @@ def load_lab(
         for name in lab_names
     ]
 
-    from ..host.lab_info import LabInfo  # lazy: this module is imported by host modules
+    # lazy: keeps ``import otto.labs.loader`` from loading otto.host
+    # (tests/unit/test_import_contracts.py pins this)
+    from ..host.lab_info import LabInfo
 
     # Attribution sweep, BEFORE the merge. After ``+`` every host lives in a lab
     # named "a+b", so a sweep run one line later would answer "which lab is this

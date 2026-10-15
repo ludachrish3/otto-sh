@@ -25,7 +25,7 @@ from .check import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from ..config.lab import Lab
+    from ..labs.loader import Lab
     from .protocol import Reservation, ReservationBackend
 
 

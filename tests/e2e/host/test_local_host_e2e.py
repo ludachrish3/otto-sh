@@ -5,7 +5,7 @@ filesystem, so the full CLI dispatch path runs end-to-end — repo discovery,
 lab loading, host resolution, command execution, file transfer — without any
 network transport or remote VM.
 
-The ``local`` host ID is a built-in host: :func:`otto.config.lab.load_lab`
+The ``local`` host ID is a built-in host: :func:`otto.labs.loader.load_lab`
 injects a ``LocalHost()`` into every lab it returns, on any backend, so
 ``otto host local`` resolves without a custom lab-repository. This fixture repo
 uses the standard ``json`` backend (``[[lab.sources]] backend = "json"`` in

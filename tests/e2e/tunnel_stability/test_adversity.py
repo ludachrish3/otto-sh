@@ -16,9 +16,9 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.config.lab import Lab
 from otto.host.daemon import kill_command
 from otto.host.interface import Interface
+from otto.labs.loader import Lab
 from otto.link import ImpairmentParams, Link, LinkEndpoint, Selector, impair_link, repair_link
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel

@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 
 from otto import context
-from otto.config.lab import Lab
 from otto.context import LIBRARY_LAB_NAME, OttoContext, reset_context, set_context
 from otto.host.host import SuppressCommandOutput, get_logging_command_output_enabled, is_dry_run
 from otto.invocation import RunPolicy, installed_policy, installed_resolver
+from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.labdata import make_host
 from tests._fixtures.paths import PROJECT_ROOT

@@ -1,8 +1,8 @@
 """Display name = element name, board, slot — as written, no number (spec 2026-09-05 §2.4)."""
 
-from otto.config.lab import Lab
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 
 
 def _mk(element, board=None, slot=None, name="", ip="10.0.0.1"):

@@ -111,9 +111,9 @@ def test_resolve_output_dir_falls_back_to_cwd(monkeypatch, tmp_path):
 
 
 def test_resolve_output_dir_uses_context_output_dir(tmp_path):
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.invocation import RunPolicy
+    from otto.labs.loader import Lab
 
     token = set_context(OttoContext(lab=Lab(name="test"), policy=RunPolicy(output_dir=tmp_path)))
     try:
@@ -1115,8 +1115,8 @@ def test_run_tests_installs_minimal_context_when_none_active(sut_repo, tmp_path)
 
 def test_run_tests_sets_and_restores_output_dir_on_active_context(sut_repo, tmp_path):
     """An active context with output_dir=None gets log_dir for the session, then restored."""
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.labs.loader import Lab
 
     sut_repo(files={"tests/test_ctx_probe_b.py": _PROBE})
     out = tmp_path / "out"
@@ -1136,9 +1136,9 @@ def test_run_tests_sets_and_restores_output_dir_on_active_context(sut_repo, tmp_
 
 def test_run_tests_leaves_active_context_output_dir_untouched(sut_repo, tmp_path):
     """A context that already has an output_dir is never mutated by run_tests."""
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.invocation import RunPolicy
+    from otto.labs.loader import Lab
 
     sut_repo(files={"tests/test_ctx_probe_c.py": _PROBE})
     ctx_dir = tmp_path / "ctx_dir"
@@ -1193,8 +1193,8 @@ def test_run_tests_restores_the_callers_verb_binding(tmp_path, monkeypatch, sess
     same verb, the same built instances, the same parsed flags.
     """
     from otto import options
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.labs.loader import Lab
     from otto.params import register_options
 
     @options
@@ -1268,8 +1268,8 @@ def test_run_tests_restores_no_context_state_on_exception(tmp_path, monkeypatch)
 def test_run_tests_restores_prior_output_dir_on_exception(tmp_path, monkeypatch):
     """Active-context-with-no-output_dir branch: an exception mid-session still
     rolls back the session-scoped output_dir assignment to its prior value."""
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.labs.loader import Lab
 
     repo = _stub_repo(tmp_path)
     _raising_session(monkeypatch)
@@ -1584,8 +1584,8 @@ def test_run_tests_abandons_hosts_left_on_the_inner_sessions_closed_loops(tmp_pa
     """A host that connected on one of pytest's loops, which then closed unswept,
     holds state no loop can drive. After the session run_tests drops it
     (``abandon_closed_loops``) and never attempts a cross-loop close."""
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
+    from otto.labs.loader import Lab
     from tests._fixtures.registry import DuckHost
 
     repo = _stub_repo(tmp_path)
@@ -1828,9 +1828,9 @@ def test_run_tests_exposes_resolved_cov_on_context(tmp_path, monkeypatch, decisi
 
 def test_run_tests_restores_prior_cov_on_an_active_context(tmp_path, monkeypatch):
     """A caller's own context gets its cov back after the run."""
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.invocation import RunPolicy
+    from otto.labs.loader import Lab
 
     repo = _stub_repo(tmp_path)
     seen = _record_ctx_cov_during_session(monkeypatch, decision=True)

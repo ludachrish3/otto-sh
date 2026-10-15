@@ -32,8 +32,8 @@ from .errors import LabNotFoundError, LabRepositoryError
 from .protocol import HostSummary
 
 if TYPE_CHECKING:
-    from ..config.lab import Lab
     from ..inventory.protocol import Inventory
+    from .loader import Lab
     from .protocol import LabRepository
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ class CompositeLabRepository:
     """Merge N ``LabRepository`` backends, later sources overriding earlier.
 
     Satisfies ``LabRepository`` and ``SupportsHostSummaries``, so every
-    downstream consumer (``config.lab.load_lab``, completion, conformance)
+    downstream consumer (``labs.loader.load_lab``, completion, conformance)
     works unchanged. An EMPTY composite is valid: it lists no labs and
     ``load_lab`` fails loud with configuration guidance — the state of a
     process where no repo declares a ``[[lab.sources]]`` entry.

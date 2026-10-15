@@ -137,8 +137,8 @@ def test_failed_discovery_leaves_ten_seconds_even_under_an_ambient_policy(monkey
 @pytest.mark.asyncio
 async def test_a_nested_open_context_with_failed_discovery_runs_under_ten_seconds(monkeypatch):
     from otto import context
-    from otto.config.lab import Lab
     from otto.invocation import current_policy
+    from otto.labs.loader import Lab
 
     monkeypatch.setattr("otto.bootstrap.discovered_teardown_deadline", lambda: None)
     bs._reset()

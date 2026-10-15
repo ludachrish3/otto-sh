@@ -17,11 +17,11 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.config.lab import Lab
 from otto.context import OttoContext, set_context
 from otto.host.factory import create_host_from_dict
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from scripts.lab_health import _run_ssh, _ssh_user_pass
 from tests._fixtures.labdata import flat_hosts, host_data

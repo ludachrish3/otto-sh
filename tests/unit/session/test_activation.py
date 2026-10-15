@@ -2,9 +2,9 @@
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.config.scope import ProjectScope
 from otto.context import OttoContext
+from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import seed_scope_verdicts
 from tests._fixtures.scoping import verdict
 

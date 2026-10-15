@@ -2,12 +2,12 @@
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.host.element import Element
 from otto.host.remote_host import make_host_id
 from otto.host.unix_host import UnixHost
 from otto.labs.errors import LabRepositoryError
 from otto.labs.json_repository import parse_elements
+from otto.labs.loader import Lab
 
 
 @pytest.mark.parametrize(

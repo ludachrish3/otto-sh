@@ -22,7 +22,7 @@ note: >
   `CommandPowerController`, `ConnectionManager`, `ConnectionManager.create`),
   bare or through a module, in the orchestration modules that load labs,
   inventory, creds, reservations and power, and build hosts' connections
-  (labs.sources, config.lab, inventory.config, creds.config,
+  (labs.sources, labs.loader, inventory.config, creds.config,
   reservations.factory, host.unix_host, host.embedded_host, session.lab
   and host.power).
 
@@ -35,7 +35,7 @@ note: >
   the real guard.
 files:
 - src/otto/labs/sources.py
-- src/otto/config/lab.py
+- src/otto/labs/loader.py
 - src/otto/inventory/config.py
 - src/otto/creds/config.py
 - src/otto/reservations/factory.py

@@ -10,7 +10,6 @@ from dataclasses import dataclass
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.examples.lab_repository import ExampleLabRepository
 from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
@@ -23,6 +22,7 @@ from otto.labs import (
     LabSource,
 )
 from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.loader import Lab
 from otto.testing import assert_lab_repository_conforms
 
 _CREDS = [{"login": "u", "password": "p"}]

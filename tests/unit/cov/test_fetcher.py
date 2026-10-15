@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.coverage.fetcher.remote import GcdaFetcher, _fetch_one_product
 from otto.host.product import Product
+from otto.labs.loader import Lab
 from otto.result import CommandResult, NotRunResult, Result
 from otto.utils import Status
 

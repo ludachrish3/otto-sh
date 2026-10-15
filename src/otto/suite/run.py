@@ -372,7 +372,6 @@ def _session_context(log_dir: Path) -> "Iterator[OttoContext]":
 
     active = try_get_context()
     if active is None:
-        from ..config.lab import Lab
         from ..context import (
             LIBRARY_LAB_NAME,
             OttoContext,
@@ -381,6 +380,7 @@ def _session_context(log_dir: Path) -> "Iterator[OttoContext]":
             reset_context,
             set_context,
         )
+        from ..labs.loader import Lab
 
         policy = prepared_policy(output_dir=log_dir)
         fill_teardown_deadline(policy)

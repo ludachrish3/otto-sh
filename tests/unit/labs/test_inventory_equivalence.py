@@ -8,10 +8,10 @@ the attributes a test can see. A mutation that drops one fill (remove
 
 import pytest
 
-from otto.config.lab import load_lab
 from otto.config.user_settings import load_user_settings
 from otto.inventory import build_inventory_from_declarations, resolve_host_entry
 from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.loader import load_lab
 from tests._fixtures.labdata import lab_data_dir
 
 _UNIX = ["test1", "test2", "test3"]

@@ -469,9 +469,9 @@ def ctx_with_local_lab() -> Iterator["OttoContext"]:
     Installed for the test's length, so a host that claims a loop registers
     with this context's per-loop scope.
     """
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.host.local_host import LocalHost
+    from otto.labs.loader import Lab
 
     lab = Lab(name="t")
     lab.add_host(LocalHost())

@@ -255,7 +255,6 @@ from dataclasses import dataclass
 import pytest
 import pytest_asyncio
 
-from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.host.factory import create_host_from_dict
 from otto.host.local_host import LocalHost
@@ -263,6 +262,7 @@ from otto.host.login_proxy import Cred
 from otto.host.remote_host import make_host_id
 from otto.host.unix_host import UnixHost
 from otto.invocation import RegistrySnapshot
+from otto.labs.loader import Lab
 from otto.suite._retry import report_retries, retry_hookwrapper
 from tests._fixtures import _conftest_rebind
 from tests._fixtures._coverage_preinit import (

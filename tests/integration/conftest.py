@@ -18,11 +18,11 @@ import pytest
 import pytest_asyncio
 
 from otto.config.env import SUT_DIRS_ENV_VAR
-from otto.config.lab import Lab
 from otto.context import OttoContext, set_context
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_data_path
 from tests._fixtures.paths import default_sut_dir

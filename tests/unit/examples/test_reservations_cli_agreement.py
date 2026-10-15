@@ -7,8 +7,8 @@ import pytest
 import typer
 
 from otto.cli.reservation import check
-from otto.config.lab import Lab
 from otto.examples.reservations_cli import check_report, translate
+from otto.labs.loader import Lab
 from otto.reservations import gate_from_settings
 from tests._fixtures.fleet import install_scoped_context
 from tests.conftest import make_host

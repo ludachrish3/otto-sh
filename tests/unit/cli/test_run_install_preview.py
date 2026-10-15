@@ -91,11 +91,11 @@ def test_the_leaf_drives_the_real_planner_over_a_lab_without_contacting_the_host
 ):
     """No patching of ``plan_instruction``: a shell product on a double host, end to end."""
     from otto.cli.run import run_app
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.declared import DeclaredEntry
     from otto.host.product import PRODUCT_KIND_BUILDER
     from otto.invocation import RunPolicy
+    from otto.labs.loader import Lab
     from tests._fixtures.dispatch import DispatchRunner
     from tests.unit.project.test_plan import _Host
 

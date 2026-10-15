@@ -4,10 +4,10 @@ from typing import Any
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.config.scope import ProjectScope
 from otto.context import OttoContext
 from otto.env.preflight import PreflightResult, Unsatisfied
+from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.fake_repo import fake_repo

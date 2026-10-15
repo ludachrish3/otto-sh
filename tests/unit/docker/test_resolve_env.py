@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.docker import resolve as resolve_mod
 from otto.docker.resolve import (
     SelectedFragment,
@@ -17,6 +16,7 @@ from otto.docker.resolve import (
     resolve_fact_refs,
 )
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 
 from .test_resolve_select import _frag, _repo
 

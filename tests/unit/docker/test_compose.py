@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto import declared as declared_mod
-from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.config.scope import DockerCompose, DockerUseCase, ProjectScopeConfig
 from otto.declared import DeclaredEntry
@@ -49,6 +48,7 @@ from otto.host.mount import Mount
 from otto.host.product import ShellProduct
 from otto.host.unix_host import UnixHost
 from otto.labs.errors import LabRepositoryError
+from otto.labs.loader import Lab
 from otto.registry import registering_repo
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status

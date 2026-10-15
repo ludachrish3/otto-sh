@@ -23,12 +23,12 @@ import pytest
 import tomli
 
 import otto.host.factory  # noqa: F401 — imported for its side effect: the factory module is what puts the built-in "file" product kind in PRODUCT_KINDS
-from otto.config.lab import Lab
 from otto.coverage.fetcher.remote import GcdaFetcher
 from otto.coverage.reporter import CoverageReporter, discover_gcda_dirs
 from otto.host.local_host import LocalHost
 from otto.host.product import PRODUCT_KIND_BUILDER, stamp_cov_dir
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.models.settings import DeclaredEntrySpec
 from otto.utils import Status
 from tests._fixtures.paths import TESTS_ROOT

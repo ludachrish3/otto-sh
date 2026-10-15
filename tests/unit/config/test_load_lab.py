@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.lab import Lab, load_lab
 from otto.labs.json_repository import JsonFileLabRepository
+from otto.labs.loader import Lab, load_lab
 from tests._fixtures.labdata import lab_data_dir, write_lab_json
 
 

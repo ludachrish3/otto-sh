@@ -90,7 +90,7 @@ from .model import make_tunnel_id
 from .socat import pick_random_free_port
 
 if TYPE_CHECKING:
-    from ..config.lab import Lab
+    from ..labs.loader import Lab
 
 PROTOCOLS = ["tcp", "udp"]
 """Every protocol the check proves, in the order ``--protocol both`` runs them."""

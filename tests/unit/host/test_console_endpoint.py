@@ -2,13 +2,13 @@
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.host.element import Element
 from otto.host.embedded_host import ZephyrHost
 from otto.host.errors import ConsoleError
 from otto.host.login_proxy import Cred
 from otto.host.options import ConsoleOptions
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 
 

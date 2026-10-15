@@ -5,7 +5,6 @@ import dataclasses
 import pytest
 
 import otto
-from otto.config.lab import Lab
 from otto.context import (
     LIBRARY_LAB_NAME,
     OttoContext,
@@ -15,6 +14,7 @@ from otto.context import (
 )
 from otto.instruction_catalog import STANDALONE_INSTRUCTIONS, InstructionEntry
 from otto.instructions import bind_handler_kwargs, instruction, run_instruction
+from otto.labs.loader import Lab
 from otto.params import (
     OPTIONS,
     OptionsRegistrationError,

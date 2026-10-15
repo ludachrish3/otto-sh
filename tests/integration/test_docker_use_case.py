@@ -33,13 +33,13 @@ from unittest.mock import patch
 import pytest
 import pytest_asyncio
 
-from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.docker import resolve as resolve_mod
 from otto.docker.compose import use_case_project
 from otto.docker.deployment import deploy, teardown
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.labdata import element_for, host_data

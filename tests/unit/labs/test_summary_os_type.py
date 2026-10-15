@@ -84,9 +84,9 @@ def test_load_lab_fallback_records_the_built_hosts_os_type():
     which applies the factory's ``"unix"`` default) and reads it back off the
     host object, not off the raw record — so it must not report ``None`` for a
     host that plainly has one."""
-    from otto.config.lab import Lab
     from otto.host.factory import create_host_from_dict
     from otto.labs import host_summaries
+    from otto.labs.loader import Lab
 
     class _MinimalRepo:
         """A LabRepository with only the two required methods (no fast path)."""

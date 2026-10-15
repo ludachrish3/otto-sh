@@ -62,7 +62,7 @@ for name in ["get_lab", "get_repos"]:
     still.append(name)
 assert still == [], f"from otto.config import still works for {still}"
 assert otto.get_lab is otto.lab.get_lab, "otto.get_lab is not otto.lab.get_lab"
-from otto.config.lab import Lab
+from otto.labs.loader import Lab
 
 assert Lab is otto.lab.Lab
 """
@@ -82,8 +82,9 @@ def test_the_old_fleet_spelling_is_gone_in_either_import_order(first):
     it loads, can make an old spelling work only after some other import ran.
     So each order runs alone in a fresh interpreter (spec 2026-10-04 §7: new
     names are imported in fresh interpreters, in both import orders). The
-    retired deep path ``otto.config.lab:Lab`` still imports: it is no longer
-    public, but no module moved.
+    lab model and its loader moved whole into ``otto.labs.loader``, and the
+    owner's ``Lab`` is the public object; that the old module no longer
+    imports is ``tests/unit/test_moved_name_spellings.py``'s to say.
     """
     proc = subprocess.run(
         [sys.executable, "-c", _IMPORT_ORDERS[first] + _OLD_SPELLING_CHECK],

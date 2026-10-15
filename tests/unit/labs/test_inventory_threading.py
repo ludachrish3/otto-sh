@@ -1,6 +1,6 @@
 """inventory= reaches the json backend's load, summaries and links (spec §6, §14).
 
-The composite, ``host_summaries`` (both routes), ``config.lab.load_lab`` and
+The composite, ``host_summaries`` (both routes), ``labs.loader.load_lab`` and
 the reference example backend all forward it too.
 """
 
@@ -183,7 +183,7 @@ def test_composite_forwards_inventory(repo, inventory):
 
 
 def test_config_load_lab_accepts_and_forwards_inventory(repo, inventory):
-    from otto.config.lab import load_lab
+    from otto.labs.loader import load_lab
 
     lab = load_lab(
         "l",

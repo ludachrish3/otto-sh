@@ -11,8 +11,8 @@ import pytest
 import typer
 
 from otto.cli.reservation import check, whoami
-from otto.config.lab import Lab
 from otto.host.element import Element
+from otto.labs.loader import Lab
 from otto.reservations import (
     NullReservationBackend,
     Reservation,

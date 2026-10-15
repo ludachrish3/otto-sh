@@ -246,7 +246,7 @@ def make_console_host(ne: str, **kwargs: Any) -> UnixHost:
     ``shell`` transfer (the only one that runs on the single session) and
     the entry's creds; any keyword overrides them.
     """
-    from otto.config.lab import Lab
+    from otto.labs.loader import Lab
 
     flat = _flat_record(ne, "tech1")
     data = entry_of(flat)

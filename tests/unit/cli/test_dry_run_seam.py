@@ -722,7 +722,7 @@ def _dialable_host(element: str = "dut1", ip: str = "198.51.100.1") -> Any:
 
 
 def _lab_with(*hosts: Any) -> Any:
-    from otto.config.lab import Lab
+    from otto.labs.loader import Lab
 
     lab = Lab(name="probelab")
     for host in hosts:

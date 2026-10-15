@@ -2,10 +2,10 @@
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
 from otto.labs.errors import LabRepositoryError
+from otto.labs.loader import Lab
 
 
 def _mk(element, ip="10.0.0.1", element_id=None):

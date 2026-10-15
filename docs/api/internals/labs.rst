@@ -21,3 +21,6 @@ labs internals
 
 .. automodule:: otto.labs.errors
    :ignore-module-all:
+
+.. automodule:: otto.labs.loader
+   :ignore-module-all:

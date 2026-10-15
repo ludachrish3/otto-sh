@@ -12,11 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.creds import JsonCredsStore
 from otto.inventory import CredsOverlay, JsonInventory
 from otto.labs import LabNotFoundError, LabRepositoryError
 from otto.labs.json_repository import JsonFileLabRepository, parse_lab_sections
+from otto.labs.loader import Lab
 from tests._fixtures.labdata import write_lab_json
 
 _CREDS = [{"login": "u", "password": "p"}]

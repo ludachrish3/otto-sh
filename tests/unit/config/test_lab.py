@@ -1,5 +1,5 @@
-from otto.config.lab import Lab
 from otto.host.element import Element
+from otto.labs.loader import Lab
 from otto.link import Link, LinkEndpoint, Provenance
 
 
@@ -91,8 +91,8 @@ class TestLabAddDedupesLinks:
 
 
 def test_load_lab_forwards_preferences(tmp_path):
-    from otto.config.lab import Lab, load_lab
     from otto.host.factory import create_host_from_dict
+    from otto.labs.loader import Lab, load_lab
     from otto.labs.registry import LAB_REPOSITORIES, register_lab_repository
 
     captured: dict[str, object] = {}

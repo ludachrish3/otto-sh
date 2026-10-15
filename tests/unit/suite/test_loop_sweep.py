@@ -277,7 +277,7 @@ def test_a_tests_open_context_leaves_its_hosts_open_until_the_runner_shuts_down(
         otto_plugins,
         test_ctx=(
             "import otto\n"
-            "from otto.config.lab import Lab\n"
+            "from otto.labs.loader import Lab\n"
             "from fakehost import RecordingHost, CLOSED\n"
             "HOST = RecordingHost('dut1')\n"
             "async def test_a():\n"

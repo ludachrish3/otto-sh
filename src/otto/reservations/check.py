@@ -27,7 +27,7 @@ from ..errors import OttoError
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-    from ..config.lab import Lab
+    from ..labs.loader import Lab
     from .identity import ReservationIdentity, ResolvedIdentity
     from .protocol import Reservation, ReservationBackend
     from .report import ReservationReport

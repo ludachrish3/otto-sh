@@ -70,13 +70,13 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.config.scope import DockerCompose, DockerImage, DockerSettings
 from otto.docker.compose import compose_down, compose_up
 from otto.host.daemon import kill_command
 from otto.host.docker_host import DockerContainerHost
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from otto.tunnel.discovery import discover_observations

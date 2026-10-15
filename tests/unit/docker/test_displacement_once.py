@@ -28,12 +28,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from otto.cli import docker as docker_cli
-from otto.config.lab import Lab
 from otto.docker import resolve as resolve_mod
 from otto.docker.reports import ImageBuild, RepoBuild
 from otto.docker.resolve import Displacement
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result

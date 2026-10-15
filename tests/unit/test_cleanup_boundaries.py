@@ -7,10 +7,10 @@ import pytest
 
 from otto import invocation as inv
 from otto import lifecycle
-from otto.config.lab import Lab
 from otto.context import open_context
 from otto.host import LocalHost
 from otto.invocation import RunPolicy, install_policy, reset_binding
+from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, install_composed
 from tests._fixtures.registry import DuckHost, registered_ids
 

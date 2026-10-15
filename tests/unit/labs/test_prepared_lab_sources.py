@@ -145,8 +145,8 @@ def test_otto_session_build_lab_refuses_during_an_init_import(tmp_path):
 
 def test_load_lab_fallback_builds_through_the_registry(tmp_path):
     """``load_lab(search_paths=)`` builds its json source through LAB_REPOSITORIES."""
-    from otto.config.lab import load_lab
     from otto.labs.json_repository import JsonFileLabRepository
+    from otto.labs.loader import load_lab
     from otto.labs.registry import LAB_REPOSITORIES, register_lab_repository
 
     write_lab_json(tmp_path / "lab_data" / "lab.json", [])
@@ -165,7 +165,7 @@ def test_load_lab_fallback_builds_through_the_registry(tmp_path):
 
 
 def test_load_lab_with_no_search_paths_fails_loud_with_guidance():
-    from otto.config.lab import load_lab
+    from otto.labs.loader import load_lab
 
     with pytest.raises(LabRepositoryError):
         load_lab("lab")

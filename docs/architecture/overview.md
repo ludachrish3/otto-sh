@@ -94,8 +94,8 @@ declared dependency graph from `tach.toml`, cycle included.
 | Module | Responsibility |
 | --- | --- |
 | `otto.models` | The data-model facade: pydantic specs for lab.json, settings.toml, env vars, monitor records; the host specs live in `otto.host.specs` and are exported from `otto.host`; this package still exports `ToolchainSpec` and the eight option specs |
-| `otto.labs` | The lab-repository (host source) protocol and the default JSON backend |
-| `otto.config` | Parsing otto's inputs: the environment, each repo's `settings.toml`, lab data; the fleet implementation behind `otto.lab` |
+| `otto.labs` | The lab model and its loader (`labs/loader.py`, behind `otto.lab.Lab` and `otto.lab.load_lab`), the lab-repository (host source) protocol and the default JSON backend |
+| `otto.config` | Parsing otto's inputs: the environment and each repo's `settings.toml`; the fleet implementation behind `otto.lab` |
 | {mod}`otto.lab` | The public lab and fleet API: load a lab, reach its hosts, walk the fleet of interest |
 
 **Domain** — the subsystems that do the actual work:

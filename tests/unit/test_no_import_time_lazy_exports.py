@@ -347,6 +347,8 @@ def test_the_scan_knows_the_names_it_guards():
     assert {"get_lab", "do_for_all_hosts"} <= guarded["otto.config.fleet"]
     assert {"get_lab", "do_for_all_hosts", "fleet_of_interest"} <= guarded["otto.lab"]
     assert {"Lab", "EmptySelectionError"}.isdisjoint(guarded["otto.lab"])  # classes
+    assert "load_lab" in guarded["otto.labs.loader"]  # the defining module, followed
+    assert "Lab" not in guarded["otto.labs.loader"]
     assert "get_context" in guarded["otto.context"]
     assert "Repo" not in guarded.get("otto.config.repo", frozenset())
 

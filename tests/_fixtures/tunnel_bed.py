@@ -111,7 +111,7 @@ def _reap_recipe(tunnel_ids: list[str]) -> str:
     that actually runs."""
     ids = ", ".join(repr(t) for t in tunnel_ids)
     return (
-        '    uv run python -c "import asyncio; from otto.config.lab import Lab; '
+        '    uv run python -c "import asyncio; from otto.labs.loader import Lab; '
         "from otto.tunnel import remove_tunnel; "
         "from tests._fixtures.tunnel_bed import UNIX, build_bed_host; "
         "lab=Lab(name='reap'); [lab.add_host(build_bed_host(n)) for n in UNIX]; "

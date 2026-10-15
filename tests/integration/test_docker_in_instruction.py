@@ -10,12 +10,12 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.docker import build_images, composed
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.paths import TESTS_ROOT

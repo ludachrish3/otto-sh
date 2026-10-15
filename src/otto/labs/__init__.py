@@ -1,4 +1,4 @@
-"""Labs module for DB-agnostic lab/host repository pattern.
+"""The lab sources (DB-agnostic backends) and the lab model with its loader (``loader``).
 
 Every name is exported lazily (PEP 562), the shape every otto package shares:
 naming the repository contract or an error does not load the json backend,

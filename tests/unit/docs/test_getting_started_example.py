@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.lab import load_lab
 from otto.config.repo import Repo
 from otto.inventory import InventoryDeclaration, build_inventory_from_declarations
+from otto.labs.loader import load_lab
 from otto.reservations import SupportsResourceHolders
 from otto.testing import assert_reservation_backend_conforms
 from tests._fixtures.gs_example import EXAMPLE, load_example_lab

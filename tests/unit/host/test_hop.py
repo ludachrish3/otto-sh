@@ -246,7 +246,7 @@ class TestConnectionManagerTunnel:
         """A hop is always an SSH tunnel (spec 2026-09-13 cred-scope §4): the
         hop host's tunnel must authenticate with its ssh-scoped cred even
         though the hop host's own active term is telnet."""
-        from otto.config.lab import Lab
+        from otto.labs.loader import Lab
 
         seen: dict[str, object] = {}
 
@@ -297,7 +297,7 @@ class TestConnectionManagerTunnel:
         for why that matters)."""
         import logging
 
-        from otto.config.lab import Lab
+        from otto.labs.loader import Lab
 
         info = {
             "server_version": "SSH-2.0-dropbear_2012.55",
@@ -373,7 +373,7 @@ class TestConnectionManagerTunnel:
         jumpbox whose ssh_options declares a fixed local_forward; both must
         open their tunnels and forward_local_port must never be awaited on
         either tunnel connection."""
-        from otto.config.lab import Lab
+        from otto.labs.loader import Lab
 
         jumpbox = UnixHost(
             ip="10.10.0.1",
@@ -1053,7 +1053,7 @@ class TestCycleDetection:
         then wires into a Lab — this is the production ordering and confirms
         _create_tunnel reads self._lab lazily rather than at build time.
         """
-        from otto.config.lab import Lab
+        from otto.labs.loader import Lab
 
         host_a = UnixHost(
             ip="10.0.0.1",
@@ -1093,7 +1093,7 @@ class TestCycleDetection:
         With the lazy fix (lab = self._lab inside _create_tunnel), it resolves
         correctly after add_host wires self._lab.
         """
-        from otto.config.lab import Lab
+        from otto.labs.loader import Lab
 
         mock_ssh_conn = MagicMock(spec=SSHClientConnection)
 
@@ -1145,8 +1145,8 @@ class TestStandaloneHostHopResolution:
         Regression test for: _create_tunnel raising "no lab back-reference" when
         self._lab is None because the host was never added to a Lab.
         """
-        from otto.config.lab import Lab
         from otto.context import OttoContext, reset_context, set_context
+        from otto.labs.loader import Lab
 
         mock_ssh_conn = MagicMock(spec=SSHClientConnection)
 

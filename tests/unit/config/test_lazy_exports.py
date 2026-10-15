@@ -186,7 +186,7 @@ def test_pynetbox_is_imported_only_by_the_first_netbox_fetch():
 
 
 def test_importing_config_does_not_load_host():
-    """Measured before: `import otto.config.lab` alone loaded 46 otto.host.* modules."""
+    """Measured before: importing the lab loader alone loaded 46 otto.host.* modules."""
     import json
     import subprocess
     import sys

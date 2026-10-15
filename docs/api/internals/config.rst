@@ -7,9 +7,6 @@ config internals
 .. automodule:: otto.config.env
    :ignore-module-all:
 
-.. automodule:: otto.config.lab
-   :ignore-module-all:
-
 .. automodule:: otto.config.scope
    :ignore-module-all:
 

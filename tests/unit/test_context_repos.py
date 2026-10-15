@@ -3,9 +3,9 @@
 import pytest
 
 from otto import bootstrap as bs
-from otto.config.lab import Lab
 from otto.config.scope import scopes_of
 from otto.context import LIBRARY_LAB_NAME, OttoContext
+from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.fake_repo import fake_repo
 

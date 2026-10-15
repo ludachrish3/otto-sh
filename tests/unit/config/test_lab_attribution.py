@@ -2,11 +2,11 @@
 
 from typing import Any
 
-from otto.config.lab import (
+from otto.host.element import Element
+from otto.labs.loader import (
     Lab,
     load_lab,
 )
-from otto.host.element import Element
 
 
 def _host(element: str, ip: str, lab_name: str | None = None) -> Any:

@@ -53,8 +53,8 @@ layers = [
     "workflows",    # instructions, project, init, the monitor service
     "run",          # the live run: context, session, fleet accessors, docker
     "composition",  # settings, Repo, discovery, the completion cache, env
-    "sources",      # where labs, inventory, creds and reservations come from
-    "topology",     # the Lab model, link, check, tunnel, the monitor's lower files
+    "sources",      # where labs, inventory, creds and reservations come from; the lab model and its loader
+    "topology",     # link, check, tunnel, the monitor's lower files
     "specs",        # pydantic models for lab, settings and inventory data
     "host",         # connections, transfer, host classes and host specs
     "foundation",   # leaf definitions, slots filled from above, catalogs
@@ -119,7 +119,9 @@ layer = "entry"
 # ensure_lab_context builds the context on it.
 # otto._shim_complete: cache.py's inspect verbs read the shim's own answer
 # (inspect_shim, inspect_tests).
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings"]
+# otto.labs: the `--lab` grammar (split_lab_names, LAB_SEPARATOR) is the lab
+# model's, in otto.labs.loader. Function-local, so no verb's `--help` loads it.
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings"]
 
 [[modules]]
 path = "otto.config"
@@ -231,6 +233,9 @@ depends_on = [
     # The context composes the leaf's run policy, resolver and bindings.
     "otto.invocation",
     "otto.config.scope",
+    # open_context splits a lab selection and wraps a given lab with the lab
+    # model in otto.labs.loader. Function-local; otto.labs is outside the cycle.
+    "otto.labs",
 ]
 
 [[modules]]
@@ -361,7 +366,6 @@ path = "otto.session"
 depends_on = [
     "otto.errors",
     "otto.bootstrap",
-    "otto.config",
     "otto.labs",
     "otto.inventory",
     "otto.docker",
@@ -496,6 +500,10 @@ depends_on = ["otto.version"]
 
 [[modules]]
 path = "otto.labs"
+layer = "sources"
+# The lab model and its loader (labs/loader.py) live here, beside the lab
+# sources they drive, so the package imports nothing of otto.config (spec
+# 2026-10-11 placement-and-phases §3.7).
 # otto.utils: sources.py anchors `[[lab.sources]]` json paths through the same
 # `anchor_path` every other settings path goes through — one authority for the
 # rule, not a copy. A foundation leaf (it depends only on
@@ -507,7 +515,6 @@ path = "otto.labs"
 depends_on = [
     "otto.registry",
     "otto.link",
-    "otto.config",
     "otto.inventory",
     "otto.models",
     "otto.models.base",
@@ -838,7 +845,9 @@ layer = "root"
 #
 # No loop: otto.project no longer imports otto.cli (thin-CLI item 1).
 # otto.invocation: the runner sweep (suite/loops.py) reads the run policy's teardown deadline.
-depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope", "otto.config.home"]
+# otto.labs: run_tests opens a context on an empty lab (otto.labs.loader.Lab)
+# when none is active.
+depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope", "otto.config.home", "otto.labs"]
 
 [[modules]]
 path = "otto.testing"
@@ -859,7 +868,7 @@ layer = "entry"
 # Cannot invert layering or create a cycle: otto.result depends only on
 # otto.utils and otto.errors, both foundation leaves, and otto.host already
 # depends on it.
-depends_on = ["otto.config", "otto.context", "otto.creds", "otto.inventory", "otto.invocation", "otto.labs", "otto.models", "otto.models.base", "otto.reservations", "otto.host", "otto.result", "otto.suite"]
+depends_on = ["otto.context", "otto.creds", "otto.inventory", "otto.invocation", "otto.labs", "otto.models", "otto.models.base", "otto.reservations", "otto.host", "otto.result", "otto.suite"]
 
 [[modules]]
 path = "otto.tls"

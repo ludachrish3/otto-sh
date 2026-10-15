@@ -11,8 +11,8 @@ the same repo name a second time in the same process.
 import pytest
 
 from otto import layout
-from otto.config.lab import Lab
 from otto.context import OttoContext, ProjectContextView
+from otto.labs.loader import Lab
 from otto.project import (
     PROJECT_ACTIONS,
     Cleanliness,

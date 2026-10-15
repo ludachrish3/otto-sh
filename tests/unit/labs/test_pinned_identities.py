@@ -15,9 +15,9 @@ element→host flattening lost or invented a field.
 
 import pytest
 
-from otto.config.lab import load_lab
 from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from otto.host.command_frame import FRAME_CLASSES, register_command_frame
+from otto.labs.loader import load_lab
 from tests._fixtures.labdata import lab_data_dir
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 

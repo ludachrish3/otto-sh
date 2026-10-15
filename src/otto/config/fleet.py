@@ -12,7 +12,6 @@ from typing import (
 
 from ..host.capability import TRANSFER_RESOLVER, console_transfer_menu
 from ..host.host import DEFAULT_COMMAND_TIMEOUT
-from .lab import Lab
 
 if TYPE_CHECKING:
     from ..host.options import (
@@ -26,6 +25,7 @@ if TYPE_CHECKING:
     )
     from ..host.remote_host import RemoteHost
     from ..host.unix_host import UnixHost
+    from ..labs.loader import Lab
     from ..result import Results
     from .repo import Repo
 
@@ -426,7 +426,7 @@ def get_host(
     )
 
 
-def get_lab() -> Lab:
+def get_lab() -> "Lab":
     """Return the active lab from the current OttoContext."""
     from ..context import get_context
 
@@ -566,7 +566,7 @@ names what was passed, so a caller can tell a typo from a repo it forgot."""
 
 
 def fleet_of_interest(
-    lab: Lab,
+    lab: "Lab",
     repos: "list[Repo]",
     *,
     owner: str | None = None,
@@ -631,7 +631,7 @@ def fleet_of_interest(
     >>> import re
     >>> import types
     >>> from otto.config.fleet import fleet_of_interest
-    >>> from otto.config.lab import Lab
+    >>> from otto.labs.loader import Lab
     >>> from otto.config.scope import ProjectScopeConfig
     >>> hosts = {
     ...     "sensor-1": types.SimpleNamespace(source_lab="bench"),

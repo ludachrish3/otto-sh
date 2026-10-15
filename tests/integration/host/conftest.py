@@ -16,12 +16,12 @@ from collections.abc import Iterator
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.context import OttoContext, set_context
 from otto.host.command_frame import FRAME_CLASSES, register_command_frame
 from otto.host.login_proxy import Cred
 from otto.host.telnet import abort_console_transports
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 
 # Private, but the lab tooling's — and already imported this way by

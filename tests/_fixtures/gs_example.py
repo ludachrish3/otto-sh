@@ -11,7 +11,7 @@ the one-line lazy import here.
 
 import sys
 
-from otto.config.lab import load_lab
+from otto.labs.loader import load_lab
 from tests._fixtures.paths import PROJECT_ROOT
 
 EXAMPLE = PROJECT_ROOT / "docs" / "examples" / "getting-started"

@@ -92,7 +92,7 @@ def whoami(ctx: typer.Context) -> None:
         raise typer.Exit(1)
     info = res.identity_report()
 
-    from ..config.lab import LAB_SEPARATOR
+    from ..labs.loader import LAB_SEPARATOR
     from .invoke import maybe_root_options
 
     opts = maybe_root_options(ctx)

@@ -41,7 +41,7 @@ def host_summaries(
         return repository.list_host_summaries(inventory=inventory)
 
     # No built-in filtering here: a backend's ``load_lab`` returns exactly its
-    # own hosts (otto's ``local`` is injected later, by ``config.lab.load_lab``,
+    # own hosts (otto's ``local`` is injected later, by ``labs.loader.load_lab``,
     # not by any backend). Filtering would drop a lab that legitimately defines
     # its own ``local`` — which otto explicitly allows — and would make this
     # path disagree with the ``SupportsHostSummaries`` one.

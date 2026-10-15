@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.lab import load_lab
 from otto.config.repo import Repo
 from otto.labs import (
     CompositeLabRepository,
@@ -16,6 +15,7 @@ from otto.labs import (
     build_lab_sources,
     register_lab_repository,
 )
+from otto.labs.loader import load_lab
 from otto.labs.registry import LAB_REPOSITORIES
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
@@ -142,7 +142,7 @@ def test_custom_backend_source_options_inline(tmp_path: Path) -> None:
             self._names = names
 
         def load_lab(self, name, preferences=None, inventory=None):
-            from otto.config.lab import Lab
+            from otto.labs.loader import Lab
 
             return Lab(name=name)
 

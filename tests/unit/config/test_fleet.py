@@ -11,12 +11,12 @@ from otto.config.fleet import (
     get_host,
     run_on_all_hosts,
 )
-from otto.config.lab import Lab
 from otto.config.scope import EmptySelectionError
 from otto.context import OttoContext, reset_context, set_context
 from otto.host import EmbeddedHost, UnixHost
 from otto.host.factory import create_host_from_dict
 from otto.host.options import SshOptions, TelnetOptions, UserlandOptions
+from otto.labs.loader import Lab
 from otto.result import CommandResult, Results
 from otto.utils import Status
 from tests._fixtures.labdata import element_for

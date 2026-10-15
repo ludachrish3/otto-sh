@@ -10,10 +10,10 @@ produced, so a stub of either would pin the stub's shape instead of the chain's.
 
 import textwrap
 
-from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.context import OttoContext, set_context
 from otto.host.element import Element
+from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.sutrepo import make_sut_repo
 

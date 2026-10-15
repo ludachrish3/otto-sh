@@ -80,7 +80,7 @@ class RunPolicy:
 class HostResolver(Protocol):
     """Where a host looks up a peer (a hop, a power controller) it holds no reference to.
 
-    :class:`~otto.config.lab.Lab` satisfies it. A host's own lab
+    :class:`~otto.labs.loader.Lab` satisfies it. A host's own lab
     back-reference always wins; the installed resolver is the fallback.
     """
 

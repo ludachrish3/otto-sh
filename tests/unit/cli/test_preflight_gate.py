@@ -29,8 +29,8 @@ import typer
 from otto.cli import invoke
 from otto.cli.invoke import refuse_unsatisfied_dependencies
 from otto.cli.registry import CommandSpec
-from otto.config.lab import Lab
 from otto.context import OttoContext
+from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.clickctx import chain
 from tests._fixtures.fake_repo import fake_repo
@@ -330,8 +330,8 @@ class TestPreambleWiring:
         active OttoContext``. That is the whole reason the spec's placement and
         its ``active()`` requirement could not both be honoured.
         """
-        from otto.config.lab import Lab
         from otto.context import OttoContext, reset_context, set_context
+        from otto.labs.loader import Lab
 
         tokens: list = []
 

@@ -10,13 +10,10 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    # Deferred: otto.config.lab imports otto.labs.json_repository (for the
-    # built-in "json" backend), so a module-level import here would cycle
-    # when otto.labs is the first thing imported. Runtime code never
-    # constructs a Lab from this module, so the string annotation below is
-    # never resolved outside of static type-checking.
-    from ..config.lab import Lab
+    # Annotation only: runtime code never constructs a Lab from this module,
+    # so the string annotations below are read by static type-checking alone.
     from ..inventory.protocol import Inventory
+    from .loader import Lab
 
 
 @runtime_checkable

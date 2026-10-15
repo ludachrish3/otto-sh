@@ -26,14 +26,13 @@ from .protocol import HostSummary, logins_of_host_data
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    # Deferred: otto.config.lab imports this module (for the built-in "json"
-    # backend), so a module-level import here would cycle when otto.labs is
-    # the first thing imported. load_lab() below imports Lab locally at call
-    # time instead, by which point both modules are fully initialized.
-    from ..config.lab import Lab
     from ..host.element import Element
     from ..inventory.protocol import Inventory
     from ..registry import Configured
+
+    # Annotation only: load_lab() below imports Lab at call time, so a
+    # backend loads the lab model only when it builds a lab.
+    from .loader import Lab
     from .sources import LabSourceEnv
 
 logger = logging.getLogger(__name__)
@@ -364,8 +363,8 @@ class JsonFileLabRepository:
             If a lab.json is malformed, a host's data is invalid, or an entry
             references an inventory key that cannot be resolved.
         """
-        from ..config.lab import Lab
         from ..inventory.resolve import resolve_host_entry  # lazy: see the note above
+        from .loader import Lab
 
         try:
             docs = self._load_documents()

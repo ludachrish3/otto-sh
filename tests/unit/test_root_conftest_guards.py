@@ -473,7 +473,7 @@ PROBE_MODULE_INSTALL = """\
 import pytest
 
 from otto import context, invocation
-from otto.config.lab import Lab
+from otto.labs.loader import Lab
 from otto.context import OttoContext, set_context
 
 

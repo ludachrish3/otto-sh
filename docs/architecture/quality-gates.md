@@ -86,8 +86,9 @@ tach checks the imports between modules, not between the files of one.
 `otto.monitor` holds both the monitor service and `live.py`, the lab-aware
 runner its facade exports, and only the runner may read the run's lab, repos
 and tunnels. `tests/unit/test_monitor_service_reads_no_lab.py`, a `lint-arch`
-leg, keeps `otto.config`, `otto.context`, `otto.tunnel`, `otto.lab` (where the
-lab is moving) and the runner itself out of every other file under
+leg, keeps `otto.config`, `otto.context`, `otto.tunnel`, `otto.lab` (the public
+lab and fleet API), `otto.labs.loader` (the lab model and its loader) and the
+runner itself out of every other file under
 `otto/monitor`, at any depth. It counts every import tach counts, in every
 spelling, and skips only the body of an `if TYPE_CHECKING:` or
 `if typing.TYPE_CHECKING:` block, never an `elif`. It also reads the literal

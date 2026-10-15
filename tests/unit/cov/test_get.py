@@ -390,9 +390,9 @@ async def test_a_sut_that_is_not_a_git_checkout_is_refused(all_hosts_of, tmp_pat
 async def test_get_defaults_to_the_per_invocation_output_dir(all_hosts_of, git_sut, tmp_path):
     """With an installed context and no ``output_dir`` given, ``get_coverage`` writes
     into ``ctx.output_dir / "cov"`` — the per-invocation output directory."""
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.invocation import RunPolicy
+    from otto.labs.loader import Lab
 
     repo = _repo({"hosts": ".*"}, sut_dir=git_sut)
     board = _embedded_board("board1")

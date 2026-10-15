@@ -5,8 +5,8 @@ import contextlib
 import pytest
 
 from otto import bootstrap as bs
-from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
+from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, patch_bootstrap
 from tests._fixtures.fake_repo import fake_repo
 

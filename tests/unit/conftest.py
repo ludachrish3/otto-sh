@@ -40,8 +40,8 @@ import sys
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.context import OttoContext
+from otto.labs.loader import Lab
 
 
 @pytest.fixture(autouse=True)

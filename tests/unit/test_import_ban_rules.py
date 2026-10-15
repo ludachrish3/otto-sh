@@ -114,16 +114,21 @@ def test_the_rule_reads_as_this_test_expects():
     assert _denied_module_path().match("..config.fleet")
     assert _denied_module_path().match("...config.fleet")
     assert not _denied_module_path().match("..config.env")
+    assert _denied_module_path().match("..labs.loader")
+    assert not _denied_module_path().match("..labs.errors")
     assert [m.pattern for m, _ in _parent_package_arms()] == [
         r"^(\.{2,}|otto)$",
         r"^rich$",
         r"^(\.{2,}|otto\.)config$",
         r"^(\.{2,}|otto\.)lab$",
+        r"^(\.{2,}|otto\.)labs$",
         r"^(\.{2,}|otto\.)host$",
         r"^(\.{2,}|otto\.)coverage$",
     ]
     assert _flagged("otto.lab", "get_lab")
     assert not _flagged("otto.lab", "EmptySelectionError")
+    assert _flagged("otto.labs", "loader")
+    assert not _flagged("otto.labs", "LabRepositoryError")
     assert {"otto", "otto.config", "otto.coverage", "otto.host", "otto.lab"} <= set(LAZY_PACKAGES)
 
 

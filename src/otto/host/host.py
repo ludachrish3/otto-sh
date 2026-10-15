@@ -1206,8 +1206,8 @@ class BaseHost(ABC):
     file can neither set it nor lie about it — hence ``init=False``, which
     keeps it out of every family's constructor too. It is stamped by
     :func:`otto.host.factory.create_host_from_dict` (``lab_name=``), swept in
-    per component by :func:`otto.config.lab.load_lab`, and backstopped by
-    :meth:`otto.config.lab.Lab.add_host` for hosts built outside the loader
+    per component by :func:`otto.labs.loader.load_lab`, and backstopped by
+    :meth:`otto.labs.loader.Lab.add_host` for hosts built outside the loader
     (container hosts, the built-in ``local``).
 
     It exists because merging erases attribution: ``a + b`` yields ONE lab

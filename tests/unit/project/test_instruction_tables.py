@@ -353,9 +353,9 @@ def test_the_run_group_serves_a_replaced_instruction():
 
 @pytest.mark.asyncio
 async def test_run_instruction_refuses_an_inactive_owner_through_the_view_s_repo():
-    from otto.config.lab import Lab
     from otto.context import OttoContext
     from otto.instructions import run_instruction
+    from otto.labs.loader import Lab
     from otto.session import InstructionInactiveError
 
     ran: list[str] = []
@@ -374,8 +374,8 @@ async def test_run_instruction_refuses_an_inactive_owner_through_the_view_s_repo
 
 
 def test_actions_for_returns_the_registered_class():
-    from otto.config.lab import Lab
     from otto.context import OttoContext
+    from otto.labs.loader import Lab
     from otto.project import actions_for
     from tests._fixtures.fake_repo import fake_repo
 

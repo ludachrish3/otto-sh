@@ -205,9 +205,9 @@ def test_module_dir_ignores_a_test_root_that_is_not_a_directory(tmp_path):
 def test_same_stem_modules_end_to_end_via_test_dir(pytester, otto_output_dir):
     """The reviewer's pa/pb probe shape, through a real inner pytest session and the
     module_dir/test_dir fixtures — not just the ArtifactLayout unit tests above."""
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.invocation import RunPolicy
+    from otto.labs.loader import Lab
     from otto.suite.layout import ArtifactLayout
     from otto.suite.plugin import OttoPlugin
     from otto.suite.pytest_plugin import OttoFixturesPlugin

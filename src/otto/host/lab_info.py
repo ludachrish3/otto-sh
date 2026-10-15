@@ -1,6 +1,6 @@
 """``LabInfo`` — the resolved lab a host was loaded from, carried on the host.
 
-Stamped by :func:`otto.config.lab.load_lab`'s attribution sweep (beside the
+Stamped by :func:`otto.labs.loader.load_lab`'s attribution sweep (beside the
 older ``source_lab`` string it complements), so a host handed to code in
 isolation can answer "which lab, with what resources and metadata" without a
 trip back to the ``OttoContext``. One structured attribute rather than three

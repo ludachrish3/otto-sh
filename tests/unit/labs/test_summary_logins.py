@@ -64,9 +64,9 @@ def test_composite_carries_logins_across_sources(tmp_path):
 
 
 def test_load_lab_fallback_records_the_built_hosts_logins():
-    from otto.config.lab import Lab
     from otto.host.factory import create_host_from_dict
     from otto.labs import host_summaries
+    from otto.labs.loader import Lab
 
     class _MinimalRepo:
         def load_lab(self, name, preferences=None, inventory=None):
@@ -84,9 +84,9 @@ def test_load_lab_fallback_records_the_built_hosts_logins():
 
 
 def test_a_host_without_creds_summarises_to_no_logins():
-    from otto.config.lab import Lab
     from otto.host.local_host import LocalHost
     from otto.labs import host_summaries
+    from otto.labs.loader import Lab
 
     class _LocalOnly:
         def load_lab(self, name, preferences=None, inventory=None):

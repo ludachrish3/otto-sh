@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.options import SshOptions
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from otto.tunnel.discovery import _TUNNEL_HOST_TIMEOUT

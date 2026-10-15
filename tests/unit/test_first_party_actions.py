@@ -25,7 +25,6 @@ import sys
 import pytest
 
 from otto import bootstrap as bs
-from otto.config.lab import Lab
 from otto.context import OttoContext
 from otto.instruction_catalog import (
     FIRST_PARTY_ACTIONS,
@@ -40,6 +39,7 @@ from otto.instruction_catalog import (
     declare_first_party_actions,
 )
 from otto.instructions import instruction, run_instruction
+from otto.labs.loader import Lab
 from otto.project.actions import ProjectActions, declare, register_project_actions
 from otto.registry import DuplicateRegistration, get_registering_repo, registering_repo
 from tests._fixtures.sutrepo import make_sut_repo
@@ -258,7 +258,7 @@ async def test_run_instruction_declares_before_its_lookup():
 _LIBRARY = """
 import asyncio
 import sys
-from otto.config.lab import Lab
+from otto.labs.loader import Lab
 from otto.context import OttoContext
 from otto.instructions import run_instruction
 before = 'otto.project.actions' in sys.modules

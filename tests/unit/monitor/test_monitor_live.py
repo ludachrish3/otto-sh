@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.config.scope import EmptySelectionError, MonitorSettings
 from otto.context import OttoContext
 from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from otto.monitor.errors import MonitorInputError, MonitorTlsError, NoMonitorableHostsError
 from otto.monitor.export import build_db_export

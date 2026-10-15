@@ -939,7 +939,7 @@ COMPOSITION_ROOT = "otto/bootstrap.py"
 # The landings of spec 2026-10-11 placement-and-phases §6, in order. Each
 # landing sets CURRENT_LANDING to its own name in its commit.
 LANDINGS = ["P1a", "P1b", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9a", "P9b"]
-CURRENT_LANDING = "P6"
+CURRENT_LANDING = "P7"
 
 # What the declared graph shows once each landing is in: the modules with a
 # layer (spec 2026-10-11 placement-and-phases §5.2, "modules layered") and the
@@ -951,6 +951,8 @@ CURRENT_LANDING = "P6"
 # no count separates them; nothing grandfathered expires in P4, so a landing
 # left named P3 through P4 loses nothing, and P5's counts then demand the bump.
 # P9a and P9b share the cycle count (0) but not the layered one (65 and 77).
+# P7 layers otto.labs alone: the lab model stayed with its loader in otto.labs, so no
+# module was carved for it (spec §3.7 and §5.2 as amended by P7), and its row is 55.
 LAYERED_AT = {
     "P1a": 19,
     "P1b": 35,
@@ -959,7 +961,7 @@ LAYERED_AT = {
     "P4": 43,
     "P5": 48,
     "P6": 54,
-    "P7": 57,
+    "P7": 55,
     "P8": 59,
     "P9a": 65,
     "P9b": 77,
@@ -988,7 +990,7 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/__init__.py", "otto.config.fleet:all_hosts", FACADE_BINDING),
     ("otto/__init__.py", "otto.config.fleet:get_host", FACADE_BINDING),
     ("otto/__init__.py", "otto.config.fleet:get_lab", FACADE_BINDING),
-    ("otto/__init__.py", "otto.config.lab:load_lab", FACADE_BINDING),
+    ("otto/__init__.py", "otto.labs.loader:load_lab", FACADE_BINDING),
     ("otto/__init__.py", "otto.config.fleet:run_on_all_hosts", FACADE_BINDING),
     ("otto/__init__.py", "otto.context:OttoContext", FACADE_BINDING),
     ("otto/__init__.py", "otto.context:get_context", FACADE_BINDING),
@@ -1031,8 +1033,8 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/host/__init__.py", "otto.result:CommandResult", FACADE_BINDING),
     ("otto/host/__init__.py", "otto.result:Results", FACADE_BINDING),
     # The otto.lab facade. otto/lab/__init__.py is in no tach module until it is declared.
-    ("otto/lab/__init__.py", "otto.config.lab:Lab", FACADE_BINDING),
-    ("otto/lab/__init__.py", "otto.config.lab:load_lab", FACADE_BINDING),
+    ("otto/lab/__init__.py", "otto.labs.loader:Lab", FACADE_BINDING),
+    ("otto/lab/__init__.py", "otto.labs.loader:load_lab", FACADE_BINDING),
     ("otto/lab/__init__.py", "otto.config.fleet:get_lab", FACADE_BINDING),
     ("otto/lab/__init__.py", "otto.config.fleet:get_host", FACADE_BINDING),
     ("otto/lab/__init__.py", "otto.config.fleet:all_hosts", FACADE_BINDING),

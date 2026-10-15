@@ -70,8 +70,8 @@ def no_logger_output_dir():
     """
     from logging import getLogger
 
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context, try_get_context
+    from otto.labs.loader import Lab
     from otto.logger.management import OTTO_HANDLER_ATTR
 
     token = None
@@ -324,9 +324,9 @@ def run_cli():
     straight off this context, exactly as it would off a library caller's.
     """
     from otto.cli.run import run_app
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.invocation import RunPolicy
+    from otto.labs.loader import Lab
     from tests._fixtures.dispatch import DispatchRunner
 
     runner = DispatchRunner()
@@ -363,9 +363,9 @@ def otto_test_cli(tmp_path):
     were parsed.
     """
     from otto.cli import test as cli_test
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.invocation import RunPolicy
+    from otto.labs.loader import Lab
     from tests._fixtures.dispatch import DispatchRunner
 
     runner = DispatchRunner()

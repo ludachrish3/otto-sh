@@ -2,7 +2,6 @@
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.examples.lab_repository import (
     ExampleLabRepository,
     ExampleLabSourceConfig,
@@ -11,6 +10,7 @@ from otto.examples.lab_repository import (
 from otto.host.os_profile import ProfileContext
 from otto.host.remote_host import RemoteHost
 from otto.labs import LabNotFoundError, LabSourceEnv, register_lab_repository
+from otto.labs.loader import Lab
 from otto.labs.registry import LAB_REPOSITORIES
 from otto.registry import Configured
 from otto.testing import assert_lab_repository_conforms

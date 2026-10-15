@@ -17,8 +17,8 @@ import typer
 
 from otto import options
 from otto.cli.run import instruction
-from otto.config.lab import Lab
 from otto.context import OttoContext
+from otto.labs.loader import Lab
 from otto.params import register_options
 from otto.project import (
     InstallOptions,

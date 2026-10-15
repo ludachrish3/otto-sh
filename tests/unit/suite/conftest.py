@@ -30,9 +30,9 @@ def otto_plugins(otto_output_dir):
     ``otto_output_dir``, and the context stays installed for the whole test,
     so a test can inspect it after the inner session returns.
     """
-    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
     from otto.invocation import RunPolicy
+    from otto.labs.loader import Lab
     from otto.suite.layout import ArtifactLayout
     from otto.suite.plugin import OttoPlugin
     from otto.suite.pytest_plugin import OttoFixturesPlugin

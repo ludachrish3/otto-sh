@@ -168,7 +168,7 @@ def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa:
     """
     from ..bootstrap import get_repos
     from ..config.completion_cache import collect_lab_names
-    from ..config.lab import LAB_SEPARATOR
+    from ..labs.loader import LAB_SEPARATOR
     from ..registry import get_completion_names
     from ..utils import complete_separated_list
 
@@ -189,7 +189,7 @@ def parse_lab_selection(value: list[str] | None) -> list[str] | None:
     Repeats accumulate and each value is itself split, so ``--lab a+b --lab c``
     selects ``a``, ``b``, and ``c``. Malformed input is a usage error (exit 2).
 
-    The grammar itself lives in :func:`otto.config.lab.split_lab_names` — this is
+    The grammar itself lives in :func:`otto.labs.loader.split_lab_names` — this is
     only the CLI adapter, translating its ``ValueError`` into a Typer usage error.
     The import is function-local to match this module's existing convention for
     narrowly-used helpers (see ``_lab_completer`` above and ``reservation.py``).
@@ -197,7 +197,7 @@ def parse_lab_selection(value: list[str] | None) -> list[str] | None:
     if not value:
         return None
 
-    from ..config.lab import split_lab_names
+    from ..labs.loader import split_lab_names
 
     names: list[str] = []
     try:
@@ -216,7 +216,7 @@ def parse_project_list(value: "list[str] | None") -> "list[str] | None":
     separates — unlike ``OTTO_SUT_DIRS``, which also splits on ``os.pathsep``,
     because these are names rather than paths. Each segment is stripped, so
     ``"a, b"`` and ``"a,b"`` are equivalent (the convention
-    :func:`otto.config.lab.split_lab_names` sets for ``--lab``); unlike that
+    :func:`otto.labs.loader.split_lab_names` sets for ``--lab``); unlike that
     one, an empty segment is dropped rather than refused, which is what makes a
     trailing comma or a shell-built ``-I "$NAMES"`` harmless.
 

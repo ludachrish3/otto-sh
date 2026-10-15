@@ -24,8 +24,8 @@ valid:
 
   if TYPE_CHECKING:
       from ..config import Repo
-      from ..config.lab import Lab
       from ..host.unix_host import UnixHost
+      from ..labs.loader import Lab
 
 
   def _resolve_parent(repo: "Repo", lab: "Lab") -> "UnixHost": ...
@@ -40,6 +40,9 @@ valid:
 # otto.lab's error class loads only otto.config.scope, which is not denylisted.
 - |
   from ..lab import EmptySelectionError
+# otto.labs' lazy error names load only the module that defines them.
+- |
+  from ..labs import LabRepositoryError
 invalid:
 # The edges this rule exists for, each re-added at module scope.
 - |
@@ -87,6 +90,13 @@ invalid:
   from typing import TYPE_CHECKING
 
   if TYPE_CHECKING:
-      from ..config.lab import Lab
+      from ..labs.loader import Lab
   else:
-      from ..config.lab import Lab
+      from ..labs.loader import Lab
+# The lab model and its loader, in each spelling of the module.
+- |
+  from ..labs.loader import LAB_SEPARATOR
+- |
+  from ..labs import loader
+- |
+  import otto.labs.loader

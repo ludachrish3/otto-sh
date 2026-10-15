@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.coverage.fetcher.embedded import (
     EmbeddedGcdaCollector,
@@ -13,6 +12,7 @@ from otto.coverage.fetcher.embedded import (
     decode_cov_dump,
 )
 from otto.host.embedded_host import EmbeddedHost
+from otto.labs.loader import Lab
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.paths import TESTS_ROOT

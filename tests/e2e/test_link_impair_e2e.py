@@ -79,9 +79,9 @@ import contextlib
 import pytest
 import pytest_asyncio
 
-from otto.config.lab import Lab
 from otto.host.interface import Interface
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.link import (
     FlowDirection,
     ImpairmentParams,

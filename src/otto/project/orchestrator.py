@@ -80,12 +80,12 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
 
     from ..config.dependencies import ResolvedDependency
-    from ..config.lab import Lab
     from ..config.repo import Repo
     from ..config.scope import ProjectScope
     from ..context import OttoContext
     from ..host.host import Host
     from ..instruction_catalog import ProjectInstructionBody
+    from ..labs.loader import Lab
 
 logger = logging.getLogger(__name__)
 

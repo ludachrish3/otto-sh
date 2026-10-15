@@ -82,11 +82,11 @@ def clean_zephyr37_llext():
     """
     import asyncio
 
-    from otto.config.lab import Lab
     from otto.context import OttoContext, set_context
     from otto.host.factory import create_host_from_dict
     from otto.host.login_proxy import Cred
     from otto.host.unix_host import UnixHost
+    from otto.labs.loader import Lab
     from otto.utils import Status
     from tests.conftest import host_data
 

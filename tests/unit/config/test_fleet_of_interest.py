@@ -381,7 +381,7 @@ def test_the_query_reads_nothing_but_its_arguments(world, monkeypatch):
 
     monkeypatch.setattr("otto.bootstrap.bootstrap", _refuse)
     monkeypatch.setattr("otto.bootstrap.discover", _refuse)
-    monkeypatch.setattr("otto.config.lab.load_lab", _refuse)
+    monkeypatch.setattr("otto.labs.loader.load_lab", _refuse)
     # The hostile ambient world: an installed context on a decoy lab. A query
     # that read the active context instead of its `lab` argument answers ["d1"].
     set_context(OttoContext(lab=_lab(("d1", "a"))))

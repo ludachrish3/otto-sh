@@ -39,8 +39,8 @@ from .socat import (
 )
 
 if TYPE_CHECKING:
-    from ..config.lab import Lab
     from ..host.docker_host import DockerContainerHost
+    from ..labs.loader import Lab
 
 logger = logging.getLogger(__name__)
 

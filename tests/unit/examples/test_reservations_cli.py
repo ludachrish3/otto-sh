@@ -2,9 +2,9 @@
 
 from typer.testing import CliRunner
 
-from otto.config.lab import Lab
 from otto.examples.reservations import ExampleReservationBackend
 from otto.examples.reservations_cli import app, check_report, run_gate, translate
+from otto.labs.loader import Lab
 from otto.reservations import (
     NoneReservationConfig,
     Reservation,

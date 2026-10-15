@@ -2,13 +2,13 @@
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.host.builtin_hosts import make_builtin_local_host
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.labs.errors import LabRepositoryError
+from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 
 

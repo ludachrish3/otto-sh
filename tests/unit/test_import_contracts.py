@@ -49,7 +49,7 @@ _NO_COMMAND_MODULE_LOADS = [
     "pydantic",
     "rich.table",
     "otto.config.fleet",
-    "otto.config.lab",
+    "otto.labs.loader",
     "otto.config.repo",
     "otto.context",
     "otto.coverage.merge",
@@ -219,7 +219,27 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     ],
     # The lab facade is lazy: a bare import loads no implementation, and its
     # lightest name, the error class, loads only the scope module.
-    "import otto.lab": ["otto.config", "otto.host"],
+    "import otto.lab": ["otto.config", "otto.host", "otto.labs"],
+    # The lab model and its loader import their collaborators inside the
+    # functions that use them: naming the model (`from otto.lab import Lab`)
+    # loads no host code, no lab source and no settings.
+    "import otto.labs.loader": [
+        "otto.config",
+        "otto.host",
+        "otto.inventory",
+        "otto.labs.composite",
+        "otto.labs.json_repository",
+        "otto.labs.registry",
+        "otto.labs.sources",
+        "otto.link",
+        "pydantic",
+    ],
+    # The fleet and the docker verbs name the lab model only in annotations, so
+    # they import it for type checking alone: reaching the fleet or a compose verb
+    # loads no lab-model module. (`otto.docker` is lazy; a bare import loads no
+    # verb, so the contract names one.)
+    "from otto.lab import get_lab": ["otto.labs.loader"],
+    "from otto.docker import compose_up": ["otto.labs.loader"],
     "from otto.lab import EmptySelectionError": ["otto.config.fleet", "otto.host"],
 }
 
@@ -230,6 +250,7 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
 IMPORT_MUST_LOAD: dict[str, list[str]] = {
     "from otto.host import LocalHost": ["otto.host.local_host"],
     "from otto.lab import fleet_of_interest": ["otto.config.fleet"],
+    "from otto.lab import Lab": ["otto.labs.loader"],
     "import otto.instruction_catalog": ["otto.errors", "otto.registry"],
 }
 

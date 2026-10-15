@@ -25,11 +25,11 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
     from .bootstrap import BootstrapResult
-    from .config.lab import Lab
     from .config.repo import Repo
     from .config.scope import ProjectScope
     from .host.remote_host import RemoteHost
     from .host.unix_host import UnixHost
+    from .labs.loader import Lab
     from .params import OptionsSource
     from .result import Results
 
@@ -1255,7 +1255,7 @@ async def open_context(
     error is logged as a warning; the lab is built from the repos'
     ``[[lab.sources]]``, ``[host_preferences]``, inventory and declared
     containers (:func:`~otto.session.build_lab`), or a
-    :class:`~otto.config.lab.Lab` you pass is used as given; once the context
+    :class:`~otto.labs.loader.Lab` you pass is used as given; once the context
     is installed, an active repo's unmet Python requirement refuses
     (:func:`~otto.session.check_dependencies`); last, the reservation gate
     runs (:meth:`~otto.reservations.check.ReservationGate.evaluate`, built by
@@ -1270,7 +1270,7 @@ async def open_context(
     ``open_context(variant=...)`` inside another context is allowed: it is
     how a script runs work under another variant, since :func:`set_variant`
     refuses while a context is installed. Every exit restores the outer
-    policy, a refusal during setup included. A :class:`~otto.config.lab.Lab`
+    policy, a refusal during setup included. A :class:`~otto.labs.loader.Lab`
     you pass keeps the products it was built with, so build it under the same
     variant (:func:`set_variant` before :func:`~otto.session.build_lab`);
     containers started in the body (``compose_up``) are ingested under the
@@ -1278,7 +1278,7 @@ async def open_context(
 
     *lab* is a lab name, a ``+``-joined combination, a list of either (each
     item split like a repeated ``--lab``), or a
-    :class:`~otto.config.lab.Lab`. It installs no logging (see
+    :class:`~otto.labs.loader.Lab`. It installs no logging (see
     :func:`otto.session.install_logging`).
 
     On exit it releases its cleanup boundary on the running loop, and the
@@ -1328,7 +1328,7 @@ async def open_context(
     policy_binding = install_policy(policy)  # ingest reads the variant while the lab is built
     try:
         from .bootstrap import bootstrap
-        from .config.lab import Lab, split_lab_names
+        from .labs.loader import Lab, split_lab_names
         from .session.dependencies import check_dependencies
         from .session.lab import build_lab
         from .session.projects import check_repos, select_projects

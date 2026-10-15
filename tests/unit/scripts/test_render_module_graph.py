@@ -226,17 +226,17 @@ def test_a_config_without_layers_has_none(tmp_path) -> None:
 
 
 def test_module_of_names_the_module_a_file_defines() -> None:
-    assert rmg.module_of("otto/config/lab.py") == "otto.config.lab"
+    assert rmg.module_of("otto/labs/loader.py") == "otto.labs.loader"
     assert rmg.module_of("otto/lab/__init__.py") == "otto.lab"
     assert rmg.module_of("otto/__init__.py") == "otto"
 
 
 def test_declared_owner_is_the_longest_declared_prefix() -> None:
-    declared = ["otto.config", "otto.config.lab", "otto.utils"]
-    assert rmg.declared_owner("otto.config.lab.x", declared) == "otto.config.lab"
+    declared = ["otto.config", "otto.config.scope", "otto.utils"]
+    assert rmg.declared_owner("otto.config.scope.x", declared) == "otto.config.scope"
     # The longer prefix listed first as well, so neither a first-match nor a last-match passes.
-    longer_first = ["otto.config.lab", "otto.config"]
-    assert rmg.declared_owner("otto.config.lab.x", longer_first) == "otto.config.lab"
+    longer_first = ["otto.config.scope", "otto.config"]
+    assert rmg.declared_owner("otto.config.scope.x", longer_first) == "otto.config.scope"
     assert rmg.declared_owner("otto.config.settings", declared) == "otto.config"
     assert rmg.declared_owner("otto.utils", declared) == "otto.utils"
     assert rmg.declared_owner("otto.utilsx", declared) is None, "a prefix must end at a dot"

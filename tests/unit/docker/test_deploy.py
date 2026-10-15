@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.config.scope import DockerCompose
 from otto.docker import deployment as deploy_mod
 from otto.docker import resolve as resolve_mod
@@ -29,6 +28,7 @@ from otto.host.element import Element
 from otto.host.errors import HostCommandError
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result

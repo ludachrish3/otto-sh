@@ -24,13 +24,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..config.lab import Lab
 from ..context import OttoContext, reset_context, set_context
 from ..host.capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from ..host.construction import check_coverage
 from ..host.host import BaseHost, Host
 from ..host.os_profile import _resolve_host_spec, _validate_host_class
 from ..host.transfer.base import BaseFileTransfer, ProgressGranularity
+from ..labs.loader import Lab
 from ..result import CommandNotRunError
 from ..suite.expect import ExpectCollector
 

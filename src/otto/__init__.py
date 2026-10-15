@@ -38,8 +38,8 @@ if TYPE_CHECKING:
     from otto.utils import Status
 
     from .config.fleet import all_hosts, get_host, get_lab, run_on_all_hosts
-    from .config.lab import load_lab
     from .context import OttoContext, get_context, open_context, try_get_context
+    from .labs.loader import load_lab
 
 __all__ = [
     "AppShell",
@@ -82,7 +82,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "all_hosts": ("otto.config.fleet", "all_hosts"),
     "get_host": ("otto.config.fleet", "get_host"),
     "get_lab": ("otto.config.fleet", "get_lab"),
-    "load_lab": ("otto.config.lab", "load_lab"),
+    "load_lab": ("otto.labs.loader", "load_lab"),
     "run_on_all_hosts": ("otto.config.fleet", "run_on_all_hosts"),
     "OttoContext": ("otto.context", "OttoContext"),
     "get_context": ("otto.context", "get_context"),

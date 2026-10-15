@@ -30,8 +30,8 @@ import pytest_asyncio
 from rich.console import Console
 
 from otto.check import Verdict, render_sections
-from otto.config.lab import Lab
 from otto.host.daemon import kill_command, parse_ps_output
+from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from otto.tunnel.check import TunnelCheckReport, check_tunnel, tunnel_sections

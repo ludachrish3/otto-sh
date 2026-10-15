@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from otto.config.lab import Lab
+from otto.labs.loader import Lab
 from otto.reservations import Reservation, ReservationBackendBase
 from otto.reservations.check import (
     EXPIRY_WARNING_WINDOW,

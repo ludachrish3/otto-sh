@@ -20,9 +20,9 @@ from pathlib import Path
 import pytest
 import tomli
 
-from otto.config.lab import Lab
 from otto.docker.observe import default_docker_parent
 from otto.host.factory import create_host_from_dict
+from otto.labs.loader import Lab
 from otto.tunnel.discovery import parse_process_discovery
 from otto.tunnel.model import make_tunnel_id
 from tests._fixtures import tunnel_bed

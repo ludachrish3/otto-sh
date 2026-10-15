@@ -21,7 +21,7 @@ from ..utils import Status
 from .compose import use_case_project
 
 if TYPE_CHECKING:
-    from ..config.lab import Lab
+    from ..labs.loader import Lab
 
 
 class DockerVerbError(FieldError, ValueError):

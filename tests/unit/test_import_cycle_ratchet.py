@@ -69,12 +69,15 @@ pytestmark = pytest.mark.interpreter_agnostic
 # their own in the specs layer: the inventory reads the user's home and settings file without
 # importing otto.config, bar the foundation scope module that names the settings file
 # (spec 2026-10-11 placement-and-phases §3.6).
+# otto.labs left it when the lab model and its loader moved out of otto.config into
+# otto.labs.loader, beside the lab sources it drives: the lab sources import nothing of
+# otto.config, and otto.session reaches the loader there (spec 2026-10-11
+# placement-and-phases §3.7).
 BASELINE: dict[str, list[str]] = {
     "otto.bootstrap": ["otto.config"],
     "otto.config": [
         "otto.bootstrap",
         "otto.context",
-        "otto.labs",
         "otto.reservations",
     ],
     "otto.context": [
@@ -84,13 +87,10 @@ BASELINE: dict[str, list[str]] = {
         "otto.session",
     ],
     "otto.docker": ["otto.config"],
-    "otto.labs": ["otto.config"],
     "otto.reservations": ["otto.config"],
     "otto.session": [
         "otto.bootstrap",
-        "otto.config",
         "otto.docker",
-        "otto.labs",
     ],
 }
 

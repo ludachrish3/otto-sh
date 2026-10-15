@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from otto.config.lab import Lab
+from otto.labs.loader import Lab
 from otto.reservations import (
     MissingReservationError,
     NullReservationBackend,

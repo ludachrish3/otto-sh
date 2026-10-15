@@ -17,8 +17,8 @@ import re
 import shlex
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
-from ..config.lab import Lab
 from ..config.repo import Repo
 from ..config.scope import DockerCompose
 from ..host.docker_host import DockerContainerHost, compose_container_probe
@@ -29,6 +29,9 @@ from ..host.mount import Mount
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
+
+if TYPE_CHECKING:
+    from ..labs.loader import Lab
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +121,7 @@ def _safe_username() -> str:
         return "anon"
 
 
-def _repo_parent_host(lab: Lab, parent: str | None) -> UnixHost:
+def _repo_parent_host(lab: "Lab", parent: str | None) -> UnixHost:
     """Pick the parent host for a repo's compose stack (spec §2).
 
     Explicit *parent*, else the lab's default parent: the one rule
@@ -221,7 +224,7 @@ async def _resolve_container_id(
 
 async def compose_up(
     repo: Repo,
-    lab: Lab,
+    lab: "Lab",
     *,
     parent: str | None = None,
     project_name: str | None = None,
@@ -315,7 +318,7 @@ async def compose_up(
         raise
 
 
-async def _rollback_partial_up(repo: Repo, lab: Lab, parent: UnixHost, proj: str) -> None:
+async def _rollback_partial_up(repo: Repo, lab: "Lab", parent: UnixHost, proj: str) -> None:
     """Best-effort teardown of a stack ``compose_up`` started but cannot hand over.
 
     Never raises and never masks: the caller is already propagating the real
@@ -360,7 +363,7 @@ def merge_declared_users(composes: "Iterable[DockerCompose]") -> "dict[str, str]
 
 
 async def register_stack_hosts(
-    lab: Lab,
+    lab: "Lab",
     parent: UnixHost,
     *,
     compose_project: str,
@@ -468,7 +471,7 @@ async def register_stack_hosts(
 
 async def _up_and_register(
     repo: Repo,
-    lab: Lab,
+    lab: "Lab",
     parent: UnixHost,
     proj: str,
     remote_file_strs: list[str],
@@ -566,7 +569,7 @@ async def _up_and_register(
 
 async def compose_down(
     repo: Repo,
-    lab: Lab,
+    lab: "Lab",
     *,
     parent: str | None = None,
     project_name: str | None = None,
@@ -662,7 +665,7 @@ async def compose_down_project(
     parent: UnixHost,
     compose_project: str,
     *,
-    lab: Lab,
+    lab: "Lab",
     remove_ids_under: "str | None",
     stop_timeout: int = 1,
 ) -> CommandResult:
@@ -715,7 +718,7 @@ async def compose_down_project(
 
 
 async def unregister_container_hosts(
-    lab: Lab, prefix: str, *, services: "list[str] | None" = None
+    lab: "Lab", prefix: str, *, services: "list[str] | None" = None
 ) -> list[str]:
     """Close and pop every container host in *lab* whose id starts with *prefix*.
 
@@ -763,7 +766,7 @@ async def unregister_container_hosts(
 @contextlib.asynccontextmanager
 async def composed(
     repo: Repo,
-    lab: Lab,
+    lab: "Lab",
     *,
     parent: str | None = None,
     project_name: str | None = None,
@@ -834,7 +837,7 @@ async def composed(
             )
 
 
-def _default_parent_or_none(lab: Lab) -> UnixHost | None:
+def _default_parent_or_none(lab: "Lab") -> UnixHost | None:
     """Return the lab's default docker parent by the one rule, or ``None`` when it refuses.
 
     The placeholder walks run at the start of every otto invocation, long
@@ -853,7 +856,7 @@ def _default_parent_or_none(lab: Lab) -> UnixHost | None:
         return None
 
 
-def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
+def register_declared_container_hosts(lab: "Lab", repos: list[Repo]) -> int:
     """Pre-register *placeholder* container hosts in *lab* for every declared service triple.
 
     The placeholders carry an empty ``container_id`` so that any operation
@@ -934,7 +937,7 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
     return count
 
 
-def _register_use_case_placeholders(lab: Lab, repo: Repo, parent: UnixHost) -> int:
+def _register_use_case_placeholders(lab: "Lab", repo: Repo, parent: UnixHost) -> int:
     """Best-effort use-case placeholders for one repo's fragments (spec §9).
 
     Every fragment's services are registered under *parent*, the one the

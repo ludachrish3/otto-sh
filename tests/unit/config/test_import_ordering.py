@@ -2,7 +2,7 @@
 
 `otto/__init__.py` is import-light (PEP 562 lazy exports), so a fresh process —
 e.g. an xdist worker importing the root ``tests/conftest.py`` — can make
-``otto.config`` (or a submodule like ``otto.config.lab``) its very
+``otto.config`` (or a submodule like ``otto.config.repo``) its very
 first otto import, with an ``OTTO_SUT_DIRS`` repo configured but none of its
 init modules imported yet. Repo init-module registration now happens lazily
 inside :func:`otto.bootstrap.bootstrap`, not as an import-time side effect of
@@ -26,7 +26,7 @@ def test_config_first_import_with_repo_no_circular():
     env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
     env["OTTO_SUT_DIRS"] = str(_REPO1)
     out = subprocess.run(
-        [sys.executable, "-c", "import otto.config.lab; print('IMPORT OK')"],
+        [sys.executable, "-c", "import otto.config.repo; print('IMPORT OK')"],
         capture_output=True,
         text=True,
         check=False,
@@ -39,12 +39,11 @@ def test_config_first_import_with_repo_no_circular():
 def test_labs_first_import_no_circular():
     """``otto.labs`` (a public library entry point) must import standalone.
 
-    ``otto.labs.json_repository`` needs ``otto.config.lab.Lab`` only at
-    ``load_lab()`` call time (a lazy, function-local import — see the module),
-    not at module-import time, specifically so a bare ``import otto.labs`` as
-    the very first otto import never trips the same cycle
-    ``otto.config.lab`` <-> ``otto.labs.json_repository`` that the sibling
-    test above guards from the other direction.
+    The package holds the lab model and its loader (``otto.labs.loader``) beside
+    the backends that build labs. ``otto.labs.json_repository`` imports ``Lab``
+    only at ``load_lab()`` call time (a lazy, function-local import — see the
+    module), so a bare ``import otto.labs`` as the very first otto import loads
+    neither, and no import order between them can trip a cycle.
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
     out = subprocess.run(

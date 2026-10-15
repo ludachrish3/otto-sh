@@ -12,7 +12,6 @@ import typer
 
 from otto.cli import docker as docker_cli
 from otto.config import fleet as fleet_mod
-from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.config.scope import DockerUseCase
 from otto.docker.deployment import UseCaseStack
@@ -21,6 +20,7 @@ from otto.docker.reports import BuildReport, ImageBuild, RepoBuild, TeardownRepo
 from otto.docker.resolve import Displacement, Selection
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.fake_repo import fake_repo

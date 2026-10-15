@@ -19,9 +19,9 @@ import re
 import pytest
 
 from otto.bootstrap import ProjectScopeError
-from otto.config.lab import Lab
 from otto.config.scope import EmptySelectionError, scopes_of
 from otto.context import OttoContext
+from otto.labs.loader import Lab
 from tests._fixtures.fleet import _lab, _repo, add_builtin_local, install_scoped_context
 
 

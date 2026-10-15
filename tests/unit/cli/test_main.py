@@ -112,7 +112,7 @@ def main_mocks(tmp_path):
         patch.dict(os.environ, clean_env, clear=True),
         patch("otto.logger.management.init_cli_logging") as p_logger,
         patch("otto.bootstrap.get_repos", return_value=[]),
-        patch("otto.config.lab.load_lab", return_value=mock_lab) as p_getlab,
+        patch("otto.labs.loader.load_lab", return_value=mock_lab) as p_getlab,
     ):
         yield {
             "init_cli_logging": p_logger,

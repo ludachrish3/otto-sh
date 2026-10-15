@@ -47,7 +47,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from otto.config.lab import Lab
 from otto.config.repo import Repo
 from otto.docker.build import build_images
 from otto.docker.compose import _resolve_container_id as _compose_resolve_container_id
@@ -63,6 +62,7 @@ from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
+from otto.labs.loader import Lab
 from otto.result import CommandNotRunError, CommandResult, NotRunResult, Result
 from otto.utils import Status
 from tests._fixtures.sutrepo import make_sut_repo

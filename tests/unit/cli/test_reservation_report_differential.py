@@ -9,7 +9,7 @@ import typer
 
 from otto.cli.reservation import check
 from otto.config.fleet import get_hosts_in_play
-from otto.config.lab import Lab
+from otto.labs.loader import Lab
 from otto.reservations import (
     NullReservationBackend,
     Reservation,

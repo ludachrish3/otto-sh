@@ -7,5 +7,8 @@ selected by name per ``[[lab.sources]]`` entry and constructed via
 The built-in ``json`` backend reads ``lab.json`` files; custom backends
 register a name via :func:`otto.labs.register_lab_repository` from an
 ``init`` module.
+The package also holds the lab model and its loader (``otto.labs.loader``), the
+implementation behind the public :class:`otto.lab.Lab` and
+:func:`otto.lab.load_lab`.
 
 .. automodule:: otto.labs

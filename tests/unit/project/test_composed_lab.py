@@ -36,13 +36,13 @@ from contextlib import asynccontextmanager
 import pytest
 
 from otto import project
-from otto.config.lab import Lab
 from otto.context import OttoContext, set_context
 from otto.host.host import BaseHost
 from otto.host.lab_info import LabInfo
 from otto.host.product import Product, apply_product_providers, register_product_provider
 from otto.host.toolchain import Toolchain
 from otto.invocation import RunPolicy
+from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from otto.project import (
     CleanupOptions,

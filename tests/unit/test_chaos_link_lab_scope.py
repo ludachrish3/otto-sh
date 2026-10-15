@@ -13,8 +13,8 @@ through test1 and nothing hostless was watching which lab they aimed at.
 
 from pathlib import Path
 
-from otto.config.lab import load_lab
 from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
+from otto.labs.loader import load_lab
 from tests._fixtures.labdata import lab_data_dir
 from tests.e2e.chaos._bed import closed_unix_link_target, unix_link_id
 

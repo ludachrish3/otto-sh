@@ -1,11 +1,11 @@
 """The lab and fleet API: load a lab, reach its hosts, walk the fleet of interest.
 
 ``from otto.lab import get_host`` is the spelling to use. Each name is
-implemented in an ``otto.config`` module and documented there, once; spec 5
-may move an implementation without changing this path:
+implemented in another module and documented there, once; spec 5 moves an
+implementation without changing this path:
 
-- :class:`~otto.config.lab.Lab`, a loaded lab, and
-  :func:`~otto.config.lab.load_lab`, which builds one from lab data;
+- :class:`~otto.labs.loader.Lab`, a loaded lab, and
+  :func:`~otto.labs.loader.load_lab`, which builds one from lab data;
 - :func:`~otto.config.fleet.get_lab` and :func:`~otto.config.fleet.get_host`:
   the active context's lab, and one of its hosts by id (never scoped);
 - :func:`~otto.config.fleet.all_hosts`,
@@ -24,10 +24,10 @@ silently touch nothing. Its readers import it from ``otto.config.fleet`` by
 hand, which is the point.
 
 Every name is exported lazily (PEP 562), the shape every otto package shares:
-``import otto.lab`` loads neither ``otto.config`` nor the host classes, and a
-name loads its defining module on first access. The resolver does not write a
-resolved name back into the module dict; see ``otto.config``'s ``__dir__`` for
-why.
+``import otto.lab`` loads none of the modules that implement it, nor the host
+classes, and a name loads its defining module on first access. The resolver
+does not write a resolved name back into the module dict; see
+``otto.config``'s ``__dir__`` for why.
 """
 
 from typing import TYPE_CHECKING
@@ -39,14 +39,14 @@ if TYPE_CHECKING:
     from ..config.fleet import get_host as get_host
     from ..config.fleet import get_lab as get_lab
     from ..config.fleet import run_on_all_hosts as run_on_all_hosts
-    from ..config.lab import Lab as Lab
-    from ..config.lab import load_lab as load_lab
     from ..config.scope import EmptySelectionError as EmptySelectionError
+    from ..labs.loader import Lab as Lab
+    from ..labs.loader import load_lab as load_lab
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
-    "Lab": "otto.config.lab",
-    "load_lab": "otto.config.lab",
+    "Lab": "otto.labs.loader",
+    "load_lab": "otto.labs.loader",
     "get_lab": "otto.config.fleet",
     "get_host": "otto.config.fleet",
     "all_hosts": "otto.config.fleet",
