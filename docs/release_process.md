@@ -61,7 +61,8 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
    `CHANGELOG.md` at the new version, bump the version in `pyproject.toml`
    and `uv.lock`, commit, tag `vX.Y.Z`, and build `dist/`. It needs the dev
    VM with the lab VMs and the Zephyr guests up and **exclusive use of the
-   bed** (the campaign holds it), and the campaign adds about 14 minutes; a
+   bed** (the campaign holds it), and the campaign adds about 9 minutes
+   (the chaos lanes are not in it — they are on-demand only); a
    red lane anywhere stops the release before any version commit (the two
    matrix stages may already have committed a refreshed matrix; that commit
    is correct and stays).

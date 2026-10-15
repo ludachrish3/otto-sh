@@ -370,10 +370,12 @@ changelog: ## (Build & Release) Regenerate the WHOLE of CHANGELOG.md from conven
 # Every lane the default gates exclude, run ONCE, so a release loses no test
 # (issue #566): the stability tiers (all run, any red fails), the dashboard
 # replay soak, hermetic conformance over EVERY cell (the lane's default samples
-# 8), the BusyBox artifact tier (CI runs it per push; a release is cut locally
-# and runs it anyway — owner's call), and the chaos lanes LAST: they hold the
-# bed exclusively and `chaos-embedded` can wedge a board, so nothing bed-bound
-# follows them. One plain `@$(MAKE)` line per lane: make aborts at the first
+# 8), and the BusyBox artifact tier (CI runs it per push; a release is cut
+# locally and runs it anyway — owner's call). NOT the chaos lanes: `chaos` and
+# `chaos-embedded` are on demand only, by owner decision (see
+# docs/architecture/quality-gates.md; #643 tracks a scheduled dev-VM run), and
+# the release census names them as its exemption. One plain `@$(MAKE)` line
+# per lane: make aborts at the first
 # non-zero line, so a red lane — or one that collected nothing (exit 5) — stops
 # the release right there. COUNT=1 throughout: completeness is a selection
 # property; multiplicity is nightly's (stability-unit ×100) and, for large
@@ -381,14 +383,12 @@ changelog: ## (Build & Release) Regenerate the WHOLE of CHANGELOG.md from conven
 # tests/unit/test_tier_marker_invariants.py (G13) and exercised for real by
 # tests/unit/test_make_release_lanes.py; the release census in
 # tests/unit/test_lane_invariants.py proves no collected test is left out.
-release-campaign: ## (Build & Release) Run every lane the default gates exclude, once each: stability (all tiers, COUNT=1), dashboard-soak, hermetic conformance over EVERY cell, the BusyBox artifact tier, then chaos and chaos-embedded last. Invoked by `make release`; dev VM only (lab VMs + Zephyr guests). Measured at COUNT=1 on the dev VM: stability ~7 min, dashboard-soak ~1 min, conformance ~30 s, busybox ~15 s, chaos ~5 min, chaos-embedded ~15 s — the whole campaign ≈ 14 min (measured 2026-10-14 with dashboard-soak and chaos red: #382, #434, #640).
-	@$(SAY) "release campaign: every excluded lane, once (stability, soak, conformance=all, busybox, chaos)"
+release-campaign: ## (Build & Release) Run every lane the default gates exclude, once each: stability (all tiers, COUNT=1), dashboard-soak, hermetic conformance over EVERY cell, then the BusyBox artifact tier — not the chaos lanes (on demand only; see docs/architecture/quality-gates.md). Invoked by `make release`; dev VM only (lab VMs + Zephyr guests). Measured at COUNT=1 on the dev VM: stability ~7 min, dashboard-soak ~1 min, conformance ~30 s, busybox ~15 s — the whole campaign ≈ 9 min (measured 2026-10-14).
+	@$(SAY) "release campaign: every excluded lane, once (stability, soak, conformance=all, busybox; chaos is on demand only)"
 	@$(MAKE) stability COUNT=1
 	@$(MAKE) dashboard-soak
 	@OTTO_CONFORMANCE_CELLS=all $(MAKE) conformance
 	@$(MAKE) busybox
-	@$(MAKE) chaos
-	@$(MAKE) chaos-embedded
 
 # WARNING: `make -n release` is NOT side-effect-free — the recipe is one
 # backslash-continued line containing $(MAKE), so GNU make executes it under
@@ -396,7 +396,7 @@ release-campaign: ## (Build & Release) Run every lane the default gates exclude,
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
 # CHANGELOG staged). Never dry-run this target.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) npm ci web/, Python static checks (check-python), nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox, chaos), docs, profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
+release: ## (Build & Release) npm ci web/, Python static checks (check-python), nox, build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs, profile, then changelog, bump, build dist (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) web-install \
 		&& $(MAKE) check-python \

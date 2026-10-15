@@ -1332,8 +1332,10 @@ def test_the_serial_twin_scanner_refuses_a_shape_it_cannot_read() -> None:
 #   manifest is spelled out so a reader sees the release's test surface in one
 #   place; the equality keeps it honest in both directions.
 # * Every item pytest collects under `testpaths` must be selected by at least
-#   one manifest leg: the leg's roots contain the item's file and the leg's
-#   expression matches the item's markers (pytest's own compiler, as above).
+#   one manifest leg, or by an owner-exempt row (_RELEASE_EXEMPT_LANES, each
+#   with its reason, held to being live and unreached by the release): the
+#   leg's roots contain the item's file and the leg's expression matches the
+#   item's markers (pytest's own compiler, as above).
 #
 # STATED BOUNDS. The census sees the HERMETIC collection: items that exist only
 # under a venue or plugin — the conformance bed venue's cells, the browser
@@ -1396,9 +1398,6 @@ _FOREACH = re.compile(r"\$\(foreach\s+(\w+),\$\(([A-Za-z_]+)\),([^)]*\$\(\w+\))\
 _ANY_MARKER = (
     "not no_such_marker_ever"  # compiles; every item matches (the matcher knows no such name)
 )
-_RELEASE_EXEMPT: "frozenset[str]" = (
-    frozenset()
-)  # node ids no release stage runs, by OWNER decision only
 
 
 def _makefile_assignments(text: str) -> "dict[str, str]":
@@ -1569,7 +1568,12 @@ def _legs_including_markerless(
 
 
 def release_legs() -> "list[_Leg]":
-    """Every pytest leg `make release` reaches.
+    """Every pytest leg `make release` reaches (see :func:`make_legs`)."""
+    return make_legs("release")
+
+
+def make_legs(start: str) -> "list[_Leg]":
+    """Every pytest leg `make <start>` reaches.
 
     Labelled `Makefile:<target>` or `noxfile.py:<session>@<python>`.
     """
@@ -1577,7 +1581,7 @@ def release_legs() -> "list[_Leg]":
     variables = _makefile_marker_variables(text)
     assignments = _makefile_assignments(text)
     legs: "list[_Leg]" = []
-    for target in make_reachable("release", text):
+    for target in make_reachable(start, text):
         live = makefile_live_recipe(text, target)
         legs += _legs_including_markerless(
             f"{_MAKEFILE}:{target}", _makefile_pytest_invocations("\n".join(live)), variables
@@ -1693,6 +1697,22 @@ RELEASE_LANES: "tuple[_Leg, ...]" = (
     ),
     _Leg("Makefile:conformance", "conformance and not conformance_bed", ()),
     _Leg("Makefile:busybox", "busybox", ()),
+)
+
+# OWNER EXEMPTIONS. Lanes the release deliberately does NOT run, each with its
+# reason, spelled as the leg it would be. The census treats their selection as
+# accounted for, so "no test left out" keeps meaning "in the release, or
+# named here"; test_the_exemptions_are_live_and_not_in_the_release holds every
+# row to two facts: it covers tests the release rows do not, and no release
+# stage reaches it (an exemption the release runs anyway is a stale lie).
+# Never add a row here without the owner.
+_RELEASE_EXEMPT_LANES: "tuple[_Leg, ...]" = (
+    # Chris, 2026-10-15: the chaos lanes are on demand only. They are
+    # bed-hostile by construction (warm reboots, SIGKILL mid-impair, SSH
+    # blackholes) and a red there is as often a bed finding as a product
+    # defect — two runs on 2026-10-14 each stranded a lab VM in its firmware
+    # after a warm reboot. A release must not wait on that. #643 tracks a
+    # scheduled dev-VM run so the lane keeps producing signal.
     _Leg("noxfile.py:chaos@default", "chaos and not embedded", ("tests/e2e/chaos",)),
     _Leg("noxfile.py:chaos_embedded@default", "chaos and embedded", ("tests/e2e/chaos",)),
 )
@@ -1720,8 +1740,6 @@ _REQUIRED_LANES = (
     "dashboard-soak",
     "conformance",
     "busybox",
-    "chaos",
-    "chaos-embedded",
 )
 
 
@@ -1972,30 +1990,76 @@ def test_a_reached_leg_selects_by_roots_and_marker_only() -> None:
 def test_every_collected_test_is_selected_by_a_release_stage(collect_marker_sets) -> None:
     """The census.
 
-    If this reddens, a lane or a marker changed — never add to _RELEASE_EXEMPT
-    without the owner. Hermetic collection only: venue/plugin-only items (bed
-    cells, browser engines) are covered by `_REQUIRED_LANES`, not here — see
-    STATED BOUNDS at the top of this section.
+    If this reddens, a lane or a marker changed — never add to
+    _RELEASE_EXEMPT_LANES without the owner. Hermetic collection only:
+    venue/plugin-only items (bed cells, browser engines) are covered by
+    `_REQUIRED_LANES`, not here — see STATED BOUNDS at the top of this section.
     """
-    all_gaps = _release_census_gaps(RELEASE_LANES, collect_marker_sets)
-    gaps = [gap for gap in all_gaps if gap not in _RELEASE_EXEMPT]
+    gaps = _release_census_gaps(RELEASE_LANES + _RELEASE_EXEMPT_LANES, collect_marker_sets)
     assert not gaps, (
         f"{len(gaps)} collected test(s) are selected by NO stage of `make release` "
-        "(roots and -m of every manifest row considered):\n  "
+        "and by no owner exemption (roots and -m of every row considered):\n  "
         + "\n  ".join(gaps[:60])
         + ("\n  …" if len(gaps) > 60 else "")
     )
-    unused = sorted(_RELEASE_EXEMPT - set(all_gaps))
-    assert not unused, f"_RELEASE_EXEMPT names tests some stage now runs; drop them: {unused}"
+
+
+@pytest.mark.xdist_group("lane_leg_membership")
+def test_the_exemptions_are_live_and_not_in_the_release(collect_marker_sets) -> None:
+    """Each exempt row covers tests the release rows do not, and no release stage reaches it.
+
+    The first half keeps the list honest in one direction (a row that selects
+    nothing the release misses is dead weight, or the lane was folded back in
+    and the row now hides that); the second keeps it honest in the other (an
+    exemption for a lane `make release` runs anyway is a stale lie — drop the
+    row). The chaos rows are the only ones today; the reason is beside them.
+    """
+    assert _RELEASE_EXEMPT_LANES, "no exemptions — delete this test with the list"
+    release_gaps = set(_release_census_gaps(RELEASE_LANES, collect_marker_sets))
+    for row in _RELEASE_EXEMPT_LANES:
+        with_row = (*RELEASE_LANES, row)
+        covered = release_gaps - set(_release_census_gaps(with_row, collect_marker_sets))
+        assert covered, f"exempt row {row} selects nothing the release rows miss; drop it"
+    reached = set(release_legs())
+    stale = [str(row) for row in _RELEASE_EXEMPT_LANES if row in reached]
+    assert not stale, f"exempt rows `make release` reaches anyway: {stale}"
+
+
+@pytest.mark.xdist_group("lane_leg_membership")
+def test_the_exempt_rows_are_exactly_the_chaos_targets_legs(collect_marker_sets) -> None:
+    """The exemption is spelled from the real lanes, and it covers the whole chaos tree.
+
+    Walking `make chaos` and `make chaos-embedded` the way the release is walked
+    must give exactly the exempt rows: a narrowed `-m` in the noxfile, or a
+    chaos session moved elsewhere, reds here instead of silently leaving tests
+    in no lane. And what the exempt rows add to the release's selection is
+    every item collected under tests/e2e/chaos, no more and no fewer.
+    """
+    text = (_REPO / _MAKEFILE).read_text()
+    assert "chaos" not in make_reachable("release", text)
+    assert "chaos-embedded" not in make_reachable("release", text)
+    chaos_legs = set(make_legs("chaos")) | set(make_legs("chaos-embedded"))
+    assert chaos_legs == set(_RELEASE_EXEMPT_LANES), (
+        "the exempt rows and the chaos targets' legs differ:\n  "
+        + "\n  ".join(sorted(str(leg) for leg in chaos_legs ^ set(_RELEASE_EXEMPT_LANES)))
+    )
+    release_only = set(_release_census_gaps(RELEASE_LANES, collect_marker_sets))
+    with_exempt = set(
+        _release_census_gaps(RELEASE_LANES + _RELEASE_EXEMPT_LANES, collect_marker_sets)
+    )
+    covered = release_only - with_exempt
+    chaos_items = {item.nodeid for item in collect_marker_sets(("tests/e2e/chaos",))}
+    assert covered == chaos_items, sorted(covered ^ chaos_items)[:10]
 
 
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_release_census_reddens_on_a_dropped_lane(collect_marker_sets) -> None:
     """Positive control: without the tunnel soak's row its tests are gaps; with every row, none."""
-    tunnel = [row for row in RELEASE_LANES if row.roots == ("tests/e2e/tunnel_stability",)]
+    every_row = RELEASE_LANES + _RELEASE_EXEMPT_LANES
+    tunnel = [row for row in every_row if row.roots == ("tests/e2e/tunnel_stability",)]
     assert tunnel, "the manifest no longer holds the stability-tunnel leg"
-    without = tuple(row for row in RELEASE_LANES if row not in tunnel)
+    without = tuple(row for row in every_row if row not in tunnel)
     gaps = _release_census_gaps(without, collect_marker_sets)
     assert gaps, "dropping the tunnel row left no gap — the census cannot see the lane"
     assert all(gap.startswith("tests/e2e/tunnel_stability/") for gap in gaps), gaps[:5]
-    assert _release_census_gaps(RELEASE_LANES, collect_marker_sets) == []
+    assert _release_census_gaps(every_row, collect_marker_sets) == []

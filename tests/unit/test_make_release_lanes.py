@@ -120,7 +120,10 @@ def test_the_tiers_run_at_the_count_the_caller_gave(tmp_path: Path):
     assert all("COUNT=1" in line for line in tier_lines), tier_lines
 
 
-_CAMPAIGN = ("stability", "dashboard-soak", "conformance", "busybox", "chaos", "chaos-embedded")
+# No chaos lane: `chaos` / `chaos-embedded` are on demand only (owner
+# decision 2026-10-15, reason beside _RELEASE_EXEMPT_LANES in
+# test_lane_invariants.py). The equality below is also the pin that they stay out.
+_CAMPAIGN = ("stability", "dashboard-soak", "conformance", "busybox")
 
 
 def test_the_campaign_runs_every_lane_in_order_when_all_are_green(tmp_path: Path):

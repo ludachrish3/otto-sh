@@ -2136,16 +2136,14 @@ def test_release_invokes_the_kmodcov_matrix_stage_which_runs_the_lane():
 
 
 # The lanes every default gate excludes, in the order the release campaign
-# runs them: hermetic first (cheap failures first), bed lanes after, the chaos
-# lanes LAST — they hold the bed exclusively and `chaos-embedded` can wedge a
-# board, so nothing bed-bound may follow them.
+# runs them. Not the chaos lanes: `chaos` / `chaos-embedded` are on demand only
+# by owner decision (2026-10-15; the reason sits beside _RELEASE_EXEMPT_LANES
+# in test_lane_invariants.py, which also holds the census honest about them).
 _CAMPAIGN_LANES = (
     "stability",
     "dashboard-soak",
     "conformance",
     "busybox",
-    "chaos",
-    "chaos-embedded",
 )
 
 
@@ -2160,7 +2158,9 @@ def test_release_invokes_the_campaign_which_runs_every_excluded_lane_once():
     Issue #566: before this stage no stability, chaos, soak, hermetic
     conformance or BusyBox lane ran at release. "Releases lose no tests" is
     the rule; the campaign is its mechanism; the census in
-    tests/unit/test_lane_invariants.py is its proof. COUNT=1 throughout:
+    tests/unit/test_lane_invariants.py is its proof — with one owner
+    exemption, the chaos lanes, stated there with its reason (2026-10-15)
+    and absent from the campaign by design. COUNT=1 throughout:
     completeness is a selection property; multiplicity belongs to nightly and
     to scripts/stability_campaign.py's opt-in ladder. Propagation (a red lane
     aborts the release) is proved for real in tests/unit/test_make_release_lanes.py.
