@@ -3,8 +3,6 @@
 These mock the parent host's `exec`/`put` so no real docker is invoked.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import getpass
@@ -1751,7 +1749,7 @@ def test_get_container_host_success(tmp_path):
     fake_lab = Lab(name="test")
     fake_lab.hosts[container.id] = container  # type: ignore[assignment]
 
-    with patch("otto.config.fleet.get_lab", return_value=fake_lab):
+    with active_context(fake_lab):
         result = get_container_host(container.id)
     assert result is container
 
@@ -1759,7 +1757,7 @@ def test_get_container_host_success(tmp_path):
 def test_get_container_host_missing_raises(tmp_path):
     """Raises KeyError when the host_id is not in the lab."""
     fake_lab = Lab(name="test")
-    with patch("otto.config.fleet.get_lab", return_value=fake_lab), pytest.raises(KeyError):
+    with active_context(fake_lab), pytest.raises(KeyError):
         get_container_host("does_not_exist")
 
 
@@ -1768,7 +1766,7 @@ def test_get_container_host_wrong_type_raises(tmp_path):
     parent = _wire_parent_mock(_capable_host())
     fake_lab = Lab(name="test")
     fake_lab.hosts[parent.id] = parent  # a UnixHost, not a DockerContainerHost
-    with patch("otto.config.fleet.get_lab", return_value=fake_lab), pytest.raises(KeyError):
+    with active_context(fake_lab), pytest.raises(KeyError):
         get_container_host(parent.id)
 
 

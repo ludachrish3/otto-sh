@@ -16,7 +16,7 @@ def test_username_completer_falls_back_to_live(monkeypatch):
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr("otto.registry.get_completion_names", lambda: None)
-    monkeypatch.setattr("otto.bootstrap.get_repos", list)
+    monkeypatch.setattr("otto.declared.get_repos", list)
     monkeypatch.setattr(cc, "collect_reservation_usernames", lambda repos: ["zoe", "zed"])
     from otto.cli.main import _username_completer
 

@@ -53,8 +53,8 @@ def lab(monkeypatch):
             raise EmptySelectionError(pattern.pattern, len(hosts))
         return iter(picked)
 
-    monkeypatch.setattr("otto.config.fleet.all_hosts", all_hosts)
-    monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
+    monkeypatch.setattr("otto.fleet.all_hosts", all_hosts)
+    monkeypatch.setattr("otto.fleet.get_lab", lambda: SimpleNamespace(links=[]))
     patch_bootstrap(monkeypatch, [])
     return hosts
 
@@ -220,7 +220,7 @@ async def test_tunnel_discovery_covers_the_whole_lab_not_the_selection(lab):
     whole = SimpleNamespace(links=[])
     server = MagicMock(serve=AsyncMock())
     with (
-        patch("otto.config.fleet.get_lab", return_value=whole),
+        patch("otto.fleet.get_lab", return_value=whole),
         patch("otto.tunnel.records.discover_tunnel_records", side_effect=discover),
         patch("otto.monitor.server.MonitorServer", return_value=server) as server_cls,
         patch("otto.monitor.collector.MetricCollector.run", new=AsyncMock()),
@@ -293,7 +293,7 @@ class TestDrivingRepoScopeGate:
             fake_repo("app", monitor_settings=MonitorSettings()),
             fake_repo("base", monitor_settings=MonitorSettings()),
         ]
-        monkeypatch.setattr("otto.config.fleet.all_hosts", _all_hosts)
+        monkeypatch.setattr("otto.fleet.all_hosts", _all_hosts)
         patch_bootstrap(monkeypatch, repos)
         ctx = _context_over(repos)
         seed_scope_verdicts(ctx, scopes)
@@ -433,7 +433,7 @@ class TestDrivingRepoScopeGate:
 
         # The run's own TLS read and a context's first repos read both ask it.
         monkeypatch.setattr("otto.bootstrap.bootstrap", _boom)
-        monkeypatch.setattr("otto.config.fleet.all_hosts", _all_hosts)
+        monkeypatch.setattr("otto.fleet.all_hosts", _all_hosts)
         return contacted
 
     @pytest.mark.asyncio

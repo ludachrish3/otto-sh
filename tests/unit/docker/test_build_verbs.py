@@ -19,6 +19,7 @@ from otto.result import CommandNotRunError, CommandResult
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.fake_repo import fake_repo
+from tests.conftest import active_context
 
 from .test_deploy import _frag, _host, _lab
 
@@ -59,12 +60,12 @@ def lab():
 
 @pytest.fixture
 def install(lab):
-    """Patch the config seams; returns a function taking the repo list (dependency order)."""
+    """Install a run on the lab and patch the root; takes the repo list (dependency order)."""
 
     @contextmanager
     def _install(repos, ordered=None):
         with (
-            patch("otto.config.fleet.get_lab", lambda: lab),
+            active_context(lab),
             patch(
                 "otto.bootstrap.bootstrap",
                 return_value=fake_bootstrap_result(repos, ordered=ordered or None),
@@ -154,10 +155,9 @@ async def test_two_repos_may_declare_names_that_share_a_staging_key(install, bui
 
 
 @pytest.mark.asyncio
-async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds, tmp_path):
+async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds, lab, tmp_path):
     from otto.config.scope import DockerImage
     from otto.docker.build import build_command
-    from tests.conftest import active_context
 
     df = tmp_path / "Dockerfile"
     df.write_text("FROM alpine\n")
@@ -167,7 +167,7 @@ async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds,
     )
     with (
         install([repo]),
-        active_context(dry_run=True),
+        active_context(lab, dry_run=True),  # the inner run: on the same lab
         pytest.raises(CommandNotRunError) as excinfo,
     ):
         await build_on("test3", no_cache=True)

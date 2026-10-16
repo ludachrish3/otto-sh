@@ -180,7 +180,7 @@ def test_a_monitor_refusal_at_run_time_exits_4(otto_test_cli, sut_repo, monkeypa
     Only the fleet walk is stubbed, to an empty lab.
     """
     sut_repo(files={"tests/test_m.py": "def test_m(): pass\n"})
-    monkeypatch.setattr("otto.config.fleet.all_hosts", lambda *a, **kw: iter([]))
+    monkeypatch.setattr("otto.fleet.all_hosts", lambda *a, **kw: iter([]))
     result = otto_test_cli(["test", "test_m", "--monitor"])
     assert result.exit_code == pytest.ExitCode.USAGE_ERROR == 4, result.output
     assert "--monitor: No hosts available in the active lab" in result.output

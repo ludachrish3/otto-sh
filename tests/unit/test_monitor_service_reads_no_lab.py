@@ -9,12 +9,14 @@ separate modules without a loop through the facade's lazy binding (spec
 2026-10-11 placement-and-phases §3.11), and tach cannot tell one file of a
 module from another. This test keeps that boundary for every file under
 ``otto/monitor``, at any depth, except ``otto/monitor/live.py`` itself, and
-keeps every other file from importing the runner. The lab is banned by
-package as well as by today's modules: ``otto.lab`` is where spec 2026-10-11
-placement-and-phases moves the fleet (``otto.lab.fleet`` in P9a), and a ban on
-the old homes alone would pass a file that followed it there. The lab model and
+keeps every other file from importing the runner. The fleet (the active
+lab and its hosts) is ``otto.fleet`` (spec 2026-10-11 placement-and-phases
+§3.9), banned by module, and the lab facade ``otto.lab`` is banned by package,
+so a file that reached either the fleet or the facade fails. The lab model and
 its loader live in ``otto.labs.loader`` (§3.7), banned by module: the rest of
-``otto.labs`` is the lab sources, which read no run.
+``otto.labs`` is the lab sources, which read no run. The run's repos are read
+from ``otto.declared`` (``current_repos``, §3.9), banned by module too: nothing
+else under ``otto/monitor`` reads the composed state or the declared entries.
 
 A name imported through a package facade (``from otto.monitor import
 run_live``) counts as an import of that package here; which module defines it
@@ -73,7 +75,15 @@ MONITOR = SRC / "otto" / "monitor"
 RUNNER = MONITOR / "live.py"
 FACADE = MONITOR / "__init__.py"
 RUNNER_MODULE = "otto.monitor.live"
-LAB = ["otto.config", "otto.context", "otto.lab", "otto.labs.loader", "otto.tunnel"]
+LAB = [
+    "otto.config",
+    "otto.context",
+    "otto.declared",
+    "otto.fleet",
+    "otto.lab",
+    "otto.labs.loader",
+    "otto.tunnel",
+]
 BANNED = [*LAB, RUNNER_MODULE]
 SKIPPED_TESTS = ["TYPE_CHECKING", "typing.TYPE_CHECKING"]
 
@@ -225,7 +235,7 @@ def test_a_nested_file_resolves_against_its_own_package() -> None:
         "from .. import tunnel as tunnels\n",
         "from .. import errors, config\n",
         "from otto import tunnel\n",
-        "from otto.config.fleet import get_lab\n",
+        "from otto.fleet import get_lab\n",
         "from otto.monitor import live\n",
         "from . import live\n",
         "from .live import run_live\n",
@@ -264,7 +274,7 @@ def test_counted_as_tach_counts(text: str) -> None:
         ),
         "RUN = Ref('otto.monitor.live:run_live')\n",
         "LAB = Ref(target='otto.lab.fleet:get_lab')\n",
-        "_LAZY_ATTRS = {'get_lab': 'otto.config.fleet'}\n",
+        "_LAZY_ATTRS = {'get_lab': 'otto.fleet'}\n",
         "_LAZY_ATTRS = {'load_lab': 'otto.labs.loader'}\n",
     ],
 )

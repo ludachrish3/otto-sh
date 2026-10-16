@@ -728,7 +728,7 @@ def test_the_extractor_reads_every_string_shape(tmp_path: Path) -> None:
     loaders = [site for site in found.literals if site.kind == "cli-loader"]
     assert {class_of(site) for site in loaders} == {REGISTRY_BUILTIN}
     assert owner_of(module_of("otto/env/manage.py"), ["otto.config"]) == "otto.env"
-    assert owner_of("otto.config.fleet", ["otto.config", "otto.config.scope"]) == "otto.config"
+    assert owner_of("otto.config.repo", ["otto.config", "otto.config.scope"]) == "otto.config"
 
 
 def test_no_import_spelling_escapes_the_audit() -> None:
@@ -939,7 +939,7 @@ COMPOSITION_ROOT = "otto/bootstrap.py"
 # The landings of spec 2026-10-11 placement-and-phases §6, in order. Each
 # landing sets CURRENT_LANDING to its own name in its commit.
 LANDINGS = ["P1a", "P1b", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9a", "P9b"]
-CURRENT_LANDING = "P8"
+CURRENT_LANDING = "P9a"
 
 # What the declared graph shows once each landing is in: the modules with a
 # layer (spec 2026-10-11 placement-and-phases §5.2, "modules layered") and the
@@ -950,12 +950,14 @@ CURRENT_LANDING = "P8"
 # The last landing's row is exact. P3 and P4 share both counts (43 and 13), so
 # no count separates them; nothing grandfathered expires in P4, so a landing
 # left named P3 through P4 loses nothing, and P5's counts then demand the bump.
-# P9a and P9b share the cycle count (0) but not the layered one (65 and 77).
+# P9a and P9b share the cycle count (0) but not the layered one (62 and 77).
 # P7 layers otto.labs alone: the lab model stayed with its loader in otto.labs, so no
 # module was carved for it (spec §3.7 and §5.2 as amended by P7), and its row is 55.
 # P8 layers otto.reservations alone: the active run is a slot in otto.invocation, a module
 # that already had its layer, so none was carved for it (spec §3.8 and §5.2 as amended by
 # P8), and its row is 56.
+# P9a layers the five modules that leave the cycle and the fleet's own module, otto.fleet
+# (spec §3.9 and §5.2 as amended by P9a), and its row is 62.
 LAYERED_AT = {
     "P1a": 19,
     "P1b": 35,
@@ -966,7 +968,7 @@ LAYERED_AT = {
     "P6": 54,
     "P7": 55,
     "P8": 56,
-    "P9a": 65,
+    "P9a": 62,
     "P9b": 77,
 }
 CYCLE_AT = {
@@ -990,11 +992,11 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/__init__.py", "otto.params:options", FACADE_BINDING),
     ("otto/__init__.py", "otto.params:register_options", FACADE_BINDING),
     ("otto/__init__.py", "otto.cli:app", FACADE_BINDING),
-    ("otto/__init__.py", "otto.config.fleet:all_hosts", FACADE_BINDING),
-    ("otto/__init__.py", "otto.config.fleet:get_host", FACADE_BINDING),
-    ("otto/__init__.py", "otto.config.fleet:get_lab", FACADE_BINDING),
+    ("otto/__init__.py", "otto.fleet:all_hosts", FACADE_BINDING),
+    ("otto/__init__.py", "otto.fleet:get_host", FACADE_BINDING),
+    ("otto/__init__.py", "otto.fleet:get_lab", FACADE_BINDING),
     ("otto/__init__.py", "otto.labs.loader:load_lab", FACADE_BINDING),
-    ("otto/__init__.py", "otto.config.fleet:run_on_all_hosts", FACADE_BINDING),
+    ("otto/__init__.py", "otto.fleet:run_on_all_hosts", FACADE_BINDING),
     ("otto/__init__.py", "otto.context:OttoContext", FACADE_BINDING),
     ("otto/__init__.py", "otto.context:get_context", FACADE_BINDING),
     ("otto/__init__.py", "otto.context:open_context", FACADE_BINDING),
@@ -1038,12 +1040,12 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     # The otto.lab facade. otto/lab/__init__.py is in no tach module until it is declared.
     ("otto/lab/__init__.py", "otto.labs.loader:Lab", FACADE_BINDING),
     ("otto/lab/__init__.py", "otto.labs.loader:load_lab", FACADE_BINDING),
-    ("otto/lab/__init__.py", "otto.config.fleet:get_lab", FACADE_BINDING),
-    ("otto/lab/__init__.py", "otto.config.fleet:get_host", FACADE_BINDING),
-    ("otto/lab/__init__.py", "otto.config.fleet:all_hosts", FACADE_BINDING),
-    ("otto/lab/__init__.py", "otto.config.fleet:do_for_all_hosts", FACADE_BINDING),
-    ("otto/lab/__init__.py", "otto.config.fleet:run_on_all_hosts", FACADE_BINDING),
-    ("otto/lab/__init__.py", "otto.config.fleet:fleet_of_interest", FACADE_BINDING),
+    ("otto/lab/__init__.py", "otto.fleet:get_lab", FACADE_BINDING),
+    ("otto/lab/__init__.py", "otto.fleet:get_host", FACADE_BINDING),
+    ("otto/lab/__init__.py", "otto.fleet:all_hosts", FACADE_BINDING),
+    ("otto/lab/__init__.py", "otto.fleet:do_for_all_hosts", FACADE_BINDING),
+    ("otto/lab/__init__.py", "otto.fleet:run_on_all_hosts", FACADE_BINDING),
+    ("otto/lab/__init__.py", "otto.fleet:fleet_of_interest", FACADE_BINDING),
     ("otto/lab/__init__.py", "otto.config.scope:EmptySelectionError", FACADE_BINDING),
     # The otto.link facade's bindings into its three foundation modules.
     ("otto/link/__init__.py", "otto.link.impairer:IMPAIRERS", FACADE_BINDING),

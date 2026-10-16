@@ -116,7 +116,7 @@ def test_whoami_is_lab_free(capsys):
 
     with (
         patch("otto.cli.reservation.build_reservation_gate", return_value=state) as build,
-        patch("otto.bootstrap.get_repos", return_value=[]),
+        patch("otto.declared.get_repos", return_value=[]),
     ):
         whoami(ctx)
 

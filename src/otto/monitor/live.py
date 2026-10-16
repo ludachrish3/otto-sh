@@ -46,7 +46,7 @@ def select_monitor_hosts(pattern: "str | re.Pattern[str] | None") -> "list[Remot
         EmptySelectionError: *pattern* matched no host.
         NoMonitorableHostsError: the selection holds no host otto can sample.
     """
-    from ..config.fleet import all_hosts
+    from ..fleet import all_hosts
     from .factory import monitorable
 
     if isinstance(pattern, str):
@@ -134,7 +134,8 @@ async def run_live(
         NoMonitorableHostsError: nothing selected can be sampled.
         MonitorTlsError: the repos' declared TLS cannot be served.
     """
-    from ..config.fleet import current_repos, get_lab
+    from ..declared import current_repos
+    from ..fleet import get_lab
     from ..tunnel.records import discover_tunnel_records
     from .server import MonitorServer
     from .session import MonitorSession

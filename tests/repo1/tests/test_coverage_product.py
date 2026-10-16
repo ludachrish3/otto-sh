@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.config.fleet import (
+from otto.fleet import (
     all_hosts,
     do_for_all_hosts,
 )

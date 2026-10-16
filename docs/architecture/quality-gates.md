@@ -56,14 +56,13 @@ superset of it. {doc}`modules` draws that graph, redrawn from `tach.toml`
 on every docs build.
 
 tach checks one edge at a time, so it cannot see a loop. The goal is
-`forbid_circular_dependencies = true`, and an import cycle keeps that flag
-off. Until it can go on, `tests/unit/test_import_cycle_ratchet.py` holds
-the cycle to what it is. It reads the same graph, and pins which modules
-are in a cycle and which edges run inside one. Both lists only shrink. A
-module that joins the cycle fails the gate, and so does a new edge between
-two of its members. An entry left behind after a cut fails too, so the cut
-is recorded and the edge cannot come back unseen. `make lint-arch` runs it,
-because a targeted test run would never select it.
+`forbid_circular_dependencies = true`. The declared graph has no import cycle
+now, and until the flag goes on `tests/unit/test_import_cycle_ratchet.py`
+keeps it that way. It reads the same graph, and its `BASELINE` of cycle
+members and the edges inside their cycle is empty, so any module in a cycle
+fails the gate, and so does any edge inside one. The flag waits only on every
+file being in a tach module. `make lint-arch` runs the ratchet, because a
+targeted test run would never select it.
 
 `tach.toml` also declares otto's role layers, from `foundation` at the
 bottom to `entry` at the top, and sets `layers_explicit_depends_on = true`.
@@ -72,10 +71,9 @@ edge its `depends_on` lists: without the switch, tach lets any import into a
 lower layer through undeclared. Every module spells its `depends_on`, `[]` for
 one that imports no other, because tach reads a missing list as "may import
 anything"; the module graph reader refuses an entry without one, so the docs
-build and the ratchet fail on it. A module inside the import cycle has no
-layer yet, which exempts it; it takes its layer in the commit that frees it,
-and `tests/unit/test_tach_layers.py` fails on a module outside the cycle that
-has none. The same test pins the files no tach module owns yet (tach sees no
+build and the ratchet fail on it. Every module carries a layer:
+`tests/unit/test_tach_layers.py` fails on a module outside an import cycle
+that has none, and with no cycle that is any module. The same test pins the files no tach module owns yet (tach sees no
 import of theirs), and that list only shrinks: a pinned copy of it as it landed
 fails any entry added past it. The switch's meaning is tach's, and the `tach`
 floor floats, so `scripts/tach_layer_canary.py`, a `lint-arch` and
@@ -85,11 +83,11 @@ an undeclared downward import stops being refused.
 tach checks the imports between modules, not between the files of one.
 `otto.monitor` holds both the monitor service and `live.py`, the lab-aware
 runner its facade exports, and only the runner may read the run's lab, repos
-and tunnels. `tests/unit/test_monitor_service_reads_no_lab.py`, a `lint-arch`
-leg, keeps `otto.config`, `otto.context`, `otto.tunnel`, `otto.lab` (the public
-lab and fleet API), `otto.labs.loader` (the lab model and its loader) and the
-runner itself out of every other file under
-`otto/monitor`, at any depth. It counts every import tach counts, in every
+and tunnels.
+[`tests/unit/test_monitor_service_reads_no_lab.py`](https://github.com/ludachrish3/otto-sh/blob/main/tests/unit/test_monitor_service_reads_no_lab.py),
+a `lint-arch` leg, keeps the modules that read the run, and the runner itself,
+out of every other file under `otto/monitor`, at any depth; its docstring names
+each banned module and why. It counts every import tach counts, in every
 spelling, and skips only the body of an `if TYPE_CHECKING:` or
 `if typing.TYPE_CHECKING:` block, never an `elif`. It also reads the literal
 import strings below with the string audit's reader, because the audit judges
@@ -288,7 +286,10 @@ job that enforces it on push.
 
 ### The last two rows are the point
 
-**`make coverage` is not in CI.** It is the per-task gate — the full pytest
+**`make coverage` is not in CI.** It is the full lane the gate-scope oracle
+selects (see
+[Gating a branch before it lands](../contributing.md#gating-a-branch-before-it-lands)
+for which commits run it) — the full pytest
 run at the 95.5 floor (a combined line+branch number, like every Python floor
 here), plus the merged TypeScript floor — and no workflow runs it. CI gates
 the *hostless* slice at 94.75 (`coverage-hostless` / the `tests` job),

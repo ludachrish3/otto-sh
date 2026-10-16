@@ -16,7 +16,7 @@ def test_lab_completer_falls_back_to_live(monkeypatch):
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr("otto.registry.get_completion_names", lambda: None)
-    monkeypatch.setattr("otto.bootstrap.get_repos", list)
+    monkeypatch.setattr("otto.declared.get_repos", list)
     monkeypatch.setattr(cc, "collect_lab_names", lambda repos: ["alpha", "beta"])
     from otto.cli.main import _lab_completer
 
@@ -32,7 +32,7 @@ def _serve(monkeypatch, *, names=(), markers=()):
     """
     import otto.config.collected_tests as ct
 
-    monkeypatch.setattr("otto.bootstrap.get_repos", list)
+    monkeypatch.setattr("otto.declared.get_repos", list)
     monkeypatch.setattr(
         ct,
         "completion_view",

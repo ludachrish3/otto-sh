@@ -288,7 +288,7 @@ def gate_env(monkeypatch, tmp_path):
     main.parent.mkdir(parents=True)
     monkeypatch.setattr("otto.config.completion_cache._cache_path", lambda: main)
     monkeypatch.setattr(
-        "otto.bootstrap.get_repos",
+        "otto.declared.get_repos",
         lambda: [fake_repo(settings={"reservations": {"backend": "json"}})],
     )
     monkeypatch.setattr(
@@ -337,7 +337,7 @@ class _Backend:
 
 
 def test_gate_no_reservation_config_allows(monkeypatch, gate_env):
-    monkeypatch.setattr("otto.bootstrap.get_repos", lambda: [fake_repo()])
+    monkeypatch.setattr("otto.declared.get_repos", lambda: [fake_repo()])
     _install_backend(monkeypatch, _Backend([]))  # would refuse if it were ever consulted
     assert rc._reservation_allows(_chain()) is True
 

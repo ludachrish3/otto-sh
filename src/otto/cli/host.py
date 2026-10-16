@@ -93,8 +93,8 @@ host_app = typer.Typer(
 
 
 def _resolve_host(host_id: str) -> "UnixHost":
-    from ..config.fleet import get_host
     from ..context import get_context
+    from ..fleet import get_host
 
     try:
         return get_host(host_id)
@@ -194,7 +194,7 @@ def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]"
     gate = ctx.meta.get("otto_reservation")
     if gate is None:
         return
-    from ..config.fleet import get_lab
+    from ..fleet import get_lab
     from ..reservations.check import MissingReservationError
 
     try:

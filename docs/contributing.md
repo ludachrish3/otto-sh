@@ -829,7 +829,7 @@ and the package `__dict__` never holds them. Four rules follow, each with a
 static check; the first also has a run-time backstop.
 
 **Tests patch a name where it is defined, never on its package.**
-`monkeypatch.setattr("otto.config.fleet.get_lab", fake)`, not
+`monkeypatch.setattr("otto.fleet.get_lab", fake)`, not
 `"otto.lab.get_lab"`; `otto.session.lab.build_lab`, not
 `otto.session.build_lab`. A package-level `monkeypatch` leaves the real object
 cached in the package `__dict__` when it undoes, and from then on, on that xdist
@@ -839,11 +839,12 @@ test. `mock.patch` on the package does not leak, but shadows a defining-module
 patch inside its block, so the rule covers it too. The lazy table in the
 package's `__init__` names the defining module; a name declared through another
 lazy package (`otto.app` → `otto.cli.app`) is defined one hop further
-(`otto.cli.main.app`). The repo accessors are not lazy: `otto.bootstrap`
-defines them, so `otto.bootstrap.get_repos` is both their import path and their
-patch target. An EAGER re-export is a different binding too: `otto.bootstrap`
-binds the error types `otto.config.scope` defines, so a test that needs to
-replace `ProjectScopeError` patches `otto.config.scope.ProjectScopeError`.
+(`otto.cli.main.app`). An EAGER re-export is a different binding too:
+`otto.bootstrap` binds `get_repos`, `get_ordered_repos` and `is_bootstrapped`,
+which `otto.declared` defines, so a test patches `otto.declared.get_repos`
+(`bootstrap` and `get_env` are the root's own). It also binds the error types
+`otto.config.scope` defines, so a test that needs to replace
+`ProjectScopeError` patches `otto.config.scope.ProjectScopeError`.
 Every other module that raises or catches it imports it from there when
 called, so that patch reaches every raise and `except` in otto except
 `otto.bootstrap`'s own: its providing-repo scope check raises through the
@@ -860,14 +861,15 @@ from a `_LAZY_ATTRS` package that a consumer binds at module level
 leaks nothing.
 
 **Source reads process-wide getters at call time.** The process-wide getters —
-`otto.bootstrap`'s `bootstrap`, `get_repos`, `get_ordered_repos`, `get_env`
-and `is_bootstrapped`, `otto.registry`'s `get_completion_names` (which
-`otto.bootstrap` re-exports), and the function entries of the
+`otto.bootstrap`'s `bootstrap` and `get_env`, `otto.declared`'s `get_repos`,
+`get_ordered_repos`, `is_bootstrapped`, `current_repos`, `current_ordered_repos`
+and `compose`, `otto.registry`'s `get_completion_names` (`otto.bootstrap`
+re-exports it and the first three of `otto.declared`'s), and the function entries of the
 `otto`, `otto.config`, `otto.logger` and `otto.lab` lazy tables (`get_lab`,
 `all_hosts`, `do_for_all_hosts`, `get_context`, `try_get_context`, ... and the
 registrars, such as `register_options` and `register_cli_command`) — are
 imported inside the function that uses them, from the defining module
-(`from ..bootstrap import get_repos`, `from ..config.fleet import get_lab`),
+(`from ..declared import get_repos`, `from ..fleet import get_lab`),
 never at module level outside `if TYPE_CHECKING:`. A module-level binding keeps
 the real function under a patch every other caller sees, so the module's tests
 run the real bootstrap without anyone noticing. Classes (`Repo`, `OttoContext`)

@@ -25,7 +25,7 @@ import shlex
 import pytest
 import pytest_asyncio
 
-from otto.config.fleet import all_hosts, do_for_all_hosts
+from otto.fleet import all_hosts, do_for_all_hosts
 from otto.host.unix_host import UnixHost
 
 CTL = "/sys/kernel/debug/otto_kmod_demo/ctl"

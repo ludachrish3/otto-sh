@@ -669,7 +669,7 @@ def ensure_inline_lab(ctx: typer.Context) -> None:
     itself, and it must do so the way dispatch does. The root callback grew
     this sequence for its own two flags; ``otto host --list-hosts`` had kept
     an eager Typer callback from before the lazy load existed, which called
-    ``get_lab()`` (``otto.config.fleet``) before any context could exist and tracebacked
+    ``get_lab()`` (``otto.fleet``) before any context could exist and tracebacked
     ``No active OttoContext`` on the documented form ``otto --lab L host
     --list-hosts`` (2026-09-03). One helper, both callers.
 

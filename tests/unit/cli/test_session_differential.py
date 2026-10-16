@@ -156,7 +156,6 @@ def _install(monkeypatch, repos: "list[Any]", errors: "list[bs.BootstrapError] |
         warnings=[],
         ordered_repos=list(repos),  # as bootstrap() fills it, so the real preflight sees them
     )
-    monkeypatch.setattr(bs, "_result", result)
     publish_composed(result, complete=True)
 
 

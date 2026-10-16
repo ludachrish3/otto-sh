@@ -22,12 +22,14 @@ deliberately NOT part of bootstrap — it happens lazily at first access.
 parsing, ``open_context()`` calls it lazily, and repeated calls return the
 same :class:`BootstrapResult`.
 
-What it composes is also published to the composed-repos catalog in
-:mod:`otto.declared`, where the layers below this root read it: the
-in-progress result before the repos' init modules run, then the complete one;
-a composition that fails, and :func:`invalidate`, withdraw both. The last
-statement of this module installs the catalog's initiator, so importing the
-root lets a reader below it start composition, and composes nothing itself.
+What it composes, a :class:`BootstrapResult`, is published to the
+composed-repos catalog in :mod:`otto.declared`, the one home of the composed
+state, where the layers below this root read it: the in-progress result
+before the repos' init modules run, then the complete one; a composition that
+fails, and :func:`invalidate`, withdraw both. This module keeps no copy of
+its own. The last statement of this module installs the catalog's initiator,
+so importing the root lets a reader below it start composition, and composes
+nothing itself.
 
 Its error types, :class:`BootstrapError`, :class:`DependencyError`,
 :class:`ProjectScopeError` and :class:`BootstrapWarning`, are defined in
@@ -39,16 +41,18 @@ imports it from the owner when called, so a test's patch of
 D2 check raises through the binding it took at import, which that patch does
 not reach.
 
-The repo accessors live here too: :func:`get_repos` and
-:func:`get_ordered_repos` read :func:`bootstrap`'s result, :func:`get_env`
-reads :func:`discover`'s, and :func:`is_bootstrapped` reads this module's
-state. Each runs discovery or bootstrap on first use, never at import, and
-each looks its source up when called, so a test's patch of
-``otto.bootstrap.bootstrap`` reaches it. :func:`get_completion_names` is
-defined in :mod:`otto.registry`, which holds the CLI's completion-cache
-snapshot, and re-exported here: its readers import that module, not this
-one, so resolving a command for ``--help`` or a TAB loads no composition
-root.
+The composed state's public names are defined in :mod:`otto.declared` and
+re-exported here, each the same object as its owner's:
+:class:`BootstrapResult`, and the accessors :func:`get_repos`,
+:func:`get_ordered_repos` and :func:`is_bootstrapped`. The first two compose
+on first use, never at import, through the catalog's initiator, which looks
+:func:`bootstrap` up in this module when called, so a test's patch of
+``otto.bootstrap.bootstrap`` reaches them; :func:`is_bootstrapped` never
+composes. :func:`get_env` reads :func:`discover`'s result.
+:func:`get_completion_names` is defined in :mod:`otto.registry`, which holds
+the CLI's completion-cache snapshot, and re-exported here: its readers
+import that module, not this one, so resolving a command for ``--help`` or a
+TAB loads no composition root.
 """
 
 import importlib
@@ -56,7 +60,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .config.scope import BootstrapError, BootstrapWarning, DependencyError, ProjectScopeError
-from .declared import clear_composed, install_initiator, publish_composed
+from .declared import (
+    BootstrapResult,
+    clear_composed,
+    get_ordered_repos,
+    get_repos,
+    install_initiator,
+    is_bootstrapped,
+    publish_composed,
+)
 from .errors import is_containable
 from .registry import clear_completion_names, get_completion_names, registering_repo
 
@@ -95,32 +107,7 @@ class DiscoveryResult:
     errors: list[BootstrapError] = field(default_factory=list)
 
 
-@dataclass(frozen=True)
-class BootstrapResult:
-    """Everything bootstrap produced: environment, repos, contained errors."""
-
-    env: "OttoEnvSettings"
-    repos: list["Repo"]
-    errors: list[BootstrapError] = field(default_factory=list)
-    warnings: list[BootstrapWarning] = field(default_factory=list)
-    ordered_repos: list["Repo"] = field(default_factory=list)
-    """Repos in the dependency pass's topological order (skipped repos excluded)."""
-
-
 _discovered: "DiscoveryResult | None" = None
-_result: BootstrapResult | None = None
-_in_progress: BootstrapResult | None = None
-"""What :func:`bootstrap` already knows while its import phase is still running.
-
-Set once discovery and the dependency pass are done — which is when ``repos``
-and ``ordered_repos`` are final — and cleared when ``bootstrap()`` leaves. It
-exists so a RE-ENTRANT ``bootstrap()`` has something true to answer with, and
-the reentrance is real: the import phase runs repo ``init`` modules, i.e. user
-code, and anything there that reaches :func:`get_repos`
-— directly, or by way of a stamped host whose product providers consult
-:func:`~otto.declared.scope_for_repo` — lands back here with ``_result``
-still unset. Without this, that call composed a SECOND, nested root.
-"""
 
 
 _NO_LAB_PATTERNS = """\
@@ -297,19 +284,26 @@ def discover() -> DiscoveryResult:
 
 
 def bootstrap() -> BootstrapResult:
-    """Run the composition root (idempotent): discovery, dependency pass, registration."""
-    global _result, _in_progress  # noqa: PLW0603 — module-level singleton/cache
-    if _result is not None:
-        return _result
-    if _in_progress is not None:
-        # Re-entered from our own import phase (see _in_progress). Answer with
-        # what is already settled rather than composing the root a second time:
-        # `repos`/`ordered_repos` are final by then, so a repo init module
-        # asking `get_repos()` gets the same list the outer call will publish.
-        # `errors` is the SAME list object the outer call keeps appending to,
-        # so this view is live rather than a stale copy — but it is necessarily
-        # partial: inits that have not run yet cannot have failed yet.
-        return _in_progress
+    """Run the composition root (idempotent): discovery, dependency pass, registration.
+
+    The catalog in :mod:`otto.declared` holds what it composed: a published
+    result is returned as it is, the complete one, or, re-entered from this
+    call's own import phase, the in-progress one.
+    """
+    # Read when called, from its defining module, so a patch of it there reaches here.
+    from .declared import published_result
+
+    published = published_result()
+    if published is not None:
+        # Complete, or re-entered from our own import phase (see the catalog's
+        # in-progress result). Answer with what is already settled rather than
+        # composing the root a second time: `repos`/`ordered_repos` are final
+        # by then, so a repo init module asking `get_repos()` gets the same
+        # list the outer call will publish. `errors` is the SAME list object
+        # the outer call keeps appending to, so this view is live rather than
+        # a stale copy — but it is necessarily partial: inits that have not
+        # run yet cannot have failed yet.
+        return published
     discovered = discover()
     env, repos = discovered.env, discovered.repos
     errors: list[BootstrapError] = list(discovered.errors)
@@ -330,14 +324,16 @@ def bootstrap() -> BootstrapResult:
     # Not contained like the per-repo imports below: this is otto's own module,
     # so a failure here is a bug in otto, not a repo's, and framing it as one
     # repo's containable error would hide it.
-    _in_progress = BootstrapResult(
-        env=env,
-        repos=repos,
-        errors=errors,
-        warnings=resolution.warnings,
-        ordered_repos=resolution.ordered,
+    publish_composed(
+        BootstrapResult(
+            env=env,
+            repos=repos,
+            errors=errors,
+            warnings=resolution.warnings,
+            ordered_repos=resolution.ordered,
+        ),
+        complete=False,
     )
-    publish_composed(_in_progress, complete=False)
     try:
         importlib.import_module("otto.project.actions").declare()
         for repo in resolution.ordered:
@@ -370,47 +366,24 @@ def bootstrap() -> BootstrapResult:
         # work", while an unscoped providing repo would silently apply its products
         # to every host in every lab — there is no degraded mode to offer.
         _check_providing_repos_declare_scope(repos, resolution.ordered)
-        _result = BootstrapResult(
+        result = BootstrapResult(
             env=env,
             repos=repos,
             errors=errors,
             warnings=resolution.warnings,
             ordered_repos=resolution.ordered,
         )
-    finally:
-        # Cleared whichever way this leaves. A bootstrap that RAISED (D2's
-        # refusal, an uncontainable init failure) must not leave a partial view
-        # standing as though it were the composition root: the next call has to
-        # re-run and fail the same way, not read a half-built answer. The
-        # catalog follows: the complete result replaces the in-progress one,
-        # or a failure withdraws both.
-        _in_progress = None
-        if _result is not None:
-            publish_composed(_result, complete=True)
-        else:
-            clear_composed()
-    return _result
-
-
-def get_repos() -> "list[Repo]":
-    """Return the configured repos, as discovered (bootstraps lazily).
-
-    Every repo whose ``settings.toml`` parsed, in ``OTTO_SUT_DIRS`` order,
-    including one the dependency pass skipped; a repo whose settings would not
-    parse is absent, and its error is in :attr:`BootstrapResult.errors`.
-    """
-    return bootstrap().repos
-
-
-def get_ordered_repos() -> "list[Repo]":
-    """Return configured repos in dependency-topological order (bootstraps lazily).
-
-    Dependencies first, dependents after — the walk order the ``otto.project``
-    orchestrator installs in (and reverses to uninstall). Skipped repos
-    (unsatisfied required deps) are absent, exactly as they are absent from
-    phase-2 registration.
-    """
-    return bootstrap().ordered_repos
+    except BaseException:
+        # A bootstrap that RAISED (D2's refusal, an uncontainable init
+        # failure) must not leave a partial view standing as though it were
+        # the composition root: the next call has to re-run and fail the same
+        # way, not read a half-built answer. The failure withdraws both
+        # published results.
+        clear_composed()
+        raise
+    # The complete result replaces the in-progress one.
+    publish_composed(result, complete=True)
+    return result
 
 
 def get_env() -> "OttoEnvSettings":
@@ -431,34 +404,6 @@ def discovered_teardown_deadline() -> "float | None":
         return None
 
 
-def is_bootstrapped() -> bool:
-    """Report whether bootstrap has already started — never forces it.
-
-    True once either ``_result`` (a completed, successful ``bootstrap()``) or
-    ``_in_progress`` (the phase-2 import pass is running, ``_result`` not yet
-    set) is non-None; false only before the first call, and after
-    :func:`invalidate`. Mid-bootstrap counts as bootstrapped ON PURPOSE: an
-    init module that builds a host — directly, or by way of a stamped host
-    whose product/dev-tool providers apply — is running INSIDE that window,
-    and :func:`get_repos` already answers correctly and for free
-    there (the re-entrant branch in :func:`bootstrap` returns
-    ``_in_progress``, whose ``repos``/``ordered_repos`` are final by then).
-    Treating that window as "not bootstrapped" would make a host built mid-
-    bootstrap silently drop its declared entries while its providers still
-    applied. The non-forcing probe: a caller that must not TRIGGER discovery
-    or repo init imports as a side effect of merely asking reads this instead
-    of calling :func:`bootstrap` or :func:`get_repos` — only a
-    process that has not started bootstrap at all collects nothing.
-
-    A caller below this root reads the published results in
-    :mod:`otto.declared` instead (:func:`otto.declared.declared_for_host`,
-    reached from ``create_host_from_dict`` in bare-library and pre-bootstrap
-    processes): they are published in the same two moments, so "nothing
-    published" there is ``False`` here.
-    """
-    return _result is not None or _in_progress is not None
-
-
 def invalidate() -> None:
     """Drop every cached bootstrap result so the next call recomputes.
 
@@ -470,15 +415,14 @@ def invalidate() -> None:
     composes again. The CLI's completion-cache snapshot
     (:func:`otto.registry.get_completion_names`) is cleared as well.
     """
-    global _discovered, _result, _in_progress  # noqa: PLW0603 — module-level singleton/cache
+    global _discovered  # noqa: PLW0603 — module-level singleton/cache
     _discovered = None
-    _result = None
-    # Defence in depth. `bootstrap()` clears this in a `finally`, so it is
-    # already None whenever anyone can call this — but "drop every cached
-    # bootstrap result" must mean every one, or the day that invariant breaks
-    # this function silently stops being the recovery path it advertises.
-    _in_progress = None
     clear_completion_names()
+    # Both published results, the in-progress one too. `bootstrap()` replaces
+    # that when it succeeds and withdraws it when it fails, so it is already
+    # gone whenever anyone can call this — but "drop every cached bootstrap
+    # result" must mean every one, or the day that invariant breaks this
+    # function silently stops being the recovery path it advertises.
     clear_composed()
 
 

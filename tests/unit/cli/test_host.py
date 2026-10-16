@@ -157,13 +157,13 @@ class TestHostHelp:
         assert "exec" in result.output
 
     def test_run_is_not_a_verb(self):
-        with patch("otto.config.fleet.get_host", return_value=_make_host()):
+        with patch("otto.fleet.get_host", return_value=_make_host()):
             result = runner.invoke(host_app, ["router1", "run", "ls"])
         assert result.exit_code == 2
         assert "No such command" in result.output
 
     def test_exec_offers_timeout_sudo_and_user(self):
-        with patch("otto.config.fleet.get_host", return_value=_make_host()):
+        with patch("otto.fleet.get_host", return_value=_make_host()):
             result = runner.invoke(host_app, ["router1", "exec", "--help"])
         assert result.exit_code == 0, result.output
         flat = " ".join(result.output.split())
@@ -190,7 +190,7 @@ class TestHostHelp:
         REAL verb, on both halves of the transfer pair, with its off switch
         beside it.
         """
-        with patch("otto.config.fleet.get_host", return_value=_make_host()):
+        with patch("otto.fleet.get_host", return_value=_make_host()):
             result = runner.invoke(host_app, ["router1", verb, "--help"])
 
         assert result.exit_code == 0, result.output
@@ -229,7 +229,7 @@ class TestHostCallback:
             patch("otto.cli.invoke.ensure_cli_session"),
             patch("otto.cli.invoke.ensure_lab_context"),
             patch("otto.logger.management.create_output_dir") as p_create,
-            patch("otto.config.fleet.get_host", return_value=mock_host),
+            patch("otto.fleet.get_host", return_value=mock_host),
         ):
             root_runner.invoke(app, ["--lab", "x", "host", "router1", "exec", "ls"])
 
@@ -242,7 +242,7 @@ class TestHostCallback:
 class TestResolveHost:
     def test_valid_host_returns_host(self):
         mock_host = _make_host()
-        with patch("otto.config.fleet.get_host", return_value=mock_host):
+        with patch("otto.fleet.get_host", return_value=mock_host):
             result = _resolve_host("router1")
         assert result is mock_host
 
@@ -252,7 +252,7 @@ class TestResolveHost:
         # no all_hosts to stand in for — an empty lab is enough here, and
         # tests/unit/config/test_fleet_scoping.py owns the unscoped-listing
         # guard itself.
-        with patch("otto.config.fleet.get_host", side_effect=KeyError("nope")):
+        with patch("otto.fleet.get_host", side_effect=KeyError("nope")):
             result = runner.invoke(host_app, ["nonexistent", "exec", "ls"])
 
         assert result.exit_code == 1
@@ -296,7 +296,7 @@ class TestResolveCliHostHop:
             },
         )
 
-        with patch("otto.config.fleet.get_host", side_effect=_fake_get_host):
+        with patch("otto.fleet.get_host", side_effect=_fake_get_host):
             host = host_module.resolve_cli_host(ctx)
 
         assert calls == ["router1", "hop-input"]
@@ -553,20 +553,20 @@ def test_an_out_of_fleet_host_with_no_slot_of_its_own_is_never_queried(monkeypat
 class TestHostExec:
     def test_exec_success(self):
         mock_host = _make_host_with_session([("", 0)])
-        with patch("otto.config.fleet.get_host", return_value=mock_host):
+        with patch("otto.fleet.get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["router1", "exec", "ls"])
         assert result.exit_code == 0, result.output
 
     def test_exec_failure_exits_with_the_commands_retcode(self):
         mock_host = _make_host_with_session([("command not found", 127)])
-        with patch("otto.config.fleet.get_host", return_value=mock_host):
+        with patch("otto.fleet.get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["router1", "exec", "bad_cmd"])
         assert result.exit_code == 127
 
     def test_two_commands_are_a_usage_error(self):
         """One command, as one argument — click rejects the second positional
         before the verb runs, and the argument's help says how to join steps."""
-        with patch("otto.config.fleet.get_host", return_value=_make_host()):
+        with patch("otto.fleet.get_host", return_value=_make_host()):
             result = runner.invoke(host_app, ["router1", "exec", "cd /tmp", "ls"])
         assert result.exit_code == 2
         assert "unexpected extra argument" in result.output
@@ -575,7 +575,7 @@ class TestHostExec:
         mock_host = _make_host()
         mock_host.exec = AsyncMock(side_effect=RuntimeError("boom"))
         mock_host.close = AsyncMock()
-        with patch("otto.config.fleet.get_host", return_value=mock_host):
+        with patch("otto.fleet.get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["router1", "exec", "ls"])
         assert result.exit_code != 0
         mock_host.close.assert_awaited_once()
@@ -586,7 +586,7 @@ class TestHostExec:
             return_value=CommandResult(status=Status.Success, value="", command="id", retcode=0)
         )
         mock_host.close = AsyncMock()
-        with patch("otto.config.fleet.get_host", return_value=mock_host):
+        with patch("otto.fleet.get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["router1", "exec", "id", "--user", "root", "--sudo"])
         assert result.exit_code == 0, result.output
         kw = mock_host.exec.await_args.kwargs
@@ -612,7 +612,7 @@ class TestHostPut:
         mock_host.put.__cli_success__ = "Transfer complete."
         mock_host.close = AsyncMock()
 
-        with patch("otto.config.fleet.get_host", return_value=mock_host):
+        with patch("otto.fleet.get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["router1", "put", str(src_file), "/tmp/dest"])
 
         assert result.exit_code == 0
@@ -630,7 +630,7 @@ class TestHostPut:
         )
         mock_host.close = AsyncMock()
 
-        with patch("otto.config.fleet.get_host", return_value=mock_host):
+        with patch("otto.fleet.get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["router1", "put", str(src_file), "/tmp/dest"])
 
         assert result.exit_code == 1
@@ -648,7 +648,7 @@ class TestHostTermAndTransfer:
         mock_host = _make_host_with_session([("", 0)])
 
         with (
-            patch("otto.config.fleet.get_host", return_value=mock_host),
+            patch("otto.fleet.get_host", return_value=mock_host),
             patch("otto.context._apply_option_overrides", return_value=mock_host) as mock_override,
         ):
             result = runner.invoke(host_app, ["--term", "telnet", "router1", "exec", "ls"])
@@ -661,7 +661,7 @@ class TestHostTermAndTransfer:
         mock_host = _make_host_with_session([("", 0)])
 
         with (
-            patch("otto.config.fleet.get_host", return_value=mock_host),
+            patch("otto.fleet.get_host", return_value=mock_host),
             patch("otto.context._apply_option_overrides", return_value=mock_host) as mock_override,
         ):
             result = runner.invoke(host_app, ["--transfer", "ftp", "router1", "exec", "ls"])
@@ -671,14 +671,14 @@ class TestHostTermAndTransfer:
 
     def test_invalid_term_exits(self):
         mock_host = _make_host()
-        with patch("otto.config.fleet.get_host", return_value=mock_host):
+        with patch("otto.fleet.get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["--term", "bogus", "router1", "exec", "ls"])
 
         assert result.exit_code != 0
 
     def test_invalid_transfer_exits(self):
         mock_host = _make_host()
-        with patch("otto.config.fleet.get_host", return_value=mock_host):
+        with patch("otto.fleet.get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["--transfer", "bogus", "router1", "exec", "ls"])
 
         assert result.exit_code != 0
@@ -687,7 +687,7 @@ class TestHostTermAndTransfer:
         mock_host = _make_host_with_session([("", 0)])
 
         with (
-            patch("otto.config.fleet.get_host", return_value=mock_host),
+            patch("otto.fleet.get_host", return_value=mock_host),
             patch("otto.context._apply_option_overrides") as mock_override,
         ):
             result = runner.invoke(host_app, ["router1", "exec", "ls"])
@@ -703,7 +703,7 @@ class TestHostTermAndTransfer:
         switched.term = "telnet"
 
         with (
-            patch("otto.config.fleet.get_host", return_value=base),
+            patch("otto.fleet.get_host", return_value=base),
             patch("otto.context._apply_option_overrides", return_value=switched),
             patch.object(base._session_mgr, "exec", wraps=base._session_mgr.exec) as base_exec,
             patch.object(
@@ -723,7 +723,7 @@ class TestHostTermAndTransfer:
         switched.transfer = "sftp"
 
         with (
-            patch("otto.config.fleet.get_host", return_value=base),
+            patch("otto.fleet.get_host", return_value=base),
             patch("otto.context._apply_option_overrides", return_value=switched),
             patch.object(base._session_mgr, "exec", wraps=base._session_mgr.exec) as base_exec,
             patch.object(
@@ -741,7 +741,7 @@ class TestHostTermAndTransfer:
         mock_host = _make_host_with_session([("", 0)])
 
         with (
-            patch("otto.config.fleet.get_host", return_value=mock_host),
+            patch("otto.fleet.get_host", return_value=mock_host),
             patch("otto.context._apply_option_overrides", return_value=mock_host) as mock_override,
         ):
             result = runner.invoke(
@@ -773,7 +773,7 @@ class TestHostTermAndTransfer:
             console_options=ConsoleOptions(server="test1", port=4001),
             log=LogMode.QUIET,
         )
-        with patch("otto.config.fleet.get_host", return_value=console_host):
+        with patch("otto.fleet.get_host", return_value=console_host):
             result = runner.invoke(host_app, ["--transfer", "nc", "test2", "exec", "ls"])
 
         assert result.exit_code == 2, result.output
@@ -795,7 +795,7 @@ class TestHostGet:
         mock_host.get.__cli_success__ = "Download complete."
         mock_host.close = AsyncMock()
 
-        with patch("otto.config.fleet.get_host", return_value=mock_host):
+        with patch("otto.fleet.get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["router1", "get", "/remote/file.txt", str(tmp_path)])
 
         assert result.exit_code == 0
@@ -808,7 +808,7 @@ class TestHostGet:
         mock_host.get = AsyncMock(return_value=Result(Status.Failed, value={}, msg="not found"))
         mock_host.close = AsyncMock()
 
-        with patch("otto.config.fleet.get_host", return_value=mock_host):
+        with patch("otto.fleet.get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["router1", "get", "/remote/file.txt", str(tmp_path)])
 
         assert result.exit_code == 1
@@ -860,7 +860,7 @@ class TestHostIdCompleter:
             ],
         )
         # _host_id_completer lazy-imports get_repos from otto.config.
-        with patch("otto.bootstrap.get_repos", return_value=[_fake_repo(lab)]):
+        with patch("otto.declared.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         # collect_host_ids also surfaces the built-in `local` host (sorted).
         assert result == ["local", "test1", "test2"]
@@ -884,7 +884,7 @@ class TestHostIdCompleter:
                 },
             ],
         )
-        with patch("otto.bootstrap.get_repos", return_value=[_fake_repo(lab)]):
+        with patch("otto.declared.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="test2")
         assert result == ["test2"]
         # A STRICT prefix must narrow too. Since the rename, `test1` and `test2`
@@ -892,7 +892,7 @@ class TestHostIdCompleter:
         # satisfied by an `==` filter as well as a `startswith` one. `loc` is a
         # genuine strict prefix of exactly one offered id, and an `==` filter
         # returns [] for it.
-        with patch("otto.bootstrap.get_repos", return_value=[_fake_repo(lab)]):
+        with patch("otto.declared.get_repos", return_value=[_fake_repo(lab)]):
             strict = _host_id_completer(ctx=MagicMock(), incomplete="loc")
         assert strict == ["local"]
 
@@ -922,7 +922,7 @@ class TestHostIdCompleter:
                 },
             ],
         )
-        with patch("otto.bootstrap.get_repos", return_value=[_fake_repo(lab1, lab2)]):
+        with patch("otto.declared.get_repos", return_value=[_fake_repo(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["beet-seed", "local", "test1"]  # + built-in local
 
@@ -938,13 +938,13 @@ class TestHostIdCompleter:
         }
         _write_hosts_json(lab1, [dup])
         _write_hosts_json(lab2, [dup])
-        with patch("otto.bootstrap.get_repos", return_value=[_fake_repo(lab1, lab2)]):
+        with patch("otto.declared.get_repos", return_value=[_fake_repo(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local", "test1"]  # + built-in local
 
     def test_skips_missing_path(self, tmp_path):
         """Non-existent search path must not raise; completer is best-effort."""
-        with patch("otto.bootstrap.get_repos", return_value=[_fake_repo(tmp_path / "nope")]):
+        with patch("otto.declared.get_repos", return_value=[_fake_repo(tmp_path / "nope")]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local"]  # only the built-in local (no lab.json to scan)
 
@@ -952,7 +952,7 @@ class TestHostIdCompleter:
         lab = tmp_path / "bad"
         lab.mkdir()
         (lab / "lab.json").write_text("{not json")
-        with patch("otto.bootstrap.get_repos", return_value=[_fake_repo(lab)]):
+        with patch("otto.declared.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local"]  # malformed json skipped; built-in local remains
 
@@ -971,7 +971,7 @@ class TestHostIdCompleter:
                 },
             ],
         )
-        with patch("otto.bootstrap.get_repos", return_value=[_fake_repo(lab)]):
+        with patch("otto.declared.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local", "test1"]  # invalid entry skipped; built-in local remains
 
@@ -990,7 +990,7 @@ class TestHostIdCompleter:
         with (
             patch("otto.registry.get_completion_names", return_value=fake_cache),
             patch(
-                "otto.bootstrap.get_repos",
+                "otto.declared.get_repos",
                 return_value=[_fake_repo(tmp_path / "does-not-exist")],
             ),
         ):
@@ -1014,7 +1014,7 @@ class TestHostIdCompleter:
         )
         with (
             patch("otto.registry.get_completion_names", return_value=None),
-            patch("otto.bootstrap.get_repos", return_value=[_fake_repo(lab)]),
+            patch("otto.declared.get_repos", return_value=[_fake_repo(lab)]),
         ):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local", "test1"]  # live scan + built-in local
@@ -1074,7 +1074,7 @@ class TestHostIdCompleterLabFilter:
         )
         with (
             patch("otto.registry.get_completion_names", return_value=None),
-            patch("otto.bootstrap.get_repos", return_value=[_fake_repo(lab)]),
+            patch("otto.declared.get_repos", return_value=[_fake_repo(lab)]),
         ):
             result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="")
         # test1 (unix) + built-in local; alt2 (unix_alt) excluded.
@@ -1092,7 +1092,7 @@ class TestHostIdCompleterLabFilter:
         with (
             patch("otto.registry.get_completion_names", return_value=fake_cache),
             patch(
-                "otto.bootstrap.get_repos",
+                "otto.declared.get_repos",
                 return_value=[_fake_repo(tmp_path / "does-not-exist")],
             ),
         ):

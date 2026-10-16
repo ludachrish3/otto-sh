@@ -10,23 +10,29 @@ schema, the one matcher, and the per-seam registry type; each seam
 registry instance, a ``register_<seam>_kind`` wrapper, and an apply loop.
 Future declarative seams adopt the identical convention by doing the same.
 
-This module also holds the **composed-repos catalog** (spec 2026-10-11
-placement-and-phases §3.5): what the composition root, :mod:`otto.bootstrap`,
-composed, published where the layers below the root can read it. The root
-publishes its in-progress result before its repos' init modules run and its
-complete result when it finishes, and withdraws both when it fails or is
-invalidated. When it is imported, it installs the **initiator**: the one way
-a reader down here starts composition. Two readers use the catalog.
-:func:`declared_for_host` reads the published results and never starts
-composition. :func:`scope_for_repo` reads the complete result, else asks the
-initiator, and with no initiator admits (decision D2). This module never
-imports :mod:`otto.bootstrap`: the root writes here, and nothing here reaches
-up to it.
+This module also holds the **composed state** (spec 2026-10-11
+placement-and-phases §3.5, §3.9): what the composition root,
+:mod:`otto.bootstrap`, composed, a :class:`BootstrapResult`, published where
+the layers below the root can read it. The root publishes its in-progress
+result before its repos' init modules run and its complete result when it
+finishes, and withdraws both when it fails or is invalidated. When it is
+imported, it installs the **initiator**, the one way a reader down here
+starts composition. :func:`compose` is the one read that starts it: the
+complete result, else the in-progress one, else the initiator's. The repo
+accessors (:func:`get_repos`, :func:`get_ordered_repos`, and
+:func:`current_repos` and :func:`current_ordered_repos`, which read the
+active run first) and :func:`scope_for_repo` read through it.
+:func:`is_bootstrapped` and :func:`declared_for_host` read the published
+results only and never start composition. This module never imports
+:mod:`otto.bootstrap`: the root writes here, and nothing here reaches up to
+it. The root re-exports four of them (:class:`BootstrapResult`,
+:func:`get_repos`, :func:`get_ordered_repos` and :func:`is_bootstrapped`),
+each the same object.
 
 Deliberately import-light: :mod:`otto.registry` at module scope, and
-``packaging``, ``otto.invocation`` and :mod:`otto.config.scope` only inside
-the functions that use them, because the host seam modules import this one
-and construct their registries at import.
+``packaging``, ``otto.invocation`` and :mod:`otto.config.scope` only
+inside the functions that use them, because the host seam modules import
+this one and construct their registries at import.
 """
 
 import logging
@@ -39,9 +45,10 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeVar, ca
 from .registry import Ref, Registry, resolved
 
 if TYPE_CHECKING:
-    from .bootstrap import BootstrapResult
-    from .config.scope import ProjectScopeConfig
+    from .config.repo import Repo
+    from .config.scope import BootstrapError, BootstrapWarning, ProjectScopeConfig
     from .host.host import Host
+    from .models.settings import OttoEnvSettings
 
 logger = logging.getLogger(__name__)
 
@@ -449,13 +456,25 @@ class KindBuilder(Generic[T]):
         return out
 
 
-# ── The composed-repos catalog and the bootstrap initiator ──────────────────
+# ── The composed state, its catalog and the bootstrap initiator ─────────────
 #
 # Two slots of spec 2026-10-11 placement-and-phases §2.1, filled from above by
 # otto.bootstrap, their one installer (tests/unit/test_slot_installers.py):
 # the catalog through publish_composed and clear_composed, the initiator
 # through install_initiator. Both live on one record, so no function here
 # rebinds a module global.
+
+
+@dataclass(frozen=True)
+class BootstrapResult:
+    """Everything bootstrap produced: environment, repos, contained errors."""
+
+    env: "OttoEnvSettings"
+    repos: "list[Repo]"
+    errors: "list[BootstrapError]" = field(default_factory=list)
+    warnings: "list[BootstrapWarning]" = field(default_factory=list)
+    ordered_repos: "list[Repo]" = field(default_factory=list)
+    """Repos in the dependency pass's topological order (skipped repos excluded)."""
 
 
 @dataclass
@@ -469,7 +488,13 @@ class _Composition:
     """The result a running composition published before its repos' init modules ran.
 
     Its ``repos`` and ``ordered_repos`` are final; its ``errors`` grow until
-    the composition ends, when it is withdrawn.
+    the composition ends, when it is withdrawn. It exists so a re-entrant read
+    has something true to answer with, and the reentrance is real: the import
+    phase runs repo ``init`` modules, user code, and anything there that
+    reaches :func:`get_repos` (directly, or by way of a stamped host whose
+    product providers consult :func:`scope_for_repo`) lands here while no
+    complete result is published. Without it, that read composed a second,
+    nested root.
     """
 
     initiator: "Callable[[], BootstrapResult] | None" = None
@@ -508,16 +533,122 @@ def install_initiator(initiator: "Callable[[], BootstrapResult]") -> None:
 
     Privileged: only :mod:`otto.bootstrap` calls it, as the last statement of
     its module, so importing the root installs it and composes nothing.
-    :func:`scope_for_repo` is the one reader that calls it.
+    :func:`compose` is the one reader that calls it.
     """
     _composition.initiator = initiator
 
 
-def _published() -> "BootstrapResult | None":
-    """Return the complete published result, else the in-progress one, else ``None``."""
+_NO_COMPOSITION_ROOT = (
+    "Nothing composed otto's repos, and no composition root is loaded to compose them: "
+    "call otto.bootstrap.bootstrap(), or open a run with otto.open_context(...)."
+)
+""":func:`compose`'s refusal when :mod:`otto.bootstrap` was never imported."""
+
+
+def published_result() -> "BootstrapResult | None":
+    """Return the complete published result, else the in-progress one, else ``None``.
+
+    Never starts composition. A running composition's result has final
+    ``repos`` and ``ordered_repos``, and its ``errors`` list is the one the
+    composition keeps appending to, so a reader inside the window sees a
+    later init's contained failure.
+    """
     if _composition.result is not None:
         return _composition.result
     return _composition.in_progress
+
+
+def compose() -> "BootstrapResult":
+    """Return the composition: the published result, else the one the initiator composes.
+
+    The one read below the root that starts composition. It answers with the
+    complete result when one is published, else with the in-progress one (a
+    repo init module that asks during composition gets the result being
+    built, never a second, nested composition), else with what the
+    initiator returns: :func:`otto.bootstrap.bootstrap`, looked up when
+    called, so a patched one runs. A composition that raises publishes
+    nothing, so the next call composes again and fails the same way.
+
+    Raises:
+        RuntimeError: no initiator is installed: :mod:`otto.bootstrap` was
+            never imported in this process.
+    """
+    result = published_result()
+    if result is not None:
+        return result
+    initiator = _composition.initiator
+    if initiator is None:
+        raise RuntimeError(_NO_COMPOSITION_ROOT)
+    return initiator()
+
+
+def get_repos() -> "list[Repo]":
+    """Return the configured repos, as discovered (composes lazily, through :func:`compose`).
+
+    Every repo whose ``settings.toml`` parsed, in ``OTTO_SUT_DIRS`` order,
+    including one the dependency pass skipped; a repo whose settings would not
+    parse is absent, and its error is in :attr:`BootstrapResult.errors`.
+    """
+    return compose().repos
+
+
+def get_ordered_repos() -> "list[Repo]":
+    """Return configured repos in dependency-topological order (composes lazily).
+
+    Dependencies first, dependents after: the walk order the ``otto.project``
+    orchestrator installs in (and reverses to uninstall). Skipped repos
+    (unsatisfied required deps) are absent, exactly as they are absent from
+    phase-2 registration.
+    """
+    return compose().ordered_repos
+
+
+def is_bootstrapped() -> bool:
+    """Report whether composition has started, a published result: never starts it.
+
+    True once a complete result is published (a finished, successful
+    composition) or an in-progress one is (the repos' init modules are
+    running); false before the first composition, after one that failed, and
+    after :func:`otto.bootstrap.invalidate`. Mid-composition counts as
+    bootstrapped ON PURPOSE: an init module that builds a host, directly or by
+    way of a stamped host whose product or dev-tool providers apply, runs
+    INSIDE that window, and :func:`get_repos` already answers correctly and
+    for free there (:func:`compose` answers with the in-progress result,
+    whose ``repos`` and ``ordered_repos`` are final). Treating that window as
+    "not bootstrapped" would make a host built mid-composition silently drop
+    its declared entries while its providers still applied. The
+    non-forcing probe: a caller that must not TRIGGER discovery or repo init
+    imports as a side effect of merely asking reads this instead of calling
+    :func:`otto.bootstrap.bootstrap` or :func:`get_repos`.
+    """
+    return published_result() is not None
+
+
+def current_repos() -> "list[Repo]":
+    """Return the run's repos where no context object is in hand.
+
+    The active run's ``repos`` when one is installed (the slot in
+    ``otto.invocation``), else the composition's (:func:`compose`). Code
+    that holds a context reads ``ctx.repos``. This is for the conveniences
+    that work with or without one (``prepare_run``, coverage's entry points,
+    docker's repo reads). A fresh list on every call.
+    """
+    from .invocation import installed_run  # function-scope: import-light
+
+    run = installed_run()
+    if run is not None:
+        return run.repos
+    return list(compose().repos)
+
+
+def current_ordered_repos() -> "list[Repo]":
+    """Return :func:`current_repos` in dependency order, dependency-skipped repos absent."""
+    from .invocation import installed_run  # function-scope: import-light
+
+    run = installed_run()
+    if run is not None:
+        return run.ordered_repos
+    return list(compose().ordered_repos)
 
 
 class _LoadedRepos(NamedTuple):
@@ -541,7 +672,7 @@ def _loaded_repos() -> "_LoadedRepos | None":
     for the repos; the survivors are the ones the dependency pass did not
     skip.
     """
-    result = _published()
+    result = published_result()
     if result is None:
         return None
     return _LoadedRepos(
@@ -626,15 +757,6 @@ def declared_for_host(host: Any, seam_attr: str) -> list[DeclaredEntry]:
     return out
 
 
-def _composed_repos() -> "list[Any] | None":
-    """Return the complete result's repos, else the initiator's, else ``None`` (no root loaded)."""
-    if _composition.result is not None:
-        return _composition.result.repos
-    if _composition.initiator is None:
-        return None
-    return _composition.initiator().repos
-
-
 def scope_for_repo(owner: "str | None") -> "ProjectScopeConfig | None":
     """Look up the compiled ``[project]`` declaration of the repo named *owner*.
 
@@ -643,13 +765,12 @@ def scope_for_repo(owner: "str | None") -> "ProjectScopeConfig | None":
     (:func:`otto.registry.get_registering_repo`), while
     :func:`~otto.config.scope.repo_targets` judges a compiled
     :class:`~otto.config.scope.ProjectScopeConfig`. The repos that hold both
-    come from the catalog: the complete published result, else the
-    initiator's answer, which composes exactly as
-    :func:`otto.bootstrap.get_repos` does (asked from inside a running
-    composition, it answers with the in-progress result). With no initiator
-    installed, :mod:`otto.bootstrap` was never imported, and the gate admits
-    rather than start composition from below (spec 2026-10-11
-    placement-and-phases, decision D2).
+    come from :func:`compose`: the published result (inside a running
+    composition, the in-progress one), else the initiator's answer, which
+    composes exactly as :func:`get_repos` does. With no initiator installed,
+    :mod:`otto.bootstrap` was never imported, and the gate admits rather than
+    start composition from below (spec 2026-10-11 placement-and-phases,
+    decision D2).
 
     EVERY "cannot answer" answers ``None``, which
     :func:`~otto.config.scope.repo_targets` reads as *admits everything*, and
@@ -680,7 +801,7 @@ def scope_for_repo(owner: "str | None") -> "ProjectScopeConfig | None":
     if owner is None:
         return None
     try:
-        repos = _composed_repos()
+        repos = compose().repos
     except Exception:  # noqa: BLE001 — see above: ANY failure to reach the repos admits, deliberately
         return None
     for repo in repos or ():

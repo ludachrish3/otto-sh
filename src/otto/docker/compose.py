@@ -1002,9 +1002,9 @@ def _register_use_case_placeholders(lab: "Lab", repo: Repo, parent: UnixHost) ->
 
 def get_container_host(host_id: str) -> DockerContainerHost:
     """Look up a registered container host by id. Raises if not present."""
-    from ..config.fleet import get_lab
+    from ..invocation import require_run
 
-    lab = get_lab()
+    lab = require_run().lab
     host = lab.hosts.get(host_id)
     if not isinstance(host, DockerContainerHost):
         raise KeyError(

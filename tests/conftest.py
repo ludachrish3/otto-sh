@@ -1275,21 +1275,22 @@ def _restore_otto_logger_state():
         root_logger.setLevel(saved_root_level)
 
 
-_BOOTSTRAP_CACHES = ["_discovered", "_result", "_in_progress"]
-"""``otto.bootstrap``'s own module caches, snapshot and restored by name at their owner."""
+_BOOTSTRAP_CACHES = ["_discovered"]
+"""``otto.bootstrap``'s own module cache, snapshot and restored by name at its owner."""
 
 
 @pytest.fixture(autouse=True)
 def _restore_composition_state():
     """Snapshot-restore the composition state at each of its owners, importing neither.
 
-    Two owners hold it. ``otto.bootstrap`` memoizes into module globals
-    (``_BOOTSTRAP_CACHES``); discovery errors ride the cached ``_discovered``
-    :class:`~otto.bootstrap.DiscoveryResult` itself (the old append-only
-    ``_discovery_errors`` global is gone). ``otto.declared`` holds the
-    composed-repos catalog the root publishes and the initiator slot the root
-    fills when it is imported, on one record, ``_composition`` (spec
-    2026-10-11 placement-and-phases §3.5, §3.13). So one test that drives the
+    Two owners hold it. ``otto.bootstrap`` memoizes discovery into a module
+    global (``_BOOTSTRAP_CACHES``); discovery errors ride the cached
+    ``_discovered`` :class:`~otto.bootstrap.DiscoveryResult` itself (the old
+    append-only ``_discovery_errors`` global is gone). ``otto.declared`` holds
+    the composed state: the complete and in-progress results the root
+    publishes and the initiator slot the root fills when it is imported, on
+    one record, ``_composition`` (spec 2026-10-11 placement-and-phases §3.5,
+    §3.9, §3.13). So one test that drives the
     CLI with ``OTTO_SUT_DIRS`` pointing at a scratch repo —
     ``test_init_prompts``'s epilogue tests do exactly that — records a framed
     "no .otto/settings.toml" error that outlives the ``monkeypatch.setenv``

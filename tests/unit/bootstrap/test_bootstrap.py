@@ -530,8 +530,8 @@ def test_an_init_module_that_reenters_gets_the_settled_repos(tmp_path, monkeypat
     """A repo init calling ``get_repos()`` is answered, not recursed.
 
     The import phase runs USER code, and user code reaching
-    ``otto.bootstrap.get_repos()`` re-enters ``bootstrap()`` with ``_result``
-    still unset — directly, or by way of a stamped host whose product
+    ``otto.bootstrap.get_repos()`` re-enters composition with no complete
+    result published yet — directly, or by way of a stamped host whose product
     providers consult ``scope_for_repo``. Discovery and the dependency pass
     are already done by then, so the honest answer is the repo list the outer
     call is about to publish.
@@ -557,15 +557,16 @@ def test_an_init_module_that_reenters_gets_the_settled_repos(tmp_path, monkeypat
 
 
 def test_a_host_built_mid_bootstrap_gets_its_declared_entries(tmp_path, monkeypatch):
-    """End-to-end pin of the non-forcing probe's `_in_progress` half.
+    """End-to-end pin of the non-forcing probe's in-progress half.
 
     An init module that builds a host runs INSIDE bootstrap's phase-2 import
-    window (`_in_progress` set, `_result` still None). The factory chokepoint
-    applies declared entries there via `declared_for_host`, whose probe must
-    answer "bootstrapped" mid-window — a probe that only counted `_result`
-    would silently drop declared entries for exactly these hosts while code
-    providers still applied. This is the one test that exercises the consumer
-    from inside the initialization window rather than around it.
+    window (the catalog holds an in-progress result and no complete one yet).
+    The factory chokepoint applies declared entries there via
+    `declared_for_host`, whose probe must answer "bootstrapped" mid-window — a
+    probe that only counted the complete result would silently drop declared
+    entries for exactly these hosts while code providers still applied. This is
+    the one test that exercises the consumer from inside the initialization
+    window rather than around it.
     """
     body = """
     from otto.host.element import Element
@@ -620,7 +621,7 @@ def test_a_host_built_mid_bootstrap_gets_its_declared_entries(tmp_path, monkeypa
 def test_reentrance_does_not_compose_the_root_twice(tmp_path, monkeypatch):
     """The re-entrant call must NOT run a second, nested composition root.
 
-    Nesting is not merely wasteful: the inner pass publishes ``_result`` from a
+    Nesting is not merely wasteful: the inner pass publishes a complete result from a
     world whose init modules are still half-imported, and every consumer that
     asks between then and the outer call's own assignment reads that half-built
     answer. Counting the dependency pass is the discriminator — a nested root
@@ -673,12 +674,10 @@ def test_a_raising_bootstrap_leaves_no_partial_view_behind(tmp_path, monkeypatch
     with pytest.raises(KeyboardInterrupt):
         bs.bootstrap()
 
-    assert bs._in_progress is None
-    assert bs._result is None  # nothing was published
     from otto import declared
 
     assert declared._composition.in_progress is None  # the in-progress view was withdrawn
-    assert declared._composition.result is None
+    assert declared._composition.result is None  # nothing was published
 
 
 # ── the catalog: what the root publishes into otto.declared ───────────────
@@ -732,24 +731,182 @@ def test_importing_the_root_installs_the_initiator_and_composes_nothing():
 # ── is_bootstrapped(): mid-bootstrap counts as bootstrapped ───────────────
 
 
-def test_is_bootstrapped_true_mid_bootstrap(monkeypatch):
-    """The phase-2 re-entrant window (`_in_progress` set, `_result` not yet)
+def test_is_bootstrapped_true_mid_bootstrap(tmp_path, monkeypatch):
+    """The phase-2 re-entrant window (an in-progress result published, no complete one yet)
     must read as bootstrapped: `get_repos()` already answers correctly and
-    for free there (the re-entrant branch returns `_in_progress`, whose
+    for free there (the re-entrant branch returns the in-progress result, whose
     `repos`/`ordered_repos` are final by then), so a host built by an init
     module mid-bootstrap must not have its declared entries silently dropped
     while its providers still apply.
     """
-    monkeypatch.setattr(bs, "_result", None)
-    monkeypatch.setattr(bs, "_in_progress", bs.BootstrapResult(env=None, repos=[]))
+    monkeypatch.setenv(
+        "OTTO_SUT_DIRS",
+        _reentrant_repo(
+            tmp_path,
+            """
+            from otto.bootstrap import is_bootstrapped
+
+            INSIDE = is_bootstrapped()
+            """,
+        ),
+    )
+
+    bs.bootstrap()
+
+    import reenter  # the init module, imported by the bootstrap above
+
+    assert reenter.INSIDE is True
+
+
+def test_is_bootstrapped_false_before_any_call():
+    """Only a process that has not started bootstrap at all collects nothing."""
+    assert bs.is_bootstrapped() is False
+
+
+# ── the composition lifecycle, through public routes (spec 2026-10-11 placement-and-phases §3.9)
+# These hold, unchanged, on both sides of the composed state's move below the root:
+# they read and drive it only through what a user can call.
+
+
+def _counted_passes(monkeypatch) -> "list[list[str]]":
+    """Count compositions: each runs the dependency pass exactly once."""
+    from otto.config import dependencies as deps_mod
+
+    calls: "list[list[str]]" = []
+    real = deps_mod.resolve_dependencies
+
+    def _counting(repos):
+        calls.append([r.name for r in repos])
+        return real(repos)
+
+    monkeypatch.setattr(deps_mod, "resolve_dependencies", _counting)
+    return calls
+
+
+def _lifecycle_repo(tmp_path, inits: "dict[str, str]", extra: str = "") -> str:
+    """A SUT repo named ``life`` whose init modules, in order, run the given bodies."""
+    names = ", ".join(f'"{stem}"' for stem in inits)
+    return str(
+        make_sut_repo(
+            tmp_path / "life",
+            name="life",
+            extra=f'init = [{names}]\nlibs = ["pylib"]\n' + extra,
+            files={f"pylib/{stem}.py": textwrap.dedent(body) for stem, body in inits.items()},
+        )
+    )
+
+
+def test_lifecycle_a_reentrant_init_reads_the_result_being_built(tmp_path, monkeypatch):
+    """Reentrant init: final repos and ordered repos, the outer call's own errors list.
+
+    ``life`` is discovered first and requires ``base``, so the dependency order is
+    the reverse of the discovery order and each reader must answer its own list.
+    A later init module's contained failure lands in the list the earlier one
+    holds, so a nested composition (an errors list of its own) cannot pass.
+    """
+    calls = _counted_passes(monkeypatch)
+    base = make_sut_repo(tmp_path / "base", name="base")
+    life = _lifecycle_repo(
+        tmp_path,
+        {
+            "life_reader": """
+            from otto.bootstrap import bootstrap, get_ordered_repos, get_repos, is_bootstrapped
+
+            BUILDING = bootstrap()
+            SEEN = [
+                [r.name for r in get_repos()],
+                [r.name for r in get_ordered_repos()],
+                [r.name for r in BUILDING.ordered_repos],
+                is_bootstrapped(),
+                len(BUILDING.errors),
+            ]
+            """,
+            "life_boom": """
+            raise ValueError("a later init fails, contained")
+            """,
+        },
+        extra='\n[dependencies]\nrequired = ["base"]\n',
+    )
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{life},{base}")
+
+    result = bs.bootstrap()
+
+    import life_reader  # imported by the bootstrap above
+
+    discovered = ["life", "base"]
+    ordered = ["base", "life"]
+    assert [discovered, ordered, ordered, True, 0] == life_reader.SEEN
+    assert life_reader.BUILDING.errors is result.errors
+    assert any("a later init fails, contained" in str(e) for e in life_reader.BUILDING.errors)
+    assert calls == [discovered]
+    assert [r.name for r in bs.get_repos()] == discovered
+    assert [r.name for r in bs.get_ordered_repos()] == ordered
+
+
+def test_lifecycle_a_failed_composition_fails_the_same_way_again(tmp_path, monkeypatch):
+    """Failed composition, then retry: nothing published, and the retry composes and fails again.
+
+    The init is never repaired: the second read must run composition again
+    (a second dependency pass) and raise the same exception.
+    """
+    calls = _counted_passes(monkeypatch)
+    monkeypatch.setenv(
+        "OTTO_SUT_DIRS",
+        _lifecycle_repo(tmp_path, {"life_fatal": 'raise KeyboardInterrupt("uncontainable")\n'}),
+    )
+
+    with pytest.raises(KeyboardInterrupt) as first:
+        bs.bootstrap()
+    assert bs.is_bootstrapped() is False
+
+    with pytest.raises(KeyboardInterrupt) as second:
+        bs.get_repos()
+    assert bs.is_bootstrapped() is False
+
+    assert [type(first.value), str(first.value)] == [type(second.value), str(second.value)]
+    assert calls == [["life"], ["life"]]
+
+
+def test_lifecycle_a_refused_composition_admits_in_scope_for_repo(tmp_path, monkeypatch):
+    """The providing-repo refusal publishes nothing; the scope lookup admits and recomposes."""
+    from otto.declared import scope_for_repo
+
+    calls = _counted_passes(monkeypatch)
+    monkeypatch.setenv("OTTO_SUT_DIRS", _write_provider_repo(tmp_path, "provlife"))
+
+    with pytest.raises(bs.BootstrapError) as first:
+        bs.bootstrap()
+    assert bs.is_bootstrapped() is False
+
+    assert scope_for_repo("provlife") is None  # composition failed again: the gate admits
+    assert bs.is_bootstrapped() is False
+
+    with pytest.raises(bs.BootstrapError) as third:
+        bs.bootstrap()
+    assert str(third.value) == str(first.value)
+    assert calls == [["provlife"], ["provlife"], ["provlife"]]
+
+
+def test_lifecycle_invalidate_withdraws_the_result_and_the_next_read_recomposes(
+    tmp_path, monkeypatch
+):
+    """Invalidation: nothing published after it, and the kept initiator composes again."""
+    from otto.declared import scope_for_repo
+
+    calls = _counted_passes(monkeypatch)
+    monkeypatch.setenv("OTTO_SUT_DIRS", _lifecycle_repo(tmp_path, {"life_plain": "X = 1\n"}))
+    first = bs.bootstrap()
     assert bs.is_bootstrapped() is True
 
-
-def test_is_bootstrapped_false_before_any_call(monkeypatch):
-    """Only a process that has not started bootstrap at all collects nothing."""
-    monkeypatch.setattr(bs, "_result", None)
-    monkeypatch.setattr(bs, "_in_progress", None)
+    bs.invalidate()
     assert bs.is_bootstrapped() is False
+
+    scope_for_repo("life")  # a read below the root composes through the kept initiator
+    assert bs.is_bootstrapped() is True
+    second = bs.bootstrap()
+    assert second is not first
+    assert [r.name for r in second.repos] == ["life"]
+    assert calls == [["life"], ["life"]]
 
 
 # ── [os_profiles]: a bad table is contained per repo, after init ──────────

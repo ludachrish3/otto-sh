@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from otto.suite.run import RunOptions, run_tests
     from otto.utils import Status
 
-    from .config.fleet import all_hosts, get_host, get_lab, run_on_all_hosts
     from .context import OttoContext, get_context, open_context, try_get_context
+    from .fleet import all_hosts, get_host, get_lab, run_on_all_hosts
     from .labs.loader import load_lab
 
 __all__ = [
@@ -79,11 +79,11 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "options": ("otto.params", "options"),
     "register_options": ("otto.params", "register_options"),
     "app": ("otto.cli", "app"),
-    "all_hosts": ("otto.config.fleet", "all_hosts"),
-    "get_host": ("otto.config.fleet", "get_host"),
-    "get_lab": ("otto.config.fleet", "get_lab"),
+    "all_hosts": ("otto.fleet", "all_hosts"),
+    "get_host": ("otto.fleet", "get_host"),
+    "get_lab": ("otto.fleet", "get_lab"),
     "load_lab": ("otto.labs.loader", "load_lab"),
-    "run_on_all_hosts": ("otto.config.fleet", "run_on_all_hosts"),
+    "run_on_all_hosts": ("otto.fleet", "run_on_all_hosts"),
     "OttoContext": ("otto.context", "OttoContext"),
     "get_context": ("otto.context", "get_context"),
     "open_context": ("otto.context", "open_context"),

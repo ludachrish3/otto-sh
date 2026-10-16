@@ -193,7 +193,7 @@ class EmbeddedGcdaCollector:
         Returns ``{(host_id, product): staging_dir}``. Non-embedded hosts,
         uninstrumented products, and failed dumps are omitted.
         """
-        from ...config.fleet import do_for_all_hosts
+        from ...fleet import do_for_all_hosts
 
         self.staging_root.mkdir(parents=True, exist_ok=True)
 

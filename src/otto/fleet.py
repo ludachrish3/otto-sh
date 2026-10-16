@@ -9,10 +9,11 @@ from typing import (
     TypeVar,
 )
 
-from ..host.host import DEFAULT_COMMAND_TIMEOUT
+from .host.host import DEFAULT_COMMAND_TIMEOUT
 
 if TYPE_CHECKING:
-    from ..host.options import (
+    from .config.repo import Repo
+    from .host.options import (
         FtpOptions,
         NcOptions,
         ScpOptions,
@@ -21,11 +22,10 @@ if TYPE_CHECKING:
         TelnetOptions,
         UserlandOptions,
     )
-    from ..host.remote_host import RemoteHost
-    from ..host.unix_host import UnixHost
-    from ..labs.loader import Lab
-    from ..result import Results
-    from .repo import Repo
+    from .host.remote_host import RemoteHost
+    from .host.unix_host import UnixHost
+    from .labs.loader import Lab
+    from .result import Results
 
 T = TypeVar("T")
 
@@ -116,7 +116,7 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
 
             matched = list(all_hosts(re.compile(r"test2.*")))
     """
-    from ..context import get_context
+    from .context import get_context
 
     yield from get_context().all_hosts(
         pattern,
@@ -189,7 +189,7 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
                 pattern=re.compile(r"router.*"),
             )
     """
-    from ..context import get_context
+    from .context import get_context
 
     return await get_context().do_for_all_hosts(
         method,
@@ -257,7 +257,7 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
 
             results = await run_on_all_hosts("uname -a")
     """
-    from ..context import get_context
+    from .context import get_context
 
     return await get_context().run_on_all_hosts(
         cmds,
@@ -308,7 +308,7 @@ def get_host(
             ``get_host('x') is get_host('x')`` still holds. Hop
             resolution is internal and is *not* affected by overrides.
     """
-    from ..context import get_context
+    from .context import get_context
 
     return get_context().get_host(
         host_id,
@@ -326,47 +326,16 @@ def get_host(
 
 def get_lab() -> "Lab":
     """Return the active lab from the current OttoContext."""
-    from ..context import get_context
+    from .context import get_context
 
     return get_context().lab
-
-
-def current_repos() -> "list[Repo]":
-    """Return the run's repos where no context object is in hand.
-
-    The installed context's :attr:`~otto.context.OttoContext.repos` when one
-    is installed, else bootstrap's. Code that holds a context reads
-    ``ctx.repos``. This is for the conveniences that work with or without
-    one (``prepare_run``, coverage's entry points, docker's repo reads). A
-    fresh list on every call.
-    """
-    from ..context import try_get_context  # function-scope: read when called
-
-    ctx = try_get_context()
-    if ctx is not None:
-        return ctx.repos
-    from ..bootstrap import bootstrap  # function-scope: the composition root
-
-    return list(bootstrap().repos)
-
-
-def current_ordered_repos() -> "list[Repo]":
-    """Return :func:`current_repos` in dependency order, dependency-skipped repos absent."""
-    from ..context import try_get_context  # function-scope: read when called
-
-    ctx = try_get_context()
-    if ctx is not None:
-        return ctx.ordered_repos
-    from ..bootstrap import bootstrap  # function-scope: the composition root
-
-    return list(bootstrap().ordered_repos)
 
 
 def get_hosts_in_play() -> set[str]:
     """Return this run's hosts in play — the RESERVATION readers' entry; walks must not use it.
 
     Named for the contract rather than for the mechanism, and deliberately NOT
-    re-exported from :mod:`otto.config`: it bakes in ``require_nonempty=False``,
+    re-exported from :mod:`otto.lab` or :mod:`otto`: it bakes in ``require_nonempty=False``,
     so ``for hid in get_hosts_in_play(): get_host(hid)`` is a walk that does
     nothing at all on an empty declared fleet — the exact silent emptiness
     :func:`~otto.config.scope.require_nonempty_fleet` exists to make loud.
@@ -380,8 +349,8 @@ def get_hosts_in_play() -> set[str]:
     empty declared fleet reads as ZERO hosts in play, never as an abort, and
     the built-in ``local`` host is never in play.
     """
-    from ..context import get_context
-    from ..reservations.check import _hosts_in_play
+    from .context import get_context
+    from .reservations.check import _hosts_in_play
 
     return _hosts_in_play(get_context())
 
@@ -465,7 +434,7 @@ def fleet_of_interest(
 
     >>> import re
     >>> import types
-    >>> from otto.config.fleet import fleet_of_interest
+    >>> from otto.fleet import fleet_of_interest
     >>> from otto.labs.loader import Lab
     >>> from otto.config.scope import ProjectScopeConfig
     >>> hosts = {
@@ -484,8 +453,8 @@ def fleet_of_interest(
     ['sensor-1', 'gw-1']
     """
     # function-scope: keeps this module import-light
-    from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, _flag_holding_out
-    from .scope import ProjectScopeError, resolve_scopes, scoped_ids
+    from .config.scope import ProjectScopeError, resolve_scopes, scoped_ids
+    from .host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, _flag_holding_out
 
     # The verdicts the walk's context resolves (``scopes_of(ctx)``), with
     # the same ``local`` exclusion, so the two read identical data.

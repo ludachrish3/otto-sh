@@ -449,9 +449,16 @@ def prepare_run(opts: RunOptions, *, dry_run: bool = False) -> None:
     if opts.cov_tickets_json is not None:
         # Knowable now, unlike "the git walk matched nothing", which stays a
         # post-run warning in _post_run_coverage.
+        #
+        # The composition root: importing it installs the initiator that composes
+        # the run's repos when no run is installed (spec 2026-10-11
+        # placement-and-phases §3.12).
+        from .. import bootstrap
+
+        del bootstrap
         from ..config.coverage_settings import get_cov_config
-        from ..config.fleet import current_repos
         from ..coverage.tickets import load_ticket_spec
+        from ..declared import current_repos
         from ..params import OptionsValidationError
 
         if load_ticket_spec(get_cov_config(current_repos())) is None:
@@ -1855,8 +1862,14 @@ def selected_tests(names: list[str], *, markers: str = "") -> Listing:
         otto.registry.RegistrationRefused: a test file or conftest
             registered something while loading.
     """
-    from ..config.fleet import current_repos
+    # The composition root: importing it installs the initiator that composes
+    # the run's repos when no run is installed (spec 2026-10-11
+    # placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.home import workspace_home
+    from ..declared import current_repos
 
     names = [n.strip() for n in names if n.strip()]
     repos = current_repos()

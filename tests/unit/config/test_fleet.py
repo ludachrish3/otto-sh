@@ -1,18 +1,18 @@
-"""Tests for otto.config.fleet — all_hosts and host utility functions."""
+"""Tests for otto.fleet — all_hosts and host utility functions."""
 
 import re
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from otto.config.fleet import (
+from otto.config.scope import EmptySelectionError
+from otto.context import OttoContext, reset_context, set_context
+from otto.fleet import (
     all_hosts,
     do_for_all_hosts,
     get_host,
     run_on_all_hosts,
 )
-from otto.config.scope import EmptySelectionError
-from otto.context import OttoContext, reset_context, set_context
 from otto.host import EmbeddedHost, UnixHost
 from otto.host.factory import create_host_from_dict
 from otto.host.options import SshOptions, TelnetOptions, UserlandOptions
@@ -479,7 +479,7 @@ class TestPerCallOptionOverrides:
         host = get_host("test1", term="telnet")
         assert host.term == "telnet"
         # the stored instance is untouched (insulation)
-        from otto.config.fleet import get_lab
+        from otto.fleet import get_lab
 
         assert get_lab().hosts["test1"].term == "ssh"
 
@@ -487,7 +487,7 @@ class TestPerCallOptionOverrides:
         # sftp is in the default unix menu [scp, sftp, ftp, nc]
         host = get_host("test1", transfer="sftp")
         assert host.transfer == "sftp"
-        from otto.config.fleet import get_lab
+        from otto.fleet import get_lab
 
         assert get_lab().hosts["test1"].transfer == "scp"
 

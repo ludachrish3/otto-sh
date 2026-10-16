@@ -305,7 +305,12 @@ def report(
             # ValueError) from load_override_config, and must hit the same
             # clean-message `except ValueError` handler below as every
             # other settings/data ValueError, not propagate as a traceback.
-            from ..bootstrap import get_repos
+            # The composition root: importing it installs the initiator that composes
+            # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+            from .. import bootstrap
+
+            del bootstrap
+            from ..declared import get_repos
 
             inputs = resolve_report_inputs(get_repos())
         store = run_command(

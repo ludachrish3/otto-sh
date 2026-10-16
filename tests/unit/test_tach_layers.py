@@ -1,4 +1,4 @@
-"""tach's layers: every module takes its layer as it leaves the cycle, and no file escapes tach.
+"""tach's layers: every module has its layer, and no file escapes tach.
 
 ``tach.toml`` declares otto's ten role layers (spec 2026-10-11 placement-and-phases
 §2) and sets ``layers_explicit_depends_on = true``: an import between two modules
@@ -9,11 +9,12 @@ refuses a module with no ``depends_on``, which tach would read as "may import
 anything". What tach cannot check, this file does:
 
 * the switch is on, and the layers are the spec's ten, highest first;
-* every module outside an import cycle has a layer. A module in the cycle has
-  none yet, which exempts it from the layer check; it takes its layer in the
-  commit that frees it (spec §5.2), and one left without would be exempt for good;
-* no module in an import cycle has a layer yet. tach tolerates one while its
-  peers in the cycle are unlayered, and nothing else would notice it;
+* every module outside an import cycle has a layer. The declared graph has no
+  cycle (``tests/unit/test_import_cycle_ratchet.py`` fails on one), so that is
+  every module; some placements are interim, and ``tach.toml`` marks each;
+* no module in an import cycle has a layer. With no cycle this holds trivially;
+  it stays so that a module that rejoined a cycle could not keep a layer tach
+  would tolerate while its peers in the cycle were unlayered;
 * no ``.py`` file under ``src/otto`` is outside every tach module except the ones
   ``UNOWNED`` lists, and that list only shrinks: ``UNOWNED_WHEN_LANDED`` pins it
   as it landed, and an entry added past it fails. tach sees no import made by a

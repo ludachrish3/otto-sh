@@ -3,12 +3,12 @@
 Tests fake the process-wide getters (``get_repos``, ``get_lab``,
 ``get_completion_names``, ``get_context``, ...) and the registrars and loaders
 beside them (``register_options``, ``load_lab``, ...) by patching the module
-that DEFINES each one (``otto.bootstrap.get_repos``). That patch reaches every
+that DEFINES each one (``otto.declared.get_repos``). That patch reaches every
 caller that looks the name up when it runs. It does not reach a module that
 bound the name at import, by either spelling:
 
 - ``from otto.config import load_user_settings`` (a package re-export), or
-- ``from otto.bootstrap import get_repos`` (the defining module).
+- ``from otto.declared import get_repos`` (the defining module).
 
 Either one binds the real function once, and the module keeps calling it under
 a patch every other caller sees. This test parses ``src/otto`` and fails on
@@ -18,9 +18,10 @@ both spellings at module level, for two sets of names:
   ``otto.logger``, and of the ``_LAZY_ATTRS`` table of ``otto.lab``, that is a
   function once the table chain is followed to its defining module;
 - ``PROCESS_WIDE_GETTERS``: getters no lazy table exports, because their
-  defining module is their public home (``otto.bootstrap``'s accessors), or
+  defining module is their public home (``otto.bootstrap``'s own), or
   because their public home re-exports them (``get_completion_names``, defined
-  in ``otto.registry``).
+  in ``otto.registry``, and the composed state's readers, defined in
+  ``otto.declared``).
 
 A module that binds a guarded name only to re-export it — the name is in its
 ``__all__`` literal and the module never reads it — is not a caller: there is
@@ -73,13 +74,16 @@ GUARDED_ATTRS_PACKAGES = ["otto.lab"]
 # binding of either would go stale across runs just the same (spec 2026-10-06
 # run-state contracts §3).
 PROCESS_WIDE_GETTERS: dict[str, frozenset[str]] = {
-    "otto.bootstrap": frozenset(
+    "otto.bootstrap": frozenset({"bootstrap", "get_env"}),
+    "otto.declared": frozenset(
         {
-            "bootstrap",
-            "get_repos",
+            "compose",
+            "current_ordered_repos",
+            "current_repos",
             "get_ordered_repos",
-            "get_env",
+            "get_repos",
             "is_bootstrapped",
+            "published_result",
         }
     ),
     "otto.registry": frozenset({"get_completion_names"}),
@@ -138,7 +142,7 @@ def guarded_names() -> dict[str, frozenset[str]]:
 
     Each entry of a guarded package's table is followed through the tables to
     the module that finally defines it: ``otto.lab.get_lab`` names
-    ``otto.config.fleet.get_lab``. When that definition is a function, the
+    ``otto.fleet.get_lab``. When that definition is a function, the
     package maps to the entry's name and the defining module to the
     function's name; a class maps to nothing.
     """
@@ -341,10 +345,18 @@ def test_the_scan_knows_the_names_it_guards():
         "get_ordered_repos",
         "get_env",
         "is_bootstrapped",
-    } <= guarded["otto.bootstrap"]
+    } <= guarded["otto.bootstrap"]  # its own two, and its three re-exports
+    assert {
+        "compose",
+        "current_ordered_repos",
+        "current_repos",
+        "get_ordered_repos",
+        "get_repos",
+        "is_bootstrapped",
+    } <= guarded["otto.declared"]
     assert "get_completion_names" in guarded["otto.registry"]
     assert "get_completion_names" in guarded["otto.bootstrap"]  # its public re-export
-    assert {"get_lab", "do_for_all_hosts"} <= guarded["otto.config.fleet"]
+    assert {"get_lab", "do_for_all_hosts"} <= guarded["otto.fleet"]
     assert {"get_lab", "do_for_all_hosts", "fleet_of_interest"} <= guarded["otto.lab"]
     assert {"Lab", "EmptySelectionError"}.isdisjoint(guarded["otto.lab"])  # classes
     assert "load_lab" in guarded["otto.labs.loader"]  # the defining module, followed
@@ -356,25 +368,25 @@ def test_the_scan_knows_the_names_it_guards():
 def test_the_scan_flags_only_bindings_made_at_import_time():
     guarded = {
         "otto.config": frozenset({"load_user_settings"}),
-        "otto.bootstrap": frozenset({"get_repos"}),
+        "otto.declared": frozenset({"get_repos"}),
     }
     source = (
         "import typing\n"
         "from typing import TYPE_CHECKING\n"
         "from ..config import load_user_settings\n"  # line 3: flagged, relative package
         "from otto.config import load_user_settings as load\n"  # line 4: flagged, aliased
-        "from ..bootstrap import get_repos\n"  # line 5: flagged, defining module
+        "from ..declared import get_repos\n"  # line 5: flagged, defining module
         "from ..config import Unrelated\n"
         "if TYPE_CHECKING:\n"
         "    from ..config import load_user_settings\n"
         "else:\n"
         "    from ..config import load_user_settings\n"  # line 10: flagged, runs at import
         "if typing.TYPE_CHECKING:\n"
-        "    from ..bootstrap import get_repos\n"
+        "    from ..declared import get_repos\n"
         "def f():\n"
         "    from ..config import load_user_settings\n"
         "async def g():\n"
-        "    from ..bootstrap import get_repos\n"
+        "    from ..declared import get_repos\n"
         "class C:\n"
         "    from ..config import load_user_settings\n"  # line 18: a class body runs at import
     )
@@ -382,7 +394,7 @@ def test_the_scan_flags_only_bindings_made_at_import_time():
     assert found == [
         (3, "otto.config", "load_user_settings"),
         (4, "otto.config", "load_user_settings"),
-        (5, "otto.bootstrap", "get_repos"),
+        (5, "otto.declared", "get_repos"),
         (10, "otto.config", "load_user_settings"),
         (18, "otto.config", "load_user_settings"),
     ]

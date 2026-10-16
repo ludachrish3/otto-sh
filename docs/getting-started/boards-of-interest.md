@@ -19,7 +19,7 @@ What the declaration changes is the fleet every walk starts from.
 `all_hosts()` and {meth}`~otto.context.OttoContext.do_for_all_hosts` iterate
 the **fleet of interest**, not the lab, and a walk that would iterate
 nothing refuses loudly rather than silently doing nothing.
-{func}`otto.lab.fleet_of_interest <otto.config.fleet.fleet_of_interest>`
+{func}`otto.lab.fleet_of_interest <otto.fleet.fleet_of_interest>`
 computes it without a connection. Here it runs from the example project's
 directory, after its init modules are imported as a real `otto` run does at
 startup:

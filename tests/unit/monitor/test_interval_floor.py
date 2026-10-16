@@ -42,7 +42,7 @@ class TestLibraryBoundary:
         still reaches the interval refusal. The lab is stubbed because the
         fixture only ever starts inside a run that has one loaded.
         """
-        monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
+        monkeypatch.setattr("otto.fleet.get_lab", lambda: SimpleNamespace(links=[]))
         handle = MonitorHandle(plugin=None)
         with pytest.raises(MonitorInputError, match="interval") as excinfo:
             await handle.start(hosts=[], interval=0.1)

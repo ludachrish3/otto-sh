@@ -33,6 +33,14 @@ active-run slot (``_active``) left ``otto.context`` for ``otto.invocation`` (as
 ``otto.context``, and ``_flag_holding_out`` left it for ``otto.host.builtin_hosts``,
 which also owns ``is_builtin_host``: the fleet's wrapper of it is gone.
 
+The composed state moved with that spec's §3.9. The root's result caches
+(``_result``, ``_in_progress``) left ``otto.bootstrap`` for the catalog's record
+in ``otto.declared``, whose own private readers (``_published``,
+``_composed_repos``) became ``published_result`` and ``compose``; the run's
+repos (``current_repos``, ``current_ordered_repos``) left ``otto.config.fleet``
+for ``otto.declared``, and the rest of the fleet left it for ``otto.fleet``: the
+old module is gone.
+
 An old spelling fails loudly at most call sites, but not everywhere. Six
 readers import an accessor inside a broad ``except``, where a stale import
 degrades silently instead of raising
@@ -110,11 +118,15 @@ LAB = frozenset(
 )
 ACTIVE_RUN = frozenset({"_active"})
 FLEET_HELPERS = frozenset({"_apply_option_overrides", "_flag_holding_out", "is_builtin_host"})
+COMPOSED_STATE = frozenset({"_result", "_in_progress"})
+CATALOG_READERS = frozenset({"_published", "_composed_repos"})
+RUN_REPOS = frozenset({"current_repos", "current_ordered_repos"})
 # Modules that are gone -> the moved names they held. Any import of one, and any string
 # naming one, is an old spelling.
 GONE: dict[str, frozenset[str]] = {
     "otto.config.bootstrapped": ACCESSORS,
     "otto.config.lab": LAB,
+    "otto.config.fleet": FLEET | FLEET_HELPERS | RUN_REPOS,
 }
 # old home -> the moved names it no longer has
 OLD_HOMES: dict[str, frozenset[str]] = {
@@ -123,7 +135,8 @@ OLD_HOMES: dict[str, frozenset[str]] = {
     "otto.config.repo": SETTINGS,
     "otto.config.env": SPLITTER,
     "otto.context": ACTIVE_RUN,
-    "otto.config.fleet": FLEET_HELPERS,
+    "otto.bootstrap": COMPOSED_STATE,
+    "otto.declared": CATALOG_READERS,
 }
 FACADE = "otto.lab"
 
@@ -283,12 +296,13 @@ def test_no_otto_code_or_test_names_a_moved_name_at_its_old_home():
         offenders += [f"{rel}:{line} {what}" for line, what in found]
     assert not offenders, (
         f"{len(offenders)} old spelling(s) of a moved name; import each from its new home "
-        "(otto.bootstrap for the repo accessors; otto.config.fleet / otto.labs.loader inside otto, "
+        "(otto.declared for the repo accessors, where a consumer or a patch reaches them; "
+        "otto.bootstrap is only their public re-export; otto.fleet / otto.labs.loader inside otto, "
         "otto.lab in tests and docs, for the lab and fleet names; otto.config.scope for the "
         "settings types and the settings file's location; otto.utils for the path-list "
         "splitter; otto.invocation for the active-run slot; otto.context for the fleet's "
         "override helper; otto.host.builtin_hosts for the membership rule and "
-        "is_builtin_host). "
+        "is_builtin_host; otto.declared for the composed state and the run's repos). "
         "A line marked (a facade) "
         "is re-pointed by scripts/facade_sweep.py --apply when it is a from-import "
         "(tests/unit/test_internal_imports_skip_facades.py):\n  " + "\n  ".join(offenders)
@@ -297,7 +311,7 @@ def test_no_otto_code_or_test_names_a_moved_name_at_its_old_home():
 
 def test_a_gone_module_does_not_import():
     """A module whose names all moved is deleted, not left behind as a second home."""
-    assert "otto.config.lab" in GONE  # the check below cannot pass on an empty table
+    assert {"otto.config.lab", "otto.config.fleet"} <= GONE.keys()  # not an empty table
     still = [module for module in GONE if importlib.util.find_spec(module) is not None]
     assert still == [], f"these modules should be gone, but still import: {still}"
 
@@ -385,8 +399,9 @@ class TestTheScanSeesEverySpelling:
             '_LAZY_EXPORTS = {"load_lab": ("otto.config", "load_lab")}\n'
             "from ..config.fleet import get_lab\n"
             "from ..config.lab import load_lab\n"
+            "from ..fleet import get_lab\n"
         )
-        assert self.lines(source) == [1, 2, 3, 4, 6]
+        assert self.lines(source) == [1, 2, 3, 4, 5, 6]
 
     def test_the_settings_types_and_the_splitter_at_their_old_homes(self):
         source = (
@@ -405,6 +420,24 @@ class TestTheScanSeesEverySpelling:
             "r.Repo\n"
         )
         assert self.lines(source, "otto.config.collected_tests") == [1, 2, 3, 4, 5, 7, 8]
+
+    def test_the_composed_state_and_the_run_s_repos_at_their_old_homes(self):
+        """The root's caches and the run's repos live in ``otto.declared`` now."""
+        source = (
+            "from otto import bootstrap as bs\n"
+            "bs._result\n"
+            'monkeypatch.setattr(bs, "_in_progress", None)\n'
+            "from otto.config.fleet import current_repos\n"
+            'monkeypatch.setattr("otto.config.fleet.current_ordered_repos", f)\n'
+            "from otto import declared\n"
+            "declared._published()\n"
+            "declared._composed_repos()\n"
+            "bs._discovered\n"
+            "bs.get_repos()\n"
+            "declared._composition.result\n"
+            "from otto.declared import current_repos, published_result\n"
+        )
+        assert self.lines(source, None) == [2, 3, 4, 5, 7, 8]
 
     def test_the_lab_module_that_moved_whole_in_every_spelling(self):
         """``otto.config.lab`` is gone: its names live in ``otto.labs.loader``."""
@@ -453,7 +486,7 @@ class TestTheScanSeesEverySpelling:
             "from otto.context import _apply_option_overrides, get_context\n"
             "from otto.host.builtin_hosts import is_builtin_host\n"
             "from otto.invocation import _ACTIVE, require_run\n"
-            'FINE = "otto.config.fleet.get_hosts_in_play"\n'
+            'FINE = "otto.fleet.get_hosts_in_play"\n'
             "context.get_context()\n"
         )
         assert self.lines(source, "otto.config.scope") == [1, 2, 3, 4, 6, 7, 8, 9]

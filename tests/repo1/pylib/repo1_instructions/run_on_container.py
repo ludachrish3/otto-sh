@@ -20,7 +20,7 @@ from typing import Annotated
 import typer
 
 from otto import options
-from otto.config.fleet import get_host
+from otto.fleet import get_host
 from otto.instructions import instruction
 from otto.result import CommandResult
 

@@ -64,7 +64,7 @@ def _flag_holding_out(
     :meth:`otto.context.OttoContext.all_hosts` yields only members, its
     empty-selection prediction (``otto.context._flags_hiding_every_match``)
     names the flags that hid every match, and
-    :func:`otto.config.fleet.fleet_of_interest` answers what the walk would
+    :func:`otto.fleet.fleet_of_interest` answers what the walk would
     yield. A second copy of the rule in any of them would drift the first
     time one of them grew a case.
 

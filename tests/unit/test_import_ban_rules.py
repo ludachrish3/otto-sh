@@ -3,7 +3,7 @@
 ``.ast-grep/rules/cli-command-no-module-scope-heavy-import.yml`` bans a short
 list of heavy modules from the top of ``src/otto/cli/`` modules. A lazy package
 re-exports names from those modules, so ``from otto.lab import get_lab`` loads
-``otto.config.fleet`` as surely as ``from ..config.fleet import get_lab`` does,
+``otto.fleet`` as surely as ``from ..fleet import get_lab`` does,
 and the rule enumerates those re-export names by hand. When a lazy table gains
 a name that resolves into a denylisted module, the rule must gain it too, or
 the new spelling slips past ``make lint-arch``. This test reads every lazy
@@ -52,7 +52,7 @@ def _parent_package_arms() -> list[tuple[re.Pattern[str], re.Pattern[str]]]:
 
 
 def _relative(module: str) -> str:
-    """How ``src/otto/cli/`` spells *module*: ``otto.config.fleet`` as ``..config.fleet``."""
+    """How ``src/otto/cli/`` spells *module*: ``otto.fleet`` as ``..fleet``."""
     if module != "otto" and not module.startswith("otto."):
         return module  # a third-party module is spelled absolutely
     return ".." + module.removeprefix("otto").removeprefix(".")
@@ -111,8 +111,8 @@ def _flagged(package: str, name: str) -> bool:
 
 def test_the_rule_reads_as_this_test_expects():
     """A reshaped rule must fail here, not turn every check below vacuous."""
-    assert _denied_module_path().match("..config.fleet")
-    assert _denied_module_path().match("...config.fleet")
+    assert _denied_module_path().match("..fleet")
+    assert _denied_module_path().match("...fleet")
     assert not _denied_module_path().match("..config.env")
     assert _denied_module_path().match("..labs.loader")
     assert not _denied_module_path().match("..labs.errors")

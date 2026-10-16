@@ -110,11 +110,12 @@ def test_a_graph_with_nothing_left_out_names_no_example(tmp_path) -> None:
     assert "For example" not in page
 
 
-def test_an_acyclic_graph_says_the_flag_can_be_turned_on(tmp_path) -> None:
+def test_an_acyclic_graph_says_the_flag_waits_on_every_file_being_in_a_module(tmp_path) -> None:
     graph = _graph(tmp_path, '[[modules]]\npath = "a"\ndepends_on = ["b"]\n')
     page = rmg.render(graph)
     assert rmg.cycles(graph) == []
-    assert "forbid_circular_dependencies = true` can be turned on" in page
+    assert "forbid_circular_dependencies = true` waits only on every file being" in page
+    assert "in a tach module." in page
     assert "## Modules that import each other" not in page
 
 

@@ -107,7 +107,7 @@ and every reservation reader passes `require_nonempty=False` to say so.
 Reservation readers reach that set through one function,
 `otto.reservations.check._hosts_in_play`, which applies the one adjustment the
 gate makes and the walks do not: the built-in `local` host is subtracted.
-{func}`otto.config.fleet.get_hosts_in_play` is that function applied to the
+{func}`otto.fleet.get_hosts_in_play` is that function applied to the
 context. The gate
 calls it on the active run ({func}`~otto.invocation.require_run`, installed by
 `otto.context.set_context`; see {doc}`../lifecycle`), so

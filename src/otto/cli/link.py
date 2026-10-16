@@ -62,7 +62,12 @@ def _link_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     same source ``otto host <TAB>`` uses — rather than offering every lab
     file's links and letting ``find_link`` refuse most of them.
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
 
     try:
         labs = selected_lab_names(ctx)
@@ -196,7 +201,7 @@ async def impair(  # noqa: PLR0913 — CLI command params
     ),
 ) -> None:
     """Impair a static link (merge-read-modify-replace, verified)."""
-    from ..config.fleet import get_lab
+    from ..fleet import get_lab
 
     given: dict[str, str | None] = {
         "--delay": delay,
@@ -278,7 +283,7 @@ async def repair(
     ),
 ) -> None:
     """Clear a link's impairment(s) and cancel its timers, or repair --all."""
-    from ..config.fleet import get_lab
+    from ..fleet import get_lab
 
     # This usage-error exit is deliberately kept OUT of the try/except below,
     # for the same typer.Exit-is-a-RuntimeError reason as `impair` above.
@@ -412,7 +417,7 @@ def _selector_rows(state: LinkState) -> list[str]:
 @link_app.command(name="list")
 async def list_links() -> None:
     """List every static link's current impairment state."""
-    from ..config.fleet import get_lab
+    from ..fleet import get_lab
 
     lab = get_lab()
     states = await read_link_states(lab)
@@ -543,7 +548,7 @@ async def check(
     # the same module as `check_link`, so it is deferred for the same reason.
     from ..check.render import render_sections
     from ..check.report import report_to_json
-    from ..config.fleet import get_lab
+    from ..fleet import get_lab
     from ..host.host import is_dry_run
     from ..link.check import check_link, link_sections, requested_features
 

@@ -48,7 +48,7 @@ _NO_COMMAND_MODULE_LOADS = [
     "asyncssh",
     "pydantic",
     "rich.table",
-    "otto.config.fleet",
+    "otto.fleet",
     "otto.labs.loader",
     "otto.config.repo",
     "otto.context",
@@ -89,8 +89,8 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     # --- Tracked verbs whose module-top edges were cut. ---
     "import otto.cli.cache": ["rich.table"],
     "import otto.cli.inventory": ["rich.table"],
-    "import otto.cli.link": ["otto.config.fleet", "rich.table"],
-    "import otto.cli.tunnel": ["otto.config.fleet", "rich.table"],
+    "import otto.cli.link": ["otto.fleet", "rich.table"],
+    "import otto.cli.tunnel": ["otto.fleet", "rich.table"],
     # --- Shared modules every command imports. ---
     # The command tree imports otto.config for every `--help`; none reads a repo.
     "import otto.config": ["otto.config.repo", "otto.config.version"],
@@ -244,7 +244,7 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     # verb, so the contract names one.)
     "from otto.lab import get_lab": ["otto.labs.loader"],
     "from otto.docker import compose_up": ["otto.labs.loader"],
-    "from otto.lab import EmptySelectionError": ["otto.config.fleet", "otto.host"],
+    "from otto.lab import EmptySelectionError": ["otto.fleet", "otto.host"],
 }
 
 # The positive control, for a row whose forbidden list alone could pass by
@@ -253,7 +253,7 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
 # the host package's hosts (its row above).
 IMPORT_MUST_LOAD: dict[str, list[str]] = {
     "from otto.host import LocalHost": ["otto.host.local_host"],
-    "from otto.lab import fleet_of_interest": ["otto.config.fleet"],
+    "from otto.lab import fleet_of_interest": ["otto.fleet"],
     "from otto.lab import Lab": ["otto.labs.loader"],
     "import otto.instruction_catalog": ["otto.errors", "otto.registry"],
 }

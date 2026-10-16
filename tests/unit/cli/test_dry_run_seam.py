@@ -453,7 +453,7 @@ def _host_app(monkeypatch: pytest.MonkeyPatch, host: SpyHost) -> typer.Typer:
     # mapping of the one record the CLI reads.
     monkeypatch.setattr(op, "HOST_CLASSES", {"spy": _entry(SpyHost)})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda _hid: SpyHost)
-    monkeypatch.setattr("otto.config.fleet.get_host", fake_get_host)
+    monkeypatch.setattr("otto.fleet.get_host", fake_get_host)
     # `_resolve_host`'s "Available hosts" listing reads the active context's
     # lab mapping directly — explicit `otto host <id>` targeting is unscoped,
     # so it deliberately does NOT go through the fleet generator. Stubbed for
@@ -546,7 +546,7 @@ class TestHostVerbsAtTheSeam:
         """``--probe`` (spec §3) dials the reference set the seam resolved."""
         from otto.cli.expose import host_dry_run_references
 
-        monkeypatch.setattr("otto.config.fleet.get_host", lambda _hid, **_kw: SpyHost())
+        monkeypatch.setattr("otto.fleet.get_host", lambda _hid, **_kw: SpyHost())
 
         class _Ctx:
             obj = None

@@ -101,7 +101,7 @@ decoupling:**
   it just landed — but if the *next* default-semantics change fans out the same way,
   that's the signal to move to a resolve-at-one-choke-point pattern. Effort if/when: M.
 - **Wrapper layers re-declaring parameters.** `src/otto/context.py:184,315` and
-  `src/otto/config/fleet.py:270,293` re-declare `timeout` in their own signatures, and
+  `src/otto/fleet.py:270,293` re-declare `timeout` in their own signatures, and
   `context.py:180-186` needed a deferred import to dodge a `context → host` circular
   import. Library-to-library signature duplication, nothing to do with the CLI. A
   small audit of which wrappers restate parameters vs. pass through would tell you how

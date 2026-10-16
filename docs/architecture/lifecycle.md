@@ -320,7 +320,7 @@ module below the run layer (the reservation gate) reads the run without
 importing `otto.context`; the host layer never reads it. The context-variable
 is *plumbing*, not a global: explicit `ctx` passing is first-class, and the
 zero-argument convenience accessors
-({func}`~otto.config.fleet.all_hosts`, `get_host`,
+({func}`~otto.fleet.all_hosts`, `get_host`,
 `run_on_all_hosts`, …) simply delegate to the active context's
 method of the same name. Anything that wants its dependency visible takes a
 `ctx` parameter — CLI commands can declare `ctx: OttoContext` and have it

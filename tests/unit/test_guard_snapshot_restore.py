@@ -219,11 +219,11 @@ def test_the_guards_state_snapshot_does_not_alias_its_mutable_fields(tmp_path) -
 @pytest.fixture(scope="module")
 def primed_bootstrap_cache() -> Iterator[object]:
     """Module-scoped bootstrap cache: a discovery memoized before any per-test snapshot."""
-    saved = (bootstrap._discovered, bootstrap._result)
+    saved = bootstrap._discovered
     sentinel = SimpleNamespace(repos=[], errors=[])
     bootstrap._discovered = sentinel
     yield sentinel
-    bootstrap._discovered, bootstrap._result = saved
+    bootstrap._discovered = saved
 
 
 def _assert_bootstrap_state_survives_then_poison_it(sentinel: object) -> None:
@@ -231,9 +231,8 @@ def _assert_bootstrap_state_survives_then_poison_it(sentinel: object) -> None:
         "a module fixture's bootstrap cache was cleared by a per-test teardown — "
         "the guard reset to defaults instead of restoring its snapshot"
     )
-    assert bootstrap._result is None, "a sibling's bootstrap result leaked forward"
     # Poison for whichever sibling runs next: the guard must swap it back out.
-    bootstrap._result = SimpleNamespace(repos=[], ordered_repos=[])
+    bootstrap._discovered = SimpleNamespace(repos=[], errors=[])
 
 
 def test_bootstrap_state_outlives_a_sibling_test(primed_bootstrap_cache: object) -> None:

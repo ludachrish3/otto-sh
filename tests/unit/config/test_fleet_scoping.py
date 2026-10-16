@@ -580,8 +580,8 @@ async def test_include_local_still_opts_in_under_scoping(tmp_path, scoped_contex
 
 @pytest.mark.asyncio
 async def test_module_level_fleet_surface_is_scoped_too(tmp_path, scoped_context):
-    """``otto.config.fleet.all_hosts`` reads the active context — same universe, same guard."""
-    from otto.config.fleet import all_hosts as fleet_all_hosts
+    """``otto.fleet.all_hosts`` reads the active context — same universe, same guard."""
+    from otto.fleet import all_hosts as fleet_all_hosts
 
     lab = _lab(("h1", "a"), ("h2", "a"))
     repo = _repo(tmp_path, "r1", labs=["a"], hosts=["h1"])
@@ -599,11 +599,11 @@ def test_module_level_get_hosts_in_play_reads_the_active_context(tmp_path, scope
     it the context module), so this accessor is the seam its gate goes through
     — and it must return the SAME set ``all_hosts`` walks, not the whole lab.
 
-    Imported from ``otto.config.fleet``, not ``otto.config``: the tolerant
-    reader is deliberately kept out of the package's re-export, so a walk
+    Imported from ``otto.fleet``, not ``otto.lab`` or ``otto``: the tolerant
+    reader is deliberately kept out of the public re-exports, so a walk
     cannot reach it by the most discoverable spelling.
     """
-    from otto.config.fleet import get_hosts_in_play
+    from otto.fleet import get_hosts_in_play
 
     lab = _lab(("h1", "a"), ("h2", "a"))
     ctx = scoped_context(lab, [_repo(tmp_path, "r1", labs=["a"], hosts=["h1"])])
@@ -621,7 +621,7 @@ def test_get_hosts_in_play_excludes_the_builtin_local_host(tmp_path, scoped_cont
     ``scoped_ids``: ``include_local=True`` is a fleet WALK's own opt-in and must
     keep working, which the second assert pins.
     """
-    from otto.config.fleet import get_hosts_in_play
+    from otto.fleet import get_hosts_in_play
 
     lab = add_builtin_local(_lab(("h1", "a"), ("h2", "a")), resources={"rack-a"})
     ctx = scoped_context(lab, [_repo(tmp_path, "r1")])
@@ -638,7 +638,7 @@ def test_get_hosts_in_play_keeps_a_lab_that_declares_its_own_local_host(tmp_path
     by writing it down. An exclusion keyed on ``id == "local"`` would silently
     drop its resources from every requirement; this is the test that would fail.
     """
-    from otto.config.fleet import get_hosts_in_play
+    from otto.fleet import get_hosts_in_play
 
     lab = _lab(("local", "a"), ("h2", "a"))
     assert "local" in lab.hosts, sorted(lab.hosts)  # the factory's id, not an assumption
@@ -647,8 +647,10 @@ def test_get_hosts_in_play_keeps_a_lab_that_declares_its_own_local_host(tmp_path
     assert get_hosts_in_play() == {"local", "h2"}
 
 
-def test_the_tolerant_fleet_reader_is_not_re_exported_from_otto_config(tmp_path, scoped_context):
-    """``otto.config`` offers only the spellings a WALK may safely use.
+def test_the_tolerant_fleet_reader_is_not_re_exported_from_otto_lab_or_otto(
+    tmp_path, scoped_context
+):
+    """``otto.lab`` and ``otto`` offer only the fleet spellings a WALK may safely use.
 
     ``get_hosts_in_play`` bakes in ``require_nonempty=False``, so a caller who
     found it beside ``all_hosts``/``get_host`` and looped over it would get a
@@ -656,10 +658,12 @@ def test_the_tolerant_fleet_reader_is_not_re_exported_from_otto_config(tmp_path,
     off the re-export is the guard; this pins that decision so a later
     convenience edit has to argue with a test.
     """
-    import otto.config
+    import otto
+    import otto.lab
 
-    assert not hasattr(otto.config, "get_hosts_in_play")
-    assert not hasattr(otto.config, "get_admissible_ids")
+    for facade in [otto.lab, otto]:
+        assert not hasattr(facade, "get_hosts_in_play"), facade.__name__
+        assert not hasattr(facade, "get_admissible_ids"), facade.__name__
 
 
 def test_require_nonempty_false_reads_an_empty_fleet_as_zero_hosts(tmp_path, scoped_context):

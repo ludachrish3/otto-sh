@@ -84,7 +84,7 @@ class MonitorHandle:
                 below the floor, or a host otto cannot sample.
             RuntimeError: already started; call :meth:`stop` first.
         """
-        from otto.config.fleet import get_lab
+        from otto.fleet import get_lab
         from otto.monitor.session import MonitorSession
 
         if self._started:

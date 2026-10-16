@@ -452,7 +452,7 @@ SURFACES: list[Surface] = [
     # this one resolves three levels deep into `tunnel remove`'s own argument
     # completer, which imports `otto.cli.tunnel` and, transitively, all of
     # `otto.tunnel`, `otto.project`, `otto.instruction_catalog`, `otto.host.daemon`,
-    # and `otto.config.fleet`/`lab`/`dependencies` — modules the top-level
+    # and `otto.fleet`, `otto.labs.loader`, `otto.config.dependencies` — modules the top-level
     # site never touches. So "as cheap as the warm path" was never the bar
     # here; the shim's own part is a cache read, the stat pass, and a marker
     # touch, which always happen before it can decide to hand over.

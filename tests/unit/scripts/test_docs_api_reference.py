@@ -57,7 +57,7 @@ def _ns(*names: str) -> "dict[str, Namespace]":
 
 
 def test_the_root_is_home_only_to_what_nothing_else_holds():
-    assert choose_home(["otto", "otto.lab"], "otto.config.fleet") == "otto.lab"
+    assert choose_home(["otto", "otto.lab"], "otto.fleet") == "otto.lab"
     assert choose_home(["otto"], "otto.cli") == "otto"
 
 

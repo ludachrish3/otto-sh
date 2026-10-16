@@ -67,7 +67,12 @@ def _reservation_gate(ctx: typer.Context) -> ReservationGate | None:
     if opts is None:
         return None
 
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
 
     try:
         gate = build_reservation_gate(
@@ -126,7 +131,7 @@ def check(ctx: typer.Context) -> None:
     # refusing -- the fleet-shaped abort is a fleet WALK's, and this walks
     # nothing. The `"none"` backend answers no `held` verdict, so its rows read
     # `n/a`.
-    from ..config.fleet import get_lab
+    from ..fleet import get_lab
 
     # The group is lab_free (whoami needs no lab); check is the one subcommand
     # that does — the lab defines the required-resource list — so load it here,
@@ -150,7 +155,7 @@ def check(ctx: typer.Context) -> None:
     # Function-scope: ``otto.cli.reservation`` is a budgeted import surface, and
     # the fleet accessor and rich's table machinery would otherwise be charged
     # to every ``otto reservation`` invocation, ``--help`` included.
-    from ..config.fleet import get_hosts_in_play
+    from ..fleet import get_hosts_in_play
 
     # The shared reservation reader, not ``admissible_ids`` directly: an empty
     # declared fleet is 0 hosts in play (a verdict, not a refusal), and the

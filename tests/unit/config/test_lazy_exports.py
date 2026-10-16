@@ -216,9 +216,9 @@ def test_help_surface_does_not_load_host():
     ``monitor.py``) are not on this surface at all — MEASURED, not assumed.
 
     Which is exactly why this guard is worth its subprocess. A future
-    module-level ``from ..config.fleet import get_host`` in one of the four modules
+    module-level ``from ..fleet import get_host`` in one of the four modules
     root help DOES load would re-trigger the whole chain through
-    ``config.fleet``, and the in-process guard above — which imports
+    ``otto.fleet``, and the in-process guard above — which imports
     ``otto.config`` and nothing else — could never see it.
     """
     result = harness.measure_surface(harness.surface_by_key("help"))

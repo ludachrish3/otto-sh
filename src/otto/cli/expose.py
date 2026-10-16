@@ -171,7 +171,7 @@ def host_class_for_id(host_id: str | None) -> type | None:
     if not host_id:
         return None
     try:
-        from ..config.fleet import get_host
+        from ..fleet import get_host
 
         return type(get_host(host_id))
     except Exception:  # noqa: BLE001 — completion fallback: no lab loaded / unknown id → return None for full menu

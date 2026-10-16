@@ -37,10 +37,10 @@ import pytest
 import pytest_asyncio
 
 from otto.bootstrap import get_repos
-from otto.config.fleet import all_hosts
 from otto.coverage import clean_coverage
 from otto.coverage.fetcher.embedded import decode_cov_dump
 from otto.declared import DeclaredEntry
+from otto.fleet import all_hosts
 from otto.host import LocalHost
 from otto.host.binary_loader import BinaryLoader
 from otto.host.embedded_host import EmbeddedHost

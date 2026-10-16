@@ -141,21 +141,13 @@ def sut_dirs_env_module():
 
     from otto import bootstrap, declared, registry
 
-    saved = (
-        bootstrap._discovered,
-        bootstrap._result,
-        bootstrap._in_progress,
-    )
+    saved_discovered = bootstrap._discovered
     saved_composition = dataclasses.replace(declared._composition)
     saved_names = registry._COMPLETION_SNAPSHOT.names
     try:
         yield from _default_sut_dirs_env_impl()
     finally:
-        (
-            bootstrap._discovered,
-            bootstrap._result,
-            bootstrap._in_progress,
-        ) = saved
+        bootstrap._discovered = saved_discovered
         declared._composition = saved_composition
         registry._COMPLETION_SNAPSHOT.names = saved_names
 

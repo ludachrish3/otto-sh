@@ -31,9 +31,9 @@ from ..version import get_version
 from .completers import completion_source
 
 if TYPE_CHECKING:
-    from ..bootstrap import BootstrapResult
     from ..config.cache_sections import CliCollectors
     from ..config.repo import Repo
+    from ..declared import BootstrapResult
     from .registry import CommandSpec
 
 # TODO: Should rich help menus be optional?
@@ -96,7 +96,12 @@ def list_labs_callback(value: bool) -> None:
         from rich.panel import Panel
         from rich.table import Table
 
-        from ..bootstrap import get_repos
+        # The composition root: importing it installs the initiator that composes
+        # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+        from .. import bootstrap
+
+        del bootstrap
+        from ..declared import get_repos
 
         # Extract lab search paths from all repos
         panels: list[Panel] = [repo.get_lab_panel() for repo in get_repos()]
@@ -145,8 +150,13 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # 
     built in the completion fast path); falls back to a live best-effort
     collection on a cache miss. Empty when the backend can't enumerate users.
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.completion_cache import collect_reservation_usernames
+    from ..declared import get_repos
     from ..registry import get_completion_names
 
     cached = get_completion_names()
@@ -166,8 +176,13 @@ def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa:
     code). ``--lab`` combines labs with ``+``, so only the in-progress segment
     is completed and already-named labs are dropped.
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.completion_cache import collect_lab_names
+    from ..declared import get_repos
     from ..labs.loader import LAB_SEPARATOR
     from ..registry import get_completion_names
     from ..utils import complete_separated_list

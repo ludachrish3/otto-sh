@@ -123,7 +123,7 @@ def _record(host, *, fail: bool = False):
 
 @pytest.fixture
 def two_hosts(lab):
-    with patch("otto.config.fleet.get_lab", return_value=lab):
+    with active_context(lab):
         yield _record(lab.hosts["test3"]), _record(lab.hosts["alt2"])
 
 
@@ -430,7 +430,7 @@ async def test_compose_verbs_ask_the_daemon_quietly(lab, tmp_path, two_hosts):
 def lab_one_parent():
     """A lab with exactly one docker-capable host (``test3``): the rule resolves it."""
     lab = _lab(_host("test3", "10.10.200.13"), _plain("test2", "10.10.200.12"))
-    with patch("otto.config.fleet.get_lab", return_value=lab):
+    with active_context(lab):
         yield lab
 
 

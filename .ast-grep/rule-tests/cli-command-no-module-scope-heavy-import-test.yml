@@ -58,7 +58,7 @@ invalid:
 - |
   from ..lab import EmptySelectionError, get_lab
 - |
-  from ..config.fleet import get_host
+  from ..fleet import get_host
 - |
   from ..host.unix_host import UnixHost
 - |
@@ -79,7 +79,12 @@ invalid:
 # A deeper relative spelling, as a module in a package under src/otto/cli/
 # would write it.
 - |
-  from ...config.fleet import get_lab
+  from ...fleet import get_lab
+# The fleet module itself, by name through its parent and absolutely.
+- |
+  from .. import fleet
+- |
+  import otto.fleet
 # The top-level package's lazy names reach the same modules.
 - |
   from otto import get_lab, options

@@ -12,16 +12,12 @@
 # Maintain BY HAND. `tach sync` REWRITES this file and strips every comment —
 # never run it to "fix" a check failure; add or (preferably) question the edge.
 #
-# End state: forbid_circular_dependencies = true. An import cycle keeps it
-# off: a set of modules that can all reach each other through the edges below.
-# tests/unit/test_import_cycle_ratchet.py (run by lint-arch) is the record of
-# that cycle. It pins which modules are in it and which edges run inside it,
-# and both lists can only shrink, so a module that joins the cycle, or a new
-# edge between two of its members, fails the gate. Read the numbers there, not
-# here: this header used to keep them in prose, and the cycle grew from sixteen
-# members to twenty-three with nobody deciding it should (#522).
-# docs/architecture/modules.md draws the cycle and the pairs of modules that
-# import each other; #590 tracks taking it apart.
+# End state: forbid_circular_dependencies = true. The declared graph below has
+# no import cycle (#590 took the old one apart), and until the flag goes on
+# tests/unit/test_import_cycle_ratchet.py (run by lint-arch) keeps it so: its
+# BASELINE is empty, so any module in a cycle, or any edge inside one, fails
+# the gate. The flag waits only on every file being in a module.
+# docs/architecture/modules.md draws the graph.
 #
 # Note tach counts function-scope (lazy) imports as edges, same as module
 # scope. Scope-sensitive rules (e.g. "models may import config lazily but
@@ -32,10 +28,9 @@
 # role layers, highest first. A module may import its own layer and the ones
 # below it, never one above. `layers_explicit_depends_on = true` keeps every
 # depends_on list binding downward too: without it tach lets any import into a
-# lower layer through undeclared. A module in the import cycle has no `layer`
-# yet, which exempts it; it takes its layer in the commit that frees it, and
-# tests/unit/test_tach_layers.py fails on a module outside the cycle that has
-# none. Every module spells its depends_on, [] for one that imports no other:
+# lower layer through undeclared. Every module has a `layer`, and
+# tests/unit/test_tach_layers.py fails on one that has none; a few placements
+# are interim, each marked "Interim:" on its entry. Every module spells its depends_on, [] for one that imports no other:
 # tach reads a missing list as "may import anything", and
 # scripts/render_module_graph.py refuses one.
 #
@@ -62,6 +57,10 @@ layers = [
 
 [[modules]]
 path = "otto.bootstrap"
+# Interim: composition until the root moves up to its own layer, because the
+# run layer's otto.context and otto.session still import it (spec 2026-10-11
+# placement-and-phases §3.9, §5.2).
+layer = "composition"
 depends_on = [
     "otto.config",
     "otto.errors",
@@ -121,10 +120,11 @@ layer = "entry"
 # (inspect_shim, inspect_tests).
 # otto.labs: the `--lab` grammar (split_lab_names, LAB_SEPARATOR) is the lab
 # model's, in otto.labs.loader. Function-local, so no verb's `--help` loads it.
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings"]
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.session", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings", "otto.declared", "otto.fleet"]
 
 [[modules]]
 path = "otto.config"
+layer = "composition"
 depends_on = [
     # completion_cache's containment seam imports `is_containable` to tell a
     # user module that DECLINED to load from one that broke. otto.errors is a
@@ -132,7 +132,6 @@ depends_on = [
     "otto.errors",
     "otto.models",
     "otto.models.base",
-    "otto.context",
     "otto.instruction_catalog",
     "otto.labs",
     # completion_cache resolves the process inventory function-locally, twice:
@@ -145,15 +144,15 @@ depends_on = [
     # imports nothing else of otto.config (spec 2026-10-11 placement-and-phases
     # §3.6).
     "otto.inventory",
-    # DEBT: survives on fleet.py's DEFAULT_COMMAND_TIMEOUT (Tier 1.7),
-    # lab.py's RemoteHost/slug/builtin_hosts, and repo.py's os_profile
-    # registration. completion_cache's host-CONSTRUCTION import is gone —
-    # it enumerates through LabRepository now — leaving only the
-    # import-light builtin_hosts and the term/transfer registries.
+    # The completion cache and its sections and tree, function-locally:
+    # otto.host.os_profile's profile context, host classes and profiles,
+    # otto.host.builtin_hosts' ids, and the term and transfer registries
+    # (otto.host.connections, otto.host.transfer). completion_cache's
+    # host-CONSTRUCTION import is gone — it enumerates through
+    # LabRepository now. Downward: the composition layer reads the host layer.
     "otto.host",
     "otto.link",
     "otto.reservations",
-    "otto.bootstrap",
     # repo.py's collection pass marks itself as loading test files, so a test
     # file or conftest that registers anything is refused there too. A leaf
     # (it depends only on otto.errors), so no cycle can form.
@@ -210,11 +209,12 @@ depends_on = []
 
 [[modules]]
 path = "otto.context"
-# NOTE: context<->config is a known cycle held apart by function-scope
-# imports in otto.context. context -> host is one-way: the host layer stopped
-# importing the context when each loop's host registry moved to
-# otto.invocation. Dropping `timeout` from run_on_all_hosts (Tier 1.7)
-# removes the host edge's worst justification.
+# Interim: run until otto.context becomes a facade at entry over
+# otto.context.state (spec 2026-10-11 placement-and-phases §3.9, §3.12).
+# context -> config is one-way: the fleet, which read the context, left
+# otto.config. context -> host is one-way: the host layer stopped importing
+# the context when each loop's host registry moved to otto.invocation.
+layer = "run"
 depends_on = [
     "otto.config",
     "otto.host",
@@ -262,6 +262,17 @@ depends_on = [
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
     "otto.config.scope",
+    # otto.declared: the run's repos when no repos are given (current_repos),
+    # the composed state's home (spec 2026-10-11 placement-and-phases §3.9).
+    "otto.declared",
+    # otto.fleet: the hosts coverage cleans and collects from (all_hosts,
+    # do_for_all_hosts), the fleet's walks.
+    "otto.fleet",
+    # otto.bootstrap: clean_coverage, collect_coverage and get_coverage load the
+    # composition root when no repos are given, so their read of the run's repos
+    # composes them as it always did (spec 2026-10-11 placement-and-phases
+    # §3.12). Downward: root to its interim composition layer.
+    "otto.bootstrap",
 ]
 
 [[modules]]
@@ -285,6 +296,7 @@ depends_on = ["otto.config.scope", "otto.invocation", "otto.registry"]
 
 [[modules]]
 path = "otto.docker"
+layer = "run"
 depends_on = [
     "otto.host",
     "otto.models",
@@ -309,7 +321,11 @@ depends_on = [
     # depends only on otto.console, so this edge cannot make a cycle.
     "otto.logger",
     "otto.config.scope",
+    # otto.declared: the run's repos (current_repos, current_ordered_repos).
     "otto.declared",
+    # otto.invocation: the active run's lab (require_run), never the
+    # fleet at otto.fleet (spec 2026-10-11 placement-and-phases §3.9).
+    "otto.invocation",
 ]
 
 [[modules]]
@@ -328,6 +344,20 @@ layer = "entry"
 # the public base a backend's config model uses.
 # otto.monitor.parsers: the sample metric parser subclasses MetricParser.
 depends_on = ["otto.reservations", "otto.host", "otto.monitor.parsers", "otto.labs", "otto.inventory", "otto.models"]
+
+[[modules]]
+path = "otto.fleet"
+layer = "run"
+# The fleet: the active lab and its hosts, the walks over the run's fleet of
+# interest, and the reservation readers' hosts in play (spec 2026-10-11
+# placement-and-phases §3.9). It reads the context (otto.context), the scope
+# predicate (otto.config.scope), the host layer (otto.host: otto.host.host's
+# DEFAULT_COMMAND_TIMEOUT and the built-in host test in otto.host.builtin_hosts)
+# and the gate's own in-play computation (otto.reservations), each within or
+# below the run layer.
+# DEBT: the otto.host edge's module-scope half is fleet.py's
+# DEFAULT_COMMAND_TIMEOUT default (Tier 1.7).
+depends_on = ["otto.config.scope", "otto.context", "otto.host", "otto.reservations"]
 
 [[modules]]
 path = "otto.filesystem"
@@ -359,6 +389,9 @@ depends_on = [
 
 [[modules]]
 path = "otto.session"
+# Interim: run until its facade becomes a module of its own at entry over its
+# six files (spec 2026-10-11 placement-and-phases §3.9, §3.12).
+layer = "run"
 # The decisions that prepare a run, shared by `otto --lab X <verb>` and
 # `otto.open_context` (thin-CLI series: the library path makes every decision
 # the CLI makes). Every heavy edge (inventory, docker, labs, env, host) is a
@@ -642,18 +675,18 @@ layer = "workflows"
 # layer (spec 2026-10-11 placement-and-phases §3.11), and live.py stays in it:
 # as a module of its own it would import factory and session from here while
 # the facade's lazy binding imports it back, a loop through a string.
-# otto.config, otto.context, otto.tunnel: live.py only. It reads the active
-# lab, the repos, the driving repo's scope and full-lab tunnel discovery and
-# hands them to the collector, whose tunnel discovery is INJECTED through the
-# tunnel_source callable (collector.py). tach cannot tell live.py from the
-# rest of this module, so tests/unit/test_monitor_service_reads_no_lab.py
-# keeps those three, otto.lab and live.py itself out of every other file under
-# otto/monitor, by import or by literal string.
+# otto.fleet, otto.context, otto.declared, otto.tunnel: live.py only. It
+# reads the active lab, the repos, the driving repo's scope and full-lab tunnel
+# discovery and hands them to the collector, whose tunnel discovery is INJECTED
+# through the tunnel_source callable (collector.py). tach cannot tell live.py
+# from the rest of this module, so tests/unit/test_monitor_service_reads_no_lab.py
+# keeps the modules that read the run, and live.py itself, out of every other
+# file under otto/monitor; its docstring names each banned module.
 # otto.utils: server.py's internal uvicorn wait runs through wait_for_async
 # (gate G6, the one sanctioned poll spelling).
 # otto.monitor.*: the lower files this module imports, each a module of its own
 # (below).
-depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.link", "otto.filesystem", "otto.logger", "otto.console", "otto.errors", "otto.utils", "otto.config", "otto.context", "otto.tunnel", "otto.monitor.broadcast", "otto.monitor.errors", "otto.monitor.event_ops", "otto.monitor.events", "otto.monitor.formats", "otto.monitor.parsers", "otto.monitor.snmp", "otto.monitor.store", "otto.monitor.tls", "otto.config.scope"]
+depends_on = ["otto.host", "otto.models", "otto._webassets", "otto.result", "otto.link", "otto.filesystem", "otto.logger", "otto.console", "otto.errors", "otto.utils", "otto.fleet", "otto.context", "otto.tunnel", "otto.monitor.broadcast", "otto.monitor.errors", "otto.monitor.event_ops", "otto.monitor.events", "otto.monitor.formats", "otto.monitor.parsers", "otto.monitor.snmp", "otto.monitor.store", "otto.monitor.tls", "otto.config.scope", "otto.declared"]
 
 # The monitor's eleven lower files, one tach module each, at topology (spec
 # 2026-10-11 placement-and-phases §3.11). They are not one subpackage module:
@@ -813,7 +846,7 @@ depends_on = ["otto.errors"]
 [[modules]]
 path = "otto.reservations"
 layer = "sources"
-# The reservation gate reads the active run, not otto.config's fleet, so the
+# The reservation gate reads the active run, not the fleet (`otto.fleet`), so the
 # package imports nothing of otto.config (spec 2026-10-11 placement-and-phases §3.8).
 # otto.invocation: the active run (the slot otto.context installs), which the gate
 # reads its lab and its hosts in play from.
@@ -856,7 +889,14 @@ layer = "root"
 # otto.invocation: the runner sweep (suite/loops.py) reads the run policy's teardown deadline.
 # otto.labs: run_tests opens a context on an empty lab (otto.labs.loader.Lab)
 # when none is active.
-depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope", "otto.config.home", "otto.labs"]
+# otto.declared: prepare_run and selected_tests read the run's repos through
+# current_repos, the composed state's home (spec 2026-10-11
+# placement-and-phases §3.9).
+# otto.bootstrap: prepare_run loads the composition root before it reads the
+# run's repos for cov_tickets_json, so that read composes them as it always did
+# (spec 2026-10-11 placement-and-phases §3.12). Downward: root to its interim
+# composition layer.
+depends_on = ["otto.context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope", "otto.config.home", "otto.labs", "otto.bootstrap", "otto.declared", "otto.fleet"]
 
 [[modules]]
 path = "otto.testing"

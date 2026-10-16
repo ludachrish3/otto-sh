@@ -113,8 +113,13 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     (``cache['docker_hosts']``); falls through to a live ``lab.json``
     scan on cache miss so first-run completion still works.
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.completion_cache import collect_docker_capable_host_ids
+    from ..declared import get_repos
     from ..registry import get_completion_names
     from .completers import lab_scoped_host_ids, selected_lab_names
 
@@ -142,8 +147,13 @@ def _use_case_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
     completer: a use-case is declared by REPOS, and which lab is selected
     decides where its fragments land, not whether it exists.
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.completion_cache import collect_docker_use_case_names
+    from ..declared import get_repos
     from ..registry import get_completion_names
 
     cached = get_completion_names()
@@ -168,8 +178,13 @@ def _names_or(key: str, collect: "Callable[[], Any]") -> Any:
 @completion_source(kind="payload", key="docker_images", sort=True)
 def _image_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Shell-completion source for ``IMAGE``: every declared ``[[docker.images]]`` name."""
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.completion_cache import collect_docker_image_names
+    from ..declared import get_repos
 
     try:
         names = _names_or("docker_images", lambda: collect_docker_image_names(get_repos()))
@@ -187,8 +202,13 @@ def _service_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     Nothing is offered until a use-case is on the line (the services of an
     unnamed use-case would be a guess).
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.completion_cache import collect_docker_services_by_use_case
+    from ..declared import get_repos
 
     try:
         use_case = (
@@ -208,8 +228,13 @@ def _service_completer(ctx: typer.Context, incomplete: str) -> list[str]:
 @completion_source(kind="payload", key="repos", sort=True)
 def _repo_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Shell-completion source for ``--repo``: every active repo's name."""
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.completion_cache import collect_repo_names
+    from ..declared import get_repos
 
     try:
         names = _names_or("repos", lambda: collect_repo_names(get_repos()))
@@ -331,7 +356,12 @@ def _default_use_case(use_case: str | None) -> str:
     if use_case is not None:
         return use_case
 
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
     from ..docker.resolve import declared_use_cases
 
     names = sorted(declared_use_cases(get_repos()))
@@ -561,8 +591,13 @@ async def _record_host(host_id: str, *, images: bool, containers: bool) -> None:
     that catches them all, so one host's failure never stops the next host's
     record nor changes the verb.
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.completion_cache import record_docker_containers, record_docker_images
+    from ..declared import get_repos
     from ..docker.observe import observed_containers, observed_images
 
     try:
@@ -902,8 +937,12 @@ def _use_cases(
     # a reason to exit 1.
     from rich.table import Table
 
-    from ..bootstrap import get_repos
-    from ..config.fleet import get_lab
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
     from ..docker.observe import DockerVerbError, docker_parent
     from ..docker.resolve import (
         UseCaseResolutionError,
@@ -911,6 +950,7 @@ def _use_cases(
         place,
         select_fragments,
     )
+    from ..fleet import get_lab
 
     repos = get_repos()
     declared = declared_use_cases(repos)

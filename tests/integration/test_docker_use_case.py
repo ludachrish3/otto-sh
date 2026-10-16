@@ -24,8 +24,6 @@ Requires:
     vagrant up test3
 """
 
-from __future__ import annotations
-
 import shlex
 import uuid
 from unittest.mock import patch
@@ -44,6 +42,7 @@ from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.labdata import element_for, host_data
 from tests._fixtures.paths import TESTS_ROOT
+from tests.conftest import active_context
 
 REPO1_DIR = TESTS_ROOT / "repo1"
 REPO2_DIR = TESTS_ROOT / "repo2"
@@ -134,10 +133,11 @@ def project(suffix) -> str:
 def _deployment_config(monkeypatch, lab, repos, suffix):
     """Point ``deploy``/``teardown`` at THIS module's lab, repos and suffix.
 
-    The two config seams are patched rather than bootstrapped: ``deploy``
-    reads the process-wide ``get_lab`` and, with no context installed, the
-    run's repos from the composition root (``otto.bootstrap.bootstrap``), and
-    bootstrapping here would import the sample repos' ``init`` modules into
+    A run on THIS module's lab is installed and the composition root is
+    patched rather than bootstrapped: ``deploy`` reads the lab off the active
+    run and the run's repos from its context, which composes them through the
+    root (``otto.bootstrap.bootstrap``), and bootstrapping here would import
+    the sample repos' ``init`` modules into
     the test process (they register process-global providers) to obtain repos
     this fixture already holds.
 
@@ -148,7 +148,7 @@ def _deployment_config(monkeypatch, lab, repos, suffix):
     """
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", suffix)
     with (
-        patch("otto.config.fleet.get_lab", return_value=lab),
+        active_context(lab),
         patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result(repos)),
         patch.object(resolve_mod, "scope_for_repo", return_value=None),
     ):

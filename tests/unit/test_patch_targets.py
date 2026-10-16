@@ -36,8 +36,9 @@ scanned module lists in its ``__all__``), so the list is never written by
 hand. Objects without a ``__module__`` (a constant, a registry instance) are
 out of its reach. A test whose consumer still reads the name through the
 re-export, and so must patch it there, is excluded, each exclusion naming the
-landing that retires it; an exclusion that matches nothing fails. There are
-none: no test patches a name ``otto.bootstrap`` re-exports.
+landing that retires it; an exclusion that matches nothing fails. There is
+one: ``session/logs.py`` reads ``get_repos`` through ``otto.bootstrap``, so its
+test patches it there until that module reads it from ``otto.declared``.
 """
 
 import ast
@@ -166,9 +167,7 @@ class TestTheScannerSeesEveryForm:
             'mock.patch("otto.lab.get_lab")',
             'mocker.patch("otto.lab.get_lab")',
         ):
-            assert self.scan(call) == [
-                "t.py:1 otto.lab.get_lab -> patch otto.config.fleet.get_lab"
-            ], call
+            assert self.scan(call) == ["t.py:1 otto.lab.get_lab -> patch otto.fleet.get_lab"], call
 
     def test_a_hop_through_another_lazy_package_names_the_true_home(self):
         assert self.scan('patch("otto.app")') == ["t.py:1 otto.app -> patch otto.cli.main.app"]
@@ -195,7 +194,7 @@ class TestTheScannerSeesEveryForm:
                 "t.py:2 otto.config.load_user_settings"
                 " -> patch otto.config.user_settings.load_user_settings"
             ),
-            "t.py:3 otto.lab.get_lab -> patch otto.config.fleet.get_lab",
+            "t.py:3 otto.lab.get_lab -> patch otto.fleet.get_lab",
         ]
 
     def test_a_plain_package_import_binds_the_root_for_dotted_spellings(self):
@@ -213,7 +212,7 @@ class TestTheScannerSeesEveryForm:
     def test_the_defining_module_and_unrelated_targets_pass(self):
         source = (
             "import otto.config as config\n"
-            'monkeypatch.setattr("otto.bootstrap.get_repos", f)\n'
+            'monkeypatch.setattr("otto.declared.get_repos", f)\n'
             'monkeypatch.setattr("otto.config.load_otto_env", f)\n'
             'monkeypatch.setattr(config, "load_otto_env", f)\n'
             'patch("otto.logger.management._ConsoleHandler")\n'
@@ -236,8 +235,10 @@ class Exclusion(NamedTuple):
     expires: str
 
 
-EAGER_REEXPORT_EXCLUSIONS: list[Exclusion] = []
-"""Empty: no test patches a name ``otto.bootstrap`` re-exports."""
+EAGER_REEXPORT_EXCLUSIONS: list[Exclusion] = [
+    Exclusion("tests/unit/session/test_logs.py", "get_repos", "P9b"),
+]
+"""The one consumer still reading a re-export: ``session/logs.py``'s ``get_repos``."""
 
 
 class Offence(NamedTuple):
@@ -356,10 +357,12 @@ def test_no_test_patches_an_eager_reexport():
 
 
 def test_the_bootstrap_error_types_are_re_exported_from_their_owner():
-    """Anti-vacuity: the identity scan finds the four error types otto.config.scope owns."""
+    """Anti-vacuity: the scan finds the four error types and the composed state's four names."""
     found = eager_reexports("otto.bootstrap")
     for name in ["BootstrapError", "BootstrapWarning", "DependencyError", "ProjectScopeError"]:
         assert found.get(name) == f"otto.config.scope.{name}", (name, found.get(name))
+    for name in ["BootstrapResult", "get_repos", "get_ordered_repos", "is_bootstrapped"]:
+        assert found.get(name) == f"otto.declared.{name}", (name, found.get(name))
     assert "bootstrap" not in found, "otto.bootstrap's own function counted as a re-export"
     assert "registering_repo" not in found, "a helper otto.bootstrap uses counted as a re-export"
 
@@ -368,6 +371,7 @@ _FIXED_REEXPORTS = {
     "otto.bootstrap": {
         "BootstrapError": "otto.config.scope.BootstrapError",
         "ProjectScopeError": "otto.config.scope.ProjectScopeError",
+        "get_repos": "otto.declared.get_repos",
     }
 }
 """The self-tests' re-export table: fixed, so they do not depend on the tree's."""
@@ -404,12 +408,24 @@ class TestTheEagerScanSeesEveryForm:
                 )
             ], imported
 
+    def test_a_moved_accessor_patched_at_the_root(self):
+        source = (
+            "from otto import bootstrap as bs\n"
+            'monkeypatch.setattr("otto.bootstrap.get_repos", f)\n'
+            'monkeypatch.setattr(bs, "get_repos", f)\n'
+        )
+        assert self.scan(source) == [
+            "t.py:2 otto.bootstrap.get_repos -> patch otto.declared.get_repos",
+            "t.py:3 otto.bootstrap.get_repos -> patch otto.declared.get_repos",
+        ]
+
     def test_the_owner_and_the_root_s_own_names_pass(self):
         source = (
             "from otto import bootstrap as bs\n"
             'monkeypatch.setattr("otto.config.scope.BootstrapError", f)\n'
+            'monkeypatch.setattr("otto.declared.get_repos", f)\n'
             'monkeypatch.setattr("otto.bootstrap.bootstrap", f)\n'
-            'monkeypatch.setattr(bs, "get_repos", f)\n'
+            'monkeypatch.setattr(bs, "bootstrap", f)\n'
             'monkeypatch.setattr(thing, "BootstrapError", f)\n'
         )
         assert self.scan(source) == []

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 def _select_docker_repos(repo: "str | None") -> "list[Repo]":
     """Every loaded repo with a ``[docker]`` section, narrowed to *repo* when given."""
-    from ..config.fleet import current_repos
+    from ..declared import current_repos
 
     docker_repos = [
         r
@@ -115,7 +115,7 @@ def _check_images(repos: "Sequence[Repo]", images: "Sequence[str] | None") -> No
 
 def _dependency_order(repos: "Sequence[Repo]") -> "list[Repo]":
     """*repos* in bootstrap dependency order; a repo the order omits sorts last."""
-    from ..config.fleet import current_ordered_repos
+    from ..declared import current_ordered_repos
 
     order = {r.name: i for i, r in enumerate(current_ordered_repos())}
     return sorted(repos, key=lambda r: order.get(r.name, len(order)))
@@ -249,9 +249,9 @@ async def build_on(
         ~otto.result.CommandNotRunError: this is a dry run; the message carries
             the whole plan.
     """
-    from ..config.fleet import get_lab
+    from ..invocation import require_run
 
-    lab = get_lab()
+    lab = require_run().lab
     parent_host = docker_parent(lab, parent)
     repos = _dependency_order(_select_docker_repos(repo))
     _check_images(repos, images)

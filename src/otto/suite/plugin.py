@@ -1225,8 +1225,8 @@ class OttoPlugin:
             yield
             return
 
-        from ..config.fleet import get_lab
         from ..config.scope import EmptySelectionError
+        from ..fleet import get_lab
         from ..monitor.errors import NoMonitorableHostsError
         from ..monitor.live import select_monitor_hosts
         from ..monitor.session import MonitorSession

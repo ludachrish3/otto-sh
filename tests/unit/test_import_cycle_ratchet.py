@@ -20,9 +20,10 @@ Four ways to fail:
 The last two are the anti-vacuity half: delete the entry in the same commit as
 the fix, so the fix is recorded and the edge cannot come back unnoticed.
 
-Cutting an edge is the work #590 tracks. To see where the cycle is and which
-pairs import each other, read ``docs/architecture/modules.md``. When the
-cycle is gone, ``BASELINE`` is empty and the flag can be turned on.
+Cutting the edges was the work #590 tracked, and the cycle is gone:
+``BASELINE`` is empty, so a module that joins any cycle fails the first
+check. ``docs/architecture/modules.md`` draws the graph. The flag is turned on
+once every file is in a module (spec 2026-10-11 placement-and-phases §5.2).
 """
 
 import pytest
@@ -38,7 +39,8 @@ pytestmark = pytest.mark.interpreter_agnostic
 # All seven of those edges have since retired. otto.lifecycle's went when the deadline readers
 # moved to the run policy; otto.coverage's, otto.docker's, otto.host's, otto.monitor.live's,
 # otto.project's and otto.suite's went when their readers took the run's repos from the context
-# (ctx.repos) or, with no context object in hand, from otto.config.fleet.current_repos().
+# (ctx.repos) or, with no context object in hand, from the fleet's current_repos(), now
+# otto.declared.current_repos().
 # otto.lifecycle has since left the cycle: the host layer and the lifecycle stopped importing
 # the context once each event loop's host registry moved to otto.invocation.
 # otto.cli, otto.coverage, otto.init, otto.monitor, otto.monitor.live and otto.suite left it
@@ -76,23 +78,12 @@ pytestmark = pytest.mark.interpreter_agnostic
 # otto.reservations left it when the reservation gate read its lab and hosts in play off the
 # active run, a slot otto.invocation holds, instead of otto.config's fleet: the package
 # imports nothing of otto.config (spec 2026-10-11 placement-and-phases §3.8).
-BASELINE: dict[str, list[str]] = {
-    "otto.bootstrap": ["otto.config"],
-    "otto.config": [
-        "otto.bootstrap",
-        "otto.context",
-    ],
-    "otto.context": [
-        "otto.bootstrap",
-        "otto.config",
-        "otto.session",
-    ],
-    "otto.docker": ["otto.config"],
-    "otto.session": [
-        "otto.bootstrap",
-        "otto.docker",
-    ],
-}
+# otto.bootstrap, otto.config, otto.context, otto.docker and otto.session, the last five, left
+# it when the composed state moved into otto.declared, otto.docker read its lab off the active
+# run, and the fleet left otto.config for a module of its own, otto.fleet: otto.config imports
+# neither the root nor the context (spec 2026-10-11 placement-and-phases §3.9). The cycle is
+# gone. BASELINE stays, empty, so that any cycle a later change closes fails here.
+BASELINE: dict[str, list[str]] = {}
 
 _HOW_TO_FIX = (
     "Cut the import that closes the loop: move the code to the module that owns "

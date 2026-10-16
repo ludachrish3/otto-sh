@@ -118,7 +118,7 @@ def _hosts_in_play(run: "ActiveRun") -> set[str]:
     (``admissible_ids(require_nonempty=False)``), less the built-in ``local``
     host. Every reservation reader reaches this one set: the gate here, and
     ``otto reservation check`` and the completer's gate through
-    :func:`otto.config.fleet.get_hosts_in_play`.
+    :func:`otto.fleet.get_hosts_in_play`.
 
     An empty declared fleet reads as ZERO hosts in play — the requirement is
     the lab-level set alone — and never as an abort; a run that goes on to walk

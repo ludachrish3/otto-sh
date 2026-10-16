@@ -27,9 +27,9 @@ import re
 import pytest
 
 from otto.bootstrap import ProjectScopeError
-from otto.config.fleet import fleet_of_interest
 from otto.config.scope import EmptySelectionError, scopes_of
 from otto.context import LIBRARY_LAB_NAME, OttoContext, set_context
+from otto.fleet import fleet_of_interest
 from otto.models.dependencies import normalize_name
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.fleet import _lab, _repo, add_builtin_local, install_scoped_context

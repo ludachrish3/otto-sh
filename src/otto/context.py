@@ -23,9 +23,9 @@ if TYPE_CHECKING:
 
     from _typeshed import DataclassInstance
 
-    from .bootstrap import BootstrapResult
     from .config.repo import Repo
     from .config.scope import ProjectScope
+    from .declared import BootstrapResult
     from .host.options import (
         FtpOptions,
         NcOptions,
@@ -308,7 +308,7 @@ def _flags_hiding_every_match(
 
     Which flag holds a host out is
     ``otto.host.builtin_hosts._flag_holding_out``'s answer: the same rule the
-    walk's yield loop and :func:`otto.config.fleet.fleet_of_interest` apply,
+    walk's yield loop and :func:`otto.fleet.fleet_of_interest` apply,
     so this prediction and the loop cannot disagree about a host.
 
     Args:
@@ -852,7 +852,7 @@ class OttoContext:
         ``require_nonempty=False`` is the RESERVATION readers' spelling —
         :meth:`otto.reservations.check.ReservationGate.evaluate` (through
         the active-run slot), ``otto reservation check`` and the completer's
-        gate (through :func:`otto.config.fleet.get_hosts_in_play`). They ask
+        gate (through :func:`otto.fleet.get_hosts_in_play`). They ask
         which hosts are IN PLAY (spec §5) and nothing more: an empty declared
         fleet means nothing is in play, which is a legal answer — the
         requirement narrows to the lab-level set — not a condition to abort

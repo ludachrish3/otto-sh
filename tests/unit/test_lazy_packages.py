@@ -457,7 +457,7 @@ IMPORT_ORDERS = [
     "import otto.suite.run; from otto.suite import OttoFixturesPlugin",
     "import otto.lab",
     "from otto.lab import EmptySelectionError; import otto.config",
-    "import otto.config.fleet; from otto.lab import get_lab",
+    "import otto.fleet; from otto.lab import get_lab",
     "from otto.lab import Lab; from otto import load_lab",
     # The built-in command table imports the registry only when it runs: a
     # process whose first import is the table still gets every built-in.

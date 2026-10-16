@@ -6,8 +6,6 @@ facts, the adapter call, staging, the merged command, registration, rollback
 — is the real code path.
 """
 
-from __future__ import annotations
-
 import logging
 from contextlib import contextmanager
 from pathlib import Path
@@ -33,6 +31,7 @@ from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.fake_repo import fake_repo
+from tests.conftest import active_context
 
 from .test_resolve_select import _frag  # reuse the fragment table builder
 
@@ -150,10 +149,14 @@ def _staged_env_text(host: UnixHost) -> str:
 
 @contextmanager
 def _install(lab, repos, ordered=None):
-    """Patch deploy.py's two config seams (the lab, the composition root) for the block."""
+    """Install a run on *lab* and patch the composition root for the block.
+
+    The deployment reads its lab off the active run and the run's repos from
+    the context, which composes them through the patched root.
+    """
     result = fake_bootstrap_result(repos, ordered=ordered or None)
     with (
-        patch("otto.config.fleet.get_lab", return_value=lab),
+        active_context(lab),
         patch("otto.bootstrap.bootstrap", return_value=result),
     ):
         yield

@@ -8,8 +8,8 @@ Run from the repo root::
 ``tach.toml`` is the single home for otto's module dependency contracts:
 ``tach check`` (``make lint-arch``) refuses an import between two modules that
 the file does not declare. This page draws the declared graph. Drawn whole it
-is unreadable, because most of the modules sit in one cycle, so the page draws
-it three ways: the cycles condensed to one node each, the pairs inside a cycle
+is unreadable, so the page draws it three ways: the cycles condensed to one
+node each (a module in no cycle is its own node), the pairs inside a cycle
 that import each other, and a table of every module's edges.
 ``docs/conf.py`` runs this at ``builder-inited`` for every builder; the page is
 git-ignored, so the only copy in the tree is ``tach.toml`` itself.
@@ -332,7 +332,8 @@ def _cycle_section(graph: ModuleGraph, found: "list[list[str]]") -> "list[str]":
     if not found:
         return [
             "No module is in a cycle: the condensed graph above is the whole graph,",
-            "and `forbid_circular_dependencies = true` can be turned on in `tach.toml`.",
+            "and `forbid_circular_dependencies = true` waits only on every file being",
+            "in a tach module.",
             "",
         ]
     lines = []

@@ -559,7 +559,7 @@ House tools exist and are used elsewhere (`host/connections.py:teardown_step`;
 - **Hardcoded 0.1s settle split across seams** (`host/session.py:654,:943` vs
   `settle=0.0` at `:686`): the tuning knob (`confirm_live(settle=…)`) and the value live
   in different files; the only unnamed timing literals in the module.
-- **`do_for_all_hosts` collect mode** (`context.py:302-308`, `config/fleet.py:191`)
+- **`do_for_all_hosts` collect mode** (`context.py:302-308`, `fleet.py:191`)
   returns `dict[str, T | BaseException]` — the largest remaining hole in the "every verb
   returns a Result" invariant; `Results.collect` already models it. Intentional today.
 

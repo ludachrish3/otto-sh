@@ -1072,7 +1072,7 @@ def test_no_panel_when_otto_registered_nothing(monkeypatch):
 def test_list_instructions_shows_the_defaults_with_no_repos_configured(registered):
     from unittest.mock import patch
 
-    with patch("otto.bootstrap.get_repos", return_value=[]):
+    with patch("otto.declared.get_repos", return_value=[]):
         result = runner.invoke(run_app, ["--list-instructions"])
 
     assert result.exit_code == 0, result.output
@@ -1109,7 +1109,7 @@ def test_list_instructions_puts_the_defaults_ahead_of_the_repo_panels(registered
     from unittest.mock import patch
 
     repos = [_PanelRepo("first-repo 1.0"), _PanelRepo("second-repo 1.0")]
-    with patch("otto.bootstrap.get_repos", return_value=repos):
+    with patch("otto.declared.get_repos", return_value=repos):
         result = runner.invoke(run_app, ["--list-instructions"])
 
     assert result.exit_code == 0, result.output

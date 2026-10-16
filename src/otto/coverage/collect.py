@@ -110,9 +110,10 @@ async def clean_coverage(
             otherwise non-empty match down to nothing.
     """
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
-    from ..config.fleet import all_hosts, current_repos, do_for_all_hosts
     from ..config.scope import EmptySelectionError
+    from ..declared import current_repos
     from ..errors import is_containable
+    from ..fleet import all_hosts, do_for_all_hosts
     from ..result import Result
     from ..utils import Status
     from .errors import NoCoverageHostsError
@@ -120,6 +121,12 @@ async def clean_coverage(
     from .reports import CleanReport
 
     if repos is None:
+        # The composition root: importing it installs the initiator that composes
+        # the run's repos when no run is installed (spec 2026-10-11
+        # placement-and-phases §3.12).
+        from .. import bootstrap
+
+        del bootstrap
         repos = current_repos()
     cov_config = get_cov_config(repos)
     if not cov_config:
@@ -236,7 +243,7 @@ async def collect_coverage(
     Args:
         cov_dir: Destination directory for the collected coverage.
         repos: Repo list to resolve ``[coverage]`` from (defaults to the
-            run's repos, :func:`otto.config.fleet.current_repos`).
+            run's repos, :func:`otto.declared.current_repos`).
         tier: Tier name to annotate onto each capture; ``None`` resolves the
             sole e2e-kind tier. A caller that has already resolved a
             :class:`~otto.coverage.tiers.TierConfig` (e.g. ``otto cov get``,
@@ -265,7 +272,8 @@ async def collect_coverage(
         the produced capture paths.
     """
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
-    from ..config.fleet import all_hosts, current_repos
+    from ..declared import current_repos
+    from ..fleet import all_hosts
     from ..host.embedded_host import EmbeddedHost
     from ..host.local_host import LocalHost
     from .fetcher.embedded import collect_embedded_coverage
@@ -273,6 +281,12 @@ async def collect_coverage(
     from .instrumentation import instrumented_products
 
     if repos is None:
+        # The composition root: importing it installs the initiator that composes
+        # the run's repos when no run is installed (spec 2026-10-11
+        # placement-and-phases §3.12).
+        from .. import bootstrap
+
+        del bootstrap
         repos = current_repos()
 
     cov_config = get_cov_config(repos)

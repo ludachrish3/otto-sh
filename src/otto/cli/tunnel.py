@@ -104,7 +104,12 @@ def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
     kind="payload", key="hosts", lab_scoped=True, sort=True, sep=",", live_past_sep=True
 )
 def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
     from .completers import lab_scoped_host_ids
 
     try:
@@ -139,7 +144,12 @@ def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:
 
 @completion_source(kind="live")
 def _tunnel_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
 
     try:
         ids = read_tunnel_ids(get_repos()) or []
@@ -236,7 +246,7 @@ async def add(
     ),
 ) -> None:
     """Create a bidirectional tunnel along an explicit host path."""
-    from ..config.fleet import get_lab
+    from ..fleet import get_lab
 
     lab = get_lab()
     try:
@@ -304,7 +314,7 @@ async def check(
     # same reason.
     from ..check.render import render_sections
     from ..check.report import report_to_json
-    from ..config.fleet import get_lab
+    from ..fleet import get_lab
     from ..host.host import is_dry_run
     from ..tunnel.check import check_tunnel, requested_protocols, tunnel_sections
 
@@ -377,8 +387,13 @@ async def list_tunnels() -> None:
     """List the live tunnels, as observed on the hosts."""
     from rich.table import Table
 
-    from ..bootstrap import get_repos
-    from ..config.fleet import get_lab
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
+    from ..fleet import get_lab
 
     lab = get_lab()
     discovery = await discover_tunnels(lab)
@@ -450,8 +465,13 @@ async def remove(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the --all confirmation."),
 ) -> None:
     """Remove a tunnel by id (all hops, both directions), or all tunnels."""
-    from ..bootstrap import get_repos
-    from ..config.fleet import get_lab
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
+    from ..fleet import get_lab
 
     # These two usage-error exits are deliberately kept OUT of the try/except
     # below: typer's vendored click fork makes ``typer.Exit`` a ``RuntimeError``

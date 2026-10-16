@@ -60,7 +60,7 @@ _INNER_HOST = (
     "from otto.host.login_proxy import Cred\n"
     "from otto.host.unix_host import UnixHost\n"
     "def _host(monkeypatch):\n"
-    "    monkeypatch.setattr('otto.config.fleet.get_lab', lambda: SimpleNamespace(links=[]))\n"
+    "    monkeypatch.setattr('otto.fleet.get_lab', lambda: SimpleNamespace(links=[]))\n"
     "    h = UnixHost(ip='10.0.0.1', element=Element('box'),\n"
     "                 creds=[Cred(login='a', password='b')])\n"
     "    h.run = AsyncMock(return_value=None)\n"
@@ -71,7 +71,7 @@ _INNER_HOST = (
 @pytest.fixture(autouse=True)
 def _stub_lab(monkeypatch):
     """Handles built with ``plugin=None`` read the lab's declared links at start."""
-    monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
+    monkeypatch.setattr("otto.fleet.get_lab", lambda: SimpleNamespace(links=[]))
 
 
 @pytest.mark.parametrize("loop_scope", ["function", "class", "module", "session"])
@@ -401,7 +401,7 @@ class TestStartArchive:
 
         out_path = tmp_path / "monitor.db"
         declared = Link(a=LinkEndpoint(host="r1"), b=LinkEndpoint(host="r2"), name="uplink")
-        monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[declared]))
+        monkeypatch.setattr("otto.fleet.get_lab", lambda: SimpleNamespace(links=[declared]))
         handle = MonitorHandle(plugin=None)
 
         with patch.object(MetricCollector, "run", _fake_collector_run):
@@ -467,7 +467,7 @@ class TestDataSurvivesStop:
 
 @pytest.mark.asyncio
 async def test_start_serves_nothing_and_returns_none(monkeypatch):
-    monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
+    monkeypatch.setattr("otto.fleet.get_lab", lambda: SimpleNamespace(links=[]))
     with patch("otto.monitor.server.MonitorServer") as server_cls:
         handle = MonitorHandle(plugin=None)
         result = await handle.start(hosts=[_unix()], interval=1)
@@ -478,7 +478,7 @@ async def test_start_serves_nothing_and_returns_none(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_start_stamps_the_session_frame_without_a_db(monkeypatch):
-    monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
+    monkeypatch.setattr("otto.fleet.get_lab", lambda: SimpleNamespace(links=[]))
     handle = MonitorHandle(plugin=None)
     await handle.start(hosts=[_unix("router1")], interval=1)
     try:
@@ -492,7 +492,7 @@ async def test_start_stamps_the_session_frame_without_a_db(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_an_snmp_host_is_collected_over_snmp(monkeypatch):
-    monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
+    monkeypatch.setattr("otto.fleet.get_lab", lambda: SimpleNamespace(links=[]))
     handle = MonitorHandle(plugin=None)
     await handle.start(hosts=[_embedded_with_snmp()], interval=1)
     try:
@@ -503,7 +503,7 @@ async def test_an_snmp_host_is_collected_over_snmp(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_host_that_cannot_be_sampled_is_refused_at_start(monkeypatch):
-    monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
+    monkeypatch.setattr("otto.fleet.get_lab", lambda: SimpleNamespace(links=[]))
     handle = MonitorHandle(plugin=None)
     with pytest.raises(MonitorInputError, match="cannot monitor z"):
         await handle.start(hosts=[_embedded_without_snmp("z")])
@@ -512,7 +512,7 @@ async def test_a_host_that_cannot_be_sampled_is_refused_at_start(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_second_start_without_stop_is_refused(monkeypatch):
-    monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
+    monkeypatch.setattr("otto.fleet.get_lab", lambda: SimpleNamespace(links=[]))
     handle = MonitorHandle(plugin=None)
     await handle.start(hosts=[_unix()], interval=1)
     try:
@@ -524,7 +524,7 @@ async def test_a_second_start_without_stop_is_refused(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stop_closes_only_the_archive_never_the_tests_hosts(monkeypatch):
-    monkeypatch.setattr("otto.config.fleet.get_lab", lambda: SimpleNamespace(links=[]))
+    monkeypatch.setattr("otto.fleet.get_lab", lambda: SimpleNamespace(links=[]))
     host = _unix()
     host.close = AsyncMock()  # type: ignore[method-assign]
     handle = MonitorHandle(plugin=None)

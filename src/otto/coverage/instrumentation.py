@@ -132,9 +132,16 @@ def detect_for_lab(repos: "list[Repo] | None" = None) -> InstrumentationReport:
     a container (spec §13).
     """
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
-    from ..config.fleet import all_hosts, current_repos
+    from ..declared import current_repos
+    from ..fleet import all_hosts
 
     if repos is None:
+        # The composition root: importing it installs the initiator that composes
+        # the run's repos when no run is installed (spec 2026-10-11
+        # placement-and-phases §3.12).
+        from .. import bootstrap
+
+        del bootstrap
         repos = current_repos()
     cov_config = get_cov_config(repos)
     pattern = load_hosts_pattern(cov_config)

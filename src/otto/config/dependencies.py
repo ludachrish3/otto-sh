@@ -9,8 +9,8 @@ import bisect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from ..bootstrap import BootstrapWarning, DependencyError
 from ..models.dependencies import DependencyClause, clauses_satisfiable, normalize_name
+from .scope import BootstrapWarning, DependencyError
 
 if TYPE_CHECKING:
     from ..models.dependencies import ParsedDependency

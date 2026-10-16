@@ -76,7 +76,7 @@ the end of P0.
 
 Spec `docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md` §2, §9 and §10.
 
-- [x] ✅ **Before P1:** commit 2 (6c817717), `feat(config)`: `fleet_of_interest` in `otto.config.fleet`, the
+- [x] ✅ **Before P1:** commit 2 (6c817717), `feat(config)`: `fleet_of_interest` in `otto.fleet`, the
   shared membership-flag helper (`OttoContext.all_hosts` refactored onto it), and the differential
   test (spec 4 §3, §8).
 - [x] ✅ (14caec5b) Fold `get_repos`, `get_ordered_repos` and `get_env` into `src/otto/bootstrap.py` (it already

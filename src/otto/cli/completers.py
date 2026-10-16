@@ -81,8 +81,13 @@ def lab_scoped_host_ids(ctx: typer.Context) -> list[str]:
     Falls through to a live ``lab.json`` scan on cache miss so first-run
     completion still works.
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.completion_cache import collect_host_ids
+    from ..declared import get_repos
     from ..registry import get_completion_names
 
     labs = selected_lab_names(ctx)
@@ -183,8 +188,13 @@ def host_user_completer(flavour: str) -> Callable[[typer.Context, str], list[str
         sort=True,
     )
     def _complete(ctx: typer.Context, incomplete: str) -> list[str]:
-        from ..bootstrap import get_repos
+        # The composition root: importing it installs the initiator that composes
+        # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+        from .. import bootstrap
+
+        del bootstrap
         from ..config.completion_cache import collect_logins_by_host
+        from ..declared import get_repos
         from ..registry import get_completion_names
 
         request = host_group_request(ctx)

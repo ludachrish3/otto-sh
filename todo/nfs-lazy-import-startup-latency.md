@@ -17,8 +17,8 @@
 > Four of five items are done; one remains open, tracked elsewhere:
 >
 > - **A** (kill constant-drags-the-world imports) ✅ done, but not literally as written — `DEFAULT_COMMAND_TIMEOUT`
->   still lives in `otto.host.host` and `otto.config.fleet` still imports it at module top level
->   (`src/otto/config/fleet.py:14`). What actually removes the drag is **B**: `otto.config.__init__`
+>   still lives in `otto.host.host` and `otto.fleet` still imports it at module top level
+>   (`src/otto/fleet.py:14`). What actually removes the drag is **B**: `otto.config.__init__`
 >   no longer eagerly imports `.fleet`/`.lab` at all, so nothing forces `fleet.py`'s own imports to run
 >   on a cheap command. See item B below for the mechanism and the measured proof.
 > - **B** (lazy `otto.config`) ✅ done — `src/otto/config/__init__.py`'s PEP 562 `__getattr__`/`__dir__`
@@ -81,7 +81,7 @@ the CLI entry point's transitive import tree.
 150280  otto.cli.main
 143473    otto.cli.main (body)
 123422      otto.config
-119037        otto.config.fleet
+119037        otto.fleet
 116577          otto.host.host      <-- 78% of total import time
  44048            otto.host.connections
  35877            otto.host.factory
@@ -135,7 +135,7 @@ The chain, and the specific line that costs the most:
 
 - `src/otto/cli/main.py:18` — `from ..config import (...)` at module top level.
 - `src/otto/config/__init__.py` — re-exports eagerly from `.env`, `.fleet`, `.lab`, `.repo`, `.version`.
-- `src/otto/config/fleet.py:14` — **`from ..host.host import DEFAULT_COMMAND_TIMEOUT`**.
+- `src/otto/fleet.py:14` — **`from ..host.host import DEFAULT_COMMAND_TIMEOUT`**.
 
 That one import of a single float constant pulls in `otto.host.host`, which is 116 ms of the 150 ms total
 and the large majority of the 442 modules — the entire host/transport/model/pydantic/rich subtree, for a
@@ -149,7 +149,7 @@ Goal, in the order the wins arrive:
 
 1. Move `DEFAULT_COMMAND_TIMEOUT` out of `otto.host.host` into a leaf module with no otto imports
    (e.g. `otto/host/defaults.py` or an existing constants module), and have `otto.host.host` re-export it
-   for compatibility. Then `otto.config.fleet` imports the leaf. Expect this alone to cut the majority of
+   for compatibility. Then `otto.fleet` imports the leaf. Expect this alone to cut the majority of
    the 442 modules off the `--version` path.
 2. Audit every other cross-package top-level import that exists only to fetch a constant or a type used in
    an annotation. `TYPE_CHECKING` guards + string annotations cover the annotation-only cases.

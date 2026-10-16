@@ -289,9 +289,14 @@ def _load_host(chain: _ChainParams) -> "tuple[Any, Any]":
     ``--term`` override-copy) so completion sees the same host the command
     will use.
     """
-    from ..bootstrap import get_repos
-    from ..config.fleet import get_host
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..context import OttoContext, _apply_option_overrides, set_context
+    from ..declared import get_repos
+    from ..fleet import get_host
     from ..session.lab import build_lab
 
     repos = get_repos()
@@ -435,9 +440,14 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     out of the walk, and :func:`remote_path_completer`'s catch-all would leave
     the user a dead TAB with no explanation.
     """
-    from ..bootstrap import get_repos
-    from ..config.fleet import get_hosts_in_play
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..context import OttoContext, reset_context, set_context
+    from ..declared import get_repos
+    from ..fleet import get_hosts_in_play
     from ..host.builtin_hosts import is_builtin_host
     from ..reservations.check import required_resources
     from ..session.lab import build_lab
@@ -476,8 +486,13 @@ def _reservation_allows(chain: _ChainParams) -> bool:
     (fail closed to ``[]``) and store nothing: only an answer the backend
     actually gave is ever cached.
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.remote_completion_cache import cached_reservation_ok, store_reservations
+    from ..declared import get_repos
     from ..reservations.check import active_reservations
     from ..reservations.factory import build_reservation_gate
     from ..reservations.identity import resolve_username

@@ -475,7 +475,7 @@ documented default. Healthy arc, named owner forming.
 | --- | --- | --- |
 | 1.2 split `session.py` | UNTOUCHED, grew | `DeclinedSession` (`session.py:1617`, overrides 7 methods) + BusyBox line budgets added; zero extraction |
 | 1.3 delete `Repo.settings` raw dict | **PARTIAL — best movement on the menu** | readers 5 → 3; all new config (`[lab]`,`[project]`,`[env]`) reads the validated model; survivors `coverage/config.py:31,39`, `repo.py:852` |
-| 1.7 option-kwarg collapse | UNTOUCHED, worse | `userland_options` is the **8th** option table at the same 7 signatures (`config/fleet.py:46,122,226,303,365`; `context.py:516,584`) |
+| 1.7 option-kwarg collapse | UNTOUCHED, worse | `userland_options` is the **8th** option table at the same 7 signatures (`fleet.py:46,122,226,303,365`; `context.py:516,584`) |
 | 1.8 finish the cov extraction | UNTOUCHED, mirror diverged | `suite/run.py:320` still "mirroring cov._resolve_cov_settings"; the two sides changed *differently* this window with a comment explaining the difference (`run.py:346-348`) |
 | 1.9 `ACQUISITION_BACKENDS` | UNTOUCHED | — |
 | 1.10 de-façade collector | UNTOUCHED | 908 lines both ends |

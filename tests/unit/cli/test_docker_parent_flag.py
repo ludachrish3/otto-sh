@@ -6,6 +6,7 @@ import pytest
 
 from otto.cli import docker as docker_cli
 from tests._fixtures.dispatch import DispatchRunner
+from tests.conftest import active_context
 from tests.unit.docker.test_deploy import _host
 from tests.unit.docker.test_deploy import _lab as _lab_of
 
@@ -22,13 +23,13 @@ def _lab(**hosts):
 
 @pytest.fixture
 def lab_two_parents_tied():
-    with patch("otto.config.fleet.get_lab", return_value=_lab(alt2=0, test3=0)):
+    with active_context(_lab(alt2=0, test3=0)):
         yield
 
 
 @pytest.fixture
 def lab_one_parent():
-    with patch("otto.config.fleet.get_lab", return_value=_lab(test3=0)):
+    with active_context(_lab(test3=0)):
         yield
 
 

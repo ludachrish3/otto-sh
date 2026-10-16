@@ -95,8 +95,8 @@ See [The fleet of interest](../../cli/run/defaults.md#the-fleet-of-interest).
 
 For fan-out across the lab — running the same command or async
 operation on every host concurrently — use
-{func}`~otto.config.fleet.run_on_all_hosts` or
-{func}`~otto.config.fleet.do_for_all_hosts`.  These helpers
+{func}`~otto.fleet.run_on_all_hosts` or
+{func}`~otto.fleet.do_for_all_hosts`.  These helpers
 apply anywhere you have an async context (instructions, test fixtures,
 monitors, ad-hoc scripts) and are documented in full on the
 [async patterns page](../async-patterns.md).

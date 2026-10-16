@@ -209,8 +209,13 @@ def _names_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
     completer reads: test names are not in it, so ``otto ho<TAB>`` never
     validates the test tree.
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.collected_tests import completion_view
+    from ..declared import get_repos
 
     names = completion_view(get_repos()).names
     return [name for name in names if name.startswith(incomplete)]
@@ -227,8 +232,13 @@ def _markers_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noq
     (:func:`otto.utils.complete_marker_expression`) completes the identifier
     being typed and keeps the rest of the expression.
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
     from ..config.collected_tests import completion_view
+    from ..declared import get_repos
     from ..suite.markers import OTTO_MARKERS
     from ..utils import complete_marker_expression
 
@@ -278,7 +288,12 @@ def list_markers_callback(value: bool) -> None:
     """
     if not value:
         return
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
     from ..suite.markers import OTTO_MARKERS
     from ..suite.run import _refresh_tables
 
@@ -364,7 +379,12 @@ def _selected_tests(names: "list[str]", markers: str) -> "Listing":
 
 def _print_trees(listing: "Listing") -> None:
     """Print *listing* as one tree per repo, a repo with no selected test included."""
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
 
     for repo in get_repos():
         rprint(tests_tree(repo, listing.tests.get(repo.name, [])))

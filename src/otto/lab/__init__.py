@@ -6,13 +6,13 @@ implementation without changing this path:
 
 - :class:`~otto.labs.loader.Lab`, a loaded lab, and
   :func:`~otto.labs.loader.load_lab`, which builds one from lab data;
-- :func:`~otto.config.fleet.get_lab` and :func:`~otto.config.fleet.get_host`:
+- :func:`~otto.fleet.get_lab` and :func:`~otto.fleet.get_host`:
   the active context's lab, and one of its hosts by id (never scoped);
-- :func:`~otto.config.fleet.all_hosts`,
-  :func:`~otto.config.fleet.do_for_all_hosts` and
-  :func:`~otto.config.fleet.run_on_all_hosts`: walks over the run's fleet of
+- :func:`~otto.fleet.all_hosts`,
+  :func:`~otto.fleet.do_for_all_hosts` and
+  :func:`~otto.fleet.run_on_all_hosts`: walks over the run's fleet of
   interest;
-- :func:`~otto.config.fleet.fleet_of_interest`: the ids such a walk takes,
+- :func:`~otto.fleet.fleet_of_interest`: the ids such a walk takes,
   computed from a lab and its repos without connecting or bootstrapping;
 - :class:`~otto.config.scope.EmptySelectionError`: a walk's pattern matched no
   host the walk may reach.
@@ -21,7 +21,7 @@ implementation without changing this path:
 spelling for reservation checks (an empty declared fleet is zero hosts in
 play, never an abort), and a walk written against the most discoverable name
 would silently touch nothing. ``otto reservation check`` and completion's gate
-import it from ``otto.config.fleet`` by hand, which is the point; the
+import it from ``otto.fleet`` by hand, which is the point; the
 reservation gate itself reads the same set off the active run in
 ``otto.invocation``.
 
@@ -35,13 +35,13 @@ does not write a resolved name back into the module dict; see
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..config.fleet import all_hosts as all_hosts
-    from ..config.fleet import do_for_all_hosts as do_for_all_hosts
-    from ..config.fleet import fleet_of_interest as fleet_of_interest
-    from ..config.fleet import get_host as get_host
-    from ..config.fleet import get_lab as get_lab
-    from ..config.fleet import run_on_all_hosts as run_on_all_hosts
     from ..config.scope import EmptySelectionError as EmptySelectionError
+    from ..fleet import all_hosts as all_hosts
+    from ..fleet import do_for_all_hosts as do_for_all_hosts
+    from ..fleet import fleet_of_interest as fleet_of_interest
+    from ..fleet import get_host as get_host
+    from ..fleet import get_lab as get_lab
+    from ..fleet import run_on_all_hosts as run_on_all_hosts
     from ..labs.loader import Lab as Lab
     from ..labs.loader import load_lab as load_lab
 
@@ -49,12 +49,12 @@ if TYPE_CHECKING:
 _LAZY_ATTRS: dict[str, str] = {
     "Lab": "otto.labs.loader",
     "load_lab": "otto.labs.loader",
-    "get_lab": "otto.config.fleet",
-    "get_host": "otto.config.fleet",
-    "all_hosts": "otto.config.fleet",
-    "do_for_all_hosts": "otto.config.fleet",
-    "run_on_all_hosts": "otto.config.fleet",
-    "fleet_of_interest": "otto.config.fleet",
+    "get_lab": "otto.fleet",
+    "get_host": "otto.fleet",
+    "all_hosts": "otto.fleet",
+    "do_for_all_hosts": "otto.fleet",
+    "run_on_all_hosts": "otto.fleet",
+    "fleet_of_interest": "otto.fleet",
     "EmptySelectionError": "otto.config.scope",
 }
 

@@ -210,7 +210,12 @@ def list_instructions_callback(value: bool) -> None:
         return
     from rich.table import Table
 
-    from ..bootstrap import get_repos  # lazy import — avoids circular dependency
+    # The composition root: importing it installs the initiator that composes
+    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
 
     panels = [repo.get_instructions_panel() for repo in get_repos()]
     # Ahead of the repos: these are the verbs every lab has, and the ones a

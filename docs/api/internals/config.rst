@@ -1,9 +1,6 @@
 config internals
 ================
 
-.. automodule:: otto.config.fleet
-   :ignore-module-all:
-
 .. automodule:: otto.config.env
    :ignore-module-all:
 

@@ -40,7 +40,7 @@ def test_falls_back_to_discovery_when_the_cache_is_cold(monkeypatch):
     monkeypatch.setattr("otto.registry.get_completion_names", lambda: None)
     monkeypatch.setattr(bs, "discover", lambda: SimpleNamespace(repos=["discovered"]))
     monkeypatch.setattr(
-        "otto.bootstrap.get_repos",
+        "otto.declared.get_repos",
         lambda: pytest.fail("get_repos() must not run during completion"),
     )
     monkeypatch.setattr(

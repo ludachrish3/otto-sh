@@ -22,6 +22,7 @@ of these pages.
    env
    errors
    examples
+   fleet
    host/index
    init/index
    instruction_catalog

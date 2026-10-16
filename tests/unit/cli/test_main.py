@@ -111,7 +111,7 @@ def main_mocks(tmp_path):
     with (
         patch.dict(os.environ, clean_env, clear=True),
         patch("otto.logger.management.init_cli_logging") as p_logger,
-        patch("otto.bootstrap.get_repos", return_value=[]),
+        patch("otto.declared.get_repos", return_value=[]),
         patch("otto.labs.loader.load_lab", return_value=mock_lab) as p_getlab,
     ):
         yield {
@@ -209,7 +209,7 @@ class TestEagerOptions:
         from rich.panel import Panel
 
         repo = fake_repo(get_lab_panel=lambda: Panel("sentinel-lab-from-patch"))
-        with patch("otto.bootstrap.get_repos", return_value=[repo]):
+        with patch("otto.declared.get_repos", return_value=[repo]):
             result = runner.invoke(app, ["--list-labs"])
         assert result.exit_code == 0, result.output
         assert "sentinel-lab-from-patch" in result.output

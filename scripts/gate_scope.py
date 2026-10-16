@@ -180,6 +180,13 @@ UNIT_TREES = {
     "suite": ["tests/unit/suite", "tests/e2e/suite"],
     "init": ["tests/unit/init", "tests/e2e/test_init_e2e.py"],
     "config": ["tests/unit/config", "tests/e2e/config"],
+    # the fleet's module; its direct tests stayed in the config tree they were written in
+    "fleet": [
+        "tests/unit/config/test_fleet.py",
+        "tests/unit/config/test_fleet_of_interest.py",
+        "tests/unit/config/test_fleet_scoping.py",
+        "tests/unit/test_lab_facade.py",
+    ],
     "inventory": ["tests/unit/inventory", "tests/e2e/config"],
     "labs": ["tests/unit/labs", "tests/e2e/config"],
     "lab": [

@@ -956,7 +956,7 @@ A repo that registers no providers and declares no `[[products]]` or
   or lab-inactive repo's error only demotes it, and its declaration still
   narrows the fleet.  See {doc}`../cli/run/defaults` for the walk semantics.
 - **It can be computed without a run.**
-  {func}`otto.lab.fleet_of_interest <otto.config.fleet.fleet_of_interest>` returns the
+  {func}`otto.lab.fleet_of_interest <otto.fleet.fleet_of_interest>` returns the
   ids a walk would take, from a loaded lab and its repos, without connecting or
   bootstrapping; {doc}`../getting-started/boards-of-interest` runs it.
 - **Providers are gated by it.**  A repo's product and dev-tool providers are

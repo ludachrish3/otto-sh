@@ -185,17 +185,19 @@ async def run_on(parents: "list[UnixHost]", command: str, *, asked: str) -> Obse
 
 async def list_containers(parent: "str | None" = None, *, all: bool = False) -> ObserveReport:  # noqa: A002 -- docker's flag name
     """``docker ps [-a]`` on every docker-capable host, or the one *parent* names."""
-    from ..config.fleet import get_lab
+    from ..invocation import require_run
 
     command = "docker ps -a" if all else "docker ps"
-    return await run_on(docker_parents(get_lab(), parent), command, asked="list_containers")
+    return await run_on(docker_parents(require_run().lab, parent), command, asked="list_containers")
 
 
 async def list_images(parent: "str | None" = None) -> ObserveReport:
     """``docker images`` on every docker-capable host, or the one *parent* names."""
-    from ..config.fleet import get_lab
+    from ..invocation import require_run
 
-    return await run_on(docker_parents(get_lab(), parent), "docker images", asked="list_images")
+    return await run_on(
+        docker_parents(require_run().lab, parent), "docker images", asked="list_images"
+    )
 
 
 IMAGES_PROBE = r"docker images --format '{{.Repository}}:{{.Tag}}\t{{.ID}}'"
@@ -265,9 +267,9 @@ async def _probe(host_id: str, command: str) -> "str | None":
 
     Transport and refusal errors propagate; the caller decides whether to swallow them.
     """
-    from ..config.fleet import get_lab
+    from ..invocation import require_run
 
-    parent = docker_parent(get_lab(), host_id)
+    parent = docker_parent(require_run().lab, host_id)
     result = await parent.exec(command, log=LogMode.QUIET)
     return result.value if result.status.is_ok and isinstance(result.value, str) else None
 
@@ -334,11 +336,11 @@ def _compose_sites(
     acting host runs: a host cannot be asked for a service it does not run.
     """
     # Function-local: the listing verbs must not import the deployment stack.
-    from ..config.fleet import get_lab
+    from ..invocation import require_run
     from . import deployment
 
     if fleet and parent is None:
-        asked: "list[str | None]" = [host.id for host in docker_parents(get_lab(), None)]
+        asked: "list[str | None]" = [host.id for host in docker_parents(require_run().lab, None)]
     else:
         asked = [parent]
     sites: "list[_ComposeSite]" = []
@@ -443,9 +445,9 @@ async def resolve_logs(
     names the host, ``None`` the default parent. With *follow*, a parent not
     reached by SSH is refused.
     """
-    from ..config.fleet import get_lab
+    from ..invocation import require_run
 
-    parent_host = docker_parent(get_lab(), parent)
+    parent_host = docker_parent(require_run().lab, parent)
     if follow:
         _require_ssh_parent(parent_host)
     flags = logs_flags(tail=tail, since=since, timestamps=timestamps)

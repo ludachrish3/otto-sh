@@ -135,8 +135,9 @@ builds it. Its choices:
   discovery that produced it. The four repo accessors —
   {func}`~otto.bootstrap.get_repos`, {func}`~otto.bootstrap.get_ordered_repos`,
   {func}`~otto.bootstrap.get_env` and {func}`~otto.bootstrap.is_bootstrapped` —
-  live in the same module, so the code that composes the repos is the one
-  place that answers for them. {func}`~otto.bootstrap.get_repos` and
+  are imported from here, their public path; `get_env` is the root's own,
+  and the other three are defined in {mod}`otto.declared`, beside the
+  composed state they read, and re-exported here. {func}`~otto.bootstrap.get_repos` and
   {func}`~otto.bootstrap.get_ordered_repos` bootstrap on first use and
   {func}`~otto.bootstrap.get_env` runs discovery only;
   {func}`~otto.bootstrap.is_bootstrapped` never forces either; none runs at
@@ -150,17 +151,23 @@ builds it. Its choices:
   defined in {mod}`otto.config.scope`, below every layer that raises or
   catches them
 - {mod}`otto.declared` — the declared products and dev tools core; it also
-  holds the composed-repos catalog, which the layers below the root read
-  instead of importing it. {func}`~otto.bootstrap.bootstrap` publishes the
+  holds the composed state, which the layers below the root read instead of
+  importing it: the published results, the initiator, and the readers over
+  them, {func}`~otto.declared.compose` (the one read that starts a
+  composition) and {func}`~otto.declared.current_repos`, the run's repos where
+  no context is in hand. {func}`~otto.bootstrap.bootstrap` publishes the
   in-progress result before the repos' init modules run, then the complete
   one; a failed composition and {func}`~otto.bootstrap.invalidate` withdraw
   both. Importing {mod}`otto.bootstrap` installs the catalog's initiator, and
   installing runs nothing. {func}`~otto.declared.declared_for_host` reads only
   what was published and never composes. {func}`~otto.declared.scope_for_repo`
-  reads the complete result, else asks the initiator to compose; in a process
+  reads the complete result, else the in-progress one, else asks the
+  initiator to compose; in a process
   that never imported the root there is no initiator, and it admits (answers
   `None`), as it does when composition fails. The CLI and every public entry
   point that can compose import the root first, so they behave as before
+  ({func}`~otto.suite.prepare_run` and the coverage entry points load it on
+  the call that reads the run's repos)
 - `otto.init` — the `otto init` doctor and scaffolder over the areas
   (settings, schemas, lab, tests, instructions, kmodcov): detect / validate /
   scaffold, reusing bootstrap's own ingestion code; `otto.cli.init` only

@@ -154,7 +154,7 @@ class GcdaFetcher:
             host2/
                 app/foo.gcda
 
-    Hosts come from :func:`~otto.config.fleet.all_hosts` (containers included),
+    Hosts come from :func:`~otto.fleet.all_hosts` (containers included),
     optionally narrowed by *pattern* against each host's ``id``.
     """
 
@@ -171,7 +171,7 @@ class GcdaFetcher:
 
         Hosts and products with no counters, and failed transfers, are omitted.
         """
-        from ...config.fleet import do_for_all_hosts
+        from ...fleet import do_for_all_hosts
 
         self.staging_root.mkdir(parents=True, exist_ok=True)
 

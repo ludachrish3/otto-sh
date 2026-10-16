@@ -83,9 +83,9 @@ A common real-world pattern is running the same command on every host in the
 lab concurrently.  Otto ships two helpers for this so you don't have to
 hand-roll `asyncio.gather` every time:
 
-- {func}`~otto.config.fleet.run_on_all_hosts` — the simplest
+- {func}`~otto.fleet.run_on_all_hosts` — the simplest
   case: run one or more shell commands on every matching host.
-- {func}`~otto.config.fleet.do_for_all_hosts` — the general
+- {func}`~otto.fleet.do_for_all_hosts` — the general
   form: call any async `UnixHost` method (including user-defined
   coroutines that take a host as their first argument).
 

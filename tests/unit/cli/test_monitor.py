@@ -43,7 +43,7 @@ def preamble(monkeypatch):
     monkeypatch.setattr(
         "otto.cli.invoke.ensure_cli_session", lambda *a, **k: calls.append("cli_session")
     )
-    monkeypatch.setattr("otto.bootstrap.get_repos", list)
+    monkeypatch.setattr("otto.declared.get_repos", list)
     return calls
 
 

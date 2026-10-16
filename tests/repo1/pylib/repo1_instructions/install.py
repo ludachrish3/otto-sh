@@ -6,8 +6,8 @@ import typer
 from repo1_common.options import RepoOptions
 
 from otto import options
-from otto.config.fleet import do_for_all_hosts, run_on_all_hosts
 from otto.context import get_context
+from otto.fleet import do_for_all_hosts, run_on_all_hosts
 from otto.host import LocalHost
 from otto.host.unix_host import UnixHost
 from otto.instructions import instruction

@@ -124,7 +124,7 @@ def test_the_observed_completers_never_bootstrap_inside_a_tab(observed, monkeypa
     # without a parent on the line.
     monkeypatch.setattr(docker_cli, "_selected_labs_for_tab", lambda ctx: ["east"])
     with patch(
-        "otto.bootstrap.get_repos",
+        "otto.declared.get_repos",
         side_effect=AssertionError("bootstrap inside a TAB"),
     ) as get_repos:
         assert docker_cli._container_completer(_ctx(parent="test3"), "") == ["unix-i-api-1", "3f9a"]
@@ -137,7 +137,7 @@ def test_the_observed_completers_never_bootstrap_inside_a_tab(observed, monkeypa
 def test_container_completer_reads_the_one_parents_state_alone(observed, monkeypatch):
     monkeypatch.setattr(docker_cli, "_selected_labs_for_tab", lambda ctx: ["east"])
     # A TAB reads the cache and discovery alone: it never loads a lab.
-    with patch("otto.config.fleet.get_lab", side_effect=AssertionError("lab load in a TAB")) as lab:
+    with patch("otto.fleet.get_lab", side_effect=AssertionError("lab load in a TAB")) as lab:
         assert docker_cli._container_completer(_ctx(parent="alt2"), "") == ["unix-i-db-1", "77ee"]
         assert docker_cli._container_completer(_ctx(parent=None), "") == ["unix-i-api-1", "3f9a"]
     lab.assert_not_called()
@@ -147,7 +147,7 @@ def test_a_cold_cache_falls_back_to_the_collectors_for_declared_names():
     with (
         patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.config.completion_cache.collect_docker_image_names", return_value=["cold"]),
-        patch("otto.bootstrap.get_repos", return_value=["repo"]),
+        patch("otto.declared.get_repos", return_value=["repo"]),
     ):
         assert docker_cli._image_completer(_ctx(), "") == ["cold"]
 
@@ -156,7 +156,7 @@ def test_the_completers_never_raise():
     boom = RuntimeError("boom")
     with (
         patch("otto.registry.get_completion_names", side_effect=boom),
-        patch("otto.bootstrap.get_repos", side_effect=boom),
+        patch("otto.declared.get_repos", side_effect=boom),
         patch("otto.bootstrap.discover", side_effect=boom),
         patch("otto.config.completion_cache.read_docker_observed", side_effect=boom),
     ):

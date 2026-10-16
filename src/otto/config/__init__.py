@@ -2,7 +2,8 @@
 
 ``otto.config`` parses and ``otto.bootstrap`` composes (spec 2026-10-06
 repo-and-scope-inputs, S-3): the lab and fleet API is :mod:`otto.lab`, and the
-repo accessors are in :mod:`otto.bootstrap`.
+repo accessors are read at :mod:`otto.bootstrap`, their public path, and defined in
+:mod:`otto.declared`.
 """
 
 from typing import TYPE_CHECKING
@@ -42,7 +43,7 @@ __all__ = [
 ]
 
 # name -> (source module, attribute) resolved on first access by __getattr__.
-# Kept lazy (PEP 562) because .dependencies imports ..bootstrap and
+# Kept lazy (PEP 562) because .dependencies imports .scope and
 # ..models.dependencies at module level, which would otherwise widen every
 # surface's import graph just to expose one dataclass type. The user-settings
 # pair is here for the same reason and was MEASURED: exporting it eagerly put

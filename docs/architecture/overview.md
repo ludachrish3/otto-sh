@@ -72,11 +72,15 @@ bootstrap, dispatch, preamble, teardown — before its command takes over.
 
 ## Layer map
 
-The package splits into four layers, and dependencies are meant to point
-downward — a lower layer importing from a higher one is debt. The
-foundation holds to that today; the boundary, domain and application
-layers do not yet, and share one import cycle. {doc}`modules` draws the
-declared dependency graph from `tach.toml`, cycle included.
+The package splits into four conceptual areas, and dependencies are meant to
+point downward — a lower area importing from a higher one is debt. The areas
+are a way to read the package; they are not the layers tach enforces, which
+are finer ({doc}`quality-gates` describes them). The declared dependency
+graph has no import cycle: every tach module carries a role layer, and an
+import may reach only its own layer or those below it. A few placements
+are interim (`tach.toml` marks each: the composition root, for one, sits
+below its own layer until the run's modules stop importing it), and tach's
+own cycle flag is not on yet ({doc}`quality-gates` says what it waits on). {doc}`modules` draws the declared dependency graph from `tach.toml`.
 
 **Foundation** — small, dependency-light modules everything else builds on:
 
@@ -95,7 +99,7 @@ declared dependency graph from `tach.toml`, cycle included.
 | --- | --- |
 | `otto.models` | The data-model facade: pydantic specs for lab.json, settings.toml, env vars, monitor records; the host specs live in `otto.host.specs` and are exported from `otto.host`; this package still exports `ToolchainSpec` and the eight option specs |
 | `otto.labs` | The lab model and its loader (`labs/loader.py`, behind `otto.lab.Lab` and `otto.lab.load_lab`), the lab-repository (host source) protocol and the default JSON backend |
-| `otto.config` | Parsing otto's inputs: the environment and each repo's `settings.toml`; the fleet implementation behind `otto.lab` |
+| `otto.config` | Parsing otto's inputs: the environment and each repo's `settings.toml` |
 | {mod}`otto.lab` | The public lab and fleet API: load a lab, reach its hosts, walk the fleet of interest |
 
 **Domain** — the subsystems that do the actual work:
@@ -115,6 +119,7 @@ declared dependency graph from `tach.toml`, cycle included.
 | --- | --- |
 | {mod}`otto.bootstrap` | Two-phase composition root: discovery, then contained user-code registration; the repo accessors (`get_repos`, `get_env`, ...) read it |
 | {mod}`otto.context` | {class}`~otto.context.OttoContext`: the per-invocation runtime and host lifecycle scope |
+| `otto.fleet` | Internal: the active lab, its hosts and the fleet walks behind {mod}`otto.lab` |
 | `otto.cli` | The Typer app, the command registry, lazy dispatch, shell completion |
 
 Two support packages sit alongside: `otto.testing` (conformance helpers

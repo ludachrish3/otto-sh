@@ -63,7 +63,7 @@ def lab(monkeypatch):
                     raise EmptySelectionError(pattern.pattern, len(fleet))
             return iter(matched)
 
-        monkeypatch.setattr("otto.config.fleet.all_hosts", fake_all_hosts)
+        monkeypatch.setattr("otto.fleet.all_hosts", fake_all_hosts)
 
         async def fake_do_for_all(method, *args, pattern=None, **kw):
             out = {}
@@ -75,7 +75,7 @@ def lab(monkeypatch):
                         out[h.id] = e
             return out
 
-        monkeypatch.setattr("otto.config.fleet.do_for_all_hosts", fake_do_for_all)
+        monkeypatch.setattr("otto.fleet.do_for_all_hosts", fake_do_for_all)
 
     return install
 
@@ -227,7 +227,7 @@ async def test_a_host_with_no_returned_outcome_is_reported_failed(lab, monkeypat
     async def fake_do_for_all_with_a_gap(method, *args, pattern=None, **kw):
         return {}  # "t1" was walked but nothing at all came back for it
 
-    monkeypatch.setattr("otto.config.fleet.do_for_all_hosts", fake_do_for_all_with_a_gap)
+    monkeypatch.setattr("otto.fleet.do_for_all_hosts", fake_do_for_all_with_a_gap)
 
     report = await clean_coverage([_repo()])
     assert not report.ok
