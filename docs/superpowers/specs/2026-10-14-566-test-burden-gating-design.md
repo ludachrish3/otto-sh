@@ -182,10 +182,13 @@ that is published).
 **D1 — `make quick` and `make quick-guards`.** Two literal targets, no `M` variable (a `$(M)` in a leg
 is unexpandable by `_makefile_marker_variables`, test_tier_marker_invariants.py:394, and
 `Expression.compile` on it fails the lane-leg census, test_lane_invariants.py:901). `make quick
-PATHS=<dirs>` = `pytest $(PATHS) -m "$(M_QUICK)" --no-cov -n $(QUICK_WORKERS)` + the serial twin `-n0`;
-`M_QUICK := not serial_timing and not stability and not busybox and not conformance and not kmodcov and
-not interpreter_agnostic` (a parallel leg must keep `not serial_timing`: tests/conftest.py:562 errors a
-serial_timing test on a worker). `make quick-guards` = `pytest tests/unit -m interpreter_agnostic
+PATHS=<dirs>` = `pytest $(PATHS) -m "$(M_QUICK) and not serial_timing" --no-cov -n $(QUICK_WORKERS)` + the
+serial twin `-m "serial_timing and $(M_QUICK)" -n0`;
+`M_QUICK := not stability and not busybox and not conformance and not kmodcov and not browser and not
+interpreter_agnostic` (`not browser` as on `M_COVERAGE`/`M_HOSTLESS`: browser tests run as their own
+pytest process, `make dashboard`, never co-selected with async tests)
+— `serial_timing` is split in the legs, like every other lane, not in the variable (a parallel leg must
+carry `not serial_timing`: tests/conftest.py:562 errors a serial_timing test on a worker). `make quick-guards` = `pytest tests/unit -m interpreter_agnostic
 --no-cov -n $(QUICK_WORKERS)`, single-legged (no carrier is serial_timing). `QUICK_WORKERS ?= min(4,
 nproc)`; `_LEAK_ENV` on; `-p no:randomly` NOT forced. `quick` is parametric, so it is exempt from the
 fixed-lane nonempty-leg pin; it tolerates exit 5 on ONE leg (`|| [ $$? -eq 5 ]`, printing which) but
@@ -200,7 +203,7 @@ first match wins, union over files, unknown path → `full`:
 
 | class | files (all must match) | per-commit | tip (landing) |
 |---|---|---|---|
-| none | docs/superpowers/specs/**, todo/** | nothing | nothing |
+| none | docs/superpowers/specs/**, todo/**, AGENTS.md | nothing | nothing |
 | docs | docs/** (not conf.py, `_ext/`, examples, captures scripts), *.md at root except AGENTS.md | `make docs` | `make gate-fresh` |
 | web | web/src/**, web test files (not api/*.gen.ts, package*.json, vite/biome configs) | `make check-ts test-ts` | `make check-ts coverage-ts gate-fresh` |
 | tests-leaf | tests/<tree>/<pkg>/test_*.py (no conftest, no `_fixtures`, no deleted test functions, no marker edits) | `make quick PATHS=<pkgs>` + ruff + `make lint-arch`; a changed module whose `pytestmark` carries `interpreter_agnostic` (29 of the 57 live under packages) runs `make quick-guards` at the commit instead of `quick` for that file | same + `make quick-guards` + `make gate-fresh` |
@@ -250,7 +253,7 @@ passes `--doctest-modules` explicitly too: it is what makes collection IMPORT th
 helpers under `testpaths`, which is the cheap half of what gate-fresh exists to catch. That keeps the
 bare-conftest hazard reachable (collect-check walks tests/ with the flag), so `pytest_ignore_collect`
 (tests/conftest.py:351) and its regression stay. Text edits: tests/_fixtures/support_matrix.py:643,
-api_dump_surface.py:3 (both describe addopts).
+tests/_fixtures/api_dump_surface.py (its docstring: collect-check's `--doctest-modules`) (both describe addopts).
 **D6 — #9.** The seam is the module-global `otto.cli.expose.iter_exposed_verbs`, which `_ensure_dynamic`
 resolves at call time (expose.py:263, 369–378) — not an instance attribute. Per chunk: one REAL call
 captures the verb list; `monkeypatch.setattr(expose, "iter_exposed_verbs", lambda: list(captured))` for
@@ -290,3 +293,26 @@ Fable final review before the full gate.
   holds every exempt row to covering tests the release rows miss AND being reached by no release stage.
   "Releases lose no tests" now reads "every collected test is in the release OR in the owner's stated
   exemption". #643 (low priority) tracks a scheduled dev-VM chaos run so the lane keeps producing signal.
+- Q10 (2026-10-15, at Phase D plan approval) `AGENTS.md` is class `none`. It is prose for agents, the same
+  kind of artifact as a spec under `docs/superpowers/specs/` or a `todo/` note: nothing executes it, no lane
+  reads it, and the full gate (the table's default for an unmatched path) would spend ~15 minutes on a
+  policy sentence. The `docs` row's "*.md at root except AGENTS.md" stays as written: the exclusion now
+  routes to `none`, not to the default.
+- Q11 (2026-10-15, Phase D Task 4 review) `M_QUICK` carries `not browser`, and the dashboard and
+  report-browser trees have no `SPECIAL_TREES` row: every browser module carries `pytestmark = browser` in
+  source (tests/e2e/monitor/dashboard/test_marking.py pins the list), so the `browser` lane marker routes
+  each one to `make dashboard`, and a hostless module inside those trees is a plain leaf that runs under
+  `make quick` over its package, where `not browser` deselects its neighbours. A per-file exemption list
+  was tried and rejected: a tree-level quick root co-selected the browser items and the dashboard
+  conftest's web-build guard exited the run. The oracle census is the check that keeps this true.
+- Q12 (2026-10-15, Phase D final review) A `conftest.py`, fixture or helper under a special tree's
+  directory (`tests/conformance/`, `tests/e2e/chaos/`, `tests/busybox/`, …) keeps its class — a conftest
+  escalates to the full gate, as the table says — AND adds that tree's lane commands beside the escalation,
+  exactly as a test module in the tree would: the full gate excludes those tiers, so without the rider a
+  conformance or chaos fixture change would land with its own lane never run. Ownership is by directory,
+  through the same `SPECIAL_TREES` rows.
+- Q13 (2026-10-15, Phase D final review) The tip column owes `make nox-unit-repeat` as the commit
+  column does: a landing is a squash, the one commit that reaches `main` carries every conftest,
+  `tests/_fixtures` or registry change of the branch, and nobody runs the oracle after the squash. The
+  rider's `commit-only` guard goes; `make quick-guards` stays commit-only because `make coverage` runs the
+  family. CI's `unit-repeat` job was the only thing still running it at the tip.

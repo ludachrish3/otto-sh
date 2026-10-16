@@ -843,12 +843,46 @@ def _makefile_pytest_invocations(text: str) -> "list[list[str]]":
     return found
 
 
+# Where a recipe line's pytest argv ends: a shell list or redirection operator. What follows
+# (`|| { [ $$? -eq 5 ] ...}`, `; $(MAKE) ...`) is another command, never one of its roots.
+_SHELL_OPERATORS = frozenset({"||", "&&", "|", ";", ">", ">>"})
+# A make function call's first token (`$(call`, `$(foreach`): shlex splits the call at its
+# spaces, so the reader skips tokens until the call's parentheses balance.
+_MAKE_FUNCTION = re.compile(r"\$\([a-z]+")
+# What an unexpanded reference looks like inside a token: `$(X)`, `${X}`, a shell `$$X`.
+_UNEXPANDED = ("$(", "${", "$$")
+
+
+def _pytest_argv(tokens: "list[str]") -> "list[str]":
+    """The tokens after `pytest`, up to the first shell operator (a trailing `;` included)."""
+    argv: "list[str]" = []
+    for token in tokens[tokens.index("pytest") + 1 :]:
+        if token in _SHELL_OPERATORS:
+            break
+        if token.endswith(";"):
+            argv.append(token[:-1])
+            break
+        argv.append(token)
+    return argv
+
+
 def _selected_roots(tokens: "list[str]") -> "list[Path]":
-    """The paths an invocation restricts collection to; empty means path-less."""
+    """The paths an invocation restricts collection to; empty means path-less.
+
+    A positional token holding `$(`, `${` or `$$` refuses (a make function call such as
+    `$(call junitxml,x)` is skipped whole): dropped as a path that does not exist, it would make the
+    leg read as path-less — every item under testpaths — which is how a recipe whose roots
+    come from the command line (`$(PATHS)`) once passed the nonempty-leg pin as a lane over
+    `<testpaths>`. A caller that knows such a variable substitutes it first.
+    """
     roots: "list[Path]" = []
-    rest = tokens[tokens.index("pytest") + 1 :]
+    rest = _pytest_argv(tokens)
     skip = False
+    depth = 0  # open parentheses of a make function call being skipped
     for token in rest:
+        if depth or _MAKE_FUNCTION.fullmatch(token):
+            depth += token.count("(") - token.count(")")
+            continue
         if skip:
             skip = False
             continue
@@ -857,6 +891,10 @@ def _selected_roots(tokens: "list[str]") -> "list[Path]":
             continue
         if token.startswith("-"):
             continue
+        assert not any(marker in token for marker in _UNEXPANDED), (
+            f"`{token}` holds an unexpanded variable where a path goes in "
+            f"`{' '.join(tokens)}` — substitute it before reading the roots"
+        )
         candidate = PROJECT_ROOT / token
         if candidate.exists():
             roots.append(candidate)

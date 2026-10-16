@@ -14,8 +14,8 @@ import pytest
 
 from tests._fixtures.paths import PROJECT_ROOT
 
-# An inert rootdir config: none of this repo's addopts (--cov, -n auto,
-# --doctest-modules) reach the inner session.
+# An inert rootdir config: none of this repo's addopts (--cov, -n auto)
+# reach the inner session.
 PROBE_INI = """\
 [pytest]
 """

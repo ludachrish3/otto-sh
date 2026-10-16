@@ -195,6 +195,23 @@ def test_scanner_sees_every_override_and_fails_loud_on_the_unparseable() -> None
     assert "-p no:tach" not in value  # unparseable reads as an offender, never green
 
 
+def test_doctest_modules_is_passed_where_collection_must_import_helpers() -> None:
+    """The flag left addopts (0 doctests under testpaths); the two children that NEED
+    it — collect-check, which imports the non-test helpers under testpaths, and the
+    sibling-conftest regression, whose defect it triggers — pass it themselves."""
+    pyproject = (PROJECT_ROOT / "pyproject.toml").read_text()
+    addopts = re.search(r'^addopts = "([^"]*)"', pyproject, re.MULTILINE)
+    assert addopts is not None
+    assert "--doctest-modules" not in addopts.group(1), addopts.group(1)
+    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    collect = [t for t in _makefile_pytest_invocations(makefile) if "--collect-only" in t]
+    assert collect
+    assert all("--doctest-modules" in t for t in collect), collect
+    from tests.unit.test_conftest_doctest_collection import _CHILD_ARGS
+
+    assert "--doctest-modules" in _CHILD_ARGS
+
+
 # ── serial_timing lane ──────────────────────────────────────────────────────
 # A serial leg is recognized by BOTH tokens: a marker expression that STARTS
 # with the positive marker (the `"serial_timing and ` convention every leg
@@ -719,9 +736,9 @@ def pytest_collection_finish(session):
 
 # Only speed and hygiene, never membership: `-n0` so one process sees every
 # item (and no `@group` nodeid suffixes), no coverage, no cache writes.
-# pyproject's `addopts` is NOT cleared — `--doctest-modules` adds items every
-# real lane also collects, so a run without it would measure a tree no lane
-# runs.
+# pyproject's `addopts` is NOT cleared, and `--doctest-modules` is not added:
+# since #566 no real lane passes it, so these children collect exactly what
+# the lanes collect.
 #
 # `--collect-only` is also what keeps these children off the web build. Both
 # browser conftests abort the session from `pytest_configure` when the React
@@ -780,10 +797,28 @@ def _legs_from_invocations(
         expr = tokens[value] if value < len(tokens) else ""
         if variables is not None:
             expr = _expand_makefile_variables(expr, variables)
-        roots = tuple(str(path.relative_to(_REPO)) for path in _selected_roots(tokens))
+        parametric = (_PATHS_TOKEN,) if _PATHS_TOKEN in tokens else ()
+        fixed = [token for token in tokens if token != _PATHS_TOKEN]
+        roots = parametric + tuple(str(path.relative_to(_REPO)) for path in _selected_roots(fixed))
         repeated = any(token == "--count" or token.startswith("--count=") for token in tokens)
         legs.append(_Leg(surface, expr, roots, repeated))
     return legs
+
+
+_PATHS_TOKEN = "$(PATHS)"
+_PARAMETRIC_TARGETS = ("quick",)
+"""The targets whose pytest roots are the caller's `PATHS` (pinned against the recipes)."""
+
+
+def _is_parametric(leg: _Leg) -> bool:
+    """Report whether `leg`'s roots come from the command line (`$(PATHS)`).
+
+    Such a leg has no fixed roots to collect, so it is exempt from the nonempty-leg pin
+    alone: its expression is still compiled there, and it is still paired with its serial
+    twin. What it selects is the oracle census's question, over the roots `make gate-scope`
+    hands it (tests/unit/scripts/test_gate_scope.py).
+    """
+    return _PATHS_TOKEN in leg.roots
 
 
 def lane_legs() -> "list[_Leg]":
@@ -923,6 +958,8 @@ def _lane_leg_offenders(legs: "list[_Leg]", collect) -> "list[str]":
         except SyntaxError as exc:
             offenders.append(f"{leg} — pytest cannot compile this expression: {exc}")
             continue
+        if _is_parametric(leg):
+            continue
         collected = collect(leg.roots)
         if not collected:
             offenders.append(f"{leg} — those paths collect no tests at all")
@@ -1035,6 +1072,67 @@ def test_the_lane_leg_gate_reddens_on_the_issue_229_leg(collect_marker_sets) -> 
     # control above would pass on a gate that condemns everything.
     live = _Leg("synthetic", "serial_timing and not stability", ())
     assert _lane_leg_offenders([live], collect_marker_sets) == []
+
+
+def test_the_quick_legs_are_parametric_not_testpaths_wide() -> None:
+    """`make quick`'s two legs take their roots from the command line: the inventory reads
+    them as parametric (roots `$(PATHS)`), never as legs over `<testpaths>`."""
+    makefile = (_REPO / _MAKEFILE).read_text()
+    m_quick = _makefile_marker_variables(makefile)["M_QUICK"]
+    parametric = [leg for leg in lane_legs() if _is_parametric(leg)]
+    assert [(leg.expr, leg.roots) for leg in parametric] == [
+        (f"{m_quick} and not serial_timing", (_PATHS_TOKEN,)),
+        (f"serial_timing and {m_quick}", (_PATHS_TOKEN,)),
+    ]
+
+
+def test_the_parametric_targets_are_exactly_the_recipes_that_read_paths() -> None:
+    makefile = (_REPO / _MAKEFILE).read_text()
+    targets = {match.group(1) for match in _RULE_LINE.finditer(makefile)}
+    reading = sorted(
+        target
+        for target in targets
+        if any(
+            _PATHS_TOKEN in tokens
+            for tokens in _makefile_pytest_invocations(
+                "\n".join(makefile_live_recipe(makefile, target))
+            )
+        )
+    )
+    assert reading == sorted(_PARAMETRIC_TARGETS)
+
+
+def test_an_unexpanded_variable_where_a_path_goes_is_refused() -> None:
+    """A positional `$(NAME)` the reader cannot expand would silently become `<testpaths>`."""
+    with pytest.raises(AssertionError, match=r"\$\(ROOTS\)"):
+        _selected_roots(["uv", "run", "pytest", "$(ROOTS)", "-m", "unit"])
+    for token in ("$(ROOT)/sub", "${ROOT}", "$$X", "tests/$(PKG)"):
+        recipe = f'leg:\n\tuv run pytest {token} -m "unit"\n'
+        (tokens,) = _makefile_pytest_invocations(recipe)
+        with pytest.raises(AssertionError, match="unexpanded"):
+            _selected_roots(tokens)
+    called = ["uv", "run", "pytest", "tests/unit", "$(call", "junitxml,x)", "-m", "unit"]
+    assert _selected_roots(called) == [_REPO / "tests/unit"], "a make function is no root"
+    assert _selected_roots(["uv", "run", "pytest", "tests/unit", "||", "$(MAKE)"]) == [
+        _REPO / "tests/unit"
+    ], "a shell command after the pytest argv is not one of its roots"
+
+
+@pytest.mark.xdist_group("lane_leg_membership")
+def test_a_fixed_lane_with_an_empty_root_still_fails_the_pin(collect_marker_sets) -> None:
+    """Only the parametric legs are exempt from the nonempty pin: a fixed lane over a root
+    that holds no test is reported, while the parametric leg beside it is still compiled."""
+    synthetic = (
+        'empty:\n\tuv run pytest tests/_fixtures -m "not stability"\n'
+        'quick:\n\tuv run pytest $(PATHS) -m "not stability and ("\n'
+    )
+    legs = _legs_from_invocations(_MAKEFILE, _makefile_pytest_invocations(synthetic), {})
+    assert [leg.roots for leg in legs] == [("tests/_fixtures",), (_PATHS_TOKEN,)]
+    reports = _lane_leg_offenders(legs, collect_marker_sets)
+    assert len(reports) == 2, reports
+    assert "tests/_fixtures" in reports[0], reports[0]
+    assert "collect no tests" in reports[0], reports[0]
+    assert "cannot compile" in reports[1], "the parametric leg's expression is still judged"
 
 
 def _count_leg_offenders(legs: "list[_Leg]", collect) -> "list[str]":

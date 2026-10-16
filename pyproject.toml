@@ -338,7 +338,10 @@ log_cli_date_format = "%Y-%m-%d %H:%M:%S.%f"
 # suppresses reporting only when it is the SOLE report option, so a lane
 # cannot opt out of a global entry; lanes opt IN instead. Pinned by
 # tests/unit/test_coverage_html_placement.py.
-addopts = "-p no:tach --doctest-modules --cov=otto --cov-context=test --cov-report term-missing -n auto --dist loadgroup"
+# --doctest-modules is NOT here: testpaths hold no doctest, and the flag imported every
+# conftest twice (the hazard tests/conftest.py's pytest_ignore_collect guards). collect-check,
+# doctest-src and the nox docs session pass it explicitly.
+addopts = "-p no:tach --cov=otto --cov-context=test --cov-report term-missing -n auto --dist loadgroup"
 doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"

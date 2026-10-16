@@ -411,7 +411,61 @@ in `scripts/release_events.py`, which `make release` also reads (see
 
 ### Gating a branch before it lands
 
-Run `make gate-fresh` before handing a branch back or squashing it onto `main`.
+`make gate-scope` tells you which gates a commit needs. It reads the diff and
+prints two command lists: one for **this commit** (`HEAD^1..HEAD`, the first
+parent, so a merge counts only what it brought in) and one for the **tip**
+(the merge base with `BASE`, default `origin/main`, to `HEAD`: what lands as a
+whole). It refuses a dirty tracked tree (commit first) and a `HEAD` with no
+parent (exit 2), and exits 1 when git cannot answer (a missing base, no
+repository). `BASE` and `make quick`'s `PATHS` are read from the command line
+only, never from the environment.
+
+Each changed path has a class; a diff takes the union of its paths' classes:
+
+| Class | Paths | This commit | Tip |
+| --- | --- | --- | --- |
+| `none` | `docs/superpowers/specs/`, `todo/`, `AGENTS.md` | `make check-breaking` only | the same |
+| `docs` | `README.md`, `docs/` (not `conf.py`, `_ext/`, `examples/`) | `make docs` | `make gate-fresh` (it runs `docs`) |
+| `web` | `web/src/` (not generated `*.gen.ts`) | `make check-ts test-ts` | `make check-ts coverage-ts`, `make gate-fresh` |
+| `tests-leaf` | a test module whose tests and marks are unchanged (an added test is a leaf change unless it carries a mark) | `make quick` over its package, ruff, `make lint-arch`; a module whose every test carries `interpreter_agnostic` runs `make quick-guards` instead of `make quick` | those, `make quick-guards`, `make gate-fresh` |
+| `tests-structural` | a test module that removes or renames a test, adds a marked one, or changes a mark (its arguments too) | the leaf lines plus `make quick-guards` | as `tests-leaf` |
+| `src-leaf` | one or two `src/otto/` packages | `make quick` over the package's unit and bed trees plus the tree-wide guards, ty, ruff, `make lint-arch`, `make quick-guards` | the full gate and the package's bed lane |
+| `scripts` | `scripts/` | `make quick-guards`, ty, ruff | the full gate |
+| `escalate` | a conftest, `tests/_fixtures/`, the registry, a package `__init__`, a build file (`Makefile`, `noxfile.py`, `pyproject.toml`, CI), three or more packages | the full gate, the bed lanes, plus `make quick-guards` (build file) and/or `make nox-unit-repeat` (conftest, fixture, registry) | the full gate, the bed lanes and `make nox-unit-repeat` (conftest, fixture, registry) |
+| `full` | any path with no row | the full gate | the full gate |
+
+The full gate is `make coverage`, `nox -s tests_hostless-3.14`,
+`make check-python`, `make docs` and `make gate-fresh`. Beyond the `escalate`
+and `full` classes, the commit column is the full gate when a test module
+carries a `stability` or `chaos` mark outside every lane's files, carries a
+`pytestmark` (or a mark decorator) the oracle cannot read, or leaves no
+surviving root `make quick` could run, and when a `src/otto/` path's test
+trees are all gone; each reason is printed above the commands. The roots
+`make quick` receives for `src/otto/` packages include integration and e2e
+bed trees, which need the lab VMs: run them on the dev VM.
+
+Some test trees are a lane's own and are never handed to `quick`. Both `quick`
+legs deselect the items of `tests/conformance/` (`make conformance`; the
+bed-opener witness runs only under `make conformance-bed`), `tests/busybox/`,
+the tunnel-stability tree and the chaos tree by marker (`conformance`,
+`busybox`, `stability`), and browser modules, which route to `make dashboard`
+by their `browser` mark, by `not browser`. `tests/integration/busybox_bed/` is
+different: its items carry only `integration`, which `quick` and `make coverage`
+do not exclude, so its row (`make coverage-unix` at the commit, the full gate at
+the tip) is what keeps it out of `quick`. A lane row names the lanes in both
+columns, even when the column is the full gate, because `make coverage`
+excludes those tiers; a conftest or helper inside one of those trees keeps its
+own class (a conftest escalates) and adds the tree's lanes as well. A *mixed* file (a stability file that also holds
+unmarked tests) runs its lane for the marked tests and `quick` over its
+package for the rest, when there is a rest. A module carrying `kmodcov`,
+`browser` or `busybox` runs that lane wherever it lives; a hostless module
+inside the dashboard tree is a plain leaf and runs under `quick` like any other.
+
+`tests/unit/scripts/test_gate_scope.py` keeps this honest: every tracked path has
+a row, and an oracle census proves that every item pytest collects in every
+test module, changed alone, is selected by a lane the oracle emits.
+
+`make gate-fresh` is the full gate's last command (a full tip column appends the bed and lane commands after it, and a docs, web or test-only tip ends with it). Run it before handing a branch back or squashing it onto `main`.
 
 It runs the lanes that catch what a clean checkout sees and your dev tree
 hides: `lint-python`, `lint-arch`, `check-api-snapshot` (the public-API
@@ -600,6 +654,20 @@ section stays focused on the mechanics of running them.
 make coverage                 # run the full suite and enforce the coverage gate
 uv run pytest -k test_host    # run a subset by keyword
 ```
+
+### The scoped lanes
+
+`make quick PATHS="<dirs or files>"` runs just those paths, uninstrumented, in
+two legs: a parallel leg, then the `-n0` twin for `serial_timing` tests. Random
+ordering stays on. A leg that selects nothing is tolerated and printed; both
+legs empty is refused, since the paths name no test. A red leg stops make with
+`Error 1`; the pytest status is in the output above that line, not in make's
+exit code. `make quick` without `PATHS` refuses before anything runs.
+
+`make quick-guards` runs the repository guards: the `interpreter_agnostic`
+family (build-file and lane census, API golden wiring, the script pins) over
+`tests/unit`, uninstrumented and parallel. `make gate-scope` is how you learn
+which of the two your diff needs. The policy is in `AGENTS.md`.
 
 ### Regression-test categories
 
@@ -827,8 +895,8 @@ make doctest       # run doctests only (from .md/.rst files)
 make docs-html     # HTML only (warnings are errors)
 ```
 
-pytest also runs doctests from Python source files automatically via
-`--doctest-modules`.
+`>>>` examples in `src/otto` run in `make doctest-src` (and the nox `docs`
+session), which pass `--doctest-modules`; the flag is not in pytest's `addopts`.
 
 The HTML build needs two system tools the dev environment provides:
 `graphviz` (renders the architecture diagrams; provisioned on the dev VM
@@ -1090,6 +1158,10 @@ the CI floor — see the coverage-floors note at the top of `noxfile.py`). The
 HTML tree is asked for per lane, not by `pyproject.toml`'s `addopts`, so the
 release legs (the ones the census in `tests/unit/test_lane_invariants.py`
 enumerates) do not each rewrite it.
+
+The HTML report lists the tests that covered each line (click a line's context
+marker); that costs about 17 s of render time and roughly 114 MB of HTML per
+report.
 
 ### Manually
 

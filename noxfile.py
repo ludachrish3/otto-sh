@@ -462,9 +462,9 @@ def tests_unit_repeat(session: nox.Session) -> None:
     broken by an earlier one) are masked entirely — exactly how the nightly
     missed the ``test_root_group`` → ``test_listing`` desync. One Python is
     sufficient (isolation leakage is interpreter-version-independent — the
-    primary, 3.10); clearing ``addopts`` drops the repo-wide ``-n auto`` /
-    coverage / ``--doctest-modules`` so the repeat is single-process
-    (strictest accumulation) and quick. Supersedes the former
+    primary, 3.10); clearing ``addopts`` drops the repo-wide ``-n auto`` and
+    coverage so the repeat is single-process (strictest accumulation) and
+    quick. Supersedes the former
     ``tests_suite_repeat`` (``tests/unit/suite`` ⊂ ``tests/unit``).
     """
     session.run(

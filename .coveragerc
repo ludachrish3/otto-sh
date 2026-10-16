@@ -38,6 +38,10 @@ precision = 2
 
 [html]
 directory = reports/coverage/html
+; Which tests covered each line, in the report (owner decision, 2026-10-13): the
+; contexts `--cov-context=test` (pyproject addopts) records. Measured on the
+; dev VM: +17 s render, +114 MB of HTML.
+show_contexts = True
 
 [paths]
 ; Map both the editable-install src layout and any installed-site-packages

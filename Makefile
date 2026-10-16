@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help all ci nox nox-release nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help quick quick-guards gate-scope all ci nox nox-release nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -195,6 +195,13 @@ M_HOSTLESS := not integration and not embedded and not stability and not browser
 # $(M_COVERAGE)`; the parallel leg appends `and not serial_timing`.
 M_COVERAGE := not stability and not browser and not busybox and not conformance and not kmodcov
 
+# The scoped per-commit lane (#566). Tier exclusions only: the legs spell
+# `serial_timing` like every other lane (parallel leg excludes it, the -n0
+# twin re-appends it — makefile_serial_lane_gaps pins the pair), the
+# `interpreter_agnostic` family runs in `quick-guards` instead, once, and
+# `browser` (Playwright) tests are their own pytest process under
+# `make dashboard`, never co-selected with the rest.
+M_QUICK := not stability and not busybox and not conformance and not kmodcov and not browser and not interpreter_agnostic
 # `not busybox` rides every CATCH-ALL selector below (and this one), for a
 # reason unrelated to the bed: that tier downloads real artifacts from
 # busybox.net and RAISES rather than skipping when it can't (deliberate — see
@@ -327,6 +334,14 @@ LEAK_DETECT := OTTO_DETECT_ASYNCIO_LEAKS=1
 JUNIT_DIR := reports/junit
 junitxml = --junitxml=$(JUNIT_DIR)/$(1)/$(1).xml
 
+# min(4, nproc): a targeted run is short; more workers only add startup cost.
+# `:=` probes nproc once, at parse (a recursive `?=` reran it at every reference); a
+# command-line QUICK_WORKERS wins, one in the environment does not.
+QUICK_WORKERS := $(if $(filter command line,$(origin QUICK_WORKERS)),$(QUICK_WORKERS),$(shell n=$$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1); [ "$$n" -gt 4 ] && echo 4 || echo "$$n"))
+# `quick`'s legs run in separate shells; this file carries "which legs
+# selected nothing" between them. Under JUNIT_DIR so a JUNIT_DIR=… run keeps
+# its state beside its reports.
+QUICK_EMPTY := $(JUNIT_DIR)/quick/empty-legs
 # ═══ Recipe output convention ═══════════════════════════════════════════════
 #
 # Every recipe line is @-silenced, and each unit of work is announced by one
@@ -884,9 +899,26 @@ coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) 
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(CI_COVERAGE_THRESHOLD)% lines+branches on the full fold)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "serial_timing and $(M_HOSTLESS)" -n0 --cov-append --cov-fail-under=$(CI_COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-hostless-serial)
 
-collect-check: ## (Quality) Import every test module without running anything — the cheap half of what gate-fresh exists to catch (forgotten `git add`, a module that only imports because the dev tree has gitignored build artifacts). No VMs.
+collect-check: ## (Quality) Import every test module without running anything — the cheap half of what gate-fresh exists to catch (forgotten `git add`, a module that only imports because the dev tree has gitignored build artifacts). `--doctest-modules` is what makes collection IMPORT the non-test helpers under testpaths. No VMs.
 	@$(SAY) "pytest: collect-only over the whole tree (imports, no execution)"
-	@uv run pytest --collect-only -q -p no:randomly --no-cov
+	@uv run pytest --collect-only -q -p no:randomly --no-cov --doctest-modules
+
+# The `|| { [ $$? -eq 5 ] && … ; }` shape: exit 5 (nothing collected) records
+# the leg's name and the line succeeds; any other non-zero status makes the
+# test false, the group's status is 1, and make stops at that line — the
+# pytest status itself is in the output above, not in make's exit code.
+quick: ## (Dev) The scoped per-commit run: `make quick PATHS="<dirs or files>"` — those paths, uninstrumented, parallel plus the -n0 serial_timing twin. One leg selecting nothing is tolerated (and printed); both empty is red. `make gate-scope` prints the PATHS for your diff.
+	@$(if $(and $(filter command line,$(origin PATHS)),$(PATHS)),true,$(error quick: PATHS is required on the command line (e.g. make quick PATHS="tests/unit/cli"); `make gate-scope` prints them for your diff))
+	@mkdir -p $(JUNIT_DIR)/quick && rm -f $(QUICK_EMPTY)
+	@$(SAY) "pytest: $(PATHS) (-n $(QUICK_WORKERS), no coverage)"
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest $(PATHS) -m "$(M_QUICK) and not serial_timing" --no-cov -n $(QUICK_WORKERS) $(call junitxml,quick) || { [ $$? -eq 5 ] && echo parallel >> $(QUICK_EMPTY); }
+	@$(SAY) "pytest: $(PATHS) serial_timing twin, -n0"
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest $(PATHS) -m "serial_timing and $(M_QUICK)" --no-cov -n0 $(call junitxml,quick-serial) || { [ $$? -eq 5 ] && echo serial >> $(QUICK_EMPTY); }
+	@if [ -e $(QUICK_EMPTY) ]; then $(SAY) "quick: the $$(tr '\n' ' ' < $(QUICK_EMPTY))leg selected no test"; [ "$$(wc -l < $(QUICK_EMPTY))" -lt 2 ] || { echo "quick: neither leg selected a test under PATHS='$(PATHS)'" >&2; exit 1; }; fi
+
+quick-guards: ## (Dev) The repository guards — the `interpreter_agnostic` family (build-file and lane census, API golden wiring, the script pins) over tests/unit, uninstrumented and parallel. The rider `make gate-scope` names for a src/, scripts/ or build-file change.
+	@$(SAY) "pytest: the interpreter_agnostic family over tests/unit (-n $(QUICK_WORKERS), no coverage)"
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit -m "interpreter_agnostic" --no-cov -n $(QUICK_WORKERS) $(call junitxml,quick-guards)
 
 coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a coverage report (no gate). Requires lab VMs. JUnit XML in reports/junit/coverage-unix/.
 	@$(SAY) "pytest: Unix-VM slice, incl. multi-hop (no gate)"
@@ -1723,6 +1755,11 @@ api-surface-report: ## (Dev) Measure the declared surface's open work without ga
 check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; RANGE must end at HEAD) that deletes a public-API golden line without a mark git-cliff's census counts, or carries a Corrects: footer that does not validate
 	@$(SAY) "check-breaking-marks: $(RANGE)"
 	@uv run python scripts/check_breaking_marks.py $(RANGE)
+
+# BASE is honoured from the command line only (the `$(origin REF)` idiom gate-fresh uses):
+# one exported by a shell or an outer tool must not silently move the landing base.
+gate-scope: ## (Quality) Classify the diff and print the exact gates for THIS commit and for the landing tip (BASE=origin/main). Refuses a dirty tracked tree: commit first.
+	@uv run python scripts/gate_scope.py --base "$(if $(filter command line,$(origin BASE)),$(BASE),origin/main)"
 
 # ═══ Docs ═══════════════════════════════════════════════════════════════════
 

@@ -560,6 +560,11 @@ def _compare(cli, cases, monkeypatch) -> tuple[int, dict[str, int]]:
     class, for the caller to hold against its own floor and expected classes.
     The shim decodes each distinct cache text once (:class:`_DecodeOnce`).
     """
+    from otto.cli import expose
+
+    real_iter_exposed_verbs = expose.iter_exposed_verbs
+    menu = list(real_iter_exposed_verbs())
+    monkeypatch.setattr(expose, "iter_exposed_verbs", lambda: list(menu))
     memo = _DecodeOnce()
     monkeypatch.setattr(sc, "_load_cache", memo.load)
     answered = 0
@@ -577,6 +582,9 @@ def _compare(cli, cases, monkeypatch) -> tuple[int, dict[str, int]]:
                 f"{words!r} cword={cword} env={env}\n  shim : {got!r}\n  typer: {expected!r}"
             )
         answered += 1
+    # One real call per chunk, and one at the end: the menu the Typer side answered
+    # from must still be the real menu, or the chunk compared against a stale one.
+    assert list(real_iter_exposed_verbs()) == menu, "the real verb menu changed during the chunk"
     # A TAB that wrote to its cache can be what made later cases mismatch: say so first.
     memo.assert_unmutated()
     assert not mismatches, "\n".join(mismatches[:40]) + f"\n… {len(mismatches)} mismatches"

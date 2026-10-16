@@ -640,7 +640,7 @@ def collect_conformance_nodeids(*, bed: bool) -> "set[str]":
 
     A SUBPROCESS, and not ``pytest.main`` in this process, for the reason
     ``tests/unit/test_pytest_addopts.py`` records about in-process configs:
-    this repo's ``addopts`` (``--cov``, ``-n auto``, ``--doctest-modules``)
+    this repo's ``addopts`` (``--cov``, ``-n auto``)
     ride any Config built here, and the venue is selected by an environment
     variable that ``tests/conftest.py`` has already stripped from THIS
     process. A child gets a clean answer to a clean question.

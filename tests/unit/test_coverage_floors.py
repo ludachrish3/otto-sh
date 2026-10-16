@@ -129,6 +129,26 @@ def coveragerc_precision(text: str) -> int:
     return int(match.group(1))
 
 
+def coveragerc_show_contexts(text: str) -> bool:
+    """`[html] show_contexts = True`, ignoring `;` and `#` comment lines."""
+    live = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith((";", "#")))
+    section = re.search(r"^\[html\][^\n]*(?:\n|\Z)(.*?)(?=^\[|\Z)", live, re.MULTILINE | re.DOTALL)
+    assert section is not None, ".coveragerc has no [html] section"
+    match = re.search(r"^show_contexts\s*=\s*(\w+)", section.group(1), re.MULTILINE)
+    return match is not None and match.group(1).lower() == "true"
+
+
+def test_the_html_report_shows_which_tests_covered_each_line() -> None:
+    """`--cov-context=test` records the contexts; `show_contexts` renders them (owner decision)."""
+    assert coveragerc_show_contexts((PROJECT_ROOT / ".coveragerc").read_text())
+    assert not coveragerc_show_contexts("[html]\ndirectory = x\n")
+    assert not coveragerc_show_contexts("[html]\n; show_contexts = True\n")
+    assert coveragerc_show_contexts("[run]\nbranch = true\n[html]\nshow_contexts = True\n[paths]\n")
+    assert "--cov-context=test" in (PROJECT_ROOT / "pyproject.toml").read_text(), (
+        "the contexts the report shows are recorded by addopts"
+    )
+
+
 def test_the_full_fold_floor_holds_at_its_codified_minimum() -> None:
     value = makefile_threshold((PROJECT_ROOT / "Makefile").read_text(), "COVERAGE_THRESHOLD")
     assert value >= _FULL_COVERAGE_FLOOR, (

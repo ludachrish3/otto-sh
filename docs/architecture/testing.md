@@ -308,9 +308,11 @@ Three more axes sit alongside level/resource, each narrower in scope:
   reduced CI gate. `make coverage-ts` (part of `make coverage`) merges that
   vitest run with the Playwright e2e leg's coverage into one Istanbul
   report gated at the full, merged floor.
-- **Doctests.** `>>>` examples inside `src/otto`'s own docstrings run
-  automatically on every default pytest invocation — `--doctest-modules` is
-  baked into `pyproject.toml`'s `addopts`. Prose examples embedded in the
+- **Doctests.** `>>>` examples inside `src/otto` run in `make doctest-src`
+  (and the nox `docs` session), which pass `--doctest-modules` over
+  `src/otto`; the flag is not in `addopts` — `tests/` holds no doctest, and
+  importing every conftest twice is a hazard. `make collect-check` passes it
+  to import the helper modules. Prose examples embedded in the
   docs themselves (`.md`/`.rst`) are a separate mechanism, run through
   Sphinx's doctest builder (`make doctest`); both are part of `make docs`.
 - **Cross-Python matrix.** otto's floor is Python 3.10 and its ceiling is

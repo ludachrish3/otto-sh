@@ -32,8 +32,12 @@ fragile. The `get_otto_logger()` module-singleton pattern is the amplifier.
 
 ## Possible fixes (pick when addressed)
 
-- Set pytest `--import-mode=importlib` and/or scope `--doctest-modules` so a module
-  is never imported under two keys (verify no duplicate `otto.*` in `sys.modules`).
+- ✅ Scope `--doctest-modules` so a module is never imported under two keys: done —
+  the flag left `addopts` in `pyproject.toml`; only `collect-check`, `doctest-src`, the
+  nox `docs` session and the sibling-conftest regression pass it.
+  **Still open:** the condition this item names — verify no duplicate `otto.*` module
+  objects exist in an xdist worker — is NOT proven by that change (the session-scoped
+  guard test below is what proves it). `--import-mode=importlib` was not tried.
 - Or stop relying on the module-level `get_otto_logger()` singleton in tests; patch
   via the actual instance / inject the dependency.
 - Add a session-scoped guard test asserting no duplicate `otto.*` module objects.

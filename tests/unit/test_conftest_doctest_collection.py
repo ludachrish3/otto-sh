@@ -30,9 +30,19 @@ from tests._fixtures.paths import PROJECT_ROOT
 # such directories: collecting both takes about a second.
 _SIBLINGS = ["tests/unit/monitor", "tests/unit/suite"]
 
-# pyproject's addopts stay on: ``--doctest-modules`` is the defect's trigger.
-# The rest is speed and hygiene only — one process, no coverage, no cache.
-_CHILD_ARGS = ["-q", "-p", "no:randomly", "-p", "no:cacheprovider", "-n0", "--no-cov"]
+# ``--doctest-modules`` is passed here: it is the defect's trigger, and since #566
+# no lane inherits it from addopts. The rest is speed and hygiene only — one
+# process, no coverage, no cache.
+_CHILD_ARGS = [
+    "-q",
+    "-p",
+    "no:randomly",
+    "-p",
+    "no:cacheprovider",
+    "-n0",
+    "--no-cov",
+    "--doctest-modules",
+]
 
 # One test per sibling that requests a fixture its directory's conftest
 # defines, so resolving it proves that conftest is loaded and bound. Each test
