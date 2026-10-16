@@ -3,7 +3,7 @@
 ``make doctest-src`` and the nox ``docs`` session run ``pytest --doctest-modules
 src/otto``. Collecting ``src/otto`` does not load ``tests/conftest.py``, so the
 suite's ``OTTO_*`` strip never runs there: a developer shell that sourced
-``project_env`` hands the doctests ``OTTO_SUT_DIRS=tests/repo1,tests/repo2``.
+``project_env`` hands the doctests ``OTTO_SUT_DIRS=tests/repo1:tests/repo2``.
 That broke the pre-push gate on ``otto.examples.reservations_cli``: the
 reservations example once reached ``OttoContext.scopes``, which bootstraps those
 repos, and repo1 declares a ``[project]`` scope, so the ``fleet of interest`` INFO line is
@@ -35,7 +35,7 @@ from tests._fixtures.paths import PROJECT_ROOT
 # The failing shape from the pre-push gate: two fixture repos, one of which
 # declares a project scope, so reaching the repos logs at INFO.
 _HOSTILE_OTTO_ENV = {
-    "OTTO_SUT_DIRS": f"{PROJECT_ROOT / 'tests' / 'repo1'},{PROJECT_ROOT / 'tests' / 'repo2'}",
+    "OTTO_SUT_DIRS": os.pathsep.join(str(PROJECT_ROOT / "tests" / r) for r in ("repo1", "repo2")),
     "OTTO_LAB": "unix",
 }
 

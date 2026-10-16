@@ -1,5 +1,7 @@
 """bootstrap(): dependency pass wiring — skip, warnings, registration order."""
 
+import os
+
 import pytest
 
 from otto import bootstrap as bs
@@ -51,7 +53,7 @@ def _order(order_file):
 
 def test_dep_free_setup_registers_in_sut_dir_order(tmp_path, monkeypatch, order_file):
     dirs = [_write_repo(tmp_path, n) for n in ("c", "a", "b")]
-    monkeypatch.setenv("OTTO_SUT_DIRS", ",".join(dirs))
+    monkeypatch.setenv("OTTO_SUT_DIRS", os.pathsep.join(dirs))
     result = bs.bootstrap()
     assert result.errors == []
     assert result.warnings == []
@@ -61,7 +63,7 @@ def test_dep_free_setup_registers_in_sut_dir_order(tmp_path, monkeypatch, order_
 def test_required_dep_reorders_registration(tmp_path, monkeypatch, order_file):
     b = _write_repo(tmp_path, "b", required=["a >= 1"])
     a = _write_repo(tmp_path, "a")
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{b},{a}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{b}{os.pathsep}{a}")
     result = bs.bootstrap()
     assert result.errors == []
     assert _order(order_file) == ["a", "b"]
@@ -76,7 +78,7 @@ def test_required_dep_reorders_registration(tmp_path, monkeypatch, order_file):
 def test_missing_required_skips_registration(tmp_path, monkeypatch, order_file):
     a = _write_repo(tmp_path, "a", required=["ghost"])
     b = _write_repo(tmp_path, "b")
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{a},{b}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{a}{os.pathsep}{b}")
     result = bs.bootstrap()
     assert _order(order_file) == ["b"]  # a never registered
     assert len(result.repos) == 2  # but still discovered/visible
@@ -90,7 +92,7 @@ def test_missing_required_skips_registration(tmp_path, monkeypatch, order_file):
 def test_optional_incompatible_warns_and_registers(tmp_path, monkeypatch, order_file):
     a = _write_repo(tmp_path, "a", optional=["metrics >= 1.4"])
     m = _write_repo(tmp_path, "metrics", version="1.2.0")
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{a},{m}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{a}{os.pathsep}{m}")
     result = bs.bootstrap()
     assert result.errors == []
     (warn,) = result.warnings
@@ -101,7 +103,7 @@ def test_optional_incompatible_warns_and_registers(tmp_path, monkeypatch, order_
 def test_skip_propagation_through_bootstrap(tmp_path, monkeypatch, order_file):
     a = _write_repo(tmp_path, "a", required=["b"])
     b = _write_repo(tmp_path, "b", required=["ghost"])
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{a},{b}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{a}{os.pathsep}{b}")
     result = bs.bootstrap()
     assert _order(order_file) == []
     assert len(result.errors) == 2  # missing + propagation
@@ -112,7 +114,7 @@ def test_import_error_does_not_propagate_like_dep_failure(tmp_path, monkeypatch,
     a = _write_repo(tmp_path, "a", required=["b"])
     b = _write_repo(tmp_path, "b")
     (tmp_path / "b" / "b_init.py").write_text("raise RuntimeError('boom')\n")
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{a},{b}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{a}{os.pathsep}{b}")
     result = bs.bootstrap()
     assert _order(order_file) == ["a"]  # b's marker never ran, a's did
     assert len(result.errors) == 1  # only the contained import error
@@ -125,7 +127,7 @@ def test_optional_provider_skipped_warns_and_dependent_registers(tmp_path, monke
     # that the optional feature it thinks it has is actually unavailable.
     d = _write_repo(tmp_path, "d", optional=["e >= 1"])
     e = _write_repo(tmp_path, "e", required=["ghost"])
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{d},{e}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{d}{os.pathsep}{e}")
     result = bs.bootstrap()
     assert _order(order_file) == ["d"]  # d registered, e never did
     (warn,) = result.warnings

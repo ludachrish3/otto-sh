@@ -136,12 +136,17 @@ class TestCompleteSeparatedList:
     [
         ("", []),
         ("/a", ["/a"]),
-        ("/a,/b", ["/a", "/b"]),
         (f"/a{os.pathsep}/b", ["/a", "/b"]),
-        (f"/a, /b {os.pathsep} /c", ["/a", " /b ", " /c"]),
-        (f",/a,,{os.pathsep}/b,", ["/a", "/b"]),
-        ("  ,  ", ["  ", "  "]),
+        (f"/a{os.pathsep} /b {os.pathsep} /c", ["/a", " /b ", " /c"]),
+        (f"{os.pathsep}/a{os.pathsep}{os.pathsep}/b{os.pathsep}", ["/a", "/b"]),
+        (f"  {os.pathsep}  ", ["  ", "  "]),
     ],
 )
 def test_split_path_list_splits_and_drops_only_empties(value: str, expected: list[str]) -> None:
     assert split_path_list(value) == [Path(p) for p in expected]
+
+
+@pytest.mark.parametrize("value", ["/a,/b", "/a, /b", ",/a,"])
+def test_split_path_list_keeps_a_comma_inside_its_entry(value: str) -> None:
+    """Only ``os.pathsep`` separates: a comma is an ordinary path character."""
+    assert split_path_list(value) == [Path(value)]

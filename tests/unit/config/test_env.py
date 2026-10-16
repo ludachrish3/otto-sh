@@ -64,7 +64,7 @@ def test_env_sutdirs_set_to_multiple_paths_that_exist(monkeypatch, tmpdir_factor
     sut_dir1 = tmpdir_factory.mktemp("dir1")
     sut_dir2 = tmpdir_factory.mktemp("dir2")
 
-    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{sut_dir1},{sut_dir2}")
+    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{sut_dir1}{os.pathsep}{sut_dir2}")
     env = load_otto_env()
 
     assert env.sut_dirs == [sut_dir1, sut_dir2]
@@ -72,7 +72,7 @@ def test_env_sutdirs_set_to_multiple_paths_that_exist(monkeypatch, tmpdir_factor
 
 def test_env_sutdirs_set_to_multiple_paths_one_does_not_exist(monkeypatch, tmpdir) -> None:
 
-    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{tmpdir},{tmpdir}_typo")
+    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{tmpdir}{os.pathsep}{tmpdir}_typo")
 
     with pytest.raises(FileNotFoundError):
         load_otto_env()
@@ -85,14 +85,25 @@ def test_env_xdir_value() -> None:
 
 
 def test_the_loader_reads_sut_dirs_through_split_path_list(monkeypatch, tmp_path) -> None:
-    """A comma-space list names a path with a leading space, which does not exist."""
+    """A separator-space list names a path with a leading space, which does not exist."""
     one, two = tmp_path / "one", tmp_path / "two"
     one.mkdir()
     two.mkdir()
     monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{one}{os.pathsep}{two}")
     assert load_otto_env().sut_dirs == [one, two]
 
-    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{one}, {two}")
+    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{one}{os.pathsep} {two}")
     with pytest.raises(FileNotFoundError) as raised:
         load_otto_env()
     assert str(raised.value) == f"Path  {two} does not exist"
+
+
+def test_the_loader_reads_a_comma_list_as_one_path(monkeypatch, tmp_path) -> None:
+    """A comma does not separate: two real repos joined by one name a missing path."""
+    one, two = tmp_path / "one", tmp_path / "two"
+    one.mkdir()
+    two.mkdir()
+    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{one},{two}")
+    with pytest.raises(FileNotFoundError) as raised:
+        load_otto_env()
+    assert str(raised.value) == f"Path {one},{two} does not exist"

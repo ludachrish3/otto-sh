@@ -108,7 +108,7 @@ class TestCreate:
         result = _run(
             ["env", "create", "--backend", backend, "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            sut_dirs=f"{REPO1},{repo4}",
+            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert result.returncode == 0, result.stdout + result.stderr
@@ -215,7 +215,7 @@ class TestSync:
         without = _run(
             ["env", "create", "--backend", "uv"],
             home=home,
-            sut_dirs=f"{REPO1},{repo4}",
+            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert without.returncode != 0, (
@@ -235,7 +235,7 @@ class TestSync:
                 str(WHEELS_DIR),
             ],
             home=home,
-            sut_dirs=f"{REPO1},{repo4}",
+            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert with_links.returncode == 0, with_links.stdout + with_links.stderr
@@ -300,12 +300,17 @@ class TestShow:
         built = _run(
             ["env", "create", "--backend", "uv", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            sut_dirs=f"{REPO1},{repo4}",
+            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert built.returncode == 0, built.stdout + built.stderr
 
-        shown = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{repo4}", timeout=BUILD_TIMEOUT)
+        shown = _run(
+            ["env", "show"],
+            home=home,
+            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
+            timeout=BUILD_TIMEOUT,
+        )
         assert shown.returncode == 0, shown.stderr
         assert "backend:     uv" in shown.stdout, shown.stdout
         # repo1 has no pyproject at all, so it is not installable and says so.
@@ -328,7 +333,12 @@ class TestShow:
         )
         assert removed.returncode == 0, removed.stderr
 
-        after = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{repo4}", timeout=BUILD_TIMEOUT)
+        after = _run(
+            ["env", "show"],
+            home=home,
+            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
+            timeout=BUILD_TIMEOUT,
+        )
         assert after.returncode == 0, after.stderr
         assert _cell(after.stdout, "otto-sample-repo4", 2) == "no", after.stdout
 
@@ -343,12 +353,12 @@ class TestShow:
         built = _run(
             ["env", "create", "--backend", "uv", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            sut_dirs=f"{REPO1},{repo4}",
+            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert built.returncode == 0, built.stdout + built.stderr
 
-        fresh = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{repo4}")
+        fresh = _run(["env", "show"], home=home, sut_dirs=f"{REPO1}{os.pathsep}{repo4}")
         assert "stale" not in fresh.stdout, fresh.stdout
 
         # Backdate the env stamp to just BEFORE repo4's pyproject rather than by
@@ -360,6 +370,6 @@ class TestShow:
         older = (repo4 / "pyproject.toml").stat().st_mtime - 1
         os.utime(stamp, (older, older))
 
-        stale = _run(["env", "show"], home=home, sut_dirs=f"{REPO1},{repo4}")
+        stale = _run(["env", "show"], home=home, sut_dirs=f"{REPO1}{os.pathsep}{repo4}")
         assert "stale" in stale.stdout, stale.stdout
         assert "otto env sync" in stale.stdout, stale.stdout

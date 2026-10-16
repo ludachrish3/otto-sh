@@ -55,6 +55,19 @@ def test_locate_hands_over_without_sut_dirs(monkeypatch):
         sc.locate_cache({})
 
 
+def test_locate_splits_sut_dirs_on_the_path_separator_only(tmp_path):
+    """The shim keys the cache as the loader reads the list: a comma is part of a path."""
+    a, b, home = str(tmp_path / "a"), str(tmp_path / "b"), str(tmp_path / "home")
+
+    def located(sut_dirs: list[str]) -> str:
+        return str(Path(home) / sc.workspace_key(sut_dirs) / sc.CACHE_FILENAME)
+
+    environ = {"OTTO_HOME": home, "OTTO_SUT_DIRS": f"{a}{os.pathsep}{b}"}
+    assert sc.locate_cache(environ) == located([a, b])
+    environ["OTTO_SUT_DIRS"] = f"{a},{b}"
+    assert sc.locate_cache(environ) == located([f"{a},{b}"])
+
+
 def test_a_cold_cache_file_hands_over_with_a_plain_reason(tmp_path, monkeypatch):
     # The common first-run case: OTTO_HOME has no completion_cache.json yet.
     monkeypatch.setenv("OTTO_SUT_DIRS", str(tmp_path / "repo"))

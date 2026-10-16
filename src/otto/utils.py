@@ -61,19 +61,19 @@ def anchor_path(value: Path, root: Path, *, quote: bool = True) -> Path:
     return value if value.is_absolute() else root / value
 
 
-# Path-list env vars (e.g. OTTO_SUT_DIRS) historically accepted only commas,
-# but the standard Unix convention is os.pathsep (':' on Linux). Accept both
-# so users can use whichever feels natural — and so callers building lists
-# via os.pathsep.join(...) work without surprises.
-_PATH_LIST_SEP = re.compile(rf"[,{re.escape(os.pathsep)}]")
+# Path-list env vars (e.g. OTTO_SUT_DIRS) separate entries with os.pathsep
+# (':' on POSIX, ';' on Windows), like PATH and PYTHONPATH. A comma is an
+# ordinary path character. The console-script shim and the completion cache
+# split the same variables with this pattern, so all three agree.
+_PATH_LIST_SEP = re.compile(re.escape(os.pathsep))
 
 
 def split_path_list(value: str) -> list[Path]:
     """Split a path-list env value (``OTTO_SUT_DIRS``) into its paths.
 
-    Entries are separated by commas or :data:`os.pathsep`, either or both,
-    and empty entries are dropped. Nothing else is touched: whitespace is
-    part of an entry (``/a, /b`` names ``" /b"``), exactly as the
+    Entries are separated by :data:`os.pathsep` only, and empty entries are
+    dropped. A comma is part of a path. Nothing else is touched: whitespace is
+    part of an entry (``/a: /b`` names ``" /b"`` on POSIX), exactly as the
     completion-cache environment and the console-script shim split the same
     variable. The loader and ``otto init``'s "is this repo already on the
     list" check both read the variable through here, so they cannot disagree

@@ -33,8 +33,8 @@ With no lab loaded there is no inference to make and every repo is active.
 
 Both are root options, so they go **before** the subcommand. Both repeat, and
 each occurrence also splits on commas: `-E a,b` and `-E a -E b` are the same
-selection. **Only** the comma separates — unlike `OTTO_SUT_DIRS`, which also
-splits on the OS path separator.
+selection. **Only** the comma separates — unlike `OTTO_SUT_DIRS`, which
+splits only on the OS path separator.
 Segments are stripped, and an empty one is dropped rather than refused, so a
 trailing comma or a shell-built `-E "$NAMES"` is harmless.
 

@@ -1,5 +1,6 @@
 """Hostless e2e: third-party top-level commands + bootstrap containment."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,7 @@ class TestPluginCommands:
 
 class TestBootstrapContainment:
     def test_broken_repo_degrades_help_with_framed_warning(self, tmp_path: Path) -> None:
-        r = run_otto(["--help"], xdir=tmp_path, sut_dirs=f"{REPO_E2E},{REPO_BROKEN}")
+        r = run_otto(["--help"], xdir=tmp_path, sut_dirs=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}")
         assert r.returncode == 0  # help still renders
         # A test file is never imported to build help (or the cache it seeds):
         # test names come from a static parse, and nothing registers from one.
@@ -57,7 +58,7 @@ class TestBootstrapContainment:
         r = run_otto(
             ["run", "noop"],
             xdir=tmp_path,
-            sut_dirs=f"{REPO_E2E},{REPO_BROKEN}",
+            sut_dirs=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}",
             lab="unix",
             extra_argv_prefix=["-R"],
         )
@@ -68,14 +69,14 @@ class TestBootstrapContainment:
 
     def test_broken_test_file_does_not_block_show_lab_or_list_hosts(self, tmp_path: Path) -> None:
         for flag in ("--show-lab", "--list-hosts"):
-            r = run_otto([flag], xdir=tmp_path, sut_dirs=f"{REPO_E2E},{REPO_BROKEN}")
+            r = run_otto([flag], xdir=tmp_path, sut_dirs=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}")
             assert "Cannot run commands while a repo fails to load" not in r.stdout + r.stderr, flag
 
     def test_broken_test_file_does_not_block_schema_export(self, tmp_path: Path) -> None:
         r = run_otto(
             ["schema", "export", "--out", str(tmp_path / "schema")],
             xdir=tmp_path,
-            sut_dirs=f"{REPO_E2E},{REPO_BROKEN}",
+            sut_dirs=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}",
         )
         assert r.returncode == 0, r.stdout + r.stderr
 
@@ -88,7 +89,7 @@ class TestBootstrapContainment:
         r = run_otto(
             ["test", "TestE2EFixture"],
             xdir=tmp_path,
-            sut_dirs=f"{REPO_E2E},{REPO_BROKEN}",
+            sut_dirs=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}",
             lab="unix",
             extra_argv_prefix=["-R"],
         )
@@ -99,7 +100,9 @@ class TestBootstrapContainment:
         assert "Cannot run commands while a repo fails to load" not in out
 
     def test_broken_test_file_does_not_block_otto_test_help(self, tmp_path: Path) -> None:
-        r = run_otto(["test", "--help"], xdir=tmp_path, sut_dirs=f"{REPO_E2E},{REPO_BROKEN}")
+        r = run_otto(
+            ["test", "--help"], xdir=tmp_path, sut_dirs=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}"
+        )
         assert r.returncode == 0, r.stdout + r.stderr
         assert "failed to load test_syntax_error.py" not in r.stderr, r.stderr
 
@@ -121,7 +124,7 @@ class TestDiscoveryContainment:
     def test_malformed_settings_degrades_help_with_framed_warning(
         self, tmp_path: Path, bad_toml_repo: Path
     ) -> None:
-        r = run_otto(["--help"], xdir=tmp_path, sut_dirs=f"{REPO_E2E},{bad_toml_repo}")
+        r = run_otto(["--help"], xdir=tmp_path, sut_dirs=f"{REPO_E2E}{os.pathsep}{bad_toml_repo}")
         assert r.returncode == 0  # help still renders
         assert "Traceback" not in r.stderr
         assert "settings.toml" in r.stderr  # framed warning names the culprit
@@ -131,7 +134,9 @@ class TestDiscoveryContainment:
     def test_malformed_settings_fails_real_dispatch_loud(
         self, tmp_path: Path, bad_toml_repo: Path
     ) -> None:
-        r = run_otto(["run", "noop"], xdir=tmp_path, sut_dirs=f"{REPO_E2E},{bad_toml_repo}")
+        r = run_otto(
+            ["run", "noop"], xdir=tmp_path, sut_dirs=f"{REPO_E2E}{os.pathsep}{bad_toml_repo}"
+        )
         assert r.returncode != 0
         assert "settings.toml" in r.stderr + r.stdout
 

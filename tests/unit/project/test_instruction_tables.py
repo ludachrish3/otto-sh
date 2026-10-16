@@ -9,6 +9,7 @@ otto's own bodies first, and one check over the sources refuses a
 registration that would leave them inconsistent.
 """
 
+import os
 import subprocess
 import sys
 from typing import Annotated
@@ -310,7 +311,7 @@ def test_post_loop_options_check_is_idempotent(tmp_path, monkeypatch):
                 files={f"lib/{module}.py": _ACTIONS_INIT.format(cls=cls, field=field)},
             )
         )
-    monkeypatch.setenv("OTTO_SUT_DIRS", ",".join(str(d) for d in dirs))
+    monkeypatch.setenv("OTTO_SUT_DIRS", os.pathsep.join(str(d) for d in dirs))
     bs._reset()
     try:
         result = bs.bootstrap()

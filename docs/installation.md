@@ -145,7 +145,7 @@ otto's business:
 {doc}`cli/env/index` builds and maintains the second:
 
 ```console
-$ export OTTO_SUT_DIRS=~/work/repo-a,~/work/repo-b
+$ export OTTO_SUT_DIRS=~/work/repo-a:~/work/repo-b
 $ otto env create
 created ~/.otto/134b91c0-repo-a-repo-b/env
   installed (editable): repo-b

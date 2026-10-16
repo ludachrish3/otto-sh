@@ -12,6 +12,7 @@ table on either of those would silently re-scope every other suite that
 loads them.
 """
 
+import os
 import textwrap
 
 import pytest
@@ -21,7 +22,7 @@ from tests.e2e._otto_subprocess import REPO1, REPO2, run_otto
 
 pytestmark = pytest.mark.hostless
 
-_BOTH = f"{REPO1},{REPO2}"
+_BOTH = f"{REPO1}{os.pathsep}{REPO2}"
 
 
 def _run(argv, *, sut_dirs=_BOTH, lab=None, xdir=None):
@@ -101,7 +102,10 @@ class TestLabInferredRefusal:
         repo = _write_repo(tmp_path, "sideproj", lab_patterns=["unix_alt"], init_body=instruction)
 
         refused = _run(
-            ["run", "flash-b"], sut_dirs=f"{REPO1},{repo}", lab="unix", xdir=tmp_path / "x1"
+            ["run", "flash-b"],
+            sut_dirs=f"{REPO1}{os.pathsep}{repo}",
+            lab="unix",
+            xdir=tmp_path / "x1",
         )
         assert refused.returncode == 1
         blob = refused.stdout + refused.stderr
@@ -111,7 +115,7 @@ class TestLabInferredRefusal:
 
         forced = _run(
             ["-I", "sideproj", "run", "flash-b"],
-            sut_dirs=f"{REPO1},{repo}",
+            sut_dirs=f"{REPO1}{os.pathsep}{repo}",
             lab="unix",
             xdir=tmp_path / "x2",
         )
@@ -125,13 +129,17 @@ class TestBootstrapDemotion:
         repo = _write_repo(
             tmp_path, "brokenproj", lab_patterns=["never_loaded"], init_body=self._BROKEN
         )
-        result = _run(["--show-lab"], sut_dirs=f"{REPO1},{repo}", lab="unix", xdir=tmp_path / "x")
+        result = _run(
+            ["--show-lab"], sut_dirs=f"{REPO1}{os.pathsep}{repo}", lab="unix", xdir=tmp_path / "x"
+        )
         assert result.returncode == 0, result.stderr
         assert "inactive for this run" in result.stdout + result.stderr
 
     def test_active_broken_repo_stays_fatal(self, tmp_path):
         repo = _write_repo(tmp_path, "brokenproj", init_body=self._BROKEN)
-        result = _run(["--show-lab"], sut_dirs=f"{REPO1},{repo}", lab="unix", xdir=tmp_path / "x")
+        result = _run(
+            ["--show-lab"], sut_dirs=f"{REPO1}{os.pathsep}{repo}", lab="unix", xdir=tmp_path / "x"
+        )
         assert result.returncode == 1
         assert "Cannot run commands while a repo fails to load" in result.stdout + result.stderr
 

@@ -72,6 +72,7 @@ def test_the_shim_starts_the_child_the_full_path_starts_detached(cache_dir, pope
     assert _without_owner(kwargs["env"]) == _without_owner(expected.env)
     assert kwargs["env"][cc.COLLECT_OWNER_ENV_VAR], "the child writes an owner into its lock"
     assert kwargs["env"]["OTTO_SUT_DIRS"] == str(Path.cwd() / "sut"), "made absolute"
+    assert kwargs["env"]["OTTO_XDIR"] == str(Path.cwd() / "out,more"), "a comma does not split"
     assert Path(kwargs["cwd"]) == expected.cwd
     assert kwargs["start_new_session"] is True
     assert kwargs["close_fds"] is True

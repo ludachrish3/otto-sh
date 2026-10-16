@@ -8,6 +8,7 @@ broken (spec 2026-08-27 lab-definition-v2 §12, spec 2026-10-03 init-library
 ``export`` line pasted line by line runs and sets the wrong value.
 """
 
+import os
 from pathlib import Path
 
 from rich.console import Console
@@ -67,7 +68,7 @@ def test_both_shells_are_covered_and_completion_is_sourced_after_install(tmp_pat
 
 def test_exports_are_omitted_when_the_root_is_already_active(tmp_path: Path) -> None:
     root = tmp_path.resolve()
-    for sut_dirs in (str(root), f"/elsewhere:{root}/", f"/elsewhere,{root}"):
+    for sut_dirs in (str(root), f"/elsewhere{os.pathsep}{root}/"):
         text = _render(root, sut_dirs)
         assert "export OTTO_SUT_DIRS" not in text, sut_dirs
         assert "Add only" not in text
@@ -75,9 +76,16 @@ def test_exports_are_omitted_when_the_root_is_already_active(tmp_path: Path) -> 
 
 
 def test_an_entry_the_loader_would_not_find_still_gets_the_exports(tmp_path: Path) -> None:
-    """``/elsewhere, <root>`` names ``" <root>"`` to the loader, so the root is not active yet."""
+    """``/elsewhere: <root>`` names ``" <root>"`` to the loader, so the root is not active yet."""
     root = tmp_path.resolve()
-    text = _render(root, f"/elsewhere, {root}")
+    text = _render(root, f"/elsewhere{os.pathsep} {root}")
+    assert text.count(f"export OTTO_SUT_DIRS={root}") == _EXPORTS_WHEN_INACTIVE
+
+
+def test_a_comma_list_still_gets_the_exports(tmp_path: Path) -> None:
+    """A comma does not separate: ``/elsewhere,<root>`` is one path, not the root."""
+    root = tmp_path.resolve()
+    text = _render(root, f"/elsewhere,{root}")
     assert text.count(f"export OTTO_SUT_DIRS={root}") == _EXPORTS_WHEN_INACTIVE
 
 

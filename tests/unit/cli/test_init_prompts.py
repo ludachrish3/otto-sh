@@ -201,19 +201,18 @@ def test_epilogue_skips_sut_dirs_when_pathsep_separated(tmp_path: Path, monkeypa
     assert "source ~/.bash_completions/otto.sh" in result.output
 
 
-def test_epilogue_skips_sut_dirs_when_comma_separated(tmp_path: Path, monkeypatch) -> None:
+def test_epilogue_keeps_sut_dirs_when_comma_separated(tmp_path: Path, monkeypatch) -> None:
+    """A comma does not separate: ``/somewhere/else,<root>`` is one path, not the repo."""
     monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else,{tmp_path}")
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
-    assert "export OTTO_SUT_DIRS" not in result.output
-    # Not vacuous: the block itself was printed.
-    assert "source ~/.bash_completions/otto.sh" in result.output
+    assert f"export OTTO_SUT_DIRS={tmp_path.resolve()}" in result.output
 
 
 def test_epilogue_keeps_sut_dirs_when_the_entry_has_a_leading_space(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """The loader reads ``, <root>`` as ``" <root>"``, a path that does not exist."""
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else, {tmp_path}")
+    """The loader reads ``<sep> <root>`` as ``" <root>"``, a path that does not exist."""
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else{os.pathsep} {tmp_path}")
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     assert f"export OTTO_SUT_DIRS={tmp_path.resolve()}" in result.output
 

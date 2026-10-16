@@ -1,5 +1,6 @@
 """bootstrap(): phases, idempotence, containment framing."""
 
+import os
 import pathlib
 import textwrap
 import types
@@ -78,7 +79,7 @@ def _write_bad_toml_repo(tmp_path) -> str:
 def test_malformed_settings_toml_is_contained_and_framed(tmp_path, monkeypatch):
     good = _write_repo(tmp_path)
     bad = _write_bad_toml_repo(tmp_path)
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{good},{bad}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{good}{os.pathsep}{bad}")
     result = bs.bootstrap()
     assert len(result.repos) == 1  # the healthy repo still loads
     assert len(result.errors) == 1
@@ -827,7 +828,7 @@ def test_lifecycle_a_reentrant_init_reads_the_result_being_built(tmp_path, monke
         },
         extra='\n[dependencies]\nrequired = ["base"]\n',
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{life},{base}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{life}{os.pathsep}{base}")
 
     result = bs.bootstrap()
 
@@ -923,7 +924,7 @@ _BAD_TABLE = '[os_profiles.broken]\nbase = "windows"\n'
 def test_a_bad_os_profiles_table_is_contained_naming_the_repo_and_the_table(tmp_path, monkeypatch):
     bad = _profile_repo(tmp_path, "repo-a", _BAD_TABLE)
     good = _profile_repo(tmp_path, "repo-b", '[os_profiles.fine]\nbase = "unix"\n')
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{bad},{good}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{bad}{os.pathsep}{good}")
     result = bs.bootstrap()  # does not raise
     assert [repo.name for repo in result.repos] == ["repo-a", "repo-b"]  # still discovered
     # Kept in the dependency order, as a repo whose init failed is.
@@ -967,7 +968,7 @@ def test_a_command_not_involving_the_broken_repo_still_runs(tmp_path):
     good = _profile_repo(tmp_path, "repo-b")
     env = {
         **os.environ,
-        "OTTO_SUT_DIRS": f"{bad},{good}",
+        "OTTO_SUT_DIRS": f"{bad}{os.pathsep}{good}",
         "OTTO_HOME": str(tmp_path / "home"),
         "OTTO_XDIR": str(tmp_path / "xdir"),
     }
@@ -999,7 +1000,7 @@ def _dependent_pair(root, broken_repo: str, monkeypatch) -> "types.SimpleNamespa
     """Bootstrap *broken_repo* (named repo-a) and repo-c, which requires it."""
     bs._reset()
     c = _profile_repo(root, "repo-c", required="repo-a")
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{broken_repo},{c}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{broken_repo}{os.pathsep}{c}")
     result = bs.bootstrap()
     return types.SimpleNamespace(
         ordered=[repo.name for repo in result.ordered_repos],
@@ -1033,7 +1034,7 @@ def test_a_dependent_of_a_bad_table_repo_behaves_as_with_a_failed_init(tmp_path,
 def _scoped_pair(tmp_path, monkeypatch):
     bad = _profile_repo(tmp_path, "repo-a", _scoped("lab-a") + _BAD_TABLE)
     good = _profile_repo(tmp_path, "repo-b", _scoped(".*"))
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{bad},{good}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{bad}{os.pathsep}{good}")
     return bs.bootstrap()
 
 
@@ -1126,7 +1127,7 @@ def test_a_ref_class_s_bad_own_profile_names_its_registering_module(tmp_path, mo
         """,
     )
     user = _profile_repo(tmp_path, "repo-user", '[os_profiles.alpha]\nbase = "typo-host"\n')
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{owner},{user}")
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"{owner}{os.pathsep}{user}")
     result = bs.bootstrap()
     (err,) = result.errors
     text = str(err)

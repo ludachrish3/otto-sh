@@ -360,11 +360,12 @@ composes multiple repos into one process and contains per-file failures.
 
 ## Multiple repos
 
-Otto supports multiple repos simultaneously.  Set `OTTO_SUT_DIRS` to a
-comma-separated list:
+Otto supports multiple repos simultaneously.  Set `OTTO_SUT_DIRS` to a list
+separated by the OS path separator, as for `PATH`: `:` on Linux and macOS,
+`;` on Windows. A comma is not a separator; it is part of a path.
 
 ```bash
-export OTTO_SUT_DIRS=/path/to/repo1,/path/to/repo2
+export OTTO_SUT_DIRS=/path/to/repo1:/path/to/repo2
 ```
 
 Each repo has its own settings, libs, tests, and host-data sources.  They

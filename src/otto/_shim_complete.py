@@ -69,7 +69,8 @@ DUMP_TESTS_ENV_VAR = "_OTTO_DUMP_TEST_NAMES"
 COLLECT_OWNER_ENV_VAR = "_OTTO_COLLECT_OWNER"
 _CHILD_PATH_VARS = ("OTTO_SUT_DIRS", "OTTO_XDIR", "OTTO_HOME")
 _NORMALIZE_RE = re.compile(r"[-_.]+")
-_PATH_LIST_SEP = re.compile(rf"[,{re.escape(os.pathsep)}]")
+_PATH_LIST_SEP = re.compile(re.escape(os.pathsep))
+"""``otto.utils._PATH_LIST_SEP``: path lists split on ``os.pathsep`` only."""
 _MARKER_KEYWORDS = frozenset({"and", "or", "not"})
 
 

@@ -22,6 +22,7 @@ same thing on a developer's machine and on a clean clone.
 the developer's real ``~/.otto``.
 """
 
+import os
 import subprocess
 
 import pytest
@@ -96,7 +97,7 @@ class TestTheAcceptancePair:
         result = _run(
             ["--lab", "unix", "run", "use-beetroot"],
             home=tmp_path / "home",
-            sut_dirs=f"{REPO1},{_repo4(tmp_path)}",
+            sut_dirs=f"{REPO1}{os.pathsep}{_repo4(tmp_path)}",
         )
         assert result.returncode == 1, result.stdout + result.stderr
         blob = result.stdout + result.stderr
@@ -115,7 +116,7 @@ class TestTheAcceptancePair:
         work from the environment it built.
         """
         home = tmp_path / "home"
-        sut_dirs = f"{REPO1},{_repo4(tmp_path)}"
+        sut_dirs = f"{REPO1}{os.pathsep}{_repo4(tmp_path)}"
         sync = _run(
             ["env", "sync", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
@@ -149,7 +150,7 @@ class TestTheAcceptancePair:
         result = _run(
             ["env", "show"],
             home=tmp_path / "home",
-            sut_dirs=f"{REPO1},{_repo4(tmp_path)}",
+            sut_dirs=f"{REPO1}{os.pathsep}{_repo4(tmp_path)}",
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert "error: repo 'repo4'" not in result.stdout + result.stderr
@@ -173,7 +174,7 @@ def test_an_eager_import_fails_at_bootstrap_before_the_preflight_can_speak(tmp_p
     result = _run(
         ["--lab", "unix", "run", "use-beetroot"],
         home=tmp_path / "home",
-        sut_dirs=f"{REPO1},{_repo4(tmp_path, eager=True)}",
+        sut_dirs=f"{REPO1}{os.pathsep}{_repo4(tmp_path, eager=True)}",
     )
     assert result.returncode == 1
     blob = result.stdout + result.stderr

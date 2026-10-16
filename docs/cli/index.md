@@ -167,7 +167,7 @@ no flag.
 | `OTTO_LOG_DAYS` | `--log-days` | |
 | `OTTO_LOG_LEVEL` | `--log-level` | |
 | `OTTO_LOG_RICH` | `--rich-log-file` | |
-| `OTTO_SUT_DIRS` | *(no flag)* | Paths to the repo roots under test, separated by `,` or the OS path separator (`:` on Linux/macOS, `;` on Windows). Required when a development repo is under test |
+| `OTTO_SUT_DIRS` | *(no flag)* | Paths to the repo roots under test, separated by the OS path separator (`:` on Linux/macOS, `;` on Windows), as for `PATH`. A comma is part of a path, not a separator. Required when a development repo is under test |
 | `OTTO_HOME` | *(no flag)* | otto's user-level home; defaults to `~/.otto`.  Holds one workspace home per `OTTO_SUT_DIRS` set — see [The workspace home](#the-workspace-home) |
 | `OTTO_TEARDOWN_DEADLINE` | *(no flag)* | Seconds an interrupted command's graceful cleanup may run before it is abandoned; defaults to `10`; read when a run is prepared (the CLI, `open_context`, library `run_tests`). Outside them, the readers of this deadline (`run_command`, `sync_phase`, `compensate`) use 10 s, while a hand-built context's `ctx.sweep_loop(...)` without `deadline=` waits for every close — see {doc}`../architecture/lifecycle` |
 | `OTTO_SSH_DEBUG` | *(no flag)* | asyncssh's own debug level, `1`..`3`; `2` prints the offered and chosen key-exchange, host-key, cipher and MAC lists under `--log-level DEBUG` (a valid value also lifts otto's own `asyncssh` logger floor to `DEBUG`) — see [Legacy SSH servers](../configuration/settings.md#legacy-ssh-servers) |

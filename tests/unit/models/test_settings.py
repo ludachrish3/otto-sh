@@ -1,3 +1,4 @@
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -581,17 +582,15 @@ def test_otto_env_settings_reads_prefixed_vars(clean_otto_env, tmp_path):
     assert env.compose_suffix == "ci"
 
 
-def test_otto_env_settings_splits_sut_dirs_comma_and_pathsep(clean_otto_env, tmp_path):
-    import os
-
+def test_otto_env_settings_splits_sut_dirs_on_pathsep_only(clean_otto_env, tmp_path):
     a = tmp_path / "a"
     b = tmp_path / "b"
     a.mkdir()
     b.mkdir()
-    clean_otto_env.setenv("OTTO_SUT_DIRS", f"{a},{b}")
-    assert OttoEnvSettings().sut_dirs == [a, b]
     clean_otto_env.setenv("OTTO_SUT_DIRS", f"{a}{os.pathsep}{b}")
     assert OttoEnvSettings().sut_dirs == [a, b]
+    clean_otto_env.setenv("OTTO_SUT_DIRS", f"{a},{b}")
+    assert OttoEnvSettings().sut_dirs == [Path(f"{a},{b}")]
 
 
 def test_otto_env_settings_empty_values_use_defaults(clean_otto_env):

@@ -49,7 +49,7 @@ def _unparseable(tmp_path, name="broken"):
 
 
 def _use(monkeypatch, *dirs):
-    monkeypatch.setenv("OTTO_SUT_DIRS", ",".join(str(d) for d in dirs))
+    monkeypatch.setenv("OTTO_SUT_DIRS", os.pathsep.join(str(d) for d in dirs))
 
 
 def _rig():
