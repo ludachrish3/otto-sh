@@ -27,6 +27,12 @@ One module moved whole with that spec's §3.7: the lab model and its loader
 deleted ``otto.config.bootstrapped``, the old module is gone, so any import of
 it, and any string naming it, is an old spelling.
 
+The active run and two of the context's helpers moved with that spec's §3.8. The
+active-run slot (``_active``) left ``otto.context`` for ``otto.invocation`` (as
+``_ACTIVE``); ``_apply_option_overrides`` left ``otto.config.fleet`` for
+``otto.context``, and ``_flag_holding_out`` left it for ``otto.host.builtin_hosts``,
+which also owns ``is_builtin_host``: the fleet's wrapper of it is gone.
+
 An old spelling fails loudly at most call sites, but not everywhere. Six
 readers import an accessor inside a broad ``except``, where a stale import
 degrades silently instead of raising
@@ -102,6 +108,8 @@ LAB = frozenset(
         "_json_source",
     }
 )
+ACTIVE_RUN = frozenset({"_active"})
+FLEET_HELPERS = frozenset({"_apply_option_overrides", "_flag_holding_out", "is_builtin_host"})
 # Modules that are gone -> the moved names they held. Any import of one, and any string
 # naming one, is an old spelling.
 GONE: dict[str, frozenset[str]] = {
@@ -114,6 +122,8 @@ OLD_HOMES: dict[str, frozenset[str]] = {
     **GONE,
     "otto.config.repo": SETTINGS,
     "otto.config.env": SPLITTER,
+    "otto.context": ACTIVE_RUN,
+    "otto.config.fleet": FLEET_HELPERS,
 }
 FACADE = "otto.lab"
 
@@ -276,7 +286,10 @@ def test_no_otto_code_or_test_names_a_moved_name_at_its_old_home():
         "(otto.bootstrap for the repo accessors; otto.config.fleet / otto.labs.loader inside otto, "
         "otto.lab in tests and docs, for the lab and fleet names; otto.config.scope for the "
         "settings types and the settings file's location; otto.utils for the path-list "
-        "splitter). A line marked (a facade) "
+        "splitter; otto.invocation for the active-run slot; otto.context for the fleet's "
+        "override helper; otto.host.builtin_hosts for the membership rule and "
+        "is_builtin_host). "
+        "A line marked (a facade) "
         "is re-pointed by scripts/facade_sweep.py --apply when it is a from-import "
         "(tests/unit/test_internal_imports_skip_facades.py):\n  " + "\n  ".join(offenders)
     )
@@ -424,3 +437,23 @@ class TestTheScanSeesEverySpelling:
         assert self.lines(source) == [1, 2, 3, 4, 5]
         assert self.lines(source, "otto.examples.reservations_cli") == []  # taught code
         assert self.lines(source, None) == []  # tests and docs may import the facade
+
+    def test_the_active_run_slot_and_the_fleet_helpers_at_their_old_homes(self):
+        """The slot left ``otto.context``; the fleet's helpers left ``otto.config.fleet``."""
+        source = (
+            "from otto.context import _active\n"
+            "from ..config.fleet import _apply_option_overrides, get_host\n"
+            "from .fleet import _flag_holding_out\n"
+            'monkeypatch.setattr("otto.config.fleet._flag_holding_out", f)\n'
+            "from otto import context\n"
+            "context._active.get()\n"
+            "from otto.config.fleet import is_builtin_host\n"
+            'CODE = "from otto.config.fleet import _apply_option_overrides\\n"\n'
+            'monkeypatch.setattr("otto.context._active", f)\n'
+            "from otto.context import _apply_option_overrides, get_context\n"
+            "from otto.host.builtin_hosts import is_builtin_host\n"
+            "from otto.invocation import _ACTIVE, require_run\n"
+            'FINE = "otto.config.fleet.get_hosts_in_play"\n'
+            "context.get_context()\n"
+        )
+        assert self.lines(source, "otto.config.scope") == [1, 2, 3, 4, 6, 7, 8, 9]

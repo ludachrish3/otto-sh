@@ -27,6 +27,7 @@ from ..errors import OttoError
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
+    from ..invocation import ActiveRun
     from ..labs.loader import Lab
     from .identity import ReservationIdentity, ResolvedIdentity
     from .protocol import Reservation, ReservationBackend
@@ -110,6 +111,35 @@ class ReservationGateResult:
     """The report the check read; ``None`` when no check ran."""
 
 
+def _hosts_in_play(run: "ActiveRun") -> set[str]:
+    """Return *run*'s hosts in play: the hosts a reservation requirement covers.
+
+    *run*'s admissible ids with the refusal off
+    (``admissible_ids(require_nonempty=False)``), less the built-in ``local``
+    host. Every reservation reader reaches this one set: the gate here, and
+    ``otto reservation check`` and the completer's gate through
+    :func:`otto.config.fleet.get_hosts_in_play`.
+
+    An empty declared fleet reads as ZERO hosts in play — the requirement is
+    the lab-level set alone — and never as an abort; a run that goes on to walk
+    its fleet still refuses that fleet with the same message.
+
+    The built-in ``local`` host is never in play: otto can always run on the
+    machine it is running on, so a reservation standing between a user and
+    ``otto host local <verb>`` costs them a run and buys nobody a slot. The
+    subtraction is here rather than in :func:`~otto.config.scope.scoped_ids`
+    because scoping answers a different question — ``include_local=True`` is a
+    fleet WALK's own opt-in and keeps working untouched. ``is_builtin_host``
+    rather than an ``id != "local"`` test: a lab may declare its OWN ``local``
+    entry (``load_lab`` then injects nothing), and that host's ``resources``
+    are as real as any other's.
+    """
+    from ..host.builtin_hosts import is_builtin_host
+
+    in_play = run.admissible_ids(require_nonempty=False)
+    return {hid for hid in in_play if not is_builtin_host(run.lab.hosts.get(hid))}
+
+
 @dataclass(frozen=True)
 class ReservationGate:
     """Per-invocation reservation gate: framework-free, callable from any Python caller.
@@ -137,12 +167,13 @@ class ReservationGate:
     def _lab_and_hosts(
         lab: "Lab | None", host_ids: "Iterable[str] | None"
     ) -> "tuple[Lab, Iterable[str] | None]":
-        """Use an explicit lab as given; otherwise the active lab and its hosts in play."""
+        """Use an explicit lab as given; otherwise the active run's lab and its hosts in play."""
         if lab is not None:
             return lab, host_ids
-        from ..config.fleet import get_hosts_in_play, get_lab
+        from ..invocation import require_run
 
-        return get_lab(), (get_hosts_in_play() if host_ids is None else host_ids)
+        run = require_run()
+        return run.lab, (_hosts_in_play(run) if host_ids is None else host_ids)
 
     def report(self, lab: "Lab", host_ids: "Iterable[str] | None" = None) -> "ReservationReport":
         """Report what this gate's user needs from *lab* and holds.
@@ -181,10 +212,9 @@ class ReservationGate:
 
         The requirement is computed over the fleet of interest —
         :meth:`~otto.context.OttoContext.admissible_ids` (spec 2026-08-28
-        three-level-reservations §5), reached through
-        :func:`~otto.config.fleet.get_hosts_in_play` because ``tach.toml``
-        does not allow this package the context module. An empty declared
-        fleet is ZERO hosts in play, so the requirement narrows to the
+        three-level-reservations §5), read off the active run in
+        ``otto.invocation``: this package sits below the context module. An empty
+        declared fleet is ZERO hosts in play, so the requirement narrows to the
         lab-level set and the gate reaches a verdict rather than aborting.
         That refusal belongs to the walk: a run that then walks its fleet
         still refuses it with the same fleet-shaped message, which is where it
@@ -235,7 +265,7 @@ class ReservationGate:
 
         Returns ``None`` when there is nothing to check. Needs an installed
         :class:`~otto.context.OttoContext`, because it reads the hosts in play
-        through :func:`~otto.config.fleet.get_hosts_in_play`.
+        off the active run.
 
         ``otto host <id> --hop <id>`` is deliberately unscoped (explicit
         targeting beats scoping) while :meth:`evaluate` requires only the
@@ -267,14 +297,15 @@ class ReservationGate:
         MissingReservationError
             A remaining host's resources are not all held.
         """
-        from ..config.fleet import get_hosts_in_play, is_builtin_host
+        from ..host.builtin_hosts import is_builtin_host
+        from ..invocation import require_run
         from .report import build_report
 
         # No identity is a quiet no-op here, unlike evaluate()/report(): a gate with
         # nothing to check as has nothing to refuse.
         if self.skip_check or self.backend is None or self.identity is None:
             return None
-        fleet = get_hosts_in_play()
+        fleet = _hosts_in_play(require_run())
         outside = [
             host
             for host in hosts

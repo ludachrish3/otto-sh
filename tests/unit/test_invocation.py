@@ -1,7 +1,9 @@
 """otto.invocation: the run's policy, peer-host resolver and context bindings (spec 2 §3).
 
 A leaf: it imports no otto module at runtime, so the host layer can read the
-run's policy without importing otto.context.
+run's policy without importing otto.context. It also holds the active run, the
+context ``set_context`` installed, which a reader below the run layer reads
+without importing otto.context (spec 2026-10-11 placement-and-phases §3.8).
 """
 
 import ast
@@ -11,6 +13,7 @@ import pytest
 
 from otto import invocation as inv
 from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.run_state import cleared_run_state
 
 
 def test_with_nothing_installed_readers_get_a_fresh_default_each_time():
@@ -91,6 +94,84 @@ def test_the_resolver_is_whatever_was_installed():
     finally:
         inv.reset_binding(binding)
     assert inv.installed_resolver() is None
+
+
+NO_ACTIVE_RUN = (
+    "No active OttoContext. Inside the CLI this is built by the top-level "
+    "callback; in a script wrap your work in `async with otto.open_context(...)`."
+)
+
+
+def test_with_no_run_installed_require_run_refuses_with_get_context_s_message():
+    """``require_run`` and ``get_context`` refuse alike: a plain RuntimeError, the same words.
+
+    Mutation: give ``require_run`` its own message, or raise an OttoError
+    subclass, and this goes red.
+    """
+    from otto.context import get_context
+
+    with cleared_run_state():
+        assert inv.installed_run() is None
+        with pytest.raises(RuntimeError) as slot:
+            inv.require_run()
+        with pytest.raises(RuntimeError) as context:
+            get_context()
+    assert type(slot.value) is RuntimeError
+    assert type(context.value) is RuntimeError
+    assert str(slot.value) == str(context.value) == NO_ACTIVE_RUN
+
+
+def test_set_context_installs_the_run_and_reset_context_restores_it():
+    """The context's install and reset go through the slot, nested ones included.
+
+    Mutation: have ``set_context`` install into a variable of its own, or
+    ``reset_context`` leave the slot alone, and this goes red.
+    """
+    from otto.context import OttoContext, get_context, reset_context, set_context, try_get_context
+    from otto.labs.loader import Lab
+
+    with cleared_run_state():
+        outer = OttoContext(lab=Lab(name="outer"))
+        inner = OttoContext(lab=Lab(name="inner"))
+        outer_binding = set_context(outer)
+        assert inv.installed_run() is outer
+        assert inv.require_run() is outer
+        inner_binding = set_context(inner)
+        assert inv.require_run() is inner
+        assert get_context() is inner
+        assert try_get_context() is inner
+        reset_context(inner_binding)
+        assert inv.require_run() is outer
+        reset_context(outer_binding)
+        assert inv.installed_run() is None
+        assert try_get_context() is None
+
+
+def test_the_active_run_protocol_is_the_four_names_the_context_provides():
+    """``lab``, ``repos``, ``ordered_repos`` and ``admissible_ids(require_nonempty=...)``.
+
+    The protocol a reader below the run layer may use, and each member as the
+    context defines it. ty checks the full shapes where ``set_context`` hands
+    the context to ``install_run``.
+    """
+    import dataclasses
+    import inspect
+
+    from otto.context import OttoContext
+
+    members = sorted(name for name in vars(inv.ActiveRun) if not name.startswith("_"))
+    assert members == ["admissible_ids", "lab", "ordered_repos", "repos"]
+    assert "lab" in {field.name for field in dataclasses.fields(OttoContext)}
+    for name in ["repos", "ordered_repos"]:
+        assert isinstance(inspect.getattr_static(OttoContext, name), property), name
+    protocol = inspect.signature(inv.ActiveRun.admissible_ids).parameters
+    context = inspect.signature(OttoContext.admissible_ids).parameters
+    assert list(protocol) == list(context) == ["self", "owner", "require_nonempty"]
+    for name in ["owner", "require_nonempty"]:
+        assert (protocol[name].kind, protocol[name].default) == (
+            context[name].kind,
+            context[name].default,
+        ), name
 
 
 def test_the_leaf_imports_no_otto_module_at_runtime():

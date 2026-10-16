@@ -180,6 +180,10 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
         "otto.inventory.netbox",
         "otto.inventory.snapshot",
     ],
+    # The reservation gate reads the active run and the built-in-host rule inside the
+    # functions that need them: importing it loads neither the context nor the host
+    # layer (spec 2026-10-11 placement-and-phases §3.8).
+    "import otto.reservations.check": ["otto.config", "otto.context", "otto.host"],
     # Every lab-loading command builds the reservation gate, even under -R.
     "from otto.reservations import build_reservation_gate": [
         "otto.reservations.json_backend",
@@ -293,6 +297,9 @@ IMPORT_ONLY_DECLARED: dict[str, list[str]] = {
     # otto.bootstrap: the root fills its initiator slot from above.
     "otto.declared": ["otto.config.scope", "otto.invocation"],
     "otto.models.dependencies": [],
+    # The run's policy, peer-host resolver, bindings and the active run: a leaf, below the
+    # host layer that reads it (spec 2026-10-11 placement-and-phases §3.8).
+    "otto.invocation": [],
     # The shared helpers every layer reads, the OTTO_SUT_DIRS splitter among them.
     "otto.utils": [],
     # The user's home and the user settings file, carved out of otto.config into

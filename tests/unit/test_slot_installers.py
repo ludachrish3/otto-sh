@@ -47,7 +47,10 @@ fields, such as ``otto.declared``'s ``_composition`` or ``otto.registry``'s
 rebinding of the table's name on its home module (by attribute, ``setattr``,
 ``vars(...)[...]`` or ``__dict__[...]``). The registry's private methods
 (``_restore`` and the like) are not checked: they belong to the registry
-engine and to the test isolation that snapshots every table.
+engine and to the test isolation that snapshots every table. The active
+run's table is a ``ContextVar``, whose ``set`` and ``reset`` are no ``Registry``
+method, so no module but its home names that variable at all, the installer
+included (``test_no_module_but_the_home_touches_the_active_run_s_variable``).
 
 The threat model: this is a static check against ordinary code, not a sandbox.
 In scope, flagged outside the slot's home module through any import alias:
@@ -139,7 +142,31 @@ SLOTS = [
         privileged=["clear_completion_names"],
         tables=["_COMPLETION_SNAPSHOT"],
     ),
+    Slot(
+        name="active run",
+        home="otto/invocation.py",
+        installer="otto/context.py",
+        privileged=["install_run", "restore_run"],
+        tables=["_ACTIVE"],
+    ),
 ]
+
+ACTIVE_RUN_API = [
+    "ActiveRun",
+    "_ACTIVE",
+    "_NO_ACTIVE_RUN",
+    "install_run",
+    "installed_run",
+    "require_run",
+    "restore_run",
+]
+"""The active-run slot's whole API in ``otto/invocation.py``, read and write.
+
+The host layer reads none of it (spec 2026-10-11 placement-and-phases §3.8): a host
+acts on the run's policy and finds a peer through the resolver, both in the same leaf,
+and never through the run itself. tach cannot say so, because the slot shares its
+module with the policy the host layer does read.
+"""
 
 
 def package_of(rel: str) -> str:
@@ -780,3 +807,136 @@ def test_the_scan_leaves_same_named_objects_of_other_modules_alone(tmp_path: Pat
         "cycle_b.py": f"from .cycle_a import {api}\n",
     }
     assert _scan(tmp_path, clean) == set()
+
+
+def host_reads_of_the_active_run(src: Path) -> "list[str]":
+    """Every reference a file of the host layer (``otto/host/``) makes to the active run."""
+    tree = _TreeResolver(src)
+    api = Slot(
+        name="active run (read)",
+        home="otto/invocation.py",
+        installer="",
+        privileged=ACTIVE_RUN_API,
+        tables=[],
+    )
+    return [
+        f"{rel}:{ref.line} uses {ref.what}, the active run; the host layer never reads it "
+        "(spec 2026-10-11 placement-and-phases §3.8)"
+        for rel in tree.files
+        if rel.startswith("otto/host/")
+        for ref in references(tree, rel, api)
+    ]
+
+
+def test_the_host_layer_never_reads_the_active_run() -> None:
+    problems = host_reads_of_the_active_run(SRC)
+    assert not problems, "\n".join(problems)
+
+
+def test_the_active_run_api_the_ban_names_is_what_the_slot_defines() -> None:
+    """Anti-vacuity: a renamed member would leave the ban looking for a name nobody has."""
+    home = ast.parse(SRC.joinpath("otto/invocation.py").read_text(encoding="utf-8"))
+    defined = set()
+    for node in home.body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            defined.add(node.name)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            defined.add(node.target.id)
+        elif isinstance(node, ast.Assign):
+            defined.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    assert set(ACTIVE_RUN_API) <= defined, sorted(set(ACTIVE_RUN_API) - defined)
+
+
+def test_the_host_read_ban_sees_every_spelling(tmp_path: Path) -> None:
+    reads = {
+        "host/absolute.py": "from otto.invocation import require_run\n",
+        "host/local.py": (
+            "def f():\n    from ..invocation import installed_run\n\n    return installed_run()\n"
+        ),
+        "host/module.py": "from .. import invocation\n\ninvocation.require_run()\n",
+        "host/aliased.py": "import otto.invocation as inv\n\nslot = inv._ACTIVE\n",
+        "host/named.py": "from otto import invocation\n\ngetattr(invocation, 'installed_run')\n",
+        "host/by_name.py": "TARGET = 'otto.invocation:require_run'\n",
+        "host/deeper/protocol.py": "from ...invocation import ActiveRun as Run\n",
+        "host/write.py": "from otto.invocation import install_run\n",
+    }
+    clean = {
+        "host/policy.py": "from ..invocation import current_policy, installed_resolver\n",
+        "host/own.py": "def require_run():\n    return None\n\n\nrequire_run()\n",
+        "reservations/check.py": "from ..invocation import require_run\n",
+    }
+    for name, text in {**reads, **clean}.items():
+        path = tmp_path / "otto" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    flagged = {line.partition(":")[0] for line in host_reads_of_the_active_run(tmp_path)}
+    assert flagged == {f"otto/{name}" for name in reads}
+
+
+def raw_uses_of_the_active_run_slot(src: Path) -> "list[str]":
+    """Every reference a file other than ``otto/invocation.py`` makes to the slot ``_ACTIVE``.
+
+    The raw-write check above knows ``Registry``'s write methods, not a
+    ``ContextVar``'s: ``_ACTIVE.set``, ``_ACTIVE.reset`` and ``install_var(_ACTIVE, ...)``
+    would each replace the run without its policy and resolver. So no module but
+    the home names the variable at all, the installer included: every route in goes
+    through ``install_run`` and ``restore_run``, and every read through
+    ``installed_run`` and ``require_run``.
+    """
+    tree = _TreeResolver(src)
+    raw = Slot(
+        name="active run (raw)",
+        home="otto/invocation.py",
+        installer="",
+        privileged=["_ACTIVE"],
+        tables=[],
+    )
+    return [
+        f"{rel}:{ref.line} uses _ACTIVE, the active run's variable; only otto/invocation.py "
+        "touches it, and every other module goes through its API (spec 2026-10-11 "
+        "placement-and-phases §2.1)"
+        for rel in tree.files
+        if rel != raw.home
+        for ref in references(tree, rel, raw)
+    ]
+
+
+def test_no_module_but_the_home_touches_the_active_run_s_variable() -> None:
+    problems = raw_uses_of_the_active_run_slot(SRC)
+    assert not problems, "\n".join(problems)
+
+
+def test_the_raw_slot_ban_sees_every_route(tmp_path: Path) -> None:
+    routes = {
+        "set.py": "from otto.invocation import _ACTIVE\n\n_ACTIVE.set(None)\n",
+        "reset.py": (
+            "import otto.invocation as inv\n\n\ndef f(token):\n    inv._ACTIVE.reset(token)\n"
+        ),
+        "install_var.py": (
+            "from otto.invocation import _ACTIVE, install_var\n\ninstall_var(_ACTIVE, None)\n"
+        ),
+        "aliased.py": "from .invocation import _ACTIVE as slot\n\nslot.set(None)\n",
+        "read.py": "from otto import invocation\n\nrun = invocation._ACTIVE.get()\n",
+        "named.py": "from otto import invocation\n\ngetattr(invocation, '_ACTIVE').set(None)\n",
+        "vars.py": "import otto.invocation as inv\n\nvars(inv)['_ACTIVE'].set(None)\n",
+        "by_name.py": "TARGET = 'otto.invocation:_ACTIVE'\n",
+        "rebind.py": "import otto.invocation as inv\n\ninv._ACTIVE = None\n",
+        # The installer gets no exemption: it goes through install_run like everyone.
+        "context.py": "from .invocation import _ACTIVE\n\n_ACTIVE.set(None)\n",
+    }
+    clean = {
+        "invocation.py": "from contextvars import ContextVar\n\n_ACTIVE = ContextVar('x')\n"
+        "_ACTIVE.set(None)\n",
+        "api.py": "from otto.invocation import install_run, installed_run, install_var, _POLICY\n",
+        "own.py": (
+            "from contextvars import ContextVar\n\n_ACTIVE = ContextVar('y')\n_ACTIVE.set(None)\n"
+        ),
+        "other.py": "from otto.elsewhere import _ACTIVE\n\n_ACTIVE.set(None)\n",
+        "bare_string.py": "NAME = '_ACTIVE'\n",
+    }
+    for name, text in {**routes, **clean}.items():
+        path = tmp_path / "otto" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    flagged = {line.partition(":")[0] for line in raw_uses_of_the_active_run_slot(tmp_path)}
+    assert flagged == {f"otto/{name}" for name in routes}

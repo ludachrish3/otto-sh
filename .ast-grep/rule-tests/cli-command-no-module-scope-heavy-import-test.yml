@@ -58,7 +58,7 @@ invalid:
 - |
   from ..lab import EmptySelectionError, get_lab
 - |
-  from ..config.fleet import _apply_option_overrides
+  from ..config.fleet import get_host
 - |
   from ..host.unix_host import UnixHost
 - |

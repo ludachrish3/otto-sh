@@ -2,9 +2,9 @@
 
 Owns the active Lab and the run's policy (:class:`RunPolicy`, from the
 ``otto.invocation`` leaf, which also keeps each event loop's host registry).
-Propagated via a ContextVar so the bare module accessors
-(otto.lab.all_hosts/get_host) can stay zero-argument, while explicit passing
-(OttoContext methods, open_context) is first-class.
+Installed into the active-run slot (``otto.invocation``, a ContextVar) so the bare
+module accessors (otto.lab.all_hosts/get_host) can stay zero-argument, while
+explicit passing (OttoContext methods, open_context) is first-class.
 """
 
 import asyncio
@@ -12,8 +12,7 @@ import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from .host.host import DEFAULT_COMMAND_TIMEOUT
@@ -27,6 +26,15 @@ if TYPE_CHECKING:
     from .bootstrap import BootstrapResult
     from .config.repo import Repo
     from .config.scope import ProjectScope
+    from .host.options import (
+        FtpOptions,
+        NcOptions,
+        ScpOptions,
+        SftpOptions,
+        SshOptions,
+        TelnetOptions,
+        UserlandOptions,
+    )
     from .host.remote_host import RemoteHost
     from .host.unix_host import UnixHost
     from .labs.loader import Lab
@@ -75,23 +83,22 @@ already-imported side keeps both directions acyclic.
 """
 
 
-_active: ContextVar["OttoContext | None"] = ContextVar("otto_context", default=None)
-
-
 def get_context() -> "OttoContext":
-    """Return the active ``OttoContext``, raising ``RuntimeError`` if none is installed."""
-    ctx = _active.get()
-    if ctx is None:
-        raise RuntimeError(
-            "No active OttoContext. Inside the CLI this is built by the top-level "
-            "callback; in a script wrap your work in `async with otto.open_context(...)`."
-        )
-    return ctx
+    """Return the active ``OttoContext``, raising ``RuntimeError`` if none is installed.
+
+    The context is the run :func:`set_context` installed in the active-run slot,
+    ``otto.invocation``, whose ``require_run`` owns the message.
+    """
+    from .invocation import require_run
+
+    return cast("OttoContext", require_run())
 
 
 def try_get_context() -> "OttoContext | None":
     """Return the active ``OttoContext``, or ``None`` if none is installed."""
-    return _active.get()
+    from .invocation import installed_run
+
+    return cast("OttoContext | None", installed_run())
 
 
 def set_context(ctx: "OttoContext") -> ContextBinding:
@@ -103,10 +110,10 @@ def set_context(ctx: "OttoContext") -> ContextBinding:
     ``open_context``, ``run_command`` or ``otto test`` a boundary holds the
     loop, so that raises and the boundary closes them instead.
     """
-    from .invocation import install_policy, install_resolver, install_var
+    from .invocation import install_policy, install_resolver, install_run
 
     policy = ctx.policy  # first: a non-context fails before anything is installed
-    binding = install_var(_active, ctx)
+    binding = install_run(ctx)
     install_policy(policy, into=binding)
     install_resolver(_ContextResolver(ctx), into=binding)
     return binding
@@ -114,9 +121,9 @@ def set_context(ctx: "OttoContext") -> ContextBinding:
 
 def reset_context(token: ContextBinding) -> None:
     """Undo the matching :func:`set_context`: resolver, policy, then context, exactly once."""
-    from .invocation import reset_binding
+    from .invocation import restore_run
 
-    reset_binding(token)
+    restore_run(token)
 
 
 def variant() -> Variant:
@@ -147,10 +154,10 @@ def set_variant(value: Variant) -> ContextBinding:
     """
     import dataclasses
 
-    from .invocation import check_variant, current_policy, install_policy
+    from .invocation import check_variant, current_policy, install_policy, installed_run
 
     checked = check_variant(value)
-    if _active.get() is not None:
+    if installed_run() is not None:
         raise RuntimeError(
             "set_variant cannot change the variant while a context is installed; "
             "run that work inside a nested `async with otto.open_context(variant=...)`"
@@ -180,6 +187,107 @@ class _ContextResolver:
         return self._ctx.lab.hosts
 
 
+def _apply_option_overrides(
+    host: "RemoteHost",
+    *,
+    term: str | None = None,
+    transfer: str | None = None,
+    ssh_options: "SshOptions | None" = None,
+    telnet_options: "TelnetOptions | None" = None,
+    sftp_options: "SftpOptions | None" = None,
+    scp_options: "ScpOptions | None" = None,
+    ftp_options: "FtpOptions | None" = None,
+    nc_options: "NcOptions | None" = None,
+    userland_options: "UserlandOptions | None" = None,
+) -> "RemoteHost":
+    """Return a copy of *host* with the given ``*_options`` fields replaced.
+
+    Each non-``None`` argument **replaces** the corresponding field on the
+    returned copy wholesale; the caller is responsible for constructing
+    the full options instance they want.
+
+    The copy is built via :func:`~otto.host.os_profile.copy_host` (a
+    :func:`dataclasses.replace` that keeps the host's resolved profile), which re-runs
+    ``__post_init__`` and therefore constructs a *fresh*
+    :class:`ConnectionManager` with the override options wired in from
+    the start. This is required because protocol options shape the
+    connection itself (key algorithms, hop wiring, etc.) and cannot be
+    swapped on an already-open connection. The original *host* and any
+    connection it owns are untouched; the override copy will open its
+    own connection on first use.
+
+    Override keys that don't correspond to a field on *host* are silently
+    dropped — e.g. ``ssh_options`` is ignored for an :class:`EmbeddedHost`,
+    which only carries ``telnet_options``. This lets fleet callers pass
+    SSH-shaped overrides without erroring on embedded hosts that simply
+    don't speak SSH.
+
+    When no applicable overrides are supplied, the original *host* is
+    returned unchanged so identity (``host is host``) is preserved for
+    non-override callers.
+
+    ``term`` / ``transfer`` switch the host's *active* protocol. Each is
+    validated against the host's menu (``valid_terms`` / ``valid_transfers``)
+    by the copy's ``__post_init__`` — a value outside the menu raises a
+    fail-loud ``ValueError`` naming the menu — and the copy's connection /
+    file-transfer backend is rebuilt for the chosen protocol via the registry
+    ``create()`` seam. Switching to a value not in the menu is rejected; to
+    select a custom backend it must be listed in the host's menu. This is the
+    only supported way to change a host's active protocol. A ``term="console"``
+    override with no ``transfer`` override also drops a resolved ``nc``
+    transfer for the next kind in the menu, since a single-client console
+    cannot run nc.
+    """
+    from .host.capability import TRANSFER_RESOLVER, console_transfer_menu
+    from .host.os_profile import copy_host
+
+    candidates: dict[str, Any] = {
+        k: v
+        for k, v in (
+            ("term", term),
+            ("transfer", transfer),
+            ("ssh_options", ssh_options),
+            ("telnet_options", telnet_options),
+            ("sftp_options", sftp_options),
+            ("scp_options", scp_options),
+            ("ftp_options", ftp_options),
+            ("nc_options", nc_options),
+            ("userland_options", userland_options),
+        )
+        if v is not None
+    }
+    if not candidates:
+        return host
+    # By NAME, never by position: the override set is intersected with the
+    # concrete family's own fields, so a family that does not declare one of
+    # these options is left alone rather than handed an unknown keyword.
+    host_fields = {f.name for f in fields(host)}
+    overrides = {k: v for k, v in candidates.items() if k in host_fields}
+    if not overrides:
+        return host
+    effective_term = overrides.get("term", getattr(host, "term", None))
+    if effective_term == "console" and "transfer" in overrides:
+        # An nc pin on a console is a config error, raised here as the
+        # ValueError every override caller already maps (the CLI to a
+        # --transfer parameter error) rather than as the ConsoleError the
+        # copy's transfer backend would raise.
+        console_transfer_menu(
+            host.name, getattr(host, "valid_transfers", []), overrides["transfer"]
+        )
+    if (
+        overrides.get("term") == "console"
+        and "transfer" not in overrides
+        and getattr(host, "transfer", None) == "nc"
+    ):
+        # The host resolved nc for its previous term; a single-client console
+        # refuses it (nc's listener needs a second session). Resolve from the
+        # same nc-less menu the lab model uses for a console host. This call
+        # sees no load-time transfer preference, so it takes the menu's order.
+        usable = console_transfer_menu(host.name, getattr(host, "valid_transfers", []), None)
+        overrides["transfer"] = TRANSFER_RESOLVER.resolve_active(usable)
+    return copy_host(host, **overrides)
+
+
 def _flags_hiding_every_match(
     matched: "list[Any]",
     *,
@@ -198,10 +306,10 @@ def _flags_hiding_every_match(
     means the walk is not empty, so there is nothing to explain and no reason
     to keep classifying the rest.
 
-    Which flag holds a host out is ``otto.config.fleet._flag_holding_out``'s
-    answer: the same rule the walk's yield loop and
-    :func:`otto.config.fleet.fleet_of_interest` apply, so this prediction and
-    the loop cannot disagree about a host.
+    Which flag holds a host out is
+    ``otto.host.builtin_hosts._flag_holding_out``'s answer: the same rule the
+    walk's yield loop and :func:`otto.config.fleet.fleet_of_interest` apply,
+    so this prediction and the loop cannot disagree about a host.
 
     Args:
         matched: The hosts the pattern fullmatched, taken from the same lab
@@ -215,7 +323,7 @@ def _flags_hiding_every_match(
         which is also what an empty *matched* returns: no matches is the OTHER
         failure, and it is already spoken for by the plain D6 message.
     """
-    from .config.fleet import _flag_holding_out
+    from .host.builtin_hosts import _flag_holding_out
 
     hiding: set[str] = set()
     for host in matched:
@@ -538,8 +646,6 @@ class OttoContext:
         Handing a host out registers nothing: the host registers with the
         event loop it connects on, and that loop's cleanup closes it.
         """
-        from .config.fleet import _apply_option_overrides
-
         host = self.lab.hosts.get(host_id)
         if host is None:
             # The sentinel LIBRARY_LAB_NAME lab is what run_tests() installs
@@ -745,12 +851,13 @@ class OttoContext:
 
         ``require_nonempty=False`` is the RESERVATION readers' spelling —
         :meth:`otto.reservations.check.ReservationGate.evaluate` (through
-        :func:`otto.config.fleet.get_hosts_in_play`), ``otto reservation
-        check``, and the completer's gate. They ask which hosts are IN PLAY
-        (spec §5) and nothing more: an empty declared fleet means nothing is in
-        play, which is a legal answer — the requirement narrows to the
-        lab-level set — not a condition to abort on. The refusal stays with the
-        WALK, which is the surface that would silently touch nothing; a run
+        the active-run slot), ``otto reservation check`` and the completer's
+        gate (through :func:`otto.config.fleet.get_hosts_in_play`). They ask
+        which hosts are IN PLAY (spec §5) and nothing more: an empty declared
+        fleet means nothing is in play, which is a legal answer — the
+        requirement narrows to the lab-level set — not a condition to abort
+        on. The refusal stays with the WALK, which is the surface that would
+        silently touch nothing; a run
         that walks still aborts with the same fleet-shaped message, just after
         the gate rather than inside it. The unknown-*owner* refusal lives in
         :func:`~otto.config.scope.scoped_ids` and fires either way: a caller's
@@ -845,7 +952,7 @@ class OttoContext:
                 (spec §7). It also cannot be spelled ``owner``: that name is
                 already a *method* kwarg forwarded to owner-accepting host verbs.
             **overrides: Per-call protocol/option overrides; see
-                ``otto.config.fleet._apply_option_overrides``.
+                ``_apply_option_overrides``.
 
         Yields:
             RemoteHost: Each selected host. Nothing registers until it
@@ -860,8 +967,8 @@ class OttoContext:
             otto.bootstrap.ProjectScopeError: The base set is empty while some
                 repo declared a ``[project]`` scope.
         """
-        from .config.fleet import _apply_option_overrides, _flag_holding_out
         from .config.scope import EmptySelectionError
+        from .host.builtin_hosts import _flag_holding_out
 
         # Computed here rather than in a wrapper: this is a generator, so the
         # body runs at first `next()` — which is when the walk actually happens

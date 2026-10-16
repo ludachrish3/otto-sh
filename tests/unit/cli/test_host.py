@@ -649,9 +649,7 @@ class TestHostTermAndTransfer:
 
         with (
             patch("otto.config.fleet.get_host", return_value=mock_host),
-            patch(
-                "otto.config.fleet._apply_option_overrides", return_value=mock_host
-            ) as mock_override,
+            patch("otto.context._apply_option_overrides", return_value=mock_host) as mock_override,
         ):
             result = runner.invoke(host_app, ["--term", "telnet", "router1", "exec", "ls"])
 
@@ -664,9 +662,7 @@ class TestHostTermAndTransfer:
 
         with (
             patch("otto.config.fleet.get_host", return_value=mock_host),
-            patch(
-                "otto.config.fleet._apply_option_overrides", return_value=mock_host
-            ) as mock_override,
+            patch("otto.context._apply_option_overrides", return_value=mock_host) as mock_override,
         ):
             result = runner.invoke(host_app, ["--transfer", "ftp", "router1", "exec", "ls"])
 
@@ -692,7 +688,7 @@ class TestHostTermAndTransfer:
 
         with (
             patch("otto.config.fleet.get_host", return_value=mock_host),
-            patch("otto.config.fleet._apply_option_overrides") as mock_override,
+            patch("otto.context._apply_option_overrides") as mock_override,
         ):
             result = runner.invoke(host_app, ["router1", "exec", "ls"])
 
@@ -708,11 +704,18 @@ class TestHostTermAndTransfer:
 
         with (
             patch("otto.config.fleet.get_host", return_value=base),
-            patch("otto.config.fleet._apply_option_overrides", return_value=switched),
+            patch("otto.context._apply_option_overrides", return_value=switched),
+            patch.object(base._session_mgr, "exec", wraps=base._session_mgr.exec) as base_exec,
+            patch.object(
+                switched._session_mgr, "exec", wraps=switched._session_mgr.exec
+            ) as switched_exec,
         ):
             result = runner.invoke(host_app, ["--term", "telnet", "router1", "exec", "ls"])
 
         assert result.exit_code == 0, result.output
+        # The command must run on the override copy, never the base host.
+        switched_exec.assert_called_once()
+        base_exec.assert_not_called()
 
     def test_valid_transfer_applies_to_host(self):
         base = _make_host_with_session([("", 0)])
@@ -721,20 +724,25 @@ class TestHostTermAndTransfer:
 
         with (
             patch("otto.config.fleet.get_host", return_value=base),
-            patch("otto.config.fleet._apply_option_overrides", return_value=switched),
+            patch("otto.context._apply_option_overrides", return_value=switched),
+            patch.object(base._session_mgr, "exec", wraps=base._session_mgr.exec) as base_exec,
+            patch.object(
+                switched._session_mgr, "exec", wraps=switched._session_mgr.exec
+            ) as switched_exec,
         ):
             result = runner.invoke(host_app, ["--transfer", "sftp", "router1", "exec", "ls"])
 
         assert result.exit_code == 0, result.output
+        # The command must run on the override copy, never the base host.
+        switched_exec.assert_called_once()
+        base_exec.assert_not_called()
 
     def test_term_and_transfer_together(self):
         mock_host = _make_host_with_session([("", 0)])
 
         with (
             patch("otto.config.fleet.get_host", return_value=mock_host),
-            patch(
-                "otto.config.fleet._apply_option_overrides", return_value=mock_host
-            ) as mock_override,
+            patch("otto.context._apply_option_overrides", return_value=mock_host) as mock_override,
         ):
             result = runner.invoke(
                 host_app, ["--term", "ssh", "--transfer", "sftp", "router1", "exec", "ls"]

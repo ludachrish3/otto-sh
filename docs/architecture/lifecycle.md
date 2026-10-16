@@ -313,7 +313,11 @@ methods are the canonical host accessors:
 The context is installed in a
 {class}`~contextvars.ContextVar` via `set_context()` and read back with
 {func}`~otto.context.get_context` (raising) or
-{func}`~otto.context.try_get_context` (returning `None`). The context-variable
+{func}`~otto.context.try_get_context` (returning `None`). That variable is the
+active-run slot ({class}`~otto.invocation.ActiveRun`) in the `otto.invocation`
+leaf, beside the run's policy and peer-host resolver, so a
+module below the run layer (the reservation gate) reads the run without
+importing `otto.context`; the host layer never reads it. The context-variable
 is *plumbing*, not a global: explicit `ctx` passing is first-class, and the
 zero-argument convenience accessors
 ({func}`~otto.config.fleet.all_hosts`, `get_host`,

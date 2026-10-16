@@ -1066,8 +1066,8 @@ def _reset_otto_context():
     """Restore the OttoContext, run-policy and resolver ContextVars to their pre-test values.
 
     Fixtures and tests call set_context() / set_variant() directly, which persist
-    in the ContextVars (the context's own, and the ``otto.invocation`` leaf's
-    policy and resolver). We snapshot the values at test start and restore them at
+    in the ContextVars (the ``otto.invocation`` leaf's active run, policy and
+    resolver). We snapshot the values at test start and restore them at
     teardown, so a test that sets a context can't leak into later tests run on
     the same (long-lived) xdist worker. We do NOT force the var to None during
     the test — that would wipe a module/session scoped context a fixture
@@ -1094,7 +1094,7 @@ def _reset_otto_context_per_module():
     The per-test restore cannot undo a module-scoped fixture's install: it
     snapshots the state with that install already in place. So a module
     fixture that undid only part of what ``set_context`` installed (restoring
-    the context's ``_active`` and not the leaf's policy and resolver, as the
+    the active run and not the leaf's policy and resolver, as the
     integration bed conftests did) left a policy and a live resolver to every
     later test on its worker: under ``make coverage`` that failed 14 unit
     tests, which found a policy installed before they started. A root

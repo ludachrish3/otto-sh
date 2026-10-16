@@ -219,7 +219,7 @@
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-310.pyc": 1,
         "otto:cli": 33,
-        "otto:config": 57,
+        "otto:config": 53,
         "otto:console": 2,
         "otto:console.cpython-310.pyc": 1,
         "otto:context": 2,
@@ -277,10 +277,10 @@
       },
       "by_process": {
         "bash": 50,
-        "python": 2543,
+        "python": 2539,
         "stty": 30
       },
-      "file_ops": 2623,
+      "file_ops": 2619,
       "workspace": 37
     },
     "dispatch_repo_warm": {
@@ -298,7 +298,7 @@
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-310.pyc": 1,
         "otto:cli": 33,
-        "otto:config": 57,
+        "otto:config": 53,
         "otto:console": 2,
         "otto:console.cpython-310.pyc": 1,
         "otto:context": 2,
@@ -355,9 +355,9 @@
         "workspace": 37
       },
       "by_process": {
-        "python": 2540
+        "python": 2536
       },
-      "file_ops": 2540,
+      "file_ops": 2536,
       "workspace": 37
     },
     "docker": {

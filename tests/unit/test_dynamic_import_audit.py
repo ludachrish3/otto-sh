@@ -939,7 +939,7 @@ COMPOSITION_ROOT = "otto/bootstrap.py"
 # The landings of spec 2026-10-11 placement-and-phases §6, in order. Each
 # landing sets CURRENT_LANDING to its own name in its commit.
 LANDINGS = ["P1a", "P1b", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9a", "P9b"]
-CURRENT_LANDING = "P7"
+CURRENT_LANDING = "P8"
 
 # What the declared graph shows once each landing is in: the modules with a
 # layer (spec 2026-10-11 placement-and-phases §5.2, "modules layered") and the
@@ -953,6 +953,9 @@ CURRENT_LANDING = "P7"
 # P9a and P9b share the cycle count (0) but not the layered one (65 and 77).
 # P7 layers otto.labs alone: the lab model stayed with its loader in otto.labs, so no
 # module was carved for it (spec §3.7 and §5.2 as amended by P7), and its row is 55.
+# P8 layers otto.reservations alone: the active run is a slot in otto.invocation, a module
+# that already had its layer, so none was carved for it (spec §3.8 and §5.2 as amended by
+# P8), and its row is 56.
 LAYERED_AT = {
     "P1a": 19,
     "P1b": 35,
@@ -962,7 +965,7 @@ LAYERED_AT = {
     "P5": 48,
     "P6": 54,
     "P7": 55,
-    "P8": 59,
+    "P8": 56,
     "P9a": 65,
     "P9b": 77,
 }

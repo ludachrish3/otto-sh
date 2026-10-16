@@ -290,8 +290,8 @@ def _load_host(chain: _ChainParams) -> "tuple[Any, Any]":
     will use.
     """
     from ..bootstrap import get_repos
-    from ..config.fleet import _apply_option_overrides, get_host
-    from ..context import OttoContext, set_context
+    from ..config.fleet import get_host
+    from ..context import OttoContext, _apply_option_overrides, set_context
     from ..session.lab import build_lab
 
     repos = get_repos()

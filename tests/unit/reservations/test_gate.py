@@ -12,8 +12,10 @@ in ``typer`` — that is the whole point of extracting the gate out of the CLI.
 
 Every case installs a REAL ``OttoContext``: since spec 2026-08-28
 three-level-reservations §5 the gate computes its requirement over
-``OttoContext.admissible_ids()``, so a lab handed over by patching
-``otto.config.fleet.get_lab`` alone would leave the fleet half of the read unwired.
+``OttoContext.admissible_ids()``, and it reads that set and the lab off the
+active run (spec 2026-10-11 placement-and-phases §3.8). A case that needs a
+narrower fleet declares one through a repo's ``[project]`` table, never by
+patching the read, so each case pins what the gate sees through every reader.
 """
 
 import dataclasses
@@ -32,6 +34,7 @@ from otto.reservations import (
 )
 from tests._fixtures.fleet import _lab as fleet_lab
 from tests._fixtures.fleet import _repo, add_builtin_local, install_scoped_context
+from tests._fixtures.run_state import cleared_run_state
 from tests.conftest import make_host
 
 
@@ -255,8 +258,9 @@ def test_empty_declared_fleet_requires_the_lab_level_only_under_skip(tmp_path):
     own when no host is selected. The refusal still belongs to the walk that
     follows, which is where it always was.
 
-    Mutation: pass ``require_nonempty=True`` in ``otto.config.fleet.get_hosts_in_play``
-    and this goes red with ``ProjectScopeError``.
+    Mutation: pass ``require_nonempty=True`` in the gate's in-play read
+    (``otto.reservations.check._hosts_in_play``) and this goes red with
+    ``ProjectScopeError``.
     """
     lab = _three_level_lab()
     install_scoped_context(lab, [_empty_fleet_repo(tmp_path)])
@@ -325,6 +329,67 @@ def test_the_gate_still_enforces_a_lab_declared_local_host():
 
     with pytest.raises(MissingReservationError, match="runner-slot"):
         gate.evaluate()
+
+
+def test_the_builtin_local_host_is_left_out_of_the_derived_set_but_kept_when_named():
+    """Only the DERIVED host set leaves the built-in ``local`` out; given ids are used as given.
+
+    Spec 2026-10-11 placement-and-phases §3.8: the gate reads its lab and hosts
+    in play off the active run and keeps today's reading, site by site. The
+    built-in host is handed a resource it never carries in production (see
+    ``add_builtin_local``), so each reading shows in the verdict: derived,
+    nothing is required; named in ``host_ids``, or reached through an explicit
+    lab with no ``host_ids`` (every host of that lab), its slot is.
+
+    Mutation: subtract the built-in host from an explicit ``host_ids`` too, or
+    stop subtracting it from the derived set, and this goes red.
+    """
+    lab = add_builtin_local(fleet_lab(("h1", "a")), resources={"runner-slot"})
+    install_scoped_context(lab, [])
+    gate = ReservationGate(
+        backend=_FakeBackend(owners={}, username="alice"),
+        identity=ResolvedIdentity(username="alice", source="$USER"),
+    )
+
+    assert gate.evaluate().checked
+    with pytest.raises(MissingReservationError, match="runner-slot"):
+        gate.evaluate(host_ids=["local"])
+    with pytest.raises(MissingReservationError, match="runner-slot"):
+        gate.evaluate(lab, host_ids=["h1", "local"])
+    with pytest.raises(MissingReservationError, match="runner-slot"):
+        gate.evaluate(lab)
+
+    skipped = ReservationGate(
+        skip_check=True, identity=ResolvedIdentity(username="alice", source="$USER")
+    )
+    assert "runner-slot" not in skipped.evaluate().warning
+    assert "Required resources: ['runner-slot']" in skipped.evaluate(host_ids=["local"]).warning
+
+
+def test_a_derived_read_with_no_run_installed_refuses_as_get_context_does():
+    """No lab given and no context installed: the same RuntimeError, word for word.
+
+    Both readers of the active run, ``evaluate`` and ``check_hosts``, refuse
+    with ``get_context``'s message, as they did when they reached the run
+    through the fleet accessors.
+    """
+    from otto.context import get_context
+
+    gate = ReservationGate(
+        backend=_FakeBackend(owners={}, username="alice"),
+        identity=ResolvedIdentity(username="alice", source="$USER"),
+    )
+    lab = fleet_lab(("h1", "a"))
+    with cleared_run_state():
+        with pytest.raises(RuntimeError) as expected:
+            get_context()
+        with pytest.raises(RuntimeError) as evaluated:
+            gate.evaluate()
+        with pytest.raises(RuntimeError) as checked:
+            gate.check_hosts(lab, [lab.hosts["h1"]])
+    assert type(evaluated.value) is RuntimeError
+    assert type(checked.value) is RuntimeError
+    assert str(evaluated.value) == str(checked.value) == str(expected.value)
 
 
 def test_reservations_import_is_typer_free():
@@ -517,6 +582,11 @@ def test_an_empty_requirement_never_reaches_the_expiry_helper(caplog):
     assert "expires" not in caplog.text.lower()
 
 
+def _h_in_repo(tmp_path):
+    """A repo whose ``[project]`` declaration puts ``h-in`` alone in play, in lab ``a``."""
+    return _repo(tmp_path, "r1", labs=["a"], hosts=["h-in"])
+
+
 class TestGateReportAndHosts:
     def test_evaluate_with_an_explicit_lab_needs_no_context(self):
         backend = _FakeBackend(owners={"rack1": "alice"}, username="alice")
@@ -594,19 +664,18 @@ class TestGateReportAndHosts:
         )
         return gate, backend
 
-    def test_check_hosts_skips_fleet_and_resourceless_hosts_without_a_query(self, monkeypatch):
+    def test_check_hosts_skips_fleet_and_resourceless_hosts_without_a_query(self, tmp_path):
         # h-in is in the fleet and declares a slot nobody holds, so only the fleet
         # filter keeps it out of the query; h-bare is outside it but declares nothing.
         lab = fleet_lab(("h-in", "a"), ("h-bare", "a"))
         lab.hosts["h-in"].resources = frozenset({"slot-in"})
         lab.resources = {"rack1"}  # a real requirement, so a stray query would reach the backend
-        install_scoped_context(lab, [])
+        install_scoped_context(lab, [_h_in_repo(tmp_path)])
         gate, backend = self._gate({})
-        monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
         assert gate.check_hosts(lab, [lab.hosts["h-in"], lab.hosts["h-bare"]]) is None
         assert backend.fetches == 0
 
-    def test_a_check_hosts_refusal_is_never_trailed_by_an_expiry_nudge(self, monkeypatch, caplog):
+    def test_a_check_hosts_refusal_is_never_trailed_by_an_expiry_nudge(self, tmp_path, caplog):
         import logging
 
         from otto.reservations import reset_expiry_warnings
@@ -615,8 +684,7 @@ class TestGateReportAndHosts:
         lab = fleet_lab(("h-in", "a"), ("h-out", "a"))
         lab.resources = {"rack1"}
         lab.hosts["h-out"].resources = frozenset({"slot-out"})
-        install_scoped_context(lab, [])
-        monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
+        install_scoped_context(lab, [_h_in_repo(tmp_path)])
         backend = _FakeBackend(
             owners={"rack1": "alice"}, username="alice", ends={"rack1": _soon(1)}
         )
@@ -635,30 +703,31 @@ class TestGateReportAndHosts:
         with pytest.raises(RuntimeError, match="no backend and no backend_factory"):
             gate.report(_lab_declaring("rack1"))
 
-    def test_check_hosts_refuses_an_unheld_outside_host_in_one_report(self, monkeypatch):
+    def test_check_hosts_refuses_an_unheld_outside_host_in_one_report(self, tmp_path):
         lab = fleet_lab(("h-in", "a"), ("h-a", "a"), ("h-b", "a"))
         lab.hosts["h-a"].resources = frozenset({"slot-a"})
         lab.hosts["h-b"].resources = frozenset({"slot-b"})
-        install_scoped_context(lab, [])
-        monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
+        install_scoped_context(lab, [_h_in_repo(tmp_path)])
         gate, backend = self._gate({})
         with pytest.raises(MissingReservationError) as exc:
             gate.check_hosts(lab, [lab.hosts["h-a"], lab.hosts["h-b"]])
         assert [m.resource for m in exc.value.report.missing] == ["slot-a", "slot-b"]
         assert backend.fetches == 1
 
-    def test_check_hosts_skips_the_builtin_local_host_but_not_a_labs_own_local(self, monkeypatch):
+    def test_check_hosts_skips_the_builtin_local_host_but_not_a_labs_own_local(self, tmp_path):
         # The built-in host is handed a resource: the hostile condition that
-        # makes the exclusion falsifiable (see add_builtin_local).
+        # makes the exclusion falsifiable (see add_builtin_local). Nothing else
+        # is in play: the built-in host is never in play.
         lab = add_builtin_local(Lab(name="test_lab"), resources={"x"})
         install_scoped_context(lab, [])
-        monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", set)
         gate, _ = self._gate({})
         assert gate.check_hosts(lab, [lab.hosts["local"]]) is None
 
+        # A lab's OWN `local` is an ordinary host: a fleet that declares nothing in
+        # play leaves it outside the fleet, and its slot is checked.
         own = fleet_lab(("local", "a"))
         own.hosts["local"].resources = frozenset({"x"})
-        install_scoped_context(own, [])
+        install_scoped_context(own, [_repo(tmp_path, "r1", labs=["a"], hosts=["nothing-matches"])])
         with pytest.raises(MissingReservationError):
             gate.check_hosts(own, [own.hosts["local"]])
 
@@ -673,9 +742,7 @@ class TestGateReportAndHosts:
         )
         assert gate.check_hosts(lab, [lab.hosts["h-a"]]) is None
 
-    def test_one_expiring_lab_booking_is_announced_once_across_both_checks(
-        self, monkeypatch, caplog
-    ):
+    def test_one_expiring_lab_booking_is_announced_once_across_both_checks(self, tmp_path, caplog):
         import logging
         from datetime import datetime, timedelta, timezone
 
@@ -686,8 +753,7 @@ class TestGateReportAndHosts:
         lab = fleet_lab(("h-in", "a"), ("h-out", "a"))
         lab.resources = {"rack1"}
         lab.hosts["h-out"].resources = frozenset({"slot"})
-        install_scoped_context(lab, [])
-        monkeypatch.setattr("otto.config.fleet.get_hosts_in_play", lambda: {"h-in"})
+        install_scoped_context(lab, [_h_in_repo(tmp_path)])
         backend = _FakeBackend(
             owners={"rack1": "alice", "slot": "alice"}, username="alice", ends={"rack1": end}
         )

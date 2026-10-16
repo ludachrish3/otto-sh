@@ -405,7 +405,7 @@ def test_every_membership_reader_consults_the_one_flag_rule(world, monkeypatch):
     def _hold_out_h2_only(host, *, include_containers, include_local):
         return "include_containers" if host.id == "h2" else None
 
-    monkeypatch.setattr("otto.config.fleet._flag_holding_out", _hold_out_h2_only)
+    monkeypatch.setattr("otto.host.builtin_hosts._flag_holding_out", _hold_out_h2_only)
     plain = world.repos["plain"]
     ctx = install_scoped_context(world.lab, [plain])
 

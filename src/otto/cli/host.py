@@ -224,7 +224,7 @@ def resolve_cli_host(ctx: typer.Context) -> "RemoteHost":
         # work itself or leave ctx.obj unset.
         return ctx.obj
 
-    from ..config.fleet import _apply_option_overrides
+    from ..context import _apply_option_overrides
 
     request = ctx.meta["_otto_host_request"]
     host: "RemoteHost" = _resolve_host(request["host_id"])

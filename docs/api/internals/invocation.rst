@@ -26,6 +26,20 @@ are declared on :doc:`/api/context`.
 
 .. autofunction:: otto.invocation.reset_binding
 
+The active-run slot: the run ``set_context`` installed, read below the run
+layer; the host layer never reads it.
+
+.. autoclass:: otto.invocation.ActiveRun
+   :members:
+
+.. autofunction:: otto.invocation.installed_run
+
+.. autofunction:: otto.invocation.require_run
+
+.. autofunction:: otto.invocation.install_run
+
+.. autofunction:: otto.invocation.restore_run
+
 .. autoclass:: otto.invocation.HostRegistration
 
 .. autoclass:: otto.invocation.Boundary

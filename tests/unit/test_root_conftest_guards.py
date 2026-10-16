@@ -1,8 +1,8 @@
 """The root conftest's guards, each exercised through a real inner pytest session.
 
 ``tests/conftest.py``'s ``_reset_otto_context`` puts the OttoContext state back
-after every test: the three ContextVars (the context's ``_active``, and the
-``otto.invocation`` leaf's ``_POLICY`` and ``_RESOLVER``), and
+after every test: the three ContextVars (the ``otto.invocation`` leaf's
+``_ACTIVE``, ``_POLICY`` and ``_RESOLVER``), and
 ``_reset_otto_context_per_module`` puts them back after every module, which
 undoes what a module-scoped fixture installed. The root conftest's
 ``pytest_runtest_teardown`` wrapper runs the lazy-export leak check
@@ -44,21 +44,21 @@ pytest_plugins = ["pytester"]
 PROBE_ARGS = [*INNER_ARGS, "-p", "no:randomly", "-rE"]
 
 PROBE_CONTEXT = """\
-from otto import context, invocation
+from otto import invocation
 
 _SENTINEL = object()
-_BEFORE = (context._active.get(), invocation._POLICY.get(), invocation._RESOLVER.get())
+_BEFORE = (invocation._ACTIVE.get(), invocation._POLICY.get(), invocation._RESOLVER.get())
 
 
 def test_leaves_the_context_state_behind():
-    context._active.set(_SENTINEL)
+    invocation._ACTIVE.set(_SENTINEL)
     invocation._POLICY.set(invocation.RunPolicy(variant="field"))
     invocation._RESOLVER.set(_SENTINEL)
 
 
 def test_starts_from_the_state_the_leaker_found():
-    after = (context._active.get(), invocation._POLICY.get(), invocation._RESOLVER.get())
-    names = ["_active", "_POLICY", "_RESOLVER"]
+    after = (invocation._ACTIVE.get(), invocation._POLICY.get(), invocation._RESOLVER.get())
+    names = ["_ACTIVE", "_POLICY", "_RESOLVER"]
     leaked = [n for n, b, a in zip(names, _BEFORE, after) if b is not a]
     assert not leaked, f"not restored: {leaked}"
 """
@@ -468,21 +468,21 @@ def test_restore_composition_state_refuses_a_replaced_initiator(inner: pytest.Py
 
 
 PROBE_MODULE_INSTALL = """\
-# A module fixture installs a context and undoes only the context's own variable,
+# A module fixture installs a context and undoes only the active run,
 # leaving the policy and resolver set_context also installed.
 import pytest
 
-from otto import context, invocation
+from otto import invocation
 from otto.labs.loader import Lab
 from otto.context import OttoContext, set_context
 
 
 @pytest.fixture(autouse=True, scope="module")
 def _load_lab():
-    snapshot = context._active.get()
+    snapshot = invocation._ACTIVE.get()
     set_context(OttoContext(lab=Lab(name="module-lab")))
     yield
-    context._active.set(snapshot)
+    invocation._ACTIVE.set(snapshot)
 
 
 def test_runs_under_the_module_lab():
@@ -490,11 +490,11 @@ def test_runs_under_the_module_lab():
 """
 
 PROBE_AFTER_THE_MODULE = """\
-from otto import context, invocation
+from otto import invocation
 
 
 def test_starts_with_nothing_installed():
-    state = (context._active.get(), invocation._POLICY.get(), invocation._RESOLVER.get())
+    state = (invocation._ACTIVE.get(), invocation._POLICY.get(), invocation._RESOLVER.get())
     assert state == (None, None, None)
 """
 

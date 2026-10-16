@@ -1,6 +1,5 @@
 """Fleet host access and host-dispatch helpers for the active lab."""
 
-import dataclasses
 import logging
 import re
 from collections.abc import Awaitable, Callable, Generator
@@ -10,7 +9,6 @@ from typing import (
     TypeVar,
 )
 
-from ..host.capability import TRANSFER_RESOLVER, console_transfer_menu
 from ..host.host import DEFAULT_COMMAND_TIMEOUT
 
 if TYPE_CHECKING:
@@ -32,106 +30,6 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
-
-
-def _apply_option_overrides(
-    host: "RemoteHost",
-    *,
-    term: str | None = None,
-    transfer: str | None = None,
-    ssh_options: "SshOptions | None" = None,
-    telnet_options: "TelnetOptions | None" = None,
-    sftp_options: "SftpOptions | None" = None,
-    scp_options: "ScpOptions | None" = None,
-    ftp_options: "FtpOptions | None" = None,
-    nc_options: "NcOptions | None" = None,
-    userland_options: "UserlandOptions | None" = None,
-) -> "RemoteHost":
-    """Return a copy of *host* with the given ``*_options`` fields replaced.
-
-    Each non-``None`` argument **replaces** the corresponding field on the
-    returned copy wholesale; the caller is responsible for constructing
-    the full options instance they want.
-
-    The copy is built via :func:`~otto.host.os_profile.copy_host` (a
-    :func:`dataclasses.replace` that keeps the host's resolved profile), which re-runs
-    ``__post_init__`` and therefore constructs a *fresh*
-    :class:`ConnectionManager` with the override options wired in from
-    the start. This is required because protocol options shape the
-    connection itself (key algorithms, hop wiring, etc.) and cannot be
-    swapped on an already-open connection. The original *host* and any
-    connection it owns are untouched; the override copy will open its
-    own connection on first use.
-
-    Override keys that don't correspond to a field on *host* are silently
-    dropped — e.g. ``ssh_options`` is ignored for an :class:`EmbeddedHost`,
-    which only carries ``telnet_options``. This lets fleet callers pass
-    SSH-shaped overrides without erroring on embedded hosts that simply
-    don't speak SSH.
-
-    When no applicable overrides are supplied, the original *host* is
-    returned unchanged so identity (``host is host``) is preserved for
-    non-override callers.
-
-    ``term`` / ``transfer`` switch the host's *active* protocol. Each is
-    validated against the host's menu (``valid_terms`` / ``valid_transfers``)
-    by the copy's ``__post_init__`` — a value outside the menu raises a
-    fail-loud ``ValueError`` naming the menu — and the copy's connection /
-    file-transfer backend is rebuilt for the chosen protocol via the registry
-    ``create()`` seam. Switching to a value not in the menu is rejected; to
-    select a custom backend it must be listed in the host's menu. This is the
-    only supported way to change a host's active protocol. A ``term="console"``
-    override with no ``transfer`` override also drops a resolved ``nc``
-    transfer for the next kind in the menu, since a single-client console
-    cannot run nc.
-    """
-    candidates: dict[str, Any] = {
-        k: v
-        for k, v in (
-            ("term", term),
-            ("transfer", transfer),
-            ("ssh_options", ssh_options),
-            ("telnet_options", telnet_options),
-            ("sftp_options", sftp_options),
-            ("scp_options", scp_options),
-            ("ftp_options", ftp_options),
-            ("nc_options", nc_options),
-            ("userland_options", userland_options),
-        )
-        if v is not None
-    }
-    if not candidates:
-        return host
-    # By NAME, never by position: the override set is intersected with the
-    # concrete family's own fields, so a family that does not declare one of
-    # these options is left alone rather than handed an unknown keyword.
-    host_fields = {f.name for f in dataclasses.fields(host)}
-    overrides = {k: v for k, v in candidates.items() if k in host_fields}
-    if not overrides:
-        return host
-    effective_term = overrides.get("term", getattr(host, "term", None))
-    if effective_term == "console" and "transfer" in overrides:
-        # An nc pin on a console is a config error, raised here as the
-        # ValueError every override caller already maps (the CLI to a
-        # --transfer parameter error) rather than as the ConsoleError the
-        # copy's transfer backend would raise.
-        console_transfer_menu(
-            host.name, getattr(host, "valid_transfers", []), overrides["transfer"]
-        )
-    if (
-        overrides.get("term") == "console"
-        and "transfer" not in overrides
-        and getattr(host, "transfer", None) == "nc"
-    ):
-        # The host resolved nc for its previous term; a single-client console
-        # refuses it (nc's listener needs a second session). Resolve from the
-        # same nc-less menu the lab model uses for a console host. This call
-        # sees no load-time transfer preference, so it takes the menu's order.
-        usable = console_transfer_menu(host.name, getattr(host, "valid_transfers", []), None)
-        overrides["transfer"] = TRANSFER_RESOLVER.resolve_active(usable)
-    from ..host.os_profile import copy_host
-
-    return copy_host(host, **overrides)
 
 
 def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_hosts)
@@ -188,7 +86,7 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
         include_containers: When ``True``, also yield
             :class:`~otto.host.docker_host.DockerContainerHost` entries. Defaults to ``False``.
         term, transfer: optional active-protocol override; see
-            ``_apply_option_overrides``.
+            ``otto.context._apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options, userland_options: Optional per-call overrides. When
             supplied, each yielded host is a fresh
@@ -268,7 +166,7 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         include_local: Forwarded to :func:`all_hosts`. When ``False``
             (default), the built-in ``local`` runner host is excluded.
         term, transfer: optional active-protocol override; see
-            ``_apply_option_overrides``.
+            ``otto.context._apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options, userland_options: Optional per-call overrides
             forwarded to :func:`all_hosts`. See its docstring for
@@ -345,7 +243,7 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         include_containers: Forwarded to :func:`do_for_all_hosts`. When
             ``False`` (default), container hosts are excluded.
         term, transfer: optional active-protocol override; see
-            ``_apply_option_overrides``.
+            ``otto.context._apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options, userland_options: Optional per-call overrides
             forwarded to :func:`do_for_all_hosts`.
@@ -397,7 +295,7 @@ def get_host(
     Args:
         host_id: Unique host id (as produced by ``UnixHost.id``).
         term, transfer: optional active-protocol override; see
-            ``_apply_option_overrides``.
+            ``otto.context._apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options, userland_options: Optional per-call overrides.
             Each non-``None`` argument **replaces** the corresponding
@@ -475,80 +373,17 @@ def get_hosts_in_play() -> set[str]:
     A fleet WALK calls :meth:`otto.context.OttoContext.admissible_ids`
     directly, with the refusal on.
 
-    Here rather than at the call site because not every reader may import
-    ``otto.context``: ``tach.toml`` confines ``otto.reservations`` to a short
-    list that does not include it, and the reservation gate needs exactly this
-    set to scope its requirement (spec 2026-08-28 three-level-reservations §5).
-    Lazy for the same reason :func:`get_lab` is — context imports config back.
-
-    An empty declared fleet reads as ZERO hosts in play — the requirement is
-    the lab-level set alone — and never as an abort; a run that goes on to walk
-    its fleet still refuses that fleet with the same message.
-
-    The built-in ``local`` host is never in play: otto can always run on the
-    machine it is running on, so a reservation standing between a user and
-    ``otto host local <verb>`` costs them a run and buys nobody a slot. The
-    subtraction is here rather than in :func:`~otto.config.scope.scoped_ids`
-    because scoping answers a different question — ``include_local=True`` is a
-    fleet WALK's own opt-in and keeps working untouched. ``is_builtin_host``
-    rather than an ``id != "local"`` test: a lab may declare its OWN ``local``
-    entry (``load_lab`` then injects nothing), and that host's ``resources``
-    are as real as any other's.
+    The active context's answer to the reservation gate's own question
+    (``otto.reservations.check._hosts_in_play``, spec 2026-08-28
+    three-level-reservations §5), so ``otto reservation check``, the
+    completer's gate and the gate itself cannot disagree about a host. An
+    empty declared fleet reads as ZERO hosts in play, never as an abort, and
+    the built-in ``local`` host is never in play.
     """
     from ..context import get_context
+    from ..reservations.check import _hosts_in_play
 
-    ctx = get_context()
-    in_play = ctx.admissible_ids(require_nonempty=False)
-    return {hid for hid in in_play if not is_builtin_host(ctx.lab.hosts.get(hid))}
-
-
-def is_builtin_host(host: object) -> bool:
-    """Report whether *host* is otto's built-in ``local`` host: the reservation readers' reach.
-
-    ``tach.toml`` keeps ``otto.reservations`` out of ``otto.host``, the same
-    reason :func:`get_hosts_in_play` lives here. The rule itself is
-    ``otto.host.builtin_hosts.is_builtin_host``.
-    """
-    from ..host.builtin_hosts import is_builtin_host as _is_builtin_host
-
-    return _is_builtin_host(host)
-
-
-def _flag_holding_out(
-    host: object, *, include_containers: bool, include_local: bool
-) -> "str | None":
-    """Name the membership flag that holds *host* out of a fleet, or ``None`` for a member.
-
-    THE one membership-flag rule. Container hosts and the built-in ``local``
-    host are not fleet members unless the caller's flag admits them: a sweep
-    must never silently reach the runner itself, or a container nobody asked
-    for. Three readers apply the rule and must agree host by host:
-    :meth:`otto.context.OttoContext.all_hosts` yields only members, its
-    empty-selection prediction (``otto.context._flags_hiding_every_match``)
-    names the flags that hid every match, and :func:`fleet_of_interest`
-    answers what the walk would yield. A second copy of the rule in any of
-    them would drift the first time one of them grew a case.
-
-    The host classes are imported here, not at module level: neither is needed
-    until a walk or a query runs, and ``LocalHost`` is heavy.
-
-    Args:
-        host: One lab host, of any family.
-        include_containers: The caller's container flag.
-        include_local: The caller's ``local`` flag.
-
-    Returns:
-        ``"include_containers"`` or ``"include_local"`` (the flag that would
-        admit *host*), or ``None`` when *host* is a fleet member as asked.
-    """
-    from ..host.docker_host import DockerContainerHost
-    from ..host.local_host import LocalHost
-
-    if not include_containers and isinstance(host, DockerContainerHost):
-        return "include_containers"
-    if not include_local and isinstance(host, LocalHost):
-        return "include_local"
-    return None
+    return _hosts_in_play(get_context())
 
 
 _UNKNOWN_QUERY_OWNER = """\
@@ -649,7 +484,7 @@ def fleet_of_interest(
     ['sensor-1', 'gw-1']
     """
     # function-scope: keeps this module import-light
-    from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
+    from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, _flag_holding_out
     from .scope import ProjectScopeError, resolve_scopes, scoped_ids
 
     # The verdicts the walk's context resolves (``scopes_of(ctx)``), with

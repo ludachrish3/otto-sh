@@ -23,7 +23,6 @@ from types import SimpleNamespace
 import pytest
 
 from otto import invocation
-from otto.context import _active
 from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.bed_hygiene import ProbeFailedError, argv_pattern, snapshot_host
@@ -197,7 +196,7 @@ def test_busybox_probe_restores_the_context_it_installed(stub_guest_host, failin
     """
 
     def state():
-        return (_active.get(), invocation._POLICY.get(), invocation._RESOLVER.get())
+        return (invocation._ACTIVE.get(), invocation._POLICY.get(), invocation._RESOLVER.get())
 
     before = state()
     stub_guest_host.fail = failing

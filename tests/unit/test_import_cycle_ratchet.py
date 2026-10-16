@@ -73,21 +73,21 @@ pytestmark = pytest.mark.interpreter_agnostic
 # otto.labs.loader, beside the lab sources it drives: the lab sources import nothing of
 # otto.config, and otto.session reaches the loader there (spec 2026-10-11
 # placement-and-phases §3.7).
+# otto.reservations left it when the reservation gate read its lab and hosts in play off the
+# active run, a slot otto.invocation holds, instead of otto.config's fleet: the package
+# imports nothing of otto.config (spec 2026-10-11 placement-and-phases §3.8).
 BASELINE: dict[str, list[str]] = {
     "otto.bootstrap": ["otto.config"],
     "otto.config": [
         "otto.bootstrap",
         "otto.context",
-        "otto.reservations",
     ],
     "otto.context": [
         "otto.bootstrap",
         "otto.config",
-        "otto.reservations",
         "otto.session",
     ],
     "otto.docker": ["otto.config"],
-    "otto.reservations": ["otto.config"],
     "otto.session": [
         "otto.bootstrap",
         "otto.docker",

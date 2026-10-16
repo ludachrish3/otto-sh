@@ -227,8 +227,8 @@ depends_on = [
     # selection, the bootstrap gate, the lab build and the dependency preflight.
     "otto.session",
     # open_context applies the reservation gate the CLI preamble applies
-    # (build_reservation_gate + ReservationGate.evaluate). Function-local.
-    # Both modules were already in one import cycle, so this adds no member.
+    # (build_reservation_gate + ReservationGate.evaluate). Function-local, and
+    # downward: otto.reservations reads the active run, not the context.
     "otto.reservations",
     # The context composes the leaf's run policy, resolver and bindings.
     "otto.invocation",
@@ -487,7 +487,9 @@ depends_on = [
 path = "otto.invocation"
 layer = "foundation"
 # The run's policy, peer-host resolver and context bindings: a leaf the host
-# layer may import (spec 2026-10-06 run-state contracts §3).
+# layer may import (spec 2026-10-06 run-state contracts §3). It also holds the
+# active run, which otto.context installs and the host layer never reads
+# (tests/unit/test_slot_installers.py; spec 2026-10-11 placement-and-phases §3.8).
 depends_on = []
 
 [[modules]]
@@ -810,7 +812,14 @@ depends_on = ["otto.errors"]
 
 [[modules]]
 path = "otto.reservations"
-depends_on = ["otto.registry", "otto.utils", "otto.models", "otto.models.base", "otto.config", "otto.errors"]
+layer = "sources"
+# The reservation gate reads the active run, not otto.config's fleet, so the
+# package imports nothing of otto.config (spec 2026-10-11 placement-and-phases §3.8).
+# otto.invocation: the active run (the slot otto.context installs), which the gate
+# reads its lab and its hosts in play from.
+# otto.host: the gate leaves the built-in `local` host out of play through the
+# owner's identity test, otto.host.builtin_hosts.is_builtin_host. Function-local.
+depends_on = ["otto.registry", "otto.utils", "otto.models", "otto.models.base", "otto.errors", "otto.host", "otto.invocation"]
 
 [[modules]]
 path = "otto.snmp"

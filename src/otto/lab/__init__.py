@@ -17,11 +17,13 @@ implementation without changing this path:
 - :class:`~otto.config.scope.EmptySelectionError`: a walk's pattern matched no
   host the walk may reach.
 
-``get_hosts_in_play`` is not exported, on purpose. It is the reservation
-readers' tolerant spelling (an empty declared fleet is zero hosts in play,
-never an abort), and a walk written against the most discoverable name would
-silently touch nothing. Its readers import it from ``otto.config.fleet`` by
-hand, which is the point.
+``get_hosts_in_play`` is not exported, on purpose. It is the tolerant
+spelling for reservation checks (an empty declared fleet is zero hosts in
+play, never an abort), and a walk written against the most discoverable name
+would silently touch nothing. ``otto reservation check`` and completion's gate
+import it from ``otto.config.fleet`` by hand, which is the point; the
+reservation gate itself reads the same set off the active run in
+``otto.invocation``.
 
 Every name is exported lazily (PEP 562), the shape every otto package shares:
 ``import otto.lab`` loads none of the modules that implement it, nor the host

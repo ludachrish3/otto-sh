@@ -1,10 +1,16 @@
-"""What this run does, and who installed it: the run's policy, peer-host resolver and bindings.
+"""What this run does and who installed it: the active run, its policy, resolver and bindings.
 
-A leaf. It imports no otto module at runtime (its annotations name host
-types under ``TYPE_CHECKING`` only), so the host layer reads the run's policy
-and resolves a peer host through it without importing :mod:`otto.context`.
+A leaf. It imports no otto module at runtime (its annotations name otto
+types, hosts, the lab and repos, under ``TYPE_CHECKING`` only), so the host
+layer reads the run's policy and resolves a peer host through it without
+importing :mod:`otto.context`.
 :class:`otto.context.OttoContext` composes these; the public names are
 declared at :mod:`otto.context`, and this module has no public path.
+
+It holds the active-run slot (:class:`ActiveRun`): the run
+:func:`otto.context.set_context` installed, which a reader below the run
+layer reads without importing :mod:`otto.context`. The host layer never
+reads it (``tests/unit/test_slot_installers.py``).
 
 It also holds each event loop's host registry and the cleanup boundaries
 that decide when that loop's hosts close.
@@ -25,7 +31,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from .config.repo import Repo
     from .host.host import Host
+    from .labs.loader import Lab
 
 T = TypeVar("T")
 
@@ -172,6 +180,85 @@ def reset_binding(binding: ContextBinding) -> None:
     for var, token in reversed(binding._installed):  # noqa: SLF001 — the binding is this module's own
         var.reset(token)
     binding._reset = True  # noqa: SLF001 — the binding is this module's own
+
+
+# ---------------------------------------------------------------------------
+# The active run: the context the run installed, as a reader below it sees it
+# ---------------------------------------------------------------------------
+
+
+class ActiveRun(Protocol):
+    """What a reader below the run layer may ask of the installed run.
+
+    :class:`otto.context.OttoContext` satisfies it. :func:`otto.context.set_context`
+    installs one (:func:`install_run`) and :func:`otto.context.reset_context` undoes
+    that install (:func:`restore_run`); nothing else writes the slot (spec
+    2026-10-11 placement-and-phases §2.1). The host layer never reads it: a host
+    acts on the run's policy and finds a peer through the resolver, never through
+    the run itself.
+    """
+
+    @property
+    def lab(self) -> "Lab":
+        """The run's lab."""
+        ...
+
+    @property
+    def repos(self) -> "list[Repo]":
+        """Every repo the run parsed, a fresh list on every read."""
+        ...
+
+    @property
+    def ordered_repos(self) -> "list[Repo]":
+        """The repos a fleet-wide walk visits, in dependency order."""
+        ...
+
+    def admissible_ids(
+        self, owner: "str | None" = None, *, require_nonempty: bool = True
+    ) -> "set[str]":
+        """Return the host ids the run's fleet walks may reach (``OttoContext.admissible_ids``)."""
+        ...
+
+
+_ACTIVE: ContextVar["ActiveRun | None"] = ContextVar("otto_context", default=None)
+"""The active-run slot: the run :func:`otto.context.set_context` installed, or ``None``."""
+
+_NO_ACTIVE_RUN = (
+    "No active OttoContext. Inside the CLI this is built by the top-level "
+    "callback; in a script wrap your work in `async with otto.open_context(...)`."
+)
+
+
+def installed_run() -> "ActiveRun | None":
+    """Return the installed run, or ``None`` when none is installed."""
+    return _ACTIVE.get()
+
+
+def require_run() -> "ActiveRun":
+    """Return the installed run; raise ``RuntimeError`` when none is installed.
+
+    The message is :func:`otto.context.get_context`'s, which reads the run through here.
+    """
+    run = _ACTIVE.get()
+    if run is None:
+        raise RuntimeError(_NO_ACTIVE_RUN)
+    return run
+
+
+def install_run(run: ActiveRun, *, into: "ContextBinding | None" = None) -> ContextBinding:
+    """Install *run* as the active run, recorded in *into* (a new binding when ``None``).
+
+    The slot's privileged write API: :func:`otto.context.set_context` alone calls it.
+    """
+    return install_var(_ACTIVE, run, into=into)
+
+
+def restore_run(binding: ContextBinding) -> None:
+    """Undo *binding*: every install it recorded, the active run's among them, exactly once.
+
+    The slot's privileged write API: :func:`otto.context.reset_context` alone calls it.
+    """
+    reset_binding(binding)
 
 
 # ---------------------------------------------------------------------------

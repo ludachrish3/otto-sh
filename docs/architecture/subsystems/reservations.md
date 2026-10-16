@@ -33,7 +33,7 @@ starting a run.
 - **The gate runs in completion too, on its own terms.** Remote-path tab
   completion for `otto host <id> get` / `put` ({doc}`../../cli/index`)
   contacts a lab host, so the same required-resource check runs first — before
-  the host is even constructed. Two deliberate differences from the command
+  a remote connection is opened. Two deliberate differences from the command
   path: `-R` does *not* bypass it (the loud skip warning has nowhere to print
   mid-TAB, and a silent break-glass is not one), and a backend failure fails
   closed to *no suggestions* rather than to an error, because a completer that
@@ -104,17 +104,22 @@ readers. A declared fleet that admits no host in the loaded lab is **zero
 hosts in play**, not a refusal: the requirement narrows to the lab's own set
 and every reservation reader passes `require_nonempty=False` to say so.
 
-Reservation readers reach that set through
-{func}`otto.config.fleet.get_hosts_in_play`, which applies the one adjustment
-the gate makes and the walks do not: the built-in `local` host is subtracted.
-Otto can always run on the machine it is running on, so requiring a slot to
-reach it would be a footgun with no upside. The subtraction is by host
-identity, not by the id string (`otto.host.builtin_hosts.is_builtin_host`) —
-a lab that declares its own `local` entry suppresses the built-in host
-altogether, and that entry's `resources` are enforced like any other's. All
-four reservation readers — the gate, `otto reservation check`, the
-explicit-target check in `otto host`, and completion's cached gate — go
-through that accessor, so none can drift from the others.
+Reservation readers reach that set through one function,
+`otto.reservations.check._hosts_in_play`, which applies the one adjustment the
+gate makes and the walks do not: the built-in `local` host is subtracted.
+{func}`otto.config.fleet.get_hosts_in_play` is that function applied to the
+context. The gate
+calls it on the active run ({func}`~otto.invocation.require_run`, installed by
+`otto.context.set_context`; see {doc}`../lifecycle`), so
+`otto.reservations` imports nothing of `otto.config`. Otto can always run on
+the machine it is running on, so requiring a slot to reach it would be a
+footgun with no upside. The subtraction is by host identity, not by the id
+string (`otto.host.builtin_hosts.is_builtin_host`) — a lab that declares its
+own `local` entry suppresses the built-in host altogether, and that entry's
+`resources` are enforced like any other's. All four reservation readers — the
+gate (in `evaluate` and in the `check_hosts` that the explicit-target check in
+`otto host` calls), `otto reservation check`, and completion's cached gate —
+go through that function, so none can drift from the others.
 
 The
 fleet-shaped `ProjectScopeError` stays with the WALK — a run that walks still

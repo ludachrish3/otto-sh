@@ -1,14 +1,14 @@
 """Put back the run state ``set_context`` installs: the context, its policy and its resolver.
 
-``set_context`` installs three ContextVars: the context's own ``_active``, and
-the ``otto.invocation`` leaf's ``_POLICY`` and ``_RESOLVER``. A fixture that
-undoes its install by restoring ``_active`` alone leaves the other two behind
-for every later test on the worker, which then sees a policy and a peer-host
-resolver it never installed. :func:`preserved_run_state` saves all three and
-restores all three; :func:`cleared_run_state` also clears all three for the
-block, for a test whose premise is that no context is installed; and
-:func:`installed_run_state` reads all three, for a test asserting what an
-entry point left behind.
+``set_context`` installs three ContextVars, all in the ``otto.invocation`` leaf:
+the active run ``_ACTIVE``, the policy ``_POLICY`` and the resolver ``_RESOLVER``.
+A fixture that undoes its install by restoring ``_ACTIVE`` alone leaves the
+other two behind for every later test on the worker, which then sees a policy
+and a peer-host resolver it never installed. :func:`preserved_run_state`
+saves all three and restores all three; :func:`cleared_run_state` also clears
+all three for the block, for a test whose premise is that no context is
+installed; and :func:`installed_run_state` reads all three, for a test
+asserting what an entry point left behind.
 
 It restores with ``ContextVar.set``, never ``reset_context(binding)``: a
 binding resets only in the execution context that made it, and the code that
@@ -22,10 +22,10 @@ from collections.abc import Iterator
 
 def installed_run_state() -> list:
     """The installed context, run policy and peer-host resolver, in that order."""
-    from otto import context, invocation
+    from otto import invocation
 
     return [
-        context.try_get_context(),
+        invocation.installed_run(),
         invocation.installed_policy(),
         invocation.installed_resolver(),
     ]
@@ -34,13 +34,13 @@ def installed_run_state() -> list:
 @contextlib.contextmanager
 def preserved_run_state() -> Iterator[None]:
     """Restore the context, run-policy and resolver ContextVars to their values at entry."""
-    from otto import context, invocation
+    from otto import invocation
 
-    saved = (context._active.get(), invocation._POLICY.get(), invocation._RESOLVER.get())
+    saved = (invocation._ACTIVE.get(), invocation._POLICY.get(), invocation._RESOLVER.get())
     try:
         yield
     finally:
-        context._active.set(saved[0])
+        invocation._ACTIVE.set(saved[0])
         invocation._POLICY.set(saved[1])
         invocation._RESOLVER.set(saved[2])
 
@@ -49,16 +49,16 @@ def preserved_run_state() -> Iterator[None]:
 def cleared_run_state() -> Iterator[None]:
     """Run the block with no context, no run policy and no resolver; restore all three after.
 
-    "No context" means all three. Clearing ``_active`` alone leaves a policy and
+    "No context" means all three. Clearing ``_ACTIVE`` alone leaves a policy and
     a peer-host resolver some earlier test or fixture installed, and a host
     with no lab back-reference resolves its hop through that resolver: so a
     test asserting that such a host *cannot* resolve its hop passes or fails
     on whatever ran before it.
     """
-    from otto import context, invocation
+    from otto import invocation
 
     with preserved_run_state():
-        context._active.set(None)
+        invocation._ACTIVE.set(None)
         invocation._POLICY.set(None)
         invocation._RESOLVER.set(None)
         yield

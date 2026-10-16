@@ -498,7 +498,7 @@ class TestPerCallOptionOverrides:
         resolving the console term from the lab would."""
         import dataclasses
 
-        from otto.config.fleet import _apply_option_overrides
+        from otto.context import _apply_option_overrides
         from otto.host.options import ConsoleOptions
 
         host = make_host(
