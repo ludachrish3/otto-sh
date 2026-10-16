@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope all ci nox nox-release nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help quick quick-guards gate-scope all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -427,18 +427,19 @@ release-campaign: ## (Build & Release) Run every lane the default gates exclude,
 # 0 — HEAD's tree carries a valid stamp, trust it; 1 — no stamp, or one that
 # does not match (tree, assets, gate), so run `make coverage` and check
 # again; 2 — a refusal no stamp can cure (a dirty tree, a venv on anything
-# but the primary, a command-line variable other than BUMP=/NEW_VERSION=),
-# so `[ $$? -eq 1 ]` is false and the release stops at once, before forty
-# minutes of a run that could not be stamped. Both checks are told the
-# command-line variables ($(COVERAGE_STAMP_OVERRIDES)): a stamp vouches for
-# the declared gate, not for a release whose later stages a
+# but the primary, a command-line variable other than BUMP=, NEW_VERSION= or
+# BUDGET_APPROVE=), so `[ $$? -eq 1 ]` is false and the release stops at
+# once, before forty minutes of a run that could not be stamped. Both checks
+# are told the command-line variables ($(COVERAGE_STAMP_OVERRIDES)): a stamp
+# vouches for the declared gate, not for a release whose later stages a
 # `PYTEST_ADDOPTS=-k …` would narrow.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) npm ci web/, the coverage stamp check (HEAD's committed tree passed `make coverage` under this venv — else run it now, before anything commits), Python static checks (check-python), nox-release (3.11–3.14; the primary's session is what the stamp proves), build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs, then changelog, bump, wheel-check (which builds dist/) (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
+release: ## (Build & Release) npm ci web/, the coverage stamp check (HEAD's committed tree passed `make coverage` under this venv — else run it now, before anything commits), Python static checks (check-python), the import-budget delta against the previous tag (budget-delta — growth stops the release unless BUDGET_APPROVE names the surface and its buckets), nox-release (3.11–3.14; the primary's session is what the stamp proves), build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs, then changelog, bump, wheel-check (which builds dist/) (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) web-install \
 		&& ( $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES) || { [ $$? -eq 1 ] && $(MAKE) coverage && $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES); } ) \
 		&& $(MAKE) check-python \
+		&& $(MAKE) budget-delta \
 		&& $(LEAK_DETECT) $(MAKE) nox-release \
 		&& $(MAKE) web \
 		&& $(MAKE) dashboard-all \
@@ -743,6 +744,30 @@ profile: ## (Dev) Enforce the import budget (per-surface file-operation ceilings
 	@$(SAY) "import budget (per-surface file-operation ceilings)"
 	@uv run python scripts/import_budget.py --check
 
+# The release's import-budget delta: the previous tag against HEAD, in file
+# operations per surface and per Python minor, measured in pristine worktrees
+# by the tip's scripts/import_budget.py over each tree's own venv. Growth
+# stops the release unless the owner names the surface AND the buckets it
+# moved by on the command line — BUDGET_APPROVE="help@3.14=stdlib+4,otto:*+1
+# run=otto:*+1" — read from the command line only ($(origin)), so an
+# environment value approves nothing; each word is quoted for the shell
+# (`otto:*` is a glob). The base's records are cached under
+# reports/budget/<tag>/ (per checkout); the tip is measured on every run.
+# Each side and minor is measured in $TMPDIR/otto-budget-delta/<side>-<minor>/
+# (two worktrees and a venv, ~0.5 GB, removed before and after every
+# measurement). The harness's bytecode cache,
+# ~/.cache/otto/import-budget-pycache, persists and mirrors absolute paths;
+# the stable holder path bounds it to one mirror per side and minor.
+# Wired by tests/unit/test_make_release_lanes.py; the script by
+# tests/unit/scripts/test_import_budget_delta.py.
+BUDGET_DELTA := uv run python scripts/import_budget_delta.py
+BUDGET_DELTA_MINORS := $(NOX_PRIMARY) $(NOX_MIDDLE) $(NOX_CANARY)
+BUDGET_DELTA_APPROVE = $(if $(and $(filter command line,$(origin BUDGET_APPROVE)),$(BUDGET_APPROVE)),--approve $(foreach a,$(BUDGET_APPROVE),'$(subst ','"'"',$(a))'))
+
+budget-delta: ## (Build & Release) The import-budget delta: the previous release tag vs HEAD, file operations per surface on every nox interpreter (primary first), in pristine worktrees; STOPS on growth unless BUDGET_APPROVE="surface[@minor]=bucket+N,… …" names the surface and the buckets it moved by (a growth stop prints the entry to paste whenever the moved buckets can be written as a word). A stage of `make release`, right after check-python. Two `uv sync`es per minor per pair (the base's skipped while its cache matches), up to three pairs per minor, each in $TMPDIR/otto-budget-delta/<side>-<minor>/ (removed per measurement; the harness's bytecode cache ~/.cache/otto/import-budget-pycache keeps one mirror per side and minor); elapsed seconds per step in reports/budget/run.log.
+	@$(SAY) "import-budget delta ($(BUDGET_DELTA_MINORS))"
+	@$(BUDGET_DELTA) measure --minors $(BUDGET_DELTA_MINORS) $(BUDGET_DELTA_APPROVE)
+
 build: ## (Build & Release) Build the project with uv
 	@$(SAY) "uv build → dist/"
 	@uv build
@@ -852,17 +877,19 @@ unit-outliers: ## (Quality) Report the unit tree's slow tests (>= UNIT_OUTLIERS_
 # the epilogue is the one recipe line, reached only when every prerequisite
 # passed, and it requires tree, dirt, interpreter and assets to equal the
 # prologue's. A run over a dirty tree, or with ANY variable on the make
-# command line but the release's own BUMP= and NEW_VERSION=
-# ($(MAKEOVERRIDES) below), still runs every leg and is simply not stamped —
-# the stamp describes the declared gate on a committed tree, nothing else.
+# command line but the release's own BUMP=, NEW_VERSION= and BUDGET_APPROVE=
+# (the command-line names read from .VARIABLES below; MAKEFLAGS carries them
+# into the `$(MAKE) coverage` fallback), still runs every leg and is simply
+# not stamped — the stamp describes the declared gate on a committed tree,
+# nothing else.
 # An ambient PYTEST_ADDOPTS is cleared for the stamped legs with a
 # target-specific `export override` (inherited by every prerequisite; plain
 # `export` would LOSE to `make coverage PYTEST_ADDOPTS=…` on the command line
 # — measured), so an environment `-k`/`-m` cannot narrow the selection the
 # stamp names. A command-line PYTEST_ADDOPTS still rides MAKEFLAGS into the
 # recursive makes (`$(MAKE) dashboard`), where it wins; like every other
-# command-line variable it is listed in $(MAKEOVERRIDES), so the legs run
-# and the stamp is withheld. Wiring pinned by
+# command-line variable it is among $(COVERAGE_STAMP_OVERRIDE_NAMES), so the
+# legs run and the stamp is withheld. Wiring pinned by
 # tests/unit/test_make_release_lanes.py; the script by
 # tests/unit/scripts/test_coverage_stamp.py.
 COVERAGE_STAMP := uv run python scripts/coverage_stamp.py
@@ -871,12 +898,18 @@ COVERAGE_STAMP_GATE = --threshold "$(COVERAGE_THRESHOLD)" --selection "$(M_COVER
 # legs expand far more than the four gate variables (junitxml, LEAK_DETECT,
 # TIMEOUT_CMD, PYTEST_TIMEOUT, BROWSER_WORKERS, …), so the honest rule is
 # "any command-line variable makes this run not the declared gate", with an
-# allowlist for the release's own knobs. $(MAKEOVERRIDES) lists them all,
-# keeps them through a target-specific `export override` (which turns a
-# variable's $(origin) into `override`), and reaches the `$(MAKE) coverage`
-# fallback through MAKEFLAGS; an environment value never appears in it.
-COVERAGE_STAMP_HARMLESS := BUMP NEW_VERSION
-COVERAGE_STAMP_OVERRIDE_NAMES = $(sort $(foreach a,$(MAKEOVERRIDES),$(if $(findstring =,$(a)),$(firstword $(subst =, ,$(a))))))
+# allowlist for the release's own knobs: the version it bumps to, and the
+# import-budget approvals (they change what the delta accepts, never what
+# `make coverage` gated).
+COVERAGE_STAMP_HARMLESS := BUMP NEW_VERSION BUDGET_APPROVE
+# Every variable whose $(origin) is `command line`, read from .VARIABLES at
+# parse time — before a target-specific `export override` (coverage's
+# PYTEST_ADDOPTS) turns an origin into `override`, and unlike a split of
+# $(MAKEOVERRIDES), which cuts a multi-word value
+# (`BUDGET_APPROVE="a=x b=y"`) into a bogus second name. Reaches the
+# `$(MAKE) coverage` fallback through MAKEFLAGS; an environment value never
+# has this origin.
+COVERAGE_STAMP_OVERRIDE_NAMES := $(sort $(foreach v,$(.VARIABLES),$(if $(filter command line,$(origin $(v))),$(v))))
 COVERAGE_STAMP_OVERRIDES = $(foreach n,$(filter-out $(COVERAGE_STAMP_HARMLESS),$(COVERAGE_STAMP_OVERRIDE_NAMES)),--overridden $(n))
 
 coverage: export override PYTEST_ADDOPTS :=
@@ -966,7 +999,7 @@ $(DASHBOARD_DIST) $(COVAPP_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
 # The stamp's prologue runs after the dist rules (its prerequisites) so the
 # assets digest it records is the one the Python legs import; `coverage`
 # lists it first, before coverage-python. See the stamp note above `coverage`.
-coverage-stamp-start: $(DASHBOARD_DIST) $(COVAPP_DIST) ## (internal) The stamped run's prologue: drop the tree's previous stamp, record the tree, the interpreter, the built assets, and anything that forbids stamping it (dirt, a foreign interpreter, any command-line variable but BUMP= and NEW_VERSION=)
+coverage-stamp-start: $(DASHBOARD_DIST) $(COVAPP_DIST) ## (internal) The stamped run's prologue: drop the tree's previous stamp, record the tree, the interpreter, the built assets, and anything that forbids stamping it (dirt, a foreign interpreter, any command-line variable but BUMP=, NEW_VERSION= and BUDGET_APPROVE=)
 	@$(COVERAGE_STAMP) start $(COVERAGE_STAMP_GATE) --workers "$(COVERAGE_WORKERS)" $(COVERAGE_STAMP_OVERRIDES)
 
 # Merged-TS-coverage inputs. The browser lane (dashboard) dumps raw Chromium

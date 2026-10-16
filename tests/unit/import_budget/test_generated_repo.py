@@ -48,3 +48,42 @@ def test_ssh_lab_port_adds_a_closed_port_host(tmp_path):
     settings = (repo / ".otto" / "settings.toml").read_text()
     assert settings.count("[[lab.sources]]") == 2
     assert str(repo / "budget_lab") in settings
+
+
+def test_the_realistic_init_imports_where_the_decorator_lives_beside_the_run_verb(
+    tmp_path, monkeypatch
+):
+    """The release the import-budget delta compares with kept `instruction` in otto.cli.run.
+
+    The tip's fixture measures both trees, so its init must import under either
+    API. Every otto module the init names is stubbed: only the fallback is tested.
+    """
+    import runpy
+    import sys
+    import types
+
+    from tests._fixtures.generated_repo import generate_repo
+
+    repo = generate_repo(tmp_path, files=1, dirs=1, realistic=True)
+    registered = []
+
+    def instruction():
+        def wrap(fn):
+            registered.append(fn.__name__)
+            return fn
+
+        return wrap
+
+    stubs = {
+        "otto.instructions": {},
+        "otto.cli.run": {"instruction": instruction},
+        "otto.monitor.parsers": {"MetricParser": object},
+        "otto.result": {"CommandResult": object},
+        "otto.utils": {"Status": object},
+    }
+    for name, attrs in stubs.items():
+        module = types.ModuleType(name)
+        module.__dict__.update(attrs)
+        monkeypatch.setitem(sys.modules, name, module)
+    runpy.run_path(str(repo / "pylib" / "genrepo_instructions.py"))
+    assert registered == ["noop", "local_true"]

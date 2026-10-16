@@ -168,6 +168,26 @@ def test_a_refused_connection_that_tracebacks_is_a_violation():
     assert "ConnectionRefusedError" in violation
 
 
+def test_a_report_row_carries_the_harness_s_ending_verdict():
+    """A reader of ``--report-json`` must see WHY a run is not the surface, not just its exit.
+
+    A lab that fails to load exits 1 as the refused connection does; only the
+    ending verdict (``check_exit``'s reasons, empty when the run ended as the
+    surface expects) tells the two apart outside the harness.
+    """
+    ops = {"total": 5, "workspace": 1, "by_bucket": {"stdlib": 5}, "by_process": {"python": 5}}
+    lab_error = {"file_ops": ops, "exit_code": 1, "exception": None, "modules": ["otto"]}
+    row = harness.report_row(_ssh_exec(), lab_error)
+    assert set(row) == {
+        "surface", "tier", "file_ops", "workspace", "exit", "ending", "by_bucket", "by_process"
+    }  # fmt: skip
+    assert row["exit"] == 1
+    assert row["ending"] == harness.check_exit(_ssh_exec(), lab_error)
+    assert "asyncssh.connection" in row["ending"][0]
+    refused = dict(lab_error, modules=["asyncssh", "asyncssh.connection"])
+    assert harness.report_row(_ssh_exec(), refused)["ending"] == []
+
+
 def test_an_unexpected_exception_is_named_in_the_violation():
     surface = harness.surface_by_key("version_repo")
     crashed = {"exit_code": 1, "exception": "builtins.KeyError: 'boom'"}

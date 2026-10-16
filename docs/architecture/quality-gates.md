@@ -26,7 +26,7 @@ on that side.
 | Unused code / deps | ruff (`F401`, `ARG`, …) | `knip` — unused files, exports, dependencies |
 | Module layering | `tach` against `tach.toml` (role layers, every dependency declared) + the import-string audit | — none today |
 | Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — thirty-one Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
-| Import cost | `scripts/import_budget.py` — per-surface, per-interpreter file-operation ceilings (whole process tree, strace-counted) and target ratios to `otto --version`; import bans in `ast-grep` and `tests/unit/test_import_contracts.py` name the edge | — (knip covers dependencies only) |
+| Import cost | `scripts/import_budget.py` — per-surface, per-interpreter file-operation ceilings (whole process tree, strace-counted) and target ratios to `otto --version`; `scripts/import_budget_delta.py` — the release's delta against the previous tag (`make budget-delta`); import bans in `ast-grep` and `tests/unit/test_import_contracts.py` name the edge | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest`, run under `build_web_no_warnings.sh`: any stderr output fails (see *Built-bundle gates*) |
 | Coverage floor | `coverage.py` / `pytest-cov` — combined line+branch totals (`.coveragerc` sets `branch = true`): 95.5 for the full local run, 94.75 for the hostless CI slice (both pinned as codified minimums by `tests/unit/test_coverage_floors.py`, which also pins the branch setting) | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
 | Browser e2e | `pytest-playwright` — two suites (monitor dashboard, coverage report), three engines each (Chromium, Firefox, WebKit) | (same lane — `OTTO_TS_COVERAGE=1` arms CDP V8 collection under `make dashboard` only; the bundle-filter **drift guard** runs at configure time in every lane, armed or not — `tests/_fixtures/_ts_bundle_filter.py`) |
@@ -308,8 +308,8 @@ primary's session was the selection the stamp already proves (it used to run
 again under a lower 92 floor nobody read,
 [#566](https://github.com/ludachrish3/otto-sh/issues/566)). A run over a
 modified or staged tracked file, an untracked file under `src/` or a test
-root, or with ANY variable on the make command line (`BUMP=` and
-`NEW_VERSION=` excepted — they are the release's own) still runs every leg
+root, or with ANY variable on the make command line (`BUMP=`,
+`NEW_VERSION=` and `BUDGET_APPROVE=` excepted — they are the release's own) still runs every leg
 and is simply not stamped — `scripts/coverage_stamp.py` says why, and
 `tests/unit/scripts/test_coverage_stamp.py` pins each refusal. The release
 check applies the same rules, and tells the two kinds of "no" apart: a
@@ -322,6 +322,12 @@ which invoke it via `COVERAGE_TARGET` (default `coverage-python`; `make ci`
 overrides it to `coverage-hostless`). So the 95.5 floor is enforced by you
 before you hand the work over, and the release will not take your word for
 it.
+
+The ceilings catch a surface that grew past its baseline plus 10 %; the
+release catches what the headroom let through. `make budget-delta` stops
+`make release` on any surface that costs more file operations than it did at
+the previous tag unless the command line names it with the buckets it moved
+by — see [Contributing](../contributing.md#the-import-budget).
 
 **The chaos and stability lanes are not in CI either.** They are bed-hostile
 by construction — they SIGKILL sessions, reboot hosts, and hold a lease on

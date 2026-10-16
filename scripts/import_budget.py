@@ -1966,7 +1966,12 @@ def _display_path(path: Path) -> str:
 
 
 def report_row(surface: Surface, result: dict) -> dict:
-    """One ``--report`` row: *surface*'s file operations out of a measurement *result*."""
+    """One ``--report`` row: *surface*'s file operations out of a measurement *result*.
+
+    ``ending`` is :func:`check_exit`'s verdict on the run (empty when it ended
+    as the surface expects), so a reader of the JSON can tell a run that
+    measured the surface from one that failed earlier with the same exit.
+    """
     ops = result["file_ops"]
     return {
         "surface": surface.key,
@@ -1974,6 +1979,7 @@ def report_row(surface: Surface, result: dict) -> dict:
         "file_ops": ops["total"],
         "workspace": ops["workspace"],
         "exit": result.get("exit_code"),
+        "ending": check_exit(surface, result),
         "by_bucket": ops["by_bucket"],
         "by_process": ops["by_process"],
     }

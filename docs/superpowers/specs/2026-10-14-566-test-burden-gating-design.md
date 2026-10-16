@@ -316,3 +316,40 @@ Fable final review before the full gate.
   `tests/_fixtures` or registry change of the branch, and nobody runs the oracle after the squash. The
   rider's `commit-only` guard goes; `make quick-guards` stays commit-only because `make coverage` runs the
   family. CI's `unit-repeat` job was the only thing still running it at the tip.
+- Q14 (2026-10-16, Phase C-ii plan) Attribution is mandatory and is the exact buckets, named with
+  the surface: an approval word is `SURFACE[@MINOR]=BUCKET±N[,…]` over the harness's bucket names
+  (`workspace`, `stdlib`, `other`, `fd`, `otto:<component>`, `site:<name>`, `otto:*`, `site:*`).
+  A surface named without its buckets is approved but unattributed → stop; buckets that differ
+  from the measurement → stop (the tip is not the tree that was approved); a growth stop prints
+  the entry the measurement warrants. One entry per `(surface, minor)` scope; `@MINOR` takes
+  precedence over the generic entry on that minor. An entry is stale when the surface grew on no
+  minor in its scope, judged over the whole span. A bucket name holding `,` or `=` cannot be
+  written: that growth stops with "rename the path". The kit's module-footprint shorthand is not
+  carried.
+- Q15 (2026-10-16, Phase C-ii plan) One instrument: the TIP's `scripts/import_budget.py` measures
+  both trees, each under a venv synced from its own tree (the tag's copy is an older harness —
+  at v0.16.1 it has no `--report-json`). Every record holds the literal `KNOWN_SURFACES` with
+  every consumed field (pinned to `import_budget.SURFACES`); a base row of a real-entry surface
+  whose exit is not the surface's expected exit is "not measurable at <tag>" — listed, never
+  judged; a tip row with the wrong exit is invalid evidence (a harness child has no expected
+  exit and is always judged). A cached base record is reused only while its sha, tree,
+  the interpreter's full version and the instrument (the harness blob and `tests/_fixtures/`
+  tree at the tip) match what the run would measure with. A base row is "not measurable at
+  <tag>" when the harness's own ending verdict (`ending`: the exit, an escaped exception, the
+  expected module not loaded) is non-empty, and the reason is printed with the surface; a tip
+  row with a non-empty ending is invalid evidence. The generated repo is one fixture: when a
+  dispatch surface inside it is not measurable at the base, every repo-based surface is listed
+  as not measurable on that minor, with the dispatch surface's reason.
+- Q16 (2026-10-16, Phase C-ii plan) `BUDGET_APPROVE` is a make command-line variable on the
+  coverage stamp's harmless list beside `BUMP` and `NEW_VERSION`: it changes what the delta
+  accepts, never what `make coverage` gated; an environment value is not an approval. The
+  stamp's override-name extractor reads command-line names from `.VARIABLES` at parse time
+  (splitting `$(MAKEOVERRIDES)` turned a multi-word value into a bogus name). Each approval
+  word is quoted for the shell. Every text that lists the exempt knobs names it.
+- Q17 (2026-10-16, Phase C-ii plan) A verdict needs two consecutive agreeing pairs (record for
+  record, both sides): one quiet pair decides; growth or a shuffle → a second pair, and pairs 1
+  and 2 agreeing confirm pair 1's verdict, else a third pair once, and pairs 2 and 3 agreeing
+  confirm pair 2's (pair 1's reading is no veto); three pairs that never agree are inconclusive —
+  a stop naming the surfaces whose records differed and the next step, never a regression and
+  never a pass. A shuffle is a stop only when confirmed. The tables printed are the deciding
+  pair's; an inconclusive minor prints every pair's, labelled. `judge` refuses a fourth pair.

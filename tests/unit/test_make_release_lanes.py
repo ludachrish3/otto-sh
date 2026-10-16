@@ -180,7 +180,8 @@ def test_a_red_or_empty_lane_aborts_the_campaign_and_nothing_after_it_runs(
 # ANY command-line variable marks the run (the legs expand far more than the
 # four gate variables — junitxml, LEAK_DETECT, TIMEOUT_CMD, …), so the
 # samples are a few gate variables, two recipe fragments and an arbitrary
-# name; BUMP and NEW_VERSION, the release's own knobs, are the allowlist.
+# name; BUMP, NEW_VERSION and BUDGET_APPROVE, the release's own knobs, are the
+# allowlist.
 _OVERRIDE_SAMPLES = (
     "COVERAGE_THRESHOLD",
     "PYTEST_ADDOPTS",
@@ -250,14 +251,16 @@ def test_make_coverage_is_stamped_at_its_start_and_its_end():
         r'--browsers "\$\(DASHBOARD_BROWSERS\)" --primary "\$\(NOX_PRIMARY\)"\s*$'
     )
     assert re.search(gate, text, re.MULTILINE)
-    # Every command-line variable, by name, from $(MAKEOVERRIDES) — which an
-    # `export override` cannot hide (it turns $(origin) into `override`) and
-    # MAKEFLAGS carries into the `$(MAKE) coverage` fallback.
+    # Every command-line variable, by name, read from .VARIABLES by its
+    # `command line` origin at parse time — before an `export override` can
+    # turn the origin into `override`, and without cutting a multi-word value
+    # as a split of $(MAKEOVERRIDES) does; MAKEFLAGS carries the names into the
+    # `$(MAKE) coverage` fallback.
     for line in (
-        r"^COVERAGE_STAMP_HARMLESS := BUMP NEW_VERSION\s*$",
+        r"^COVERAGE_STAMP_HARMLESS := BUMP NEW_VERSION BUDGET_APPROVE\s*$",
         (
-            r"^COVERAGE_STAMP_OVERRIDE_NAMES = \$\(sort \$\(foreach a,\$\(MAKEOVERRIDES\),"
-            r"\$\(if \$\(findstring =,\$\(a\)\),\$\(firstword \$\(subst =, ,\$\(a\)\)\)\)\)\)\s*$"
+            r"^COVERAGE_STAMP_OVERRIDE_NAMES := \$\(sort \$\(foreach v,\$\(\.VARIABLES\),"
+            r"\$\(if \$\(filter command line,\$\(origin \$\(v\)\)\),\$\(v\)\)\)\)\s*$"
         ),
         (
             r"^COVERAGE_STAMP_OVERRIDES = \$\(foreach n,\$\(filter-out "
@@ -330,9 +333,10 @@ def test_a_command_line_override_reaches_the_stamp_start(tmp_path: Path, variabl
 
     `make -n` prints the expanded command without running it (the dist rules'
     `$(MAKE) web`, if stale, runs the stub), so this proves the
-    $(MAKEOVERRIDES) reading for real. The stub's own `MAKE=<stub>` is a
-    command-line variable too, so it is always marked — proof, every time,
-    that an arbitrary name is caught — and the other samples never are.
+    command-line-origin reading of .VARIABLES for real. The stub's own
+    `MAKE=<stub>` is a command-line variable too, so it is always marked —
+    proof, every time, that an arbitrary name is caught — and the other
+    samples never are.
     """
     stub, _log = _stub_make(tmp_path, {})
     with_override = _run_make(stub, "-n", "coverage-stamp-start", f"{variable}=zzz")
@@ -357,10 +361,11 @@ def test_a_command_line_variable_is_marked_inside_the_coverage_context(tmp_path:
 
     `coverage`'s target-specific `export override PYTEST_ADDOPTS :=` is
     inherited by `coverage-stamp-start` and turns the variable's origin into
-    `override`, so an origin test saw no command-line value there;
-    $(MAKEOVERRIDES) still lists it. The probe includes the real Makefile and
-    dry-runs `coverage` itself, so the start line printed is the one a real
-    `make coverage PYTEST_ADDOPTS=--no-cov` would run.
+    `override`, so an origin test made at recipe time saw no command-line value
+    there; the names read from .VARIABLES at parse time still list it. The
+    probe includes the real Makefile and dry-runs `coverage` itself, so the
+    start line printed is the one a real `make coverage PYTEST_ADDOPTS=--no-cov`
+    would run.
     """
     stub, _log = _stub_make(tmp_path, {})
     probe = tmp_path / "Probe.mk"
@@ -432,3 +437,72 @@ def test_an_environment_value_is_not_an_override(tmp_path: Path):
     assert '--browsers "firefox"' in completed.stdout, completed.stdout
     assert "--overridden DASHBOARD_BROWSERS" not in completed.stdout, completed.stdout
     assert "--overridden MAKE" in completed.stdout, completed.stdout
+
+
+# --- the import-budget delta stage -----------------------------------------
+
+
+def _delta_line(stdout: str) -> str:
+    [line] = [ln for ln in stdout.splitlines() if "import_budget_delta.py" in ln]
+    return line
+
+
+def test_the_release_runs_the_budget_delta_right_after_check_python():
+    """Early and failing: between check-python and nox-release, a bare `$(MAKE)` line."""
+    text = (PROJECT_ROOT / "Makefile").read_text()
+    _prerequisites, recipe = _rule(text, "release")
+    stages = re.findall(r"\$\(MAKE\) ([a-z-]+)", " ".join(recipe))
+    assert stages.index("budget-delta") == stages.index("check-python") + 1, stages
+    assert stages.index("nox-release") == stages.index("budget-delta") + 1, stages
+    # A link of the `&&` chain, continued: its failure stops everything after it.
+    [line] = [ln for ln in recipe if "budget-delta" in ln]
+    assert line == "&& $(MAKE) budget-delta \\", line
+    previous = recipe[recipe.index(line) - 1]
+    assert previous.endswith(" \\"), previous
+
+
+def test_budget_delta_measures_the_nox_interpreters_primary_first(tmp_path: Path):
+    stub, _log = _stub_make(tmp_path, {})
+    completed = _run_make(stub, "-n", "budget-delta")
+    assert completed.returncode == 0, completed.stderr
+    line = _delta_line(completed.stdout)
+    assert " measure " in line
+    assert "--minors 3.10 3.11 3.12 3.13 3.14" in line, line
+    assert "--approve" not in line
+
+
+def test_the_approval_variable_reaches_the_script_quoted_from_the_command_line_only(
+    tmp_path: Path, monkeypatch
+):
+    stub, _log = _stub_make(tmp_path, {})
+    given = _run_make(stub, "-n", "budget-delta", "BUDGET_APPROVE=help@3.14=stdlib+4 run=otto:*+1")
+    assert "--approve 'help@3.14=stdlib+4' 'run=otto:*+1'" in _delta_line(given.stdout)
+    monkeypatch.setenv("BUDGET_APPROVE", "help")
+    assert "--approve" not in _delta_line(_run_make(stub, "-n", "budget-delta").stdout), (
+        "an environment value is not an approval"
+    )
+    empty = _run_make(stub, "-n", "budget-delta", "BUDGET_APPROVE=")
+    assert "--approve" not in _delta_line(empty.stdout), (
+        "an empty command-line value approves nothing"
+    )
+
+
+def test_the_approval_variable_is_the_release_s_own_knob_even_with_spaces(tmp_path: Path):
+    """`make release BUDGET_APPROVE="a=x+4 b=y+1"` must still trust (and make) the stamp."""
+    stub, _log = _stub_make(tmp_path, {})
+    completed = _run_make(
+        stub, "-n", "coverage-stamp-start", "BUDGET_APPROVE=help=stdlib+4 run=otto:*+1"
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert _overridden(completed.stdout) == ["MAKE"], completed.stdout
+
+
+def test_a_multi_word_override_of_any_other_name_is_marked_once(tmp_path: Path):
+    """The old `$(MAKEOVERRIDES)` splitter turned `A=x y=z` into names `A` and `y`."""
+    stub, _log = _stub_make(tmp_path, {})
+    completed = _run_make(stub, "-n", "coverage-stamp-start", "PYTEST_ADDOPTS=-k x y=z")
+    assert _overridden(completed.stdout) == ["MAKE", "PYTEST_ADDOPTS"], completed.stdout
+
+
+def test_budget_delta_is_phony():
+    assert "budget-delta" in _phony_targets((PROJECT_ROOT / "Makefile").read_text())

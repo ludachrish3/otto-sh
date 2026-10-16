@@ -517,8 +517,8 @@ The stamp is a committed-tree contract, like `make gate-fresh`: a run over
 modified or staged tracked files, over an untracked file under `src/` or a
 `testpaths` root in `pyproject.toml` (the live checkout would import it),
 under a venv on anything but the primary interpreter, or with ANY variable
-on the make command line (`BUMP=` and `NEW_VERSION=` excepted — they are the
-release's own; an environment `PYTEST_ADDOPTS` is simply cleared) still runs
+on the make command line (`BUMP=`, `NEW_VERSION=` and `BUDGET_APPROVE=` excepted — they are
+the release's own; an environment `PYTEST_ADDOPTS` is simply cleared) still runs
 every leg and is **not stamped** — the first lines of the run say why. An
 untracked file anywhere else (`tests/_fixtures/`, `scripts/`) does not
 block the stamp; the run lists it, and you should add it before you gate,
@@ -530,7 +530,7 @@ find the stamp.
 The release reads the same rules. A dirty tree, a non-primary venv or a
 command-line variable stops the release at once; only a missing or
 mismatched stamp runs `make coverage`. So `make release` with any
-command-line variable but `BUMP=` or `NEW_VERSION=` is refused before any
+command-line variable but `BUMP=`, `NEW_VERSION=` or `BUDGET_APPROVE=` is refused before any
 test stage runs, rather than gated at a custom setting and released.
 
 ## Keeping your branch up to date
@@ -1222,6 +1222,50 @@ uv run python scripts/import_budget.py --report-json budget.json   # the same, w
 make import-snapshot                      # regenerate THIS interpreter's ceilings file
 ```
 
+- **A release compares against the previous tag, not just the ceilings.**
+  `make budget-delta` (a stage of `make release`, right after `check-python`)
+  measures the nearest tag and HEAD on every nox interpreter, the primary
+  first, each in a pristine worktree with its own venv, with the tip's
+  `import_budget.py` as the one instrument, and stops at the first minor on
+  which a surface costs more file operations than it did at the tag, once a
+  second measurement confirms it — growth the 10 % headroom would have let
+  through. A growth stop prints the entry to paste, whenever the moved
+  buckets can be written as a word (a bucket name holding `,` or `=`
+  cannot: rename the path):
+  `make release BUDGET_APPROVE="help@3.14=stdlib+4,otto:*+1 run=otto:*+1"`
+  names each grown surface with the exact buckets it moved by (`@minor`
+  scopes an entry; without it the entry applies wherever the surface grew;
+  one entry per surface and minor). A surface named without buckets,
+  buckets that differ from the measurement, or an entry nothing grew for
+  over the whole run each stop again. It is a command-line variable (an
+  environment value approves nothing) and the release's own knob, like
+  `BUMP=`: the coverage stamp accepts it. Growth or a bucket shuffle is
+  measured a second time before it counts, a third when the second
+  disagrees, and a minor that never reproduces itself stops as inconclusive,
+  naming the surfaces; the tables shown are the deciding pair's, or every
+  pair's, labelled, for a minor that stayed inconclusive. The
+  base's records are cached under `reports/budget/<tag>/` of the checkout
+  that measured them (per checkout, like every `reports/`) and reused while
+  their sha, tree, interpreter version and instrument (the harness and
+  `tests/_fixtures/` at the tip) still match; the tip is measured every
+  time. Exit 0 is accepted (nothing grew, or every growth is approved and
+  attributed); exit 1 is a policy stop; exit 2 is invalid evidence or an
+  operational failure (a failed sync or measurement, a malformed approval
+  word, base and tip the same tree, a git or filesystem error), possibly
+  after earlier minors were judged and printed. Surfaces the tag cannot run
+  (a verb added since, or a run that did not end as the surface expects at
+  the tag — its reason is printed) are listed, not judged; when the
+  generated repo's dispatch surface cannot run at the tag, every repo-based
+  surface is listed with it. Each step's elapsed seconds are in
+  `reports/budget/run.log`. Each side and minor is measured in
+  `$TMPDIR/otto-budget-delta/<side>-<minor>/` (two worktrees and a venv,
+  about half a gigabyte, removed before and after every measurement); the
+  harness's bytecode cache, `~/.cache/otto/import-budget-pycache`, persists
+  and holds one mirror per side and minor. The holder is one per box and per
+  `<side>-<minor>`, shared by every checkout of the repository, so two
+  releases must not run `make budget-delta` at the same time on one machine:
+  each would remove the other's venv, and the loser fails loudly with status
+  2, never with a wrong verdict.
 - **Regenerate per interpreter.** `make import-snapshot` rewrites only the
   running interpreter's `tests/unit/import_budget/ceilings/<major>.<minor>.json`.
   For another minor, install its nox env and run the script with that

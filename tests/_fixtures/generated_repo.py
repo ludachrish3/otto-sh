@@ -87,7 +87,10 @@ class TestTop{i}:
 """
 
 _REALISTIC_INIT = '''\
-from otto.instructions import instruction
+try:
+    from otto.instructions import instruction
+except ImportError:  # the decorator lived beside the run verb before otto.instructions
+    from otto.cli.run import instruction
 from otto.monitor.parsers import MetricParser  # noqa: F401  (real repos subclass parsers here)
 from otto.result import CommandResult
 from otto.utils import Status

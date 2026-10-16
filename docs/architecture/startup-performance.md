@@ -319,6 +319,12 @@ no regeneration.
   the baseline is stale-high, and every later regression up to it would pass
   unseen until someone regenerates it.
 
+**The release's delta.** A ceiling pins today's cost with 10 % of room, so
+a surface can grow by a few operations a release and never trip it; the
+release therefore also compares every surface, tracked ones included, with
+the previous tag and stops on growth (`make budget-delta`, in
+[Contributing](../contributing.md#the-import-budget)).
+
 **Gated and tracked surfaces.** A gated surface has baselines and is
 enforced. A tracked surface (its key starts with `tracked_`) is measured and
 printed in `make profile`'s table, and the test suite still checks that its

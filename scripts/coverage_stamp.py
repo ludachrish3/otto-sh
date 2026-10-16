@@ -28,9 +28,10 @@ stamp is withheld, and `start` says why. An untracked file anywhere else
 (`tests/_fixtures/`, `scripts/`, a note at the root) is listed in the
 output but does not block: the legs do not collect it as a test, yet they
 may well import it, so add it before you gate. The same holds for a run
-with ANY variable on the make command line (the release's own `BUMP=` and
-`NEW_VERSION=` excepted): the Makefile passes `--overridden NAME` for each,
-read from `$(MAKEOVERRIDES)`, to `start` and to `check` alike, because the
+with ANY variable on the make command line (the release's own `BUMP=`,
+`NEW_VERSION=` and `BUDGET_APPROVE=` excepted): the Makefile passes
+`--overridden NAME` for each name whose `$(origin)` is `command line`, read
+from `.VARIABLES`, to `start` and to `check` alike, because the
 stamp describes the declared gate, not a custom one. Ambient
 `PYTEST_ADDOPTS` is cleared by the Makefile for the stamped legs, so an
 environment override cannot narrow the selection the stamp names.
