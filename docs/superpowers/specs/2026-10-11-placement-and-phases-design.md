@@ -251,7 +251,7 @@ The `depends_on` column is simulator-derived (§1.1); real tach confirms it land
 | composition | `otto.env` | 4 | config, config.home, errors, models.dependencies, version |
 | run | `otto.context.state` | 1 | config, config.scope, declared, host, invocation, labs, params, reservations, session.dependencies, session.errors, session.lab, session.projects |
 | run | `otto.docker` | 11 | config, config.scope, declared, errors, host, invocation, lifecycle, logger, models, registry, result, utils |
-| run | `otto.lab.fleet` | 1 | config.scope, context.state, host, reservations |
+| run | `otto.fleet` | 1 | config.scope, context.state, host, reservations |
 | run | `otto.session.activation` | 1 | config.scope, models.dependencies, session.errors |
 | run | `otto.session.dependencies` | 1 | config.scope, env, session.errors |
 | run | `otto.session.errors` | 1 | errors |
@@ -278,6 +278,8 @@ The `depends_on` column is simulator-derived (§1.1); real tach confirms it land
 **Amended by P7, 2026-10-15.** `otto.lab.model` and `otto.labs.errors` are not modules: the lab model lives with its loader in `otto.labs.loader` (§3.7). The end state has two fewer layered modules (§5.2).
 
 **Amended by P8, 2026-10-15.** There is no `otto.active_run`: the slot is in `otto.invocation` (§3.8), so the end state has one fewer tach module and one fewer layered module (§5.2). `otto.lab.fleet` depends on `otto.reservations`: the fleet's in-play read returns the gate's own `_hosts_in_play` (§3.8), a downward edge from run to sources.
+
+**Amended by P9a, 2026-10-16.** The fleet is `otto.fleet`, a module of its own (§3.9, D-P9a-2). Every `lab.fleet` in this map's dependency cells (`otto.monitor`, `otto.coverage`, `otto.suite`, `otto.cli`) and in the `otto.lab` placement below reads `fleet`.
 
 In the end state every file is owned and every module layered. There are no static upward edges,
 and the graph **between declared tach modules** has no cycle. Imports inside one tach module are
@@ -999,6 +1001,29 @@ forbids cycles.
   still import it), and `otto.context` and `otto.session` sit at run (they are not facades yet).
   The two by-name imports of `otto.project` stay, as transitional audit entries (§5.3).
 
+**Amended by P9a, 2026-10-16.** Building P9a changed this part in these places:
+- **The fleet moves to `otto.fleet`, not `otto.lab.fleet`** (D-P9a-2): `git mv config/fleet.py
+  fleet.py`, a run-layer module declaring `otto.config.scope`, `otto.context`, `otto.host` and
+  `otto.reservations`. Under `otto.lab`, the facade's package `__init__` loaded on 8 host and test
+  surfaces that only needed the fleet (+12 file operations each); as a module of its own, nothing
+  grows. `otto.lab`'s and the root's lazy tables re-point to `otto.fleet`.
+- **`config/dependencies.py` takes its error types from `.scope` in P9a, not P9b.** Its import of
+  `otto.bootstrap` was the last `config→bootstrap` edge; with it, the cycle does not empty.
+- **The composing calls import the root on the call** (D-P9a-3, §3.12): `prepare_run` and the
+  three coverage entry points run a function-local `from .. import bootstrap` immediately before
+  their `current_repos()` read; `run_tests` composes through the `repos` of the library context it
+  builds, and `OttoContext.repos` imports the root itself (function scope, `context.py`).
+- **Re-located lines at BASE `e65ea043a`:** `current_repos`/`current_ordered_repos` were
+  `config/fleet.py:334-370` (not `:435-463`); `context.py`'s `bootstrap()` calls `:710` and `:1443`
+  (not `:601`, `:1330`); docker's reads `build_verbs.py:33`, `:118`, `:254`, `compose.py:1007`,
+  `observe.py:188`, `:196`, `:268`, `:337`, `:446`, `deployment.py:585-592`; `lab/__init__.py:38-43`
+  (not `:36-41`); `tests/unit/test_no_import_time_lazy_exports.py:141`, `:347` (not `:239`);
+  `tests/unit/test_import_contracts.py:51` (not `:49`).
+- **The isolation row holds:** the conftest snapshots `otto.bootstrap._discovered` only
+  (`_BOOTSTRAP_CACHES`); the catalog's record is `otto.declared._composition`.
+- **Not breaking (D-P6-1, D-P7-3, applied as D-P9a-1).** Only private names and the internal
+  `otto.config.fleet` move; the four re-exports are the catalog's own objects.
+
 Session's `build_lab` path (`session → docker`) is an ordinary downward edge; no registry-string
 hook is needed. The indirect provider route (`docker/compose.py:930`, `:995` →
 `host/factory.py:335` → `host/product.py:795` → `otto.declared`) points downward at every hop
@@ -1158,6 +1183,8 @@ Bindings are then downward edges, never exceptions. No file moves, and no public
 | `otto.models` | specs | foundation, host, specs | Already compliant. |
 | `_webassets`, `check`, `cli`, `coverage.fetcher`, `coverage.merge`, `coverage.store`, `creds`, `docker`, `env`, `host.survey`, `host.transfer`, `init`, `inventory`, `kmodcov`, `logger`, `project`, `reservations`, `testing`, `tunnel` | — | one layer, their own | Nothing to do. |
 
+**Amended by P9a, 2026-10-16.** The `otto.coverage` and `otto.suite` rows' 'its resolver loads the root (§3.12)' is superseded for P9a: their resolvers load nothing, and the composing calls import the root on the call (§3.12 as amended, D-P9a-3).
+
 **`otto.monitor` (P1b).** Its facade exports `LiveReport`, `run_live` and `select_monitor_hosts`
 from `monitor/live.py` (workflows) alongside its topology code.
 - Declaring each monitor file as its own module does not work. Five files import each other in
@@ -1243,6 +1270,8 @@ static, downward edge tach sees and checks:
 | `otto.session` (`session/__init__.py`) | `otto.session`, entry, owning only the `__init__` | `install_logging` | P9b |
 | `otto` (root, `otto/__init__.py:77-118`) | `otto`, entry | none of its own: its aliases bind to the namespace facades, which hold the rule | P9b |
 
+**Amended by P9a, 2026-10-16.** The P9a rows (`otto.suite`, `otto.coverage`) are met on the call, not in the resolvers (D-P9a-3): resolving a composing name loads no root, and the root is imported immediately before the call's read of the run's repos. Measured on 3.10, the resolver mechanism grew 5 public names (`run_tests`, `prepare_run` +6 otto modules, +13 modules, +11 file operations; the three coverage entry points +4, +11 to +19, +8 to +14); on the call, none grows. The import-cost table's P9a 'library use' row is superseded: resolution loads nothing. `run_tests` needs no P9a routing: it reads the `repos` of the library context it builds, and `OttoContext.repos` imports the root itself. When P9b re-points `context.py` to `declared.compose()`, the context facade keeps this table's P9b routing for `OttoContext` and `open_context` (nothing under `otto.context.state` imports the root: that would be a run→root edge), and `run_tests` takes a call-time root import in `otto.suite`, as `prepare_run` has here.
+
 - **`otto.context` becomes a package, with no path change.** `git mv context.py
   context/state.py`; the new `context/__init__.py` is a facade in the `otto.lab` shape (strings
   only, `TYPE_CHECKING` imports, a lazy table). Its table serves the fourteen public names of
@@ -1324,6 +1353,8 @@ so a fixture that imports it would hide exactly the case §3.12 protects.
 | P5 | `otto.declared`: the published complete and in-progress results and the initiator slot (new); `otto.bootstrap`: `_discovered`, `_result` and `_in_progress`, still its own; `otto.registry`: `_COMPLETION_SNAPSHOT`, formerly `otto.bootstrap`'s `_completion_names` (§2.1) | Snapshot both owners; stop importing `otto.bootstrap`; add the slot invariant and `no_composition_root`. |
 | P9a | `otto.declared`: `_result` and `_in_progress` (one home now); `otto.bootstrap`: `_discovered`; `otto.registry`: `_COMPLETION_SNAPSHOT` (since P5) | `_result` and `_in_progress` are read at `otto.declared`. The test helpers that set them (`tests/_fixtures/bootstrap_seam.py`, `tests/integration/conftest.py`, `tests/unit/bootstrap/test_bootstrap.py`) re-point. Patches migrate with their consumers (rule below): a patch of a moved accessor re-points to `otto.declared` in the landing whose consumer re-points. In P9a that is the CLI's readers of `get_repos`, `get_ordered_repos` and `is_bootstrapped`, and the coverage, suite, monitor and docker readers of `current_repos` and `current_ordered_repos` (patched today at `otto.config.fleet`). Patches whose consumer keeps the `otto.bootstrap` alias until P9b stay: `tests/unit/session/test_logs.py:91-94` patches `otto.bootstrap.get_repos`, which `session/logs.py:57-61` reads. Patches of `otto.bootstrap.bootstrap` stay in every landing: it is not a re-export, and the initiator looks it up at call time. |
 | P9b | `otto.config.repo`: `_discovered`; `otto.registry`: `_COMPLETION_SNAPSHOT` (since P5) | `_discovered` is read at `otto.config.repo`. The remaining staged patches move with their consumers, in the same commit: `test_logs.py:91-94` to `otto.declared.get_repos` (with `session/logs.py:57`), and patches of `discover`, `get_env` and `discovered_teardown_deadline` to `otto.config.repo` (with the CLI, `context.py:1230` and `env/manage.py:302`). |
+
+**Amended by P9a, 2026-10-16.** No test patched `current_repos`/`current_ordered_repos` at `otto.config.fleet` at BASE; the readers' patches re-pointed are the 21 files patching `otto.bootstrap.get_repos`/`get_ordered_repos`/`is_bootstrapped`. The exclusion is `tests/unit/session/test_logs.py:93` (`get_repos`, expires P9b); the self-test case is `tests/unit/test_patch_targets.py:213` at BASE (not `:180-189`).
 
 `tests/unit/test_env_hermeticity.py`, which re-runs the historical poisoner/victim pair, must stay
 green at each of the three landings.
@@ -1500,6 +1531,13 @@ vs the landing, two runs per minor: 3.10: 38 surfaces, 2 changed; 3.11: 38 surfa
 gate or the fleet: 3.10 SUMMARY 0 grow, 0 allowed, 10 shrink, 91 unchanged, 0 failed, 0 not reproduced of 101; 3.11 SUMMARY 0 grow, 0 allowed, 10 shrink, 91 unchanged, 0 failed, 0 not reproduced of 101; 3.12 SUMMARY 0 grow, 0 allowed, 10 shrink, 91 unchanged, 0 failed, 0 not reproduced of 101; 3.13 SUMMARY 0 grow, 0 allowed, 10 shrink, 91 unchanged, 0 failed, 0 not reproduced of 101; 3.14 SUMMARY 0 grow, 0 allowed, 10 shrink, 91 unchanged, 0 failed, 0 not reproduced of 101. Nothing grows, and every
 shrink is locked at its measured delta (D-P8-2).
 
+**P9a, measured (amended by P9a, 2026-10-16).** Row P9a's +1 does not appear: the dispatch surfaces
+never load the fleet, and the fleet is `otto.fleet`, not under `otto.lab` (D-P9a-2). Harness, base
+`e65ea043a` vs the landing, two runs per minor: 3.10: 38 surfaces, 0 changed; 3.11: 38 surfaces, 0 changed; 3.12: 38 surfaces, 0 changed; 3.13: 38 surfaces, 0 changed; 3.14: 38 surfaces, 0 changed. Bucket moves, reproduced in both runs, each at an unchanged total: 3.10 host_local_exec 2595 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-310.pyc': 1}; 3.10 host_local_get 2607 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-310.pyc': 1}; 3.10 host_local_put 2608 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-310.pyc': 1}; 3.10 host_ssh_exec 4452 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-310.pyc': 1}; 3.10 host_ssh_login 4452 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-310.pyc': 1}; 3.10 test_repo 7049 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-310.pyc': 1}; 3.10 tracked_host_power 3123 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-310.pyc': 1}; 3.10 tracked_host_probe 3123 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-310.pyc': 1}; 3.11 host_local_exec 2588 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-311.pyc': 1}; 3.11 host_local_get 2600 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-311.pyc': 1}; 3.11 host_local_put 2601 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-311.pyc': 1}; 3.11 host_ssh_exec 4445 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-311.pyc': 1}; 3.11 host_ssh_login 4445 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-311.pyc': 1}; 3.11 test_repo 6929 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-311.pyc': 1}; 3.11 tracked_host_power 3112 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-311.pyc': 1}; 3.11 tracked_host_probe 3112 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-311.pyc': 1}; 3.12 host_local_exec 2619 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-312.pyc': 1}; 3.12 host_local_get 2631 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-312.pyc': 1}; 3.12 host_local_put 2632 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-312.pyc': 1}; 3.12 host_ssh_exec 4476 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-312.pyc': 1}; 3.12 host_ssh_login 4476 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-312.pyc': 1}; 3.12 test_repo 7224 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-312.pyc': 1}; 3.12 tracked_host_power 3143 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-312.pyc': 1}; 3.12 tracked_host_probe 3143 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-312.pyc': 1}; 3.13 host_local_exec 2552 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-313.pyc': 1}; 3.13 host_local_get 2564 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-313.pyc': 1}; 3.13 host_local_put 2565 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-313.pyc': 1}; 3.13 host_ssh_exec 4444 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-313.pyc': 1}; 3.13 host_ssh_login 4444 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-313.pyc': 1}; 3.13 test_repo 7232 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-313.pyc': 1}; 3.13 tracked_host_power 3094 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-313.pyc': 1}; 3.13 tracked_host_probe 3094 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-313.pyc': 1}; 3.14 host_local_exec 2634 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-314.pyc': 1}; 3.14 host_local_get 2646 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-314.pyc': 1}; 3.14 host_local_put 2647 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-314.pyc': 1}; 3.14 host_ssh_exec 4531 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-314.pyc': 1}; 3.14 host_ssh_login 4531 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-314.pyc': 1}; 3.14 test_repo 7338 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-314.pyc': 1}; 3.14 tracked_host_power 3176 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-314.pyc': 1}; 3.14 tracked_host_probe 3176 moved {'otto:*': 1, 'otto:config': -4, 'otto:fleet': 2, 'otto:fleet.cpython-314.pyc': 1}. Outside the harness, on every minor 3.10-3.14, fresh processes, twice each;
+on 3.10: import otto.bootstrap: otto 8 -> 8, modules 53 -> 53, file ops 46 -> 46; from otto.bootstrap import get_repos: otto 8 -> 8, modules 53 -> 53, file ops 46 -> 46; import otto.declared: otto 4 -> 4, modules 49 -> 49, file ops 41 -> 41; from otto.suite import run_tests: otto 5 -> 5, modules 60 -> 60, file ops 47 -> 47; from otto.coverage import collect_coverage: otto 8 -> 8, modules 46 -> 46, file ops 43 -> 43; from otto.lab import get_lab: otto 20 -> 18, modules 116 -> 114, file ops 103 -> 100; call is_bootstrapped(): otto 8 -> 8, modules 53 -> 53, file ops 46 -> 46; call get_lab() under a context: otto 24 -> 22, modules 120 -> 118, file ops 108 -> 105; call docker's lab read under a context: otto 60 -> 59, modules 271 -> 270, file ops 381 -> 380; and every public name
+of `otto`, `otto.lab`, `otto.bootstrap`, `otto.suite`, `otto.coverage`, `otto.docker` and each
+namespace that reaches the root, the catalog or the fleet: 3.10 SUMMARY 0 grow, 0 allowed, 11 shrink, 367 unchanged, 0 failed, 0 not reproduced of 378; 3.11 SUMMARY 0 grow, 0 allowed, 11 shrink, 367 unchanged, 0 failed, 0 not reproduced of 378; 3.12 SUMMARY 0 grow, 0 allowed, 11 shrink, 367 unchanged, 0 failed, 0 not reproduced of 378; 3.13 SUMMARY 0 grow, 0 allowed, 11 shrink, 367 unchanged, 0 failed, 0 not reproduced of 378; 3.14 SUMMARY 0 grow, 0 allowed, 11 shrink, 367 unchanged, 0 failed, 0 not reproduced of 378. Nothing grows, and every shrink is locked at its measured delta.
+
 ### 4.3 Package ancestors
 
 Importing a carved module runs every ancestor `__init__`, so every ancestor of a carved module
@@ -1553,6 +1591,8 @@ imports are exactly `otto.config.env`.
   and session's six files, places `otto.context` and `otto.session` in entry and
   `otto.bootstrap` in root, and sets `forbid_circular_dependencies = true`.
 
+**Amended by P9a, 2026-10-16.** P9a declares `otto.fleet`, not `otto.lab.fleet` (§3.9, D-P9a-2); the bullet naming `otto.lab.fleet` is superseded.
+
 ### 5.2 Layers, assigned as modules leave the cycle
 
 `layers` is declared in P1a. In each landing, every module outside the cycle gets its layer;
@@ -1567,6 +1607,8 @@ replaces with their final ones.
 **Amended by P7, 2026-10-15.** P7 layers `otto.labs` alone (55, not 57): no module is carved for the lab model (§3.7). The later columns assumed `otto.lab.model` and `otto.labs.errors`; without them they are two lower (P8 57, P9a 63, P9b 75) unless a later landing carves a module this map does not show. Each landing confirms its own column, as P7 did; `tests/unit/test_dynamic_import_audit.py`'s `LAYERED_AT` rows for P8, P9a and P9b are amended by the landing that reaches them.
 
 **Amended by P8, 2026-10-15.** P8 layers `otto.reservations` alone (56, not 57): no module is carved for the active run (§3.8). The later columns drop by one more (P9a 62, P9b 74) unless a later landing carves a module this map does not show; `LAYERED_AT` rows past P8 stay for their landings to confirm.
+
+**Amended by P9a, 2026-10-16.** P9a layers 62 modules, as amended by P8: the six interim layers (`otto.bootstrap`, `otto.config` at composition; `otto.context`, `otto.docker`, `otto.session`, `otto.fleet` at run). `LAYERED_AT["P9b"]` stays for P9b to confirm (74 by P8's amendment; the audit's row still reads 77).
 
 The model finds no layer violation at any landing.
 
@@ -1703,7 +1745,7 @@ The counts below are simulator-derived; the real tree confirms them per landing.
 | P6 settings types and helpers down | 7 | 16 | −15 | creds, inventory, link, models | config.home, config.user_settings | bootstrap→models, config→utils |
 | P7 Lab model and loader | 6 | 12 | −4 | labs | lab.model, labs.errors | — |
 | P8 active-run contract; reservations | 5 | 9 | −3 | reservations | active_run | reservations→host |
-| P9a accessors down; docker's reads; fleet under otto.lab | 0 | 0 | −9 (empty) | bootstrap, config, context, docker, session | lab.fleet | cli→declared, coverage→bootstrap, coverage→declared, docker→invocation, lab.fleet→reservations, monitor→declared, suite→bootstrap, suite→declared |
+| P9a accessors down; docker's reads; fleet under otto.lab | 0 | 0 | −9 (empty) | bootstrap, config, context, docker, session | fleet | cli→declared, cli→fleet, coverage→bootstrap, coverage→declared, coverage→fleet, docker→invocation, fleet→config.scope, fleet→context, fleet→host, fleet→reservations, monitor→declared, monitor→fleet, suite→bootstrap, suite→declared, suite→fleet |
 | P9b discovery; composing entry points; root up; cycles forbidden | 0 | 0 | none (already empty) | — | lab, env, _shim, __main__, otto, context.state, the six session files | bootstrap→project, testing→bootstrap |
 
 No landing grows the ratchet. With every file owned, the whole-tree cycle goes 24, 24, 18, 15, 15,
@@ -1750,6 +1792,8 @@ commit.
 
 **Amended by P8, 2026-10-15.** The real tree confirms row P8: the cycle is 5 modules and 9 in-cycle edges (61 modules, 305 edges, 56 layered, §5.2), and `BASELINE` lost exactly Appendix A's three P8 edges. Row P8's 'tach modules declared' is none, and its new edges outside the cycle are `reservations→host` and `reservations→invocation` (§3.8). P9a's `declared→active_run` and `docker→active_run` read `invocation` instead (`declared→invocation` already exists), and P9a gains `lab.fleet→reservations`: the fleet's in-play read moves with `config/fleet.py` (at P8 it is `config→reservations`, downward and outside the cycle). The order note 'P9a needs P8's active run' now means the slot in `otto.invocation`. P8's commit is not marked.
 
+**Amended by P9a, 2026-10-16.** The real tree confirms row P9a: the cycle is 0 modules and 0 in-cycle edges (62 modules, 317 edges, 62 layered, §5.2), and `BASELINE` is empty, having lost exactly Appendix A's nine P9a edges. The graph adds 15 edges (`cli→declared`, `cli→fleet`, `coverage→bootstrap`, `coverage→declared`, `coverage→fleet`, `docker→invocation`, `fleet→config.scope`, `fleet→context`, `fleet→host`, `fleet→reservations`, `monitor→declared`, `monitor→fleet`, `suite→bootstrap`, `suite→declared`, `suite→fleet`) and drops 3 (`config→bootstrap`, `config→context`, `monitor→config`). Row P9a's 'tach modules declared' is `fleet` (D-P9a-2), and its new-edges cell is the 15 above. P9a's commit is not marked.
+
 **Phases re-checked under the revised S5-1.** P1 is now split (above), and P9's split follows
 cohesion rather than the shrink. The carve-with-the-fix rule (§5.1) stays, because carving
 earlier would only add `BASELINE` entries. P4's place before P5 is a real dependency, not a
@@ -1774,12 +1818,16 @@ shrink artifact. No other phase had been bent to stay shrink-only, so none chang
 | D-P7-2 | **Controller, 2026-10-15:** the lab model stays with its loader in `otto.labs.loader`, and the fleet and the compose verbs import it for type checking only: the import-budget rule (fix growth at its source) leaves no growth anywhere. Variants A–D measured. | §3.7, §4.2 |
 | D-P7-3 | **Owner, 2026-10-15: unmarked.** `typing.get_type_hints` on 14 functions (5 public: `compose_up`, `compose_down`, `composed`, `get_lab`, `fleet_of_interest`) now needs the type-only `Lab` supplied; runtime hint resolution of these signatures is an implementation detail, like D-P6-1's `__module__`. Precedent: 19 of 45 already raised; #645. | §3.7 |
 | D-P8-2 | **Controller, 2026-10-15:** the active-run slot lives in `otto.invocation` and the membership-flag rule in `otto.host.builtin_hosts`; the import-budget rule (fix growth at its source) leaves no growth anywhere. Variants A, C and D measured; B cannot leave the cycle. | §3.8, §4.2 |
+| D-P9a-2 | **Controller, 2026-10-16:** the fleet moves to `otto.fleet`; under `otto.lab` it grew 8 surfaces by 12 file operations. | §3.9, §4.2 |
+| D-P9a-3 | **Controller, 2026-10-16:** the P9a composing calls import the root on the call; the resolver mechanism grew 5 public names. | §3.12 |
 
 **Amended by P6, 2026-10-14.** D-P6-1 added; P6's settings-type home was chosen by measurement (§3.6, §4.2), not ruled.
 
 **Amended by P7, 2026-10-15.** D-P7-2 and D-P7-3 added. D-P6-1 decided P7's marking of the move (unmarked) without a new question.
 
 **Amended by P8, 2026-10-15.** D-P8-2 added. D-P6-1 decided P8's marking (unmarked, as D-P8-1) without a new question.
+
+**Amended by P9a, 2026-10-16.** D-P9a-2 and D-P9a-3 added. D-P6-1 and D-P7-3 decided P9a's marking (unmarked, as D-P9a-1) without a new question.
 
 **Decided in the design by evidence, not by the owner**
 - `CredSpec` lives in `models.base` (§3.3).
@@ -1824,3 +1872,5 @@ one. An edge is deleted because an import goes or because one end leaves the cyc
 | P8 (3) | config→reservations, context→reservations, reservations→config |
 | P9a (9) | bootstrap→config, config→bootstrap, config→context, context→bootstrap, context→config, context→session, docker→config, session→bootstrap, session→docker |
 | P9b (0) | — (`BASELINE` already empty) |
+
+**Amended by P9a, 2026-10-16.** Confirmed: `BASELINE` lost exactly these nine; P9a declares `otto.fleet`, not `otto.lab.fleet`.
