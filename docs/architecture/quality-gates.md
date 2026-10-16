@@ -283,6 +283,7 @@ job that enforces it on push.
 | docs | `docs` | `docs` | `docs` |
 | vendored-UI upstream drift | — | — | `untitledui-drift.yml` (its own workflow) |
 | Python coverage floor (95.5, lines + branches) | `coverage`, `validate`, `all` | — | **not in CI** — local only; `release` trusts the coverage stamp (`make coverage` passed on the released tree under this venv, with these assets) or runs `make coverage` itself first |
+| The landing's gate: the oracle's tip lanes, stamped per lane on the committed tree | `gate-tip` (`make gate-scope` names the lanes) | — | **not in CI** — enforced by the pre-push hook on every push to `main` |
 | chaos / stability lanes | `chaos`, `chaos-embedded`, `stability*`; `release-campaign` runs the stability tiers once inside `make release`, never the chaos lanes (see below) | `chaos`, `chaos_embedded` | **not in `ci.yml`** — nightly runs the no-VM legs only |
 
 ### The last two rows are the point
@@ -294,9 +295,17 @@ the *hostless* slice at 94.75 (`coverage-hostless` / the `tests` job),
 because the full run needs lab VMs. A contributor reading only
 `.github/workflows/ci.yml` would conclude the 95.5 floor is enforced on push.
 
-`make release` reaches it through the **coverage stamp**. `make coverage`
-records, under the clone's common git dir, that every leg passed on the
-committed tree (`HEAD^{tree}`), under the primary interpreter (3.10 — a venv
+`make release` reaches it through the **coverage stamp**, and the landing
+reaches it through `make gate-tip`, of which coverage is one **stamped lane**.
+`make gate-tip` runs the lanes the oracle names for the tip and records each
+as a stamp under the clone's common git dir, keyed by the committed tree
+(`HEAD^{tree}`); the pre-push hook refuses a push to `main` whose stamped
+lanes are missing. The live set is never stamped, because it depends on the
+pushed range or is run by the push itself: `check-breaking`, `lint-arch`,
+`check-python`, `docs` and `gate-fresh`. See
+[the landing's gate is stamped](../contributing.md#the-landings-gate-is-stamped).
+The coverage lane's stamp records that every leg passed
+under the primary interpreter (3.10 — a venv
 rebuilt on another CPython is refused), at the declared threshold and
 selection, against the built web assets; `make release` checks that stamp
 first and, finding none for HEAD's tree (or one written under another patch

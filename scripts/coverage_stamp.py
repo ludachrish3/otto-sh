@@ -68,24 +68,26 @@ Lifecycle, driven by the Makefile (`make coverage`, `make release`):
 import argparse
 import hashlib
 import json
-import os
 import platform
 import subprocess
 import sys
-import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import tomli
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
-from scripts.gate_fresh import (  # noqa: E402 -- path set up above
+from scripts.gate_stamp_common import (  # noqa: E402 -- path set up above
     GateFreshError,
     TreeState,
+    blocking_untracked,
+    dirt_refusals,
+    stamps_root,
+    test_roots,
+    tree_hash,
     tree_state,
+    write_atomically,
 )
 
 STAMPS_DIR = "otto-coverage-stamps"
@@ -120,32 +122,14 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout
 
 
-def tree_hash(repo: Path) -> str:
-    """``HEAD^{tree}``: the committed content, whatever the commit or branch."""
-    return _git(repo, "rev-parse", "HEAD^{tree}").strip()
-
-
 def stamps_dir(repo: Path) -> Path:
     """Return the clone's shared stamp directory (under the git common dir)."""
-    common = _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
-    return Path(common) / STAMPS_DIR
+    return stamps_root(repo, STAMPS_DIR)
 
 
 def stamp_path(repo: Path, tree: str) -> Path:
     """Where *tree*'s stamp lives."""
     return stamps_dir(repo) / f"{tree}.json"
-
-
-def test_roots(repo: Path) -> "list[str]":
-    """Pyproject's ``testpaths``: the roots the live checkout collects from."""
-    data = tomli.loads((repo / "pyproject.toml").read_text())
-    return list(data["tool"]["pytest"]["ini_options"]["testpaths"])
-
-
-def blocking_untracked(untracked: "list[str]", roots: "list[str]") -> "list[str]":
-    """Select the untracked paths the live checkout would import: under ``src/`` or a test root."""
-    prefixes = tuple(f"{root.rstrip('/')}/" for root in ("src", *roots))
-    return [path for path in untracked if path.startswith(prefixes)]
 
 
 def assets_digest(repo: Path) -> str:
@@ -196,18 +180,7 @@ def python_refusal(version: str, primary: str) -> "list[str]":
 
 def refusals(state: TreeState, roots: "list[str]", overridden: "list[str]") -> "list[str]":
     """Why this run cannot be stamped; empty when it can."""
-    why: "list[str]" = []
-    if state.tracked_dirty:
-        why.append(
-            "tracked files are modified or staged (the committed tree does not hold them): "
-            + ", ".join(state.tracked_dirty)
-        )
-    blocking = blocking_untracked(state.untracked, roots)
-    if blocking:
-        why.append(
-            "untracked files under src/ or a test root (the live checkout imports them; "
-            "the committed tree has no such file): " + ", ".join(blocking)
-        )
+    why = dirt_refusals(state, roots)
     if overridden:
         why.append(
             "came from the command line, so the run is not the declared gate: "
@@ -259,18 +232,6 @@ def start(repo: Path, gate: Gate, overridden: "list[str]") -> int:
     return 0
 
 
-def _write_atomically(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as handle:
-            handle.write(text)
-        Path(tmp).replace(path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
 def finish(repo: Path) -> int:
     """Stamp the tree when nothing was refused and nothing changed; always exit 0."""
     pending_path = repo / PENDING
@@ -320,7 +281,7 @@ def finish(repo: Path) -> int:
         "checkout": str(repo),
     }
     path = stamp_path(repo, tree)
-    _write_atomically(path, json.dumps(stamp, indent=2, sort_keys=True) + "\n")
+    write_atomically(path, json.dumps(stamp, indent=2, sort_keys=True) + "\n")
     _say(f"stamped tree {tree[:12]} ({path})")
     return 0
 

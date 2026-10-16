@@ -431,7 +431,7 @@ Each changed path has a class; a diff takes the union of its paths' classes:
 | `none` | `docs/superpowers/specs/`, `todo/`, `AGENTS.md` | `make check-breaking` only | the same |
 | `docs` | `README.md`, `docs/` (not `conf.py`, `_ext/`, `examples/`) | `make docs` | `make gate-fresh` (it runs `docs`) |
 | `web` | `web/src/` (not generated `*.gen.ts`) | `make check-ts test-ts` | `make check-ts coverage-ts`, `make gate-fresh` |
-| `tests-leaf` | a test module whose tests and marks are unchanged (an added test is a leaf change unless it carries a mark) | `make quick` over its package, ruff, `make lint-arch`; a module whose every test carries `interpreter_agnostic` runs `make quick-guards` instead of `make quick` | those, `make quick-guards`, `make gate-fresh` |
+| `tests-leaf` | a test module whose tests and marks are unchanged (an added test is a leaf change unless it carries a mark), and the two measured matrices, over their reader modules | `make quick` over its package, ruff, `make lint-arch`; a module whose every test carries `interpreter_agnostic` runs `make quick-guards` instead of `make quick` | those, `make quick-guards`, `make gate-fresh` |
 | `tests-structural` | a test module that removes or renames a test, adds a marked one, or changes a mark (its arguments too) | the leaf lines plus `make quick-guards` | as `tests-leaf` |
 | `src-leaf` | one or two `src/otto/` packages | `make quick` over the package's unit and bed trees plus the tree-wide guards, ty, ruff, `make lint-arch`, `make quick-guards` | the full gate and the package's bed lane |
 | `scripts` | `scripts/` | `make quick-guards`, ty, ruff | the full gate |
@@ -500,6 +500,78 @@ present would be just as wrong as gating the browser lanes without it.
 `git push` to `main` runs this automatically via `.githooks/pre-push`; use
 `git push --no-verify` to skip it deliberately.
 
+### The landing's gate is stamped
+
+`make gate-tip` is how a branch earns its push to `main`. It asks the oracle
+for the tip list (`make gate-scope`, over `BASE..HEAD`), runs every **stamped**
+lane on it in order, and on green writes a stamp for that lane, keyed by the
+committed tree. A lane that already has a stamp for this tree is skipped, so a
+re-run after a red lane repeats only what is missing. It skips the **live**
+lanes: the history checks, `lint-arch`, `check-python`, `docs` and
+`make gate-fresh` depend on the pushed range or are run by the push itself
+(`.githooks/pre-push`), so a stamp for them would certify the wrong thing.
+Coverage is one stamped lane among the others; it runs through
+[the coverage stamp](#the-coverage-stamp)'s own check. `uv run python
+scripts/gate_tip.py --dry-run` lists the lanes without running them and
+`--force` re-runs lanes that are already stamped.
+
+Stamps live under `<git common dir>/otto-gate-stamps/<tree>/`, so every
+worktree of the clone shares them. They are keyed by the tree hash and not the
+commit because the tree is what a squash inherits: the squash of a gated tip
+has the same tree, so the gate you ran on the branch is the gate the landing
+shows. Like the coverage stamp, a stamp is a committed-tree contract: a dirty
+tracked tree, or an untracked file the lanes would import, is refused, and so
+is any command-line variable other than `BASE=` (`make gate-tip X=...` is
+refused). `BASE=` is the one control. The runner shares the coverage stamp's
+boundary for the environment, too: `PYTEST_ADDOPTS`, `MAKEFLAGS`, `MFLAGS` and an
+environment `BASE` are cleared before a lane runs. Everything else in your
+environment reaches the lanes undetected (`CONFORMANCE_CELLS=1 make gate-tip`
+stamps a sampled bed run as the bed lane): the same boundary the coverage stamp
+has, and you are trusted on it as on intermediate commits.
+
+Two lanes **measure**: the conformance bed rewrites `schemas/support_matrix.json`
+and `kmodcov` rewrites `schemas/kmodcov_matrix.json`. Commit exactly what the
+run produced and the stamps follow: a measured matrix committed as the lane
+wrote it is witnessed by blob, so every stamp of that run is promoted to the
+new tree. Two consequences. A second measuring lane needs the first one's
+commit before it runs, since the first rewrote a tracked file. And a red
+measuring lane still rewrites the matrix, so restore it or review the diff
+before you go on.
+
+This has one accepted imprecision. Under a promoted stamp, a test that *reads*
+a measured matrix ran against the pre-measurement matrix, at the tree that was
+stamped; CI runs it again at the committed one. The oracle's row for the
+matrices is what a measurement commit owes locally: the reader modules, through
+`make quick-guards` for the family modules and `make quick` for the rest.
+
+When the pre-push hook finds a stamped lane without a satisfying stamp it
+refuses and says which, as in:
+
+```text
+gate-tip: refusing to push 3f9a1c2d4e5b to main — its gate is not stamped on tree 7b0c91ae2d44 (range 9e1d4b7a0c33..3f9a1c2d4e5b):
+  make coverage: no stamp
+run: git fetch origin main && make gate-tip BASE=FETCH_HEAD   (on commit 3f9a1c2d4e5b), then push again.
+git push --no-verify skips this check; CI then runs only its own lanes — never make coverage, nox-unit-repeat or the beds.
+```
+
+Each lane's reason is one of `no stamp`, `unreadable stamp`, `command mismatch (…)`, `stamped for tree …, which differs from the tip's beyond the measured outputs (…)` or `stamped for a different path list (…)`; the last is the stale-fetch case below.
+
+The check recomputes the tip list over the range the push really carries, so
+a stale `origin/main` (someone else landed after your last fetch) can make the
+list longer than the one you stamped. The remedy in the message is the
+fetch-then-restamp: `git fetch <remote> main && make gate-tip BASE=FETCH_HEAD`.
+
+There are two ways out of a refusal: stamp the tip, or `git push --no-verify`.
+The second is honest only about what it skips: CI never runs `make coverage`,
+`nox-unit-repeat` or the beds, so a push that bypasses the hook lands without
+any of them having run.
+
+`scripts/coverage_stamp.py check` stays exact-tree, and `make release` still
+uses it that way. A release after a matrix commit therefore re-runs coverage
+instead of trusting a promoted stamp. That is the right trade: the release is
+the one place the full coverage run is cheap relative to what it certifies, and
+promotion is for the landing's gate, not the release's.
+
 ### The coverage stamp
 
 `make coverage` leaves a **stamp** when every leg passes: a small JSON file
@@ -526,6 +598,9 @@ because the legs may import it while the committed tree lacks it. Only
 `make coverage` stamps: `make all` and `make validate` run the same coverage
 legs but leave no stamp. Commit, then `make coverage`, and the release will
 find the stamp.
+
+The landing's own gate is stamped lane by lane, which is a different contract:
+see [The landing's gate is stamped](#the-landings-gate-is-stamped).
 
 The release reads the same rules. A dirty tree, a non-primary venv or a
 command-line variable stops the release at once; only a missing or

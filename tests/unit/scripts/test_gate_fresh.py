@@ -16,18 +16,22 @@ from pathlib import Path
 
 import pytest
 
-from scripts import gate_fresh
+from scripts import check_breaking_marks, gate_fresh
+from scripts import gate_scope as gs
+from scripts import gate_tip as gt
 from scripts.gate_fresh import (
     GateFreshError,
     GateResult,
+    PushedPair,
     gate,
     main,
     ref_to_gate,
     resolve_ref,
     tree_state,
 )
-from tests._fixtures.gitrepo import git_env
+from tests._fixtures.gitrepo import TmpGitRepo, git_env
 from tests._fixtures.paths import PROJECT_ROOT
+from tests.unit.scripts.test_check_breaking_marks import GOLDEN_HEADER, _seed
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -240,7 +244,7 @@ class TestGateLifecycle:
         repo = _repo(tmp_path)
         seen: list[Path] = []
 
-        def runner(wt: Path, targets: list[str]) -> bool:
+        def runner(wt: Path, targets: list[str], make_args: list[str]) -> bool:
             seen.append(wt)
             assert (wt / "tracked.txt").exists(), "worktree must hold the gated commit"
             return True
@@ -264,7 +268,7 @@ class TestGateLifecycle:
         # this is the one test that legitimately leaves a worktree behind, and
         # the holder lives in system temp where tmp_path cleanup cannot reach it.
         repo = _repo(tmp_path)
-        result = gate(repo, resolve_ref(repo, "HEAD"), runner=lambda wt, targets: False)
+        result = gate(repo, resolve_ref(repo, "HEAD"), runner=lambda wt, targets, make_args: False)
         assert result.passed is False
         assert result.kept is True
         assert result.worktree.exists()
@@ -276,7 +280,7 @@ class TestGateLifecycle:
         gate(
             repo,
             resolve_ref(repo, "HEAD"),
-            runner=lambda wt, targets: captured.append(targets) or True,
+            runner=lambda wt, targets, make_args: captured.append(targets) or True,
         )
         assert captured == [
             [
@@ -293,7 +297,7 @@ class TestGateLifecycle:
     def test_an_exception_mid_run_leaks_no_registered_worktree(self, tmp_path: Path):
         repo = _repo(tmp_path)
 
-        def boom(wt: Path, targets: list[str]) -> bool:
+        def boom(wt: Path, targets: list[str], make_args: list[str]) -> bool:
             raise RuntimeError("harness died")
 
         with pytest.raises(RuntimeError, match="harness died"):
@@ -308,7 +312,7 @@ class TestGateLifecycle:
         # in is never touched by git, so a passing gate must remove it itself
         # or it leaks an empty dir into system temp on every single run.
         repo = _repo(tmp_path)
-        gate(repo, resolve_ref(repo, "HEAD"), runner=lambda wt, targets: True)
+        gate(repo, resolve_ref(repo, "HEAD"), runner=lambda wt, targets, make_args: True)
 
         assert track_holders, "gate() must call tempfile.mkdtemp"
         assert not track_holders[0].exists(), "the holder dir must not survive a passing gate"
@@ -322,7 +326,7 @@ class TestGateLifecycle:
         # call, so a failed add must still clean it up itself.
         repo = _repo(tmp_path)
 
-        def unreachable(wt: Path, targets: list[str]) -> bool:
+        def unreachable(wt: Path, targets: list[str], make_args: list[str]) -> bool:
             raise AssertionError("runner must not run when worktree add itself fails")
 
         with pytest.raises(GateFreshError, match="invalid reference"):
@@ -348,7 +352,7 @@ class TestGateLifecycle:
         # reintroduced through a different route.
         repo = _repo(tmp_path)
 
-        def boom(wt: Path, targets: list[str]) -> bool:
+        def boom(wt: Path, targets: list[str], make_args: list[str]) -> bool:
             (wt / ".git").unlink()
             raise RuntimeError("harness died")
 
@@ -375,7 +379,7 @@ class TestGateLifecycle:
         # metadata, exactly as the exception branch does.
         repo = _repo(tmp_path)
 
-        def passes_but_corrupts(wt: Path, targets: list[str]) -> bool:
+        def passes_but_corrupts(wt: Path, targets: list[str], make_args: list[str]) -> bool:
             (wt / ".git").unlink()
             return True
 
@@ -554,16 +558,16 @@ class TestMain:
         # path correctly does, above) would block a routine push of already-
         # committed content for a reason that does not apply, and the natural
         # response is `git push --no-verify`, which defeats the gate.
-        repo = _repo(tmp_path)
+        repo, _bare_repo, remote_sha, pushed_sha = _published(tmp_path)
+        _stamp_tip(repo, remote_sha, pushed_sha)
         (repo / "tracked.txt").write_text("v2\n")
-        pushed_sha = resolve_ref(repo, "HEAD")
-        stdin_line = f"refs/heads/main {pushed_sha} refs/heads/main {gate_fresh.ZERO_SHA}\n"
+        stdin_line = f"refs/heads/main {pushed_sha} refs/heads/main {remote_sha}\n"
         monkeypatch.setattr(gate_fresh.sys, "stdin", io.StringIO(stdin_line))
         gated_shas: list[str] = []
         monkeypatch.setattr(
             gate_fresh,
             "gate",
-            lambda repo, sha, **k: (
+            lambda repo, sha, *, make_args=None: (
                 gated_shas.append(sha)
                 or GateResult(passed=True, worktree=tmp_path / "wt", kept=False)
             ),
@@ -612,9 +616,9 @@ SHA_B = "b" * 40
 
 
 class TestRefToGate:
-    def test_pushing_main_returns_the_local_sha(self):
+    def test_pushing_main_returns_the_remote_and_local_shas(self):
         line = f"refs/heads/main {SHA_A} refs/heads/main {SHA_B}\n"
-        assert ref_to_gate(line) == SHA_A
+        assert ref_to_gate(line) == PushedPair(SHA_B, SHA_A)
 
     def test_pushing_a_feature_branch_is_skipped(self):
         line = f"refs/heads/feat {SHA_A} refs/heads/feat {SHA_B}\n"
@@ -629,14 +633,14 @@ class TestRefToGate:
         # Pushing a local branch to main must still gate; keying off the local
         # ref name would miss `git push origin mybranch:main`.
         line = f"refs/heads/mybranch {SHA_A} refs/heads/main {SHA_B}\n"
-        assert ref_to_gate(line) == SHA_A
+        assert ref_to_gate(line) == PushedPair(SHA_B, SHA_A)
 
     def test_a_mixed_push_gates_the_main_line(self):
         lines = (
             f"refs/heads/feat {SHA_B} refs/heads/feat {SHA_B}\n"
             f"refs/heads/main {SHA_A} refs/heads/main {SHA_B}\n"
         )
-        assert ref_to_gate(lines) == SHA_A
+        assert ref_to_gate(lines) == PushedPair(SHA_B, SHA_A)
 
     def test_empty_stdin_is_skipped(self):
         assert ref_to_gate("") is None
@@ -681,4 +685,366 @@ class TestPrePushHook:
         # If someone rewrites the shim to drop --pre-push, the hook would gate
         # HEAD instead of the pushed sha — a silent wrong-tree gate.
         content = (self._REPO_ROOT / ".githooks" / "pre-push").read_text()
-        assert "gate_fresh.py --pre-push" in content
+        assert 'gate_fresh.py --pre-push --remote "$1"' in content
+
+
+# ---------------------------------------------------------------------------
+# The pre-push check: stamped lanes, the pushed range and the history checks
+# ---------------------------------------------------------------------------
+
+
+def _bare(tmp_path: Path, name: str) -> Path:
+    bare = tmp_path / f"{name}.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True, env=git_env(tmp_path))
+    return bare
+
+
+def _commit_file(repo: Path, path: str, text: str, message: str) -> str:
+    (repo / path).parent.mkdir(parents=True, exist_ok=True)
+    (repo / path).write_text(text)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", message)
+    return _git(repo, "rev-parse", "HEAD").strip()
+
+
+def _published(tmp_path: Path, remote: str = "origin") -> "tuple[Path, Path, str, str]":
+    """Three commits: _repo's, then pyproject (published as the remote's main = A), then a
+    tests-leaf commit on top (the tip = B).
+
+    Returns (repo, bare, remote_sha = A, tip_sha = B). The oracle's tip list for A..B is the
+    tests-leaf shape: `make quick PATHS="tests/unit/cli"`, ruff over the module and
+    `make quick-guards` (the three stamped lanes), plus the live check-breaking, lint-arch
+    and gate-fresh lines.
+    """
+    repo = _repo(tmp_path)
+    (repo / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "pyproject")
+    remote_sha = _git(repo, "rev-parse", "HEAD").strip()
+    bare = _bare(tmp_path, remote)
+    _git(repo, "remote", "add", remote, str(bare))
+    _git(repo, "push", "-q", remote, "HEAD:refs/heads/main")
+    tip_sha = _commit_file(repo, "tests/unit/cli/test_b.py", "def test_b(): pass\n", "tip")
+    return repo, bare, remote_sha, tip_sha
+
+
+def _stamp_tip(repo: Path, remote_sha: str, tip_sha: str) -> None:
+    """Stamp, at tip_sha's tree, every stamped lane the oracle names for remote_sha..tip_sha."""
+    root = gt.stamps_root(repo, gt.STORE)
+    tree = gt.tree_hash(repo, tip_sha)
+    for line in gs.tip_commands(repo, remote_sha, tip_sha, git_env(repo)):
+        if not gt.is_live(line):
+            gt.write_stamp(
+                root,
+                tree=tree,
+                key=gt.lane_key(line),
+                base=remote_sha,
+                measured={},
+                checkout=str(repo),
+            )
+
+
+def _pre_push(
+    monkeypatch, repo: Path, remote: str, remote_sha: str, local_sha: str, *argv: str
+) -> int:
+    monkeypatch.setattr(
+        "sys.stdin", io.StringIO(f"refs/heads/main {local_sha} refs/heads/main {remote_sha}\n")
+    )
+    return gate_fresh.main(["--repo", str(repo), "--pre-push", "--remote", remote, *argv])
+
+
+def _sentinel_gate(monkeypatch) -> None:
+    monkeypatch.setattr(gate_fresh, "gate", lambda *a, **k: pytest.fail("gate() reached"))
+
+
+def _recording_gate(monkeypatch, tmp_path: Path) -> "list[tuple[str, list[str]]]":
+    calls: "list[tuple[str, list[str]]]" = []
+
+    def fake(repo, sha, *, make_args=None):
+        calls.append((sha, make_args or []))
+        return GateResult(passed=True, worktree=tmp_path / "wt", kept=False)
+
+    monkeypatch.setattr(gate_fresh, "gate", fake)
+    return calls
+
+
+def _stamped(repo: Path, remote_sha: str, tip_sha: str) -> "list[str]":
+    lines = gs.tip_commands(repo, remote_sha, tip_sha, git_env(repo))
+    return [line for line in lines if not gt.is_live(line)]
+
+
+class TestPrePushCheck:
+    def test_the_check_runs_before_the_worktree_gate_and_refuses_with_the_text(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+        _sentinel_gate(monkeypatch)
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, tip) == 1
+        err = capsys.readouterr().err
+        tree = gt.tree_hash(repo, tip)
+        assert err.startswith(
+            f"gate-tip: refusing to push {tip[:12]} to main — its gate is not stamped on tree "
+            f"{tree[:12]} (range {remote_sha[:12]}..{tip[:12]}):"
+        )
+        stamped = _stamped(repo, remote_sha, tip)
+        assert stamped
+        assert f"  {stamped[0]}: no stamp" in err
+        assert (
+            "run: git fetch origin main && make gate-tip BASE=FETCH_HEAD   "
+            f"(on commit {tip[:12]}), then push again."
+        ) in err
+        assert (
+            "git push --no-verify skips this check; CI then runs only its own lanes — "
+            "never make coverage, nox-unit-repeat or the beds."
+        ) in err
+
+    def test_a_stamped_tree_is_honoured_by_a_squash_and_a_message_amend(
+        self, tmp_path, monkeypatch
+    ):
+        assert "lint-arch" in gate_fresh.GATED_TARGETS
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+        _stamp_tip(repo, remote_sha, tip)
+        calls = _recording_gate(monkeypatch, tmp_path)
+        tree = gt.tree_hash(repo, tip)
+        squash = _git(repo, "commit-tree", tree, "-p", remote_sha, "-m", "squash").strip()
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, squash) == 0
+        _git(repo, "commit", "--amend", "-qm", "tip, reworded")
+        amended = _git(repo, "rev-parse", "HEAD").strip()
+        assert amended != tip
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, amended) == 0
+        make_args = [f"RANGE={remote_sha}..HEAD"]
+        assert calls == [(squash, make_args), (amended, make_args)]
+
+    def test_the_amended_message_that_drops_a_breaking_marker_is_rejected_by_the_live_check(
+        self, tmp_path
+    ):
+        repo = TmpGitRepo(tmp_path / "breaking")
+        base = _seed(repo, ["otto:Alpha", "otto:Beta"])
+        repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
+        tip = repo.commit("feat(api)!: drop Beta")
+        argv = ["--repo", str(repo.root), "--golden", "golden.txt"]
+        assert check_breaking_marks.main([f"{base}..{tip}", *argv]) == 0
+        repo.git("commit", "--amend", "-q", "-m", "feat(api): drop Beta")
+        amended = repo.git("rev-parse", "HEAD").strip()
+        assert check_breaking_marks.main([f"{base}..{amended}", *argv]) == 1
+
+    def test_the_pristine_make_carries_the_pushed_range(self, tmp_path, monkeypatch):
+        calls: "list[list[str]]" = []
+
+        def fake(cmd: "list[str]", cwd: Path) -> int:
+            calls.append(cmd)
+            return 0
+
+        monkeypatch.setattr(gate_fresh, "_run_awaiting_descendants", fake)
+        assert gate_fresh._run_targets(tmp_path, ["lint-arch"], ("RANGE=a..HEAD",)) is True
+        assert calls == [["uv", "sync", "--locked"], ["make", "lint-arch", "RANGE=a..HEAD"]]
+
+    def test_the_check_reads_the_pushed_sha_not_head(self, tmp_path, capsys, monkeypatch):
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+        _stamp_tip(repo, remote_sha, tip)
+        later = _commit_file(repo, "src/otto/cli/x.py", "X = 1\n", "later")
+        calls = _recording_gate(monkeypatch, tmp_path)
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, tip) == 0
+        assert [sha for sha, _ in calls] == [tip]
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, later) == 1
+        err = capsys.readouterr().err
+        assert f"refusing to push {later[:12]}" in err
+        owed = _stamped(repo, remote_sha, later)
+        assert owed
+        for line in owed:
+            assert f"  {line}: " in err
+
+    def test_an_oracle_failure_is_reported_before_the_worktree_gate(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+
+        def boom(*a, **k):
+            raise gs.GateScopeError("boom")
+
+        monkeypatch.setattr(gs, "tip_commands", boom)
+        _sentinel_gate(monkeypatch)
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, tip) == 1
+        err = capsys.readouterr().err
+        assert "gate-fresh: the oracle could not classify" in err
+        assert "boom" in err
+
+    def test_live_goals_are_never_demanded(self, tmp_path):
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+        _stamp_tip(repo, remote_sha, tip)
+        lines = gs.tip_commands(repo, remote_sha, tip, git_env(repo))
+        assert any(gt.is_live(line) for line in lines), "the range owes live lines too"
+        assert gt.missing_stamps(repo, "origin", remote_sha, tip).missing == []
+
+    def test_a_lane_the_oracle_started_requiring_is_no_stamp(self, tmp_path, monkeypatch):
+        repo, _bare_repo, remote_sha, base_tip = _published(tmp_path)
+        tip = _commit_file(repo, "schemas/unrowed.json", "{}\n", "unrowed")
+        assert "make coverage" in gs.tip_commands(repo, remote_sha, tip, git_env(repo))
+        _stamp_tip(repo, remote_sha, tip)
+        assert base_tip != tip
+        monkeypatch.setattr(gs, "FULL_GATE", [*gs.FULL_GATE, "make nox-unit-repeat"])
+        verdict = gt.missing_stamps(repo, "origin", remote_sha, tip)
+        assert verdict.missing == [gt.Missing("make nox-unit-repeat", "no stamp")]
+
+    def test_a_lane_this_runner_does_not_know_refuses_with_one_line(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        repo, _bare_repo, remote_sha, _base_tip = _published(tmp_path)
+        tip = _commit_file(repo, "schemas/unrowed.json", "{}\n", "unrowed")
+        monkeypatch.setattr(gs, "FULL_GATE", [*gs.FULL_GATE, "make a-goal-this-runner-never-knew"])
+        _sentinel_gate(monkeypatch)
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, tip) == 1
+        err = capsys.readouterr().err
+        assert "gate-fresh: the oracle emitted a lane this runner does not know" in err
+        assert "make a-goal-this-runner-never-knew" in err
+        assert "Traceback" not in err
+
+    def test_a_multi_commit_push_demands_the_last_tree_only(self, tmp_path, monkeypatch):
+        repo, _bare_repo, remote_sha, _tip = _published(tmp_path)
+        _commit_file(repo, "tests/unit/cli/test_c.py", "def test_c(): pass\n", "second")
+        last = _commit_file(repo, "tests/unit/cli/test_d.py", "def test_d(): pass\n", "third")
+        _stamp_tip(repo, remote_sha, last)
+        calls = _recording_gate(monkeypatch, tmp_path)
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, last) == 0
+        assert [sha for sha, _ in calls] == [last]
+
+    def test_a_remote_sha_absent_locally(self, tmp_path, capsys, monkeypatch):
+        repo, _bare_repo, _remote_sha, tip = _published(tmp_path)
+        _sentinel_gate(monkeypatch)
+        assert _pre_push(monkeypatch, repo, "origin", "c" * 40, tip) == 1
+        assert "is not in this clone: git fetch origin main" in capsys.readouterr().err
+
+    def test_a_non_fast_forward(self, tmp_path, capsys, monkeypatch):
+        repo, _bare_repo, _remote_sha, tip = _published(tmp_path)
+        stranger = _git(repo, "commit-tree", gt.tree_hash(repo, tip), "-m", "other").strip()
+        _sentinel_gate(monkeypatch)
+        assert _pre_push(monkeypatch, repo, "origin", stranger, tip) == 1
+        assert "not a fast-forward of origin's main" in capsys.readouterr().err
+
+    def test_the_all_zero_remote_sha(self, tmp_path, capsys, monkeypatch):
+        repo, _bare_repo, _remote_sha, tip = _published(tmp_path)
+        _sentinel_gate(monkeypatch)
+        assert _pre_push(monkeypatch, repo, "origin", gate_fresh.ZERO_SHA, tip) == 1
+        assert "has no main to compare against" in capsys.readouterr().err
+
+    def test_a_remote_reset_behind_the_tracking_ref_demands_the_larger_list(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        repo, bare, a_sha, _tip0 = _published(tmp_path)
+        b_sha = _commit_file(repo, "schemas/unrowed.json", "{}\n", "measure")
+        c_sha = _commit_file(repo, "tests/unit/cli/test_c.py", "def test_c(): pass\n", "tip")
+        _git(repo, "push", "-q", "origin", f"{b_sha}:refs/heads/main")
+        _stamp_tip(repo, b_sha, c_sha)
+        _git(repo, "--git-dir", str(bare), "update-ref", "refs/heads/main", a_sha)
+        _sentinel_gate(monkeypatch)
+        assert _pre_push(monkeypatch, repo, "origin", a_sha, c_sha) == 1
+        err = capsys.readouterr().err
+        assert f"(range {a_sha[:12]}..{c_sha[:12]}):" in err
+        larger = _stamped(repo, a_sha, c_sha)
+        assert "make coverage" in larger
+        assert "nox -s tests_hostless-3.14" in larger
+        bc = _stamped(repo, b_sha, c_sha)
+        assert "make coverage" not in bc
+        assert "nox -s tests_hostless-3.14" not in bc
+        assert not set(larger) <= set(bc)
+        verdict = gt.missing_stamps(repo, "origin", a_sha, c_sha)
+        assert [m.lane for m in verdict.missing] == larger
+
+    def test_a_push_to_an_upstream_remote_and_the_remedy_classifies_the_same_range(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path, "upstream")
+        _sentinel_gate(monkeypatch)
+        assert _pre_push(monkeypatch, repo, "upstream", remote_sha, tip) == 1
+        err = capsys.readouterr().err
+        assert "git fetch upstream main" in err
+        assert (
+            err.rstrip()
+            .splitlines()[-2]
+            .endswith(f"make gate-tip BASE=FETCH_HEAD   (on commit {tip[:12]}), then push again.")
+        )
+        _git(repo, "fetch", "-q", "upstream", "main")
+        assert gt._tip_list(repo, "FETCH_HEAD") == (
+            remote_sha,
+            gs.tip_commands(repo, remote_sha, tip, git_env(repo)),
+        )
+
+    def test_a_push_to_a_bare_path(self, tmp_path, capsys, monkeypatch):
+        repo, bare, remote_sha, tip = _published(tmp_path)
+        _sentinel_gate(monkeypatch)
+        assert _pre_push(monkeypatch, repo, str(bare), remote_sha, tip) == 1
+        err = capsys.readouterr().err
+        assert f"run: git fetch {bare} main && make gate-tip BASE=FETCH_HEAD" in err
+        _git(repo, "fetch", "-q", str(bare), "main")
+        assert gt._tip_list(repo, "FETCH_HEAD") == (
+            remote_sha,
+            gs.tip_commands(repo, remote_sha, tip, git_env(repo)),
+        )
+
+    def test_a_push_to_a_non_main_ref_runs_no_check(self, tmp_path, monkeypatch):
+        repo = _repo(tmp_path)
+        sha = resolve_ref(repo, "HEAD")
+        monkeypatch.setattr(gt, "missing_stamps", lambda *a: pytest.fail("checked"))
+        _sentinel_gate(monkeypatch)
+        monkeypatch.setattr(
+            "sys.stdin", io.StringIO(f"refs/heads/feature {sha} refs/heads/feature {sha}\n")
+        )
+        assert gate_fresh.main(["--repo", str(repo), "--pre-push", "--remote", "origin"]) == 0
+
+
+class TestMeasuredOutputsThroughTheCheck:
+    """A tip differing from a stamped tree by a recorded blob is honoured; any other is not."""
+
+    MATRIX = "schemas/support_matrix.json"
+
+    def _stamped_s(self, tmp_path: Path, measured_text: str):
+        """Return (repo, remote sha, S sha, the blob a lane recorded for measured_text)."""
+        repo, _bare_repo, remote_sha, _tip = _published(tmp_path)
+        s_sha = _commit_file(repo, self.MATRIX, '{"as_of": "2026-10-01"}\n', "matrix")
+        _stamp_tip(repo, remote_sha, s_sha)
+        (repo / self.MATRIX).write_text(measured_text)
+        blob = _git(repo, "hash-object", self.MATRIX).strip()
+        _git(repo, "checkout", "--", self.MATRIX)
+        assert "make coverage" in gs.tip_commands(repo, remote_sha, s_sha, git_env(repo))
+        lane = _stamped(repo, remote_sha, s_sha)[0]
+        gt.write_stamp(
+            gt.stamps_root(repo, gt.STORE),
+            tree=gt.tree_hash(repo, s_sha),
+            key=gt.lane_key(lane),
+            base=remote_sha,
+            measured={self.MATRIX: blob},
+            checkout=str(repo),
+        )
+        return repo, remote_sha, s_sha
+
+    def test_a_tip_that_differs_only_by_a_recorded_measured_blob_is_honoured(self, tmp_path):
+        text = '{"as_of": "2026-10-16"}\n'
+        repo, remote_sha, s_sha = self._stamped_s(tmp_path, text)
+        t_sha = _commit_file(repo, self.MATRIX, text, "measured")
+        assert gs.tip_commands(repo, remote_sha, s_sha, git_env(repo)) == gs.tip_commands(
+            repo, remote_sha, t_sha, git_env(repo)
+        )
+        assert gt.missing_stamps(repo, "origin", remote_sha, t_sha).missing == []
+
+    def test_a_tip_whose_matrix_bytes_differ_from_the_recorded_blob_is_refused(self, tmp_path):
+        repo, remote_sha, s_sha = self._stamped_s(tmp_path, '{"as_of": "2026-10-16"}\n')
+        t_sha = _commit_file(repo, self.MATRIX, '{"as_of": "hand edited"}\n', "edited")
+        verdict = gt.missing_stamps(repo, "origin", remote_sha, t_sha)
+        assert [m.lane for m in verdict.missing] == _stamped(repo, remote_sha, t_sha)
+        reason = (
+            f"stamped for tree {gt.tree_hash(repo, s_sha)[:12]}, which differs from the tip's "
+            f"beyond the measured outputs (stamped in {repo}, base {remote_sha[:12]})"
+        )
+        assert {m.reason for m in verdict.missing} == {reason}
+
+    def test_one_that_differs_elsewhere_names_the_stamp_checkout_and_base(self, tmp_path):
+        repo, _bare_repo, remote_sha, s_sha = _published(tmp_path)
+        _stamp_tip(repo, remote_sha, s_sha)
+        t_sha = _commit_file(repo, "tests/unit/cli/test_b.py", "def test_b(): assert 1\n", "edit")
+        verdict = gt.missing_stamps(repo, "origin", remote_sha, t_sha)
+        assert [m.lane for m in verdict.missing] == _stamped(repo, remote_sha, t_sha)
+        reason = (
+            f"stamped for tree {gt.tree_hash(repo, s_sha)[:12]}, which differs from the tip's "
+            f"beyond the measured outputs (stamped in {repo}, base {remote_sha[:12]})"
+        )
+        assert {m.reason for m in verdict.missing} == {reason}

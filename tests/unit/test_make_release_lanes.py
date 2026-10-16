@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import gate_tip as gt
 from tests._fixtures.paths import PROJECT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -506,3 +507,92 @@ def test_a_multi_word_override_of_any_other_name_is_marked_once(tmp_path: Path):
 
 def test_budget_delta_is_phony():
     assert "budget-delta" in _phony_targets((PROJECT_ROOT / "Makefile").read_text())
+
+
+def test_gate_tip_targets_are_phony():
+    phony = _phony_targets((PROJECT_ROOT / "Makefile").read_text())
+    assert {"gate-tip", "coverage-gate-args"} <= phony
+
+
+def _recipe(target: str) -> str:
+    text = (PROJECT_ROOT / "Makefile").read_text()
+    match = re.search(rf"^{re.escape(target)}:[^\n]*\n((?:\t[^\n]*\n)+)", text, re.MULTILINE)
+    assert match, f"no recipe for {target}"
+    return match.group(1).strip("\t\n")
+
+
+def test_the_gate_tip_recipe_and_its_overrides_are_the_declared_wiring():
+    assert _recipe("gate-tip") == (
+        '@uv run python scripts/gate_tip.py --repo . --base "$(if $(filter command line,'
+        '$(origin BASE)),$(BASE),origin/main)" $(GATE_TIP_OVERRIDES)'
+    )
+    text = (PROJECT_ROOT / "Makefile").read_text()
+    assert (
+        "GATE_TIP_OVERRIDES = $(foreach n,$(filter-out BASE,"
+        "$(COVERAGE_STAMP_OVERRIDE_NAMES)),--overridden $(n))\n"
+    ) in text
+    assert _recipe("coverage-gate-args") == "@printf '%s\\n' $(COVERAGE_STAMP_GATE)"
+
+
+def _make_with_uv_stub(tmp_path: Path, *args: str) -> "list[str]":
+    """Run the real `make gate-tip` with `uv` stubbed to record its argv; return that argv."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    argv = tmp_path / "argv.txt"
+    uv = bin_dir / "uv"
+    uv.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$@" > "{argv}"\n')
+    uv.chmod(uv.stat().st_mode | stat.S_IXUSR)
+    dropped = {"MAKEFLAGS", "MFLAGS", "MAKELEVEL"}
+    env = {k: v for k, v in os.environ.items() if k not in dropped}
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    completed = subprocess.run(
+        ["make", "--no-print-directory", "gate-tip", *args],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        env=env,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return argv.read_text().splitlines()
+
+
+def test_gate_tip_hands_every_command_line_variable_to_the_runner_as_overridden(tmp_path: Path):
+    lines = _make_with_uv_stub(tmp_path, "X=1")
+    assert lines[:3] == ["run", "python", "scripts/gate_tip.py"]
+    assert lines[lines.index("--overridden") + 1] == "X"
+    assert lines[lines.index("--base") + 1] == "origin/main"
+
+
+def test_gate_tip_hands_a_release_knob_over_too(tmp_path: Path):
+    lines = _make_with_uv_stub(tmp_path, "BUMP=minor")
+    assert lines[lines.index("--overridden") + 1] == "BUMP"
+
+
+def test_gate_tip_honours_base_from_the_command_line_and_does_not_call_it_an_override(
+    tmp_path: Path,
+):
+    lines = _make_with_uv_stub(tmp_path, "BASE=upstream/main")
+    assert lines[lines.index("--base") + 1] == "upstream/main"
+    assert "--overridden" not in lines
+
+
+def test_the_declared_coverage_gate_frames_as_four_option_value_lines():
+    dropped = {"MAKEFLAGS", "MFLAGS", "MAKELEVEL"}
+    env = {k: v for k, v in os.environ.items() if k not in dropped}
+    completed = subprocess.run(
+        ["make", "-s", "coverage-gate-args"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        env=env,
+    )
+    assert completed.returncode == 0, completed.stderr
+    lines = completed.stdout.split("\n")
+    assert lines.pop() == ""
+    assert len(lines) == 8, "a value holding a newline would break the shape"
+    assert lines[0::2] == gt.COVERAGE_GATE_OPTIONS
+    assert " " in lines[lines.index("--selection") + 1]

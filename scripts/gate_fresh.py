@@ -29,6 +29,29 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+from scripts.gate_stamp_common import (  # noqa: E402 -- path set up above
+    ZERO_SHA,
+    GateFreshError,
+    TreeState,
+    _git,
+    tree_state,
+)
+
+__all__ = [
+    "ZERO_SHA",
+    "GateFreshError",
+    "GateResult",
+    "PushedPair",
+    "TreeState",
+    "gate",
+    "main",
+    "ref_to_gate",
+    "resolve_ref",
+    "tree_state",
+]
+
 # Pre-push runs while git holds the connection to the remote OPEN: git dials
 # the remote first (it needs the remote refs to feed the hook on stdin), then
 # runs this, then pushes. So every second here is a second an idle SSH channel
@@ -94,22 +117,19 @@ GATED_TARGETS = [
     "docs",
 ]
 
-ZERO_SHA = "0" * 40
 _PRE_PUSH_LINE_FIELDS = 4
 
 
-class GateFreshError(RuntimeError):
-    """Something about *running* the gate failed — never a pass/fail verdict.
+@dataclass(frozen=True)
+class PushedPair:
+    """The two shas of the push to the protected ref."""
 
-    Covers both ends of a run: an unmet precondition before it starts (not a
-    git repository, an unresolvable ref, an underlying git command failing)
-    and a disposal failure after it ends (``git worktree remove`` itself
-    failing to clean up a completed run).
-    """
+    remote_sha: str
+    local_sha: str
 
 
-def ref_to_gate(stdin_text: str, *, protected: str = "refs/heads/main") -> str | None:
-    """Which sha, if any, this push would put on the protected ref.
+def ref_to_gate(stdin_text: str, *, protected: str = "refs/heads/main") -> PushedPair | None:
+    """Return the remote and local sha of the push to the protected ref, or None when there is none.
 
     git feeds pre-push one ``<local ref> <local sha> <remote ref> <remote sha>``
     line per ref. The REMOTE ref decides: ``git push origin mybranch:main``
@@ -120,81 +140,10 @@ def ref_to_gate(stdin_text: str, *, protected: str = "refs/heads/main") -> str |
         fields = line.split()
         if len(fields) != _PRE_PUSH_LINE_FIELDS:
             continue
-        _local_ref, local_sha, remote_ref, _remote_sha = fields
+        _local_ref, local_sha, remote_ref, remote_sha = fields
         if remote_ref == protected and local_sha != ZERO_SHA:
-            return local_sha
+            return PushedPair(remote_sha, local_sha)
     return None
-
-
-@dataclass(frozen=True)
-class TreeState:
-    """What the invoking repo's working tree holds beyond its HEAD commit."""
-
-    tracked_dirty: list[str]
-    untracked: list[str]
-
-
-def _git(repo: Path, *args: str) -> str:
-    try:
-        result = subprocess.run(  # noqa: S603
-            ["git", *args],  # noqa: S607
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError as e:
-        raise GateFreshError(f"git failed in {repo}: {e}") from e
-    if result.returncode != 0:
-        raise GateFreshError(f"git {' '.join(args)} failed in {repo}: {result.stderr.strip()}")
-    return result.stdout
-
-
-def tree_state(repo: Path) -> TreeState:
-    """Split the working tree's dirt into blocking and informational halves.
-
-    Tracked modifications block: the worktree is built from a commit and cannot
-    see them, so proceeding would gate different content than the developer is
-    looking at. Untracked files do not block — the gate failing because one was
-    needed is precisely the forgotten-``git add`` case being caught.
-
-    Parsed from ``git status --porcelain -z`` rather than the human-readable
-    (newline-delimited) form. Three prior attempts at parsing the newline form
-    each enumerated the two-character status code and each enumeration missed
-    a case (a bare ``"R "``/``"C "`` check misses ``"RM"``; a first-character
-    check misses ``" R"``, reachable when a tracked file is deleted from the
-    worktree only and a similar new path is staged with ``git add -N``). The
-    ``-z`` form sidesteps status-code enumeration entirely: paths are
-    NUL-terminated instead of newline-terminated (so a filename containing a
-    space is not ambiguous with the human form's separators), and for a
-    rename or copy — whichever column (index-relative or worktree-relative)
-    carries the R/C — the origin path arrives as its own trailing
-    NUL-terminated field instead of being joined into one field with a
-    literal ``" -> "``. The entry's own path is already the destination (the
-    file that exists in the tree now); the origin field only needs skipping.
-    """
-    try:
-        _git(repo, "rev-parse", "--show-toplevel")
-    except GateFreshError as e:
-        raise GateFreshError(f"not a git repository: {repo}") from e
-    tracked_dirty: list[str] = []
-    untracked: list[str] = []
-    raw = _git(repo, "status", "--porcelain", "--untracked-files=normal", "-z")
-    fields = raw.split("\0")
-    i = 0
-    while i < len(fields):
-        entry = fields[i]
-        i += 1
-        if not entry:
-            continue
-        code, path = entry[:2], entry[3:]
-        if code[0] in "RC" or code[1] in "RC":
-            i += 1  # skip the origin-path field emitted for renames/copies
-        if code == "??":
-            untracked.append(path)
-        else:
-            tracked_dirty.append(path)
-    return TreeState(tracked_dirty=sorted(tracked_dirty), untracked=sorted(untracked))
 
 
 def resolve_ref(repo: Path, ref: str) -> str:
@@ -323,7 +272,7 @@ def _run_awaiting_descendants(cmd: list[str], cwd: Path) -> int:
     return proc.returncode
 
 
-def _run_targets(worktree: Path, targets: list[str]) -> bool:
+def _run_targets(worktree: Path, targets: list[str], make_args: list[str] | None = None) -> bool:
     """Sync a fresh venv, then run the gated make targets in the worktree.
 
     Both steps run through :func:`_run_awaiting_descendants`, so the caller
@@ -338,7 +287,7 @@ def _run_targets(worktree: Path, targets: list[str]) -> bool:
     # gating a committed tree.
     if _run_awaiting_descendants(["uv", "sync", "--locked"], worktree) != 0:
         return False
-    return _run_awaiting_descendants(["make", *targets], worktree) == 0
+    return _run_awaiting_descendants(["make", *targets, *(make_args or [])], worktree) == 0
 
 
 def _reconcile_after_cleanup_failure(repo: Path, holder: Path) -> None:
@@ -363,7 +312,8 @@ def gate(
     sha: str,
     *,
     targets: list[str] | None = None,
-    runner: Callable[[Path, list[str]], bool] | None = None,
+    runner: Callable[[Path, list[str], list[str]], bool] | None = None,
+    make_args: list[str] | None = None,
 ) -> GateResult:
     """Run ``targets`` against ``sha`` in a throwaway worktree.
 
@@ -412,7 +362,7 @@ def gate(
         shutil.rmtree(holder, ignore_errors=True)
         raise
     try:
-        passed = run(worktree, targets)
+        passed = run(worktree, targets, [] if make_args is None else list(make_args))
     except BaseException:
         # best-effort: a cleanup failure here must not mask the exception
         # being handled
@@ -482,15 +432,32 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="read git's pre-push stdin and gate only a push to main",
     )
+    parser.add_argument(
+        "--remote", default="origin", help="the remote a --pre-push run is pushing to"
+    )
     args = parser.parse_args(argv)
+    repo = Path(args.repo).resolve()
+    make_args: list[str] = []
 
     if args.pre_push:
-        sha = ref_to_gate(sys.stdin.read())
-        if sha is None:
+        pair = ref_to_gate(sys.stdin.read())
+        if pair is None:
             return 0
+        remote_sha, sha = pair.remote_sha, pair.local_sha
         args.ref = sha
+        # Local on purpose: gate_tip imports gate_scope, which imports this module.
+        from scripts.gate_tip import missing_stamps
 
-    repo = Path(args.repo).resolve()
+        try:
+            verdict = missing_stamps(repo, args.remote, remote_sha, sha)
+        except GateFreshError as exc:
+            print(f"gate-fresh: {exc}", file=sys.stderr)
+            return 1
+        if verdict.lines:
+            print("\n".join(verdict.lines), file=sys.stderr)
+            return 1
+        make_args = [f"RANGE={remote_sha}..HEAD"]
+
     try:
         state = tree_state(repo)
         if state.tracked_dirty:
@@ -520,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
             f"gate-fresh: gating {sha[:12]} in a pristine worktree ({', '.join(GATED_TARGETS)})",
             flush=True,
         )
-        result = gate(repo, sha)
+        result = gate(repo, sha, make_args=make_args)
     except GateFreshError as exc:
         print(f"gate-fresh: {exc}", file=sys.stderr)
         return 1

@@ -6,6 +6,11 @@
 # pristine worktree. The dev tree carries gitignored build artifacts CI never
 # has, so a green local run can certify an environment CI will not reproduce
 # (issue #196).
+# Before that, it refuses a tip whose landing lanes are not stamped
+# (scripts/gate_tip.py, `make gate-tip`), and it runs the history checks
+# over the pushed range (RANGE=<remote main>..HEAD).
+#
+# The push's remote name (the hook's $1) reaches the refusal and the remedy.
 #
 # Skipped for every other ref, and for deletes. Escape hatch: `git push
 # --no-verify` — unlike prepare-commit-msg, pre-push honours it.
@@ -23,4 +28,4 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-exec uv run python scripts/gate_fresh.py --pre-push
+exec uv run python scripts/gate_fresh.py --pre-push --remote "$1"

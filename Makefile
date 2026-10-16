@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help quick quick-guards gate-scope gate-tip coverage-gate-args all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -1793,6 +1793,17 @@ check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; R
 # one exported by a shell or an outer tool must not silently move the landing base.
 gate-scope: ## (Quality) Classify the diff and print the exact gates for THIS commit and for the landing tip (BASE=origin/main). Refuses a dirty tracked tree: commit first.
 	@uv run python scripts/gate_scope.py --base "$(if $(filter command line,$(origin BASE)),$(BASE),origin/main)"
+
+# gate-tip refuses ANY command-line variable: no harmless set here. BASE is the
+# runner's own control (the landing base), honoured from the command line like
+# gate-scope's, and never a lane knob — the runner strips it from lane envs.
+GATE_TIP_OVERRIDES = $(foreach n,$(filter-out BASE,$(COVERAGE_STAMP_OVERRIDE_NAMES)),--overridden $(n))
+
+gate-tip: ## (Quality) The landing's gate: run the oracle's tip lanes (make gate-scope, BASE=origin/main) and stamp the committed tree per lane on green; the push to main refuses a tip whose lanes are not stamped. Lanes already stamped for this tree are skipped. Refuses any other command-line variable. `uv run python scripts/gate_tip.py --force` re-runs, `--dry-run` only lists.
+	@uv run python scripts/gate_tip.py --repo . --base "$(if $(filter command line,$(origin BASE)),$(BASE),origin/main)" $(GATE_TIP_OVERRIDES)
+
+coverage-gate-args: ## (internal) Print the declared coverage gate, one argv element per line, for scripts/gate_tip.py's own call of the coverage stamp's check
+	@printf '%s\n' $(COVERAGE_STAMP_GATE)
 
 # ═══ Docs ═══════════════════════════════════════════════════════════════════
 

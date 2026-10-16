@@ -1774,3 +1774,198 @@ def test_the_script_runs_as_a_file_from_the_repo_root(tmp_path: Path):
     )
     assert completed.returncode == 0, completed.stderr
     assert "this commit (HEAD^1..HEAD)" in completed.stdout
+
+
+def _real_reader_sources() -> "dict[tuple[str, str], str]":
+    return {("head", p): (PROJECT_ROOT / p).read_text() for p in gs.MATRIX_READERS}
+
+
+def test_a_measured_matrix_routes_its_readers_as_tests_leaf_changes():
+    for path in gs.MEASURED_ROWS:
+        assert gs.classify_path(path) == gs.TESTS_LEAF
+    scope = _scope(
+        [gs.Change("schemas/support_matrix.json", "M")],
+        _real_reader_sources(),
+        head_paths=set(gs.MATRIX_READERS) | {"schemas/support_matrix.json"},
+    )
+    assert scope.classes == [gs.TESTS_LEAF]
+    family = [
+        p for p in gs.MATRIX_READERS if gs.carries_family_mark((PROJECT_ROOT / p).read_text())
+    ]
+    assert scope.guard_files == family
+    assert scope.quick_paths == [p for p in gs.MATRIX_READERS if p not in family]
+    assert scope.full_at_commit == []
+    assert scope.unknown == []
+    tip = gs.commands(scope, tip=True, base="origin/main")
+    assert tip[0] == "make check-breaking"
+    assert "make quick-guards" in tip
+    assert any(
+        line.startswith('make quick PATHS="tests/unit/test_matrix_downgrades.py') for line in tip
+    )
+    assert "make gate-fresh" in tip
+    assert "make coverage" not in tip
+
+
+def test_a_measured_matrix_whose_readers_are_gone_is_a_full_gate():
+    scope = _scope(
+        [gs.Change("schemas/support_matrix.json", "M")],
+        {},
+        head_paths={"schemas/support_matrix.json"},
+    )
+    assert scope.quick_paths == []
+    assert scope.guard_files == []
+    assert any("no surviving reader" in reason for reason in scope.full_at_commit)
+
+
+def test_the_matrix_reader_census_separates_readers_from_gate_pins():
+    support = 'X = "schemas/support_matrix.json"\n'
+    kmodcov = 'X = "schemas/kmodcov_matrix.json"\n'
+    sources = {
+        "tests/unit/test_new_reader.py": "import json\n" + kmodcov,
+        "tests/unit/scripts/test_gate_pin.py": "from scripts import gate_scope\n" + support,
+        "tests/unit/scripts/test_runner_pin.py": "from scripts.gate_tip import goals\n" + support,
+        "tests/unit/scripts/test_both_pin.py": (
+            "from scripts import gate_fresh, gate_scope as gs, gate_tip as gt\n" + support
+        ),
+        "tests/unit/scripts/test_dotted_pin.py": "import scripts.gate_tip\n" + kmodcov,
+        "tests/unit/test_unparsable.py": 'def test_a(:\n    "schemas/support_matrix.json"\n',
+        "tests/unit/test_unrelated.py": "def test_a(): pass\n",
+        "tests/_fixtures/matrix.py": support,
+    }
+    assert gs.matrix_readers(sources) == [
+        "tests/unit/test_new_reader.py",
+        "tests/unit/test_unparsable.py",
+    ]
+
+
+def test_the_matrix_readers_row_is_every_reader_in_the_test_tree():
+    """A new reader of either matrix must join the row, or the row under-gates it."""
+    sources = {
+        p: (PROJECT_ROOT / p).read_text()
+        for p in _head_paths()
+        if p.startswith("tests/") and p.endswith(".py")
+    }
+    assert gs.matrix_readers(sources) == gs.MATRIX_READERS
+
+
+FAMILY_MODULE = (
+    "import pytest\npytestmark = pytest.mark.interpreter_agnostic\n\n\ndef test_b(): pass\n"
+)
+
+
+def _tests_only_repo(tmp_path: Path) -> "tuple[Path, str, str]":
+    """Build base, tip and HEAD commits; return (repo, base_sha, tip_sha).
+
+    base: one unit module; tip: adds a plain second module; HEAD: the SAME module, now wholly
+    interpreter_agnostic — so the oracle routes test_b.py to `make quick` when read at the tip and
+    to `make quick-guards` when read at HEAD.
+    """
+    repo = tmp_path / "trepo"
+    (repo / "tests/unit/cli").mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "tests/unit/cli/test_a.py").write_text("def test_a(): pass\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "base")
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "tests/unit/cli/test_b.py").write_text("def test_b(): pass\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "tip")
+    tip = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "tests/unit/cli/test_b.py").write_text(FAMILY_MODULE)
+    (repo / "tests/unit/other").mkdir()
+    (repo / "tests/unit/other/test_c.py").write_text("def test_c(): pass\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "after the tip: test_b joins the family, test_c appears elsewhere")
+    return repo, base, tip
+
+
+def test_head_tree_and_tip_commands_read_the_given_revision(tmp_path):
+    repo, base, tip = _tests_only_repo(tmp_path)
+    env = git_env(repo)
+    assert "tests/unit/other/test_c.py" not in gs.head_tree(repo, env, tip)
+    assert "tests/unit/other/test_c.py" in gs.head_tree(repo, env, "HEAD")
+    # the oracle's tests-leaf tip shape: check-breaking, quick over the surviving roots, ruff per
+    # module, lint-arch, quick-guards (every tests-leaf tip), gate-fresh — see commands()
+    assert gs.tip_commands(repo, base, tip, env) == [
+        f"make check-breaking RANGE={base}..HEAD",
+        'make quick PATHS="tests/unit/cli"',
+        "uv run ruff check tests/unit/cli/test_b.py",
+        f"make lint-arch RANGE={base}..HEAD",
+        "make quick-guards",
+        f"make gate-fresh RANGE={base}..HEAD",
+    ]
+    # at HEAD, test_b.py is a family module (guards, no quick root of its own) and the only
+    # quick root is test_c.py's package: reading sources at the tip is what keeps tests/unit/cli
+    assert gs.tip_commands(repo, base, "HEAD", env) == [
+        f"make check-breaking RANGE={base}..HEAD",
+        'make quick PATHS="tests/unit/other"',
+        "uv run ruff check tests/unit/cli/test_b.py",
+        "uv run ruff check tests/unit/other/test_c.py",
+        f"make lint-arch RANGE={base}..HEAD",
+        "make quick-guards",
+        f"make gate-fresh RANGE={base}..HEAD",
+    ]
+
+
+def test_tip_commands_read_the_tree_at_the_given_revision(tmp_path):
+    """The tip's paths decide routing: a reader deleted after the tip still routes at the tip."""
+    repo = tmp_path / "mrepo"
+    reader = "tests/unit/test_support_matrix.py"
+    matrix = "schemas/support_matrix.json"
+    (repo / "tests/unit").mkdir(parents=True)
+    (repo / "schemas").mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / reader).write_text("def test_a(): pass\n")
+    (repo / matrix).write_text("{}\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "base")
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / matrix).write_text('{"measured": 1}\n')
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "tip: the matrix is measured")
+    tip = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / reader).unlink()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "after the tip: the only reader goes")
+    env = git_env(repo)
+    # at the tip the reader exists: a tests-leaf route over it
+    assert gs.tip_commands(repo, base, tip, env) == [
+        f"make check-breaking RANGE={base}..HEAD",
+        'make quick PATHS="tests/unit/test_support_matrix.py"',
+        f"make lint-arch RANGE={base}..HEAD",
+        "make quick-guards",
+        f"make gate-fresh RANGE={base}..HEAD",
+    ]
+    # at HEAD it is gone: the measured matrix has no surviving reader, so the full gate
+    assert gs.tip_commands(repo, base, "HEAD", env) == [
+        f"make check-breaking RANGE={base}..HEAD",
+        "make coverage",
+        "nox -s tests_hostless-3.14",
+        f"make check-python RANGE={base}..HEAD",
+        "make docs",
+        f"make gate-fresh RANGE={base}..HEAD",
+    ]
+
+
+def test_the_report_ends_with_the_gate_tip_remedy_only_when_something_lands():
+    scope = _scope([gs.Change("docs/a.md", "M")])
+    text = gs.render(
+        scope,
+        scope,
+        base="origin/main",
+        merge_base="abc",
+        commit_range="a..b",
+        tip_range="a..b",
+        count=1,
+    )
+    assert text.rstrip().endswith("run them and stamp the tree: make gate-tip")
+    text = gs.render(
+        scope,
+        None,
+        base="origin/main",
+        merge_base="abc",
+        commit_range="a..b",
+        tip_range="a..b",
+        count=0,
+    )
+    assert "gate-tip" not in text

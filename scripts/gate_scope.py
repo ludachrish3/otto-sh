@@ -239,6 +239,60 @@ GUARD_RIDERS = [
     "tests/unit/api_snapshot",
 ]
 """Tree-wide guards no package path selects; they ride every src-leaf `quick`."""
+MATRIX_READERS = [
+    "tests/unit/test_collate_kmodcov_matrix.py",
+    "tests/unit/test_kmodcov_matrix.py",
+    "tests/unit/test_matrix_downgrades.py",
+    "tests/unit/test_support_matrix.py",
+]
+"""The test modules that read a measured matrix; a measurement commit owes exactly these."""
+MEASURED_ROWS = {
+    "schemas/support_matrix.json": MATRIX_READERS,
+    "schemas/kmodcov_matrix.json": MATRIX_READERS,
+}
+"""The bed and kmodcov lanes rewrite these with what they measured (the Makefile says review
+and commit the diff); the commit is a tests-leaf change over the readers, never a full gate."""
+
+_GATE_PIN_MODULES = frozenset({"scripts.gate_scope", "scripts.gate_tip"})
+
+
+def _imports_a_gate_pin(source: str) -> bool:
+    """Report whether *source* imports the oracle or the runner; unparsable is False."""
+    tree = _parse(source)
+    if tree is None:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name in _GATE_PIN_MODULES for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module in _GATE_PIN_MODULES:
+                return True
+            if module == "scripts" and any(
+                f"scripts.{alias.name}" in _GATE_PIN_MODULES for alias in node.names
+            ):
+                return True
+    return False
+
+
+def matrix_readers(sources: "dict[str, str]") -> "list[str]":
+    """Return the test modules among *sources* that read a measured matrix.
+
+    A module names a matrix file either to read it or to pin this oracle's row for it;
+    the pins import the oracle or the runner, the readers do not. An unparsable module
+    that names a matrix counts as a reader (judged conservatively, as `_parse` callers do).
+    """
+    names = [name.rsplit("/", 1)[-1] for name in MEASURED_ROWS]
+    return sorted(
+        path
+        for path, text in sources.items()
+        if _is_test_module(path)
+        and any(name in text for name in names)
+        and not _imports_a_gate_pin(text)
+    )
+
+
 # (glob, commit-time commands, tip-time commands): a directory-stamped tree — every item is
 # a lane's, so `quick` is never added. First match wins. [FULL] = that column is full.
 # A row may name several lanes; each column is named even when it is the full gate.
@@ -339,6 +393,8 @@ def classify_path(path: str) -> "str | None":
         return DOCS  # AGENTS.md never reaches here: NONE_GLOBS matched it first
     if path.startswith("web/src/"):
         return None if _match(path, WEB_EXCLUDED) else WEB
+    if path in MEASURED_ROWS:
+        return TESTS_LEAF
     if path.startswith("tests/"):
         return TESTS_LEAF if _is_test_module(path) else None
     if path.startswith("src/otto/"):
@@ -848,6 +904,31 @@ def _outermost(roots: "set[str]") -> "list[str]":
     return sorted(r for r in roots if not any(r.startswith(o + "/") for o in roots if o != r))
 
 
+def _present_paths(changes: "list[Change]") -> "list[str]":
+    """Return the sorted paths among *changes* that still exist after them (not deleted)."""
+    return sorted({c.path for c in changes if c.status != "D"})
+
+
+def _route_measured(
+    path: str,
+    read: Reader,
+    head_rev: str,
+    head_paths: "set[str]",
+    add_root: "Callable[[str], None]",
+    guards: "set[str]",
+    full_commit: "list[str]",
+) -> None:
+    """Route a measured matrix to its surviving readers: family to guards, others to quick."""
+    readers = [p for p in MEASURED_ROWS[path] if p in head_paths]
+    if not readers:
+        full_commit.append(f"{path}: no surviving reader")
+    for reader in readers:
+        if carries_family_mark(read(head_rev, reader)):
+            guards.add(reader)
+        else:
+            add_root(reader)
+
+
 def classify(
     changes: "list[Change]", read: Reader, base_rev: str, head_rev: str, head_paths: "set[str]"
 ) -> Scope:
@@ -856,7 +937,6 @@ def classify(
     quick: "set[str]" = set()
     guards: "set[str]" = set()
     packages: "set[str]" = set()
-    files: "set[str]" = set()
     paths: "set[str]" = set()
     special: "set[str]" = set()
     special_tip: "set[str]" = set()
@@ -877,8 +957,6 @@ def classify(
     for change in changes:
         path = change.path
         paths.add(path)
-        if change.status != "D":
-            files.add(path)
         if _is_src(path):
             bed.update(BED_LANES.get(_src_key(path), []))
         cls = classify_path(path)
@@ -888,6 +966,10 @@ def classify(
             unknown.append(path)
             full_commit.append(f"no row: {path}")
             classes.add(FULL)
+            continue
+        if path in MEASURED_ROWS:
+            _route_measured(path, read, head_rev, head_paths, add_root, guards, full_commit)
+            classes.add(TESTS_LEAF)
             continue
         if cls == TESTS_LEAF:
             head = None if change.status == "D" else read(head_rev, path)
@@ -935,7 +1017,7 @@ def classify(
         _outermost(quick),
         sorted(guards),
         sorted(packages),
-        sorted(files),
+        _present_paths(changes),
         sorted(paths),
         sorted(special),
         sorted(special_tip),
@@ -1085,12 +1167,10 @@ def changes_between(
     ]
 
 
-def head_tree(repo: Path, env: "dict[str, str] | None" = None) -> "set[str]":
-    """Return every path tracked at HEAD."""
+def head_tree(repo: Path, env: "dict[str, str] | None" = None, rev: str = "HEAD") -> "set[str]":
+    """Return every path tracked at *rev*."""
     return {
-        p
-        for p in _git(repo, "ls-tree", "-r", "--name-only", "-z", "HEAD", env=env).split("\0")
-        if p
+        p for p in _git(repo, "ls-tree", "-r", "--name-only", "-z", rev, env=env).split("\0") if p
     }
 
 
@@ -1100,6 +1180,20 @@ def _reader(repo: Path, env: "dict[str, str] | None") -> Reader:
         return completed.stdout if completed.returncode == 0 else None
 
     return read
+
+
+def tip_commands(
+    repo: Path, base_sha: str, tip_sha: str, env: "dict[str, str] | None" = None
+) -> "list[str]":
+    """Return the tip list for ``base_sha..tip_sha``, reading sources at *tip_sha*, never HEAD."""
+    scope = classify(
+        changes_between(repo, f"{base_sha}..{tip_sha}", env),
+        _reader(repo, env),
+        base_sha,
+        tip_sha,
+        head_tree(repo, env, tip_sha),
+    )
+    return commands(scope, tip=True, base=base_sha)
 
 
 def render(
@@ -1126,6 +1220,8 @@ def render(
         reasons = scope.full_at_tip if tip else scope.full_at_commit
         lines += [f"  (full gate: {reason})" for reason in reasons]
         lines += [f"  {cmd}" for cmd in commands(scope, tip=tip, base=base)]
+    if tip_scope is not None:
+        lines.append("run them and stamp the tree: make gate-tip")
     return "\n".join(lines) + "\n"
 
 
