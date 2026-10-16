@@ -415,7 +415,11 @@ in `scripts/release_events.py`, which `make release` also reads (see
 prints two command lists: one for **this commit** (`HEAD^1..HEAD`, the first
 parent, so a merge counts only what it brought in) and one for the **tip**
 (the merge base with `BASE`, default `origin/main`, to `HEAD`: what lands as a
-whole). It refuses a dirty tracked tree (commit first) and a `HEAD` with no
+whole). The lists gate the commits that will **persist** on `main`: a branch
+that lands as one squash runs the tip list once, on its final tip, and its
+intermediate commits run only the tests in their likely breakage areas plus
+ruff on the files they changed; a landing whose commits persist one by one
+runs the commit list for each. It refuses a dirty tracked tree (commit first) and a `HEAD` with no
 parent (exit 2), and exits 1 when git cannot answer (a missing base, no
 repository). `BASE` and `make quick`'s `PATHS` are read from the command line
 only, never from the environment.
