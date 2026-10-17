@@ -1943,3 +1943,5 @@ one. An edge is deleted because an import goes or because one end leaves the cyc
 **Amended by P9a, 2026-10-16.** Confirmed: `BASELINE` lost exactly these nine; P9a declares `otto.fleet`, not `otto.lab.fleet`.
 
 **Amended by P9b, 2026-10-17.** Confirmed: no ratchet edge was left to delete; tach forbids cycles and the ratchet keeps its empty `BASELINE` (S5-3).
+
+**Amended after P9b, 2026-10-17 (owner).** The ratchet is retired: with every file in a tach module and `forbid_circular_dependencies = true`, `tach check --exact` refuses any cycle in the same declared graph the ratchet read, so its empty `BASELINE` checked nothing tach does not. `tests/unit/test_import_cycle_ratchet.py` is deleted; S5-3's "the ratchet stays" and every row above that keeps it are superseded. The module graph page is still drawn by `scripts/render_module_graph.py`, and `tests/unit/test_tach_layers.py` still pins the cycle switch on.
