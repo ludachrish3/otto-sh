@@ -1,9 +1,9 @@
 """Parsing otto's inputs: repo settings, versions, user settings and the environment.
 
-``otto.config`` parses and ``otto.bootstrap`` composes (spec 2026-10-06
-repo-and-scope-inputs, S-3): the lab and fleet API is :mod:`otto.lab`, and the
-repo accessors are read at :mod:`otto.bootstrap`, their public path, and defined in
-:mod:`otto.declared`.
+``otto.config`` parses, discovery included, and ``otto.bootstrap`` composes; the
+composed-repos accessors are in :mod:`otto.declared` (spec 2026-10-06
+repo-and-scope-inputs, S-3; spec 2026-10-11 placement-and-phases §3.9). The lab and
+fleet API is :mod:`otto.lab`.
 """
 
 from typing import TYPE_CHECKING

@@ -297,7 +297,7 @@ class TestDrivingRepoScopeGate:
         patch_bootstrap(monkeypatch, repos)
         ctx = _context_over(repos)
         seed_scope_verdicts(ctx, scopes)
-        monkeypatch.setattr("otto.context.get_context", lambda: ctx)
+        monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
         return contacted
 
     @pytest.mark.asyncio
@@ -391,7 +391,7 @@ class TestDrivingRepoScopeGate:
         patch_bootstrap(monkeypatch, [])
         ctx = _context_over([])
         seed_scope_verdicts(ctx, {})
-        monkeypatch.setattr("otto.context.get_context", lambda: ctx)
+        monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
 
         report = await run_live()
 
@@ -412,7 +412,7 @@ class TestDrivingRepoScopeGate:
             raise RuntimeError("no bootstrap here")
 
         patch_bootstrap(monkeypatch, [fake_repo("app", monitor_settings=MonitorSettings())])
-        monkeypatch.setattr("otto.context.get_context", _boom)
+        monkeypatch.setattr("otto.run_context.get_context", _boom)
 
         report = await run_live()
 
@@ -470,7 +470,7 @@ class TestDrivingRepoScopeGate:
         contacted = self._unreachable_repos(monkeypatch)
         ctx = OttoContext(lab=Lab(name="rig"))
         seed_scope_verdicts(ctx, {})
-        monkeypatch.setattr("otto.context.get_context", lambda: ctx)
+        monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
 
         with pytest.raises(RuntimeError, match="no bootstrap here"):
             await run_live()

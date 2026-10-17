@@ -57,9 +57,9 @@ from typing import TYPE_CHECKING, Any
 from ..errors import OttoError
 
 if TYPE_CHECKING:
-    from ..context import OttoContext
     from ..host.host import Host
     from ..models.settings import ProjectScopeSpec
+    from ..run_context import OttoContext
     from .repo import Repo
 
 

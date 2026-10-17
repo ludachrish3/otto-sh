@@ -82,6 +82,7 @@ LAB = [
     "otto.fleet",
     "otto.lab",
     "otto.labs.loader",
+    "otto.run_context",
     "otto.tunnel",
 ]
 BANNED = [*LAB, RUNNER_MODULE]

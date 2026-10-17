@@ -4,6 +4,7 @@ import os
 
 import pytest
 
+import otto.config.repo as config_repo
 from otto.config import corpus_snapshot as cs
 from tests._fixtures.generated_repo import generate_repo
 from tests._fixtures.paths import PROJECT_ROOT
@@ -63,7 +64,7 @@ def discovered(request, tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     bs.invalidate()
     try:
-        yield bs.discover().repos
+        yield config_repo.discover().repos
     finally:
         bs.invalidate()
 

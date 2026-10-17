@@ -100,9 +100,9 @@ async def get_coverage(
         get_cov_repo,
         load_hosts_pattern,
     )
-    from ..context import try_get_context
     from ..declared import current_repos
     from ..fleet import all_hosts
+    from ..run_context import try_get_context
     from . import collect
     from .capture.gitio import head_commit
     from .capture.model import Capture

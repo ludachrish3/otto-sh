@@ -31,10 +31,11 @@ note: >
   literal list of strings equal to its public lazy names plus the public
   names it binds eagerly.
 
-  Scope: any src/otto/**/__init__.py that assigns a module-scope `_LAZY_*`
-  table, the same condition as lazy-package-init-stays-lazy.
+  Scope: any module under src/otto that assigns a module-scope `_LAZY_*`
+  table: a lazy package's `__init__`, or a plain module that re-exports
+  some names lazily (otto.bootstrap).
 files:
-- src/otto/**/__init__.py
+- src/otto/**/*.py
 utils:
   namespace-dict:
     regex: '^(globals\(\)|vars\(\)|.+\.__dict__)$'

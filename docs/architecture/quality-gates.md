@@ -55,14 +55,13 @@ with its last import. What the file declares is the import graph, not a
 superset of it. {doc}`modules` draws that graph, redrawn from `tach.toml`
 on every docs build.
 
-tach checks one edge at a time, so it cannot see a loop. The goal is
-`forbid_circular_dependencies = true`. The declared graph has no import cycle
-now, and until the flag goes on `tests/unit/test_import_cycle_ratchet.py`
-keeps it that way. It reads the same graph, and its `BASELINE` of cycle
-members and the edges inside their cycle is empty, so any module in a cycle
-fails the gate, and so does any edge inside one. The flag waits only on every
-file being in a tach module. `make lint-arch` runs the ratchet, because a
-targeted test run would never select it.
+`tach.toml` sets `forbid_circular_dependencies = true`, so `tach check`
+refuses an import cycle as well as an undeclared edge. The declared graph has
+none, and `tests/unit/test_import_cycle_ratchet.py` checks it again: it reads
+the same graph, and its `BASELINE` of cycle members and the edges inside
+their cycle is empty, so any module in a cycle fails the gate, and so does
+any edge inside one, each named. `make lint-arch` runs the ratchet, because
+a targeted test run would never select it.
 
 `tach.toml` also declares otto's role layers, from `foundation` at the
 bottom to `entry` at the top, and sets `layers_explicit_depends_on = true`.
@@ -73,9 +72,10 @@ one that imports no other, because tach reads a missing list as "may import
 anything"; the module graph reader refuses an entry without one, so the docs
 build and the ratchet fail on it. Every module carries a layer:
 `tests/unit/test_tach_layers.py` fails on a module outside an import cycle
-that has none, and with no cycle that is any module. The same test pins the files no tach module owns yet (tach sees no
-import of theirs), and that list only shrinks: a pinned copy of it as it landed
-fails any entry added past it. The switch's meaning is tach's, and the `tach`
+that has none, and with no cycle that is any module. The same test fails on a
+file no tach module owns (tach checks none of its imports), and on a file a
+facade's module owns besides its facade: the root package `otto` is a module,
+so a new file would otherwise join it unnoticed. The switch's meaning is tach's, and the `tach`
 floor floats, so `scripts/tach_layer_canary.py`, a `lint-arch` and
 `nox -s lint` leg, runs the installed tach on a throwaway project and fails if
 an undeclared downward import stops being refused.

@@ -3,8 +3,8 @@
 Pins Wave 14's conversion of ``_restore_otto_logger_state`` and the
 bootstrap-state restore, now ``_restore_composition_state`` (root conftest),
 from reset-to-default teardowns to snapshot-restore. The composition state has
-two owners, ``otto.bootstrap``'s caches and the catalog ``otto.declared``
-holds, and the guard restores the CLI's completion-cache snapshot on
+two owners, ``otto.config.repo``'s discovery cache and the catalog
+``otto.declared`` holds, and the guard restores the CLI's completion-cache snapshot on
 ``otto.registry`` with them; all three are pinned. The motivating defect
 (review §5.5): a module-scoped fixture's logging/bootstrap state was
 destroyed by the reset after its FIRST test, so every later test in that
@@ -30,7 +30,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from otto import bootstrap, declared, registry
+import otto.config.repo as config_repo
+from otto import declared, registry
 from otto.logger import management
 
 pytestmark = pytest.mark.hostless
@@ -218,21 +219,21 @@ def test_the_guards_state_snapshot_does_not_alias_its_mutable_fields(tmp_path) -
 
 @pytest.fixture(scope="module")
 def primed_bootstrap_cache() -> Iterator[object]:
-    """Module-scoped bootstrap cache: a discovery memoized before any per-test snapshot."""
-    saved = bootstrap._discovered
+    """Module-scoped discovery cache: a discovery memoized before any per-test snapshot."""
+    saved = config_repo._discovery.result
     sentinel = SimpleNamespace(repos=[], errors=[])
-    bootstrap._discovered = sentinel
+    config_repo._discovery.result = sentinel
     yield sentinel
-    bootstrap._discovered = saved
+    config_repo._discovery.result = saved
 
 
 def _assert_bootstrap_state_survives_then_poison_it(sentinel: object) -> None:
-    assert bootstrap._discovered is sentinel, (
-        "a module fixture's bootstrap cache was cleared by a per-test teardown — "
+    assert config_repo._discovery.result is sentinel, (
+        "a module fixture's discovery cache was cleared by a per-test teardown — "
         "the guard reset to defaults instead of restoring its snapshot"
     )
     # Poison for whichever sibling runs next: the guard must swap it back out.
-    bootstrap._discovered = SimpleNamespace(repos=[], errors=[])
+    config_repo._discovery.result = SimpleNamespace(repos=[], errors=[])
 
 
 def test_bootstrap_state_outlives_a_sibling_test(primed_bootstrap_cache: object) -> None:

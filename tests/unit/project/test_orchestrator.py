@@ -205,7 +205,7 @@ class _FakeCtx:
 
         Two properties, both load-bearing. The call shape is ``method(host,
         ...)`` -- the function object it was handed, applied to the host, with
-        NO name lookup (``otto/context.py``'s ``method(h, *args, **kwargs)``).
+        NO name lookup (``otto/run_context.py``'s ``method(h, *args, **kwargs)``).
         An earlier version dispatched by ``method.__name__``, which is dynamic
         where the real seam is static: it certified host-class overrides the
         production walks did not honour, and hid that bug from every gate.
@@ -305,7 +305,7 @@ def _wire_lab(monkeypatch, repo_names, ctx, current=None, dependencies=None):
     # lets a test see that it did not.
     ctx.repos = configured
     ctx.ordered_repos = ordered
-    monkeypatch.setattr("otto.context.get_context", lambda: ctx)
+    monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
     return ordered
 
 
@@ -915,7 +915,7 @@ async def test_cleanup_a_dry_run_declines_both_steps_rather_than_reporting_them_
 
     ctx = _FakeCtx([], lab=fake_lab)
     _wire_lab(monkeypatch, [], ctx)
-    monkeypatch.setattr("otto.context.try_get_context", lambda: ctx)
+    monkeypatch.setattr("otto.run_context.try_get_context", lambda: ctx)
 
     binding = install_policy(RunPolicy(dry_run=True))  # what is_dry_run() reads
     try:

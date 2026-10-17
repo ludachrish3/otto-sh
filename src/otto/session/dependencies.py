@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from .errors import DependencyRefusedError
 
 if TYPE_CHECKING:
-    from ..context import OttoContext
+    from ..run_context import OttoContext
 
 
 def check_dependencies(ctx: "OttoContext") -> list[str]:

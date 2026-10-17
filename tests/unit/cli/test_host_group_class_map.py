@@ -33,12 +33,11 @@ def test_unknown_id_or_unregistered_name_yields_none(monkeypatch):
 
 def test_falls_back_to_discovery_when_the_cache_is_cold(monkeypatch):
     """A cold cache resolves from DISCOVERED repos — never `get_repos()`, which would bootstrap."""
-    import otto.bootstrap as bs
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
     monkeypatch.setattr("otto.registry.get_completion_names", lambda: None)
-    monkeypatch.setattr(bs, "discover", lambda: SimpleNamespace(repos=["discovered"]))
+    monkeypatch.setattr("otto.config.repo.discover", lambda: SimpleNamespace(repos=["discovered"]))
     monkeypatch.setattr(
         "otto.declared.get_repos",
         lambda: pytest.fail("get_repos() must not run during completion"),
@@ -54,12 +53,11 @@ def test_falls_back_to_discovery_when_the_cache_is_cold(monkeypatch):
 def test_cold_cache_collector_runs_once_per_process(monkeypatch):
     """Click resolves every candidate verb through `get_command` in one completion, so a cold
     cache must run the collector at most ONCE per process, not once per verb resolved."""
-    import otto.bootstrap as bs
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
     monkeypatch.setattr("otto.registry.get_completion_names", lambda: None)
-    monkeypatch.setattr(bs, "discover", lambda: SimpleNamespace(repos=["discovered"]))
+    monkeypatch.setattr("otto.config.repo.discover", lambda: SimpleNamespace(repos=["discovered"]))
     calls: list[list[str]] = []
 
     def _counting_collect(repos):
@@ -74,7 +72,6 @@ def test_cold_cache_collector_runs_once_per_process(monkeypatch):
 
 def test_non_dict_mapping_falls_back_to_discovery_without_raising(monkeypatch):
     """A malformed (non-dict) `host_classes_by_id` value must not raise — fall back to discovery."""
-    import otto.bootstrap as bs
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
@@ -82,7 +79,7 @@ def test_non_dict_mapping_falls_back_to_discovery_without_raising(monkeypatch):
         "otto.registry.get_completion_names",
         lambda: {"host_classes_by_id": ["not", "a", "dict"]},
     )
-    monkeypatch.setattr(bs, "discover", lambda: SimpleNamespace(repos=["discovered"]))
+    monkeypatch.setattr("otto.config.repo.discover", lambda: SimpleNamespace(repos=["discovered"]))
     monkeypatch.setattr(
         cc,
         "collect_host_classes_by_id",

@@ -902,9 +902,7 @@ def test_a_kmodcov_change_runs_its_direct_tests():
 def test_a_fleet_change_runs_its_direct_tests():
     assert _src_leaf_quick("src/otto/fleet.py") == sorted(
         [
-            "tests/unit/config/test_fleet.py",
-            "tests/unit/config/test_fleet_of_interest.py",
-            "tests/unit/config/test_fleet_scoping.py",
+            "tests/unit/fleet",
             "tests/unit/test_lab_facade.py",
             *_RIDERS,
         ]

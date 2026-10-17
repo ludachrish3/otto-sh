@@ -4,10 +4,15 @@ import pytest
 
 from otto import bootstrap as bs
 from otto.config.scope import scopes_of
-from otto.context import LIBRARY_LAB_NAME, OttoContext
+from otto.context import OttoContext
 from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.fake_repo import fake_repo
+
+LIBRARY_LAB = "<library>"
+"""The library sentinel's lab name: the host-less context ``run_tests`` builds when none is
+active. Spelled here, not imported, because only its value is public behaviour; the verdicts
+special-case it, so a lab of any other name fails the sentinel test below."""
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +75,7 @@ def test_known_empty_and_unavailable_are_distinct_and_a_refusal_is_cached(monkey
 def test_the_library_sentinel_still_bootstraps_for_its_repos(monkeypatch):
     repo = fake_repo("alpha")
     _counting(monkeypatch, fake_bootstrap_result([repo]))
-    ctx = OttoContext(lab=Lab(name=LIBRARY_LAB_NAME))
+    ctx = OttoContext(lab=Lab(name=LIBRARY_LAB))
     assert [r.name for r in ctx.repos] == ["alpha"]
     assert scopes_of(ctx) == {}  # verdicts special-case the sentinel; repos do not
 

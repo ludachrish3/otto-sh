@@ -98,7 +98,7 @@ def _enforce_driving_repo_scope() -> None:
             a run, so the verdicts cannot be known.
     """
     from ..config.scope import require_current_scope, scopes_of
-    from ..context import get_context
+    from ..run_context import get_context
 
     try:
         ctx = get_context()

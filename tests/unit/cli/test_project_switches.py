@@ -65,7 +65,7 @@ class TestConflict:
 class TestProjectCompleter:
     def test_offers_discovered_repo_names(self, monkeypatch):
         monkeypatch.setattr(
-            "otto.bootstrap.discover",
+            "otto.config.repo.discover",
             lambda: SimpleNamespace(repos=[fake_repo("repo1"), fake_repo("repo2")]),
         )
         assert _project_completer(None, "repo") == ["repo1", "repo2"]
@@ -75,7 +75,7 @@ class TestProjectCompleter:
         def _boom():
             raise RuntimeError("half-registered")
 
-        monkeypatch.setattr("otto.bootstrap.discover", _boom)
+        monkeypatch.setattr("otto.config.repo.discover", _boom)
         assert _project_completer(None, "") == []
 
     def test_completion_never_runs_user_code(self, monkeypatch):
@@ -87,7 +87,7 @@ class TestProjectCompleter:
         the import line to stay put.
         """
         monkeypatch.setattr(
-            "otto.bootstrap.discover",
+            "otto.config.repo.discover",
             lambda: SimpleNamespace(repos=[fake_repo("repo1")]),
         )
 

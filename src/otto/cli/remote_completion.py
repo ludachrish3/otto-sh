@@ -294,9 +294,9 @@ def _load_host(chain: _ChainParams) -> "tuple[Any, Any]":
     from .. import bootstrap
 
     del bootstrap
-    from ..context import OttoContext, _apply_option_overrides, set_context
     from ..declared import get_repos
     from ..fleet import get_host
+    from ..run_context import OttoContext, _apply_option_overrides, set_context
     from ..session.lab import build_lab
 
     repos = get_repos()
@@ -317,7 +317,7 @@ def _load_host(chain: _ChainParams) -> "tuple[Any, Any]":
 
 def _release_context(token: "Any") -> None:
     """Restore the context the completer installed for its lab."""
-    from ..context import reset_context
+    from ..run_context import reset_context
 
     reset_context(token)
 
@@ -445,11 +445,11 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     from .. import bootstrap
 
     del bootstrap
-    from ..context import OttoContext, reset_context, set_context
     from ..declared import get_repos
     from ..fleet import get_hosts_in_play
     from ..host.builtin_hosts import is_builtin_host
     from ..reservations.check import required_resources
+    from ..run_context import OttoContext, reset_context, set_context
     from ..session.lab import build_lab
 
     lab = build_lab(get_repos(), chain.labs)

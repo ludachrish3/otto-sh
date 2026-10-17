@@ -54,7 +54,12 @@ def install_logging(
     :class:`~otto.host.host.HostFilter` goes on the console handlers only, so
     ``verbose.log`` keeps every host's output.
     """
-    from ..bootstrap import get_repos
+    # The composition root: importing it installs the initiator that composes
+    # the repos when nothing has yet (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..declared import get_repos
     from ..host.host import HostFilter
     from ..logger import management
 

@@ -82,10 +82,10 @@ if TYPE_CHECKING:
     from ..config.dependencies import ResolvedDependency
     from ..config.repo import Repo
     from ..config.scope import ProjectScope
-    from ..context import OttoContext
     from ..host.host import Host
     from ..instruction_catalog import ProjectInstructionBody
     from ..labs.loader import Lab
+    from ..run_context import OttoContext
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +171,7 @@ def _lab() -> "tuple[OttoContext, list[Repo]]":
     are gated by the verb they delegate to, before that delegate does anything
     either.
     """
-    from ..context import get_context
+    from ..run_context import get_context
 
     ctx = get_context()
     _enforce_current_scope(ctx)

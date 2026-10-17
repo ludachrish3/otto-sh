@@ -21,13 +21,13 @@ if TYPE_CHECKING:
 
 
 def record_contexts_at_close(monkeypatch: "pytest.MonkeyPatch") -> "list[OttoContext]":
-    """Wrap ``otto.context.reset_context``; return the list the wrapper fills.
+    """Wrap ``otto.run_context.reset_context``; return the list the wrapper fills.
 
-    The CLI imports ``reset_context`` from ``otto.context`` inside the function
+    The CLI imports ``reset_context`` from ``otto.run_context`` inside the function
     that registers the reset, so a patch of the defining module made before the
     invocation is the function Click calls at close.
     """
-    import otto.context as context_mod
+    import otto.run_context as context_mod
 
     real_reset = context_mod.reset_context
     seen: "list[OttoContext]" = []
@@ -38,5 +38,5 @@ def record_contexts_at_close(monkeypatch: "pytest.MonkeyPatch") -> "list[OttoCon
             seen.append(installed)
         real_reset(token)
 
-    monkeypatch.setattr("otto.context.reset_context", _recording_reset)
+    monkeypatch.setattr("otto.run_context.reset_context", _recording_reset)
     return seen

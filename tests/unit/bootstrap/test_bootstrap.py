@@ -7,6 +7,7 @@ import types
 
 import pytest
 
+import otto.config.repo as config_repo
 from otto import bootstrap as bs
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -62,7 +63,7 @@ def test_bootstrap_never_imports_a_test_file(tmp_path, monkeypatch):
 
 def test_discover_runs_no_user_code(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path, broken_test=True))
-    discovered = bs.discover()  # broken test file must NOT explode discovery
+    discovered = config_repo.discover()  # broken test file must NOT explode discovery
     assert len(discovered.repos) == 1
     assert discovered.errors == []  # phase 1 never imports it, so it cannot have failed yet
 
@@ -91,7 +92,7 @@ def test_malformed_settings_toml_is_contained_and_framed(tmp_path, monkeypatch):
 
 def test_discover_contains_settings_errors_without_raising(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_SUT_DIRS", _write_bad_toml_repo(tmp_path))
-    discovered = bs.discover()  # malformed config data must NOT explode discovery
+    discovered = config_repo.discover()  # malformed config data must NOT explode discovery
     assert discovered.repos == []
     # The name of this test promises the error is CONTAINED, not merely survived;
     # asserting only `repos == []` passed just as well when nothing was recorded.
@@ -263,7 +264,7 @@ def test_discovery_seam_contains_a_base_exception(tmp_path, monkeypatch):
 
     monkeypatch.setattr(repo_mod, "Repo", _raise_skipped)
     try:
-        discovered = bs.discover()
+        discovered = config_repo.discover()
     except BaseException as exc:  # the escape IS the defect under test
         raise AssertionError(
             f"discover() let {type(exc).__name__} escape the phase-1 seam: {exc!r}"
@@ -713,14 +714,18 @@ def test_the_initiator_runs_the_patched_bootstrap(monkeypatch):
 
 
 def test_importing_the_root_installs_the_initiator_and_composes_nothing():
-    """A fresh interpreter: importing ``otto.bootstrap`` fills the slot and runs no discovery."""
+    """A fresh interpreter: importing ``otto.bootstrap`` fills the slot and runs no discovery.
+
+    Discovery builds each repo with ``otto.config.repo``, so a root import that ran it
+    would have loaded that module.
+    """
     import subprocess
     import sys
 
     probe = (
-        "import otto.bootstrap as bs, otto.declared as d; "
+        "import sys, otto.bootstrap as bs, otto.declared as d; "
         "print(d._composition.initiator is bs._initiate, "
-        "d._composition.result is None, bs._discovered is None)"
+        "d._composition.result is None, 'otto.config.repo' not in sys.modules)"
     )
     proc = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, check=False

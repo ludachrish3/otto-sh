@@ -250,7 +250,7 @@ class TestResolveHost:
         # The "Available hosts" listing reads the lab's mapping directly rather
         # than the fleet generator (explicit targeting is unscoped), so there is
         # no all_hosts to stand in for — an empty lab is enough here, and
-        # tests/unit/config/test_fleet_scoping.py owns the unscoped-listing
+        # tests/unit/fleet/test_fleet_scoping.py owns the unscoped-listing
         # guard itself.
         with patch("otto.fleet.get_host", side_effect=KeyError("nope")):
             result = runner.invoke(host_app, ["nonexistent", "exec", "ls"])
@@ -649,7 +649,9 @@ class TestHostTermAndTransfer:
 
         with (
             patch("otto.fleet.get_host", return_value=mock_host),
-            patch("otto.context._apply_option_overrides", return_value=mock_host) as mock_override,
+            patch(
+                "otto.run_context._apply_option_overrides", return_value=mock_host
+            ) as mock_override,
         ):
             result = runner.invoke(host_app, ["--term", "telnet", "router1", "exec", "ls"])
 
@@ -662,7 +664,9 @@ class TestHostTermAndTransfer:
 
         with (
             patch("otto.fleet.get_host", return_value=mock_host),
-            patch("otto.context._apply_option_overrides", return_value=mock_host) as mock_override,
+            patch(
+                "otto.run_context._apply_option_overrides", return_value=mock_host
+            ) as mock_override,
         ):
             result = runner.invoke(host_app, ["--transfer", "ftp", "router1", "exec", "ls"])
 
@@ -688,7 +692,7 @@ class TestHostTermAndTransfer:
 
         with (
             patch("otto.fleet.get_host", return_value=mock_host),
-            patch("otto.context._apply_option_overrides") as mock_override,
+            patch("otto.run_context._apply_option_overrides") as mock_override,
         ):
             result = runner.invoke(host_app, ["router1", "exec", "ls"])
 
@@ -704,7 +708,7 @@ class TestHostTermAndTransfer:
 
         with (
             patch("otto.fleet.get_host", return_value=base),
-            patch("otto.context._apply_option_overrides", return_value=switched),
+            patch("otto.run_context._apply_option_overrides", return_value=switched),
             patch.object(base._session_mgr, "exec", wraps=base._session_mgr.exec) as base_exec,
             patch.object(
                 switched._session_mgr, "exec", wraps=switched._session_mgr.exec
@@ -724,7 +728,7 @@ class TestHostTermAndTransfer:
 
         with (
             patch("otto.fleet.get_host", return_value=base),
-            patch("otto.context._apply_option_overrides", return_value=switched),
+            patch("otto.run_context._apply_option_overrides", return_value=switched),
             patch.object(base._session_mgr, "exec", wraps=base._session_mgr.exec) as base_exec,
             patch.object(
                 switched._session_mgr, "exec", wraps=switched._session_mgr.exec
@@ -742,7 +746,9 @@ class TestHostTermAndTransfer:
 
         with (
             patch("otto.fleet.get_host", return_value=mock_host),
-            patch("otto.context._apply_option_overrides", return_value=mock_host) as mock_override,
+            patch(
+                "otto.run_context._apply_option_overrides", return_value=mock_host
+            ) as mock_override,
         ):
             result = runner.invoke(
                 host_app, ["--term", "ssh", "--transfer", "sftp", "router1", "exec", "ls"]

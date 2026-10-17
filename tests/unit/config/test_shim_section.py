@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import otto.config.repo as config_repo
 from otto import bootstrap
 from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, _completion_collectors, app
 from otto.config import completion_cache as cc
@@ -16,7 +17,7 @@ def _repos(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     bootstrap.invalidate()
-    return repo, bootstrap.discover().repos
+    return repo, config_repo.discover().repos
 
 
 def test_stat_triple_records_a_file_and_a_missing_path(tmp_path: Path):

@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 
 from otto import context
-from otto.context import LIBRARY_LAB_NAME, OttoContext, reset_context, set_context
 from otto.host.host import SuppressCommandOutput, get_logging_command_output_enabled, is_dry_run
 from otto.invocation import RunPolicy, installed_policy, installed_resolver
 from otto.labs.loader import Lab
+from otto.run_context import LIBRARY_LAB_NAME, OttoContext, reset_context, set_context
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.labdata import make_host
 from tests._fixtures.paths import PROJECT_ROOT
@@ -208,7 +208,7 @@ def test_a_cli_context_built_without_the_root_callback_takes_the_discovered_dead
     from tests._fixtures.rootoptions import make_root_options
 
     _without_the_root_callback(monkeypatch, lambda repos, labs: Lab(name="rig"))
-    monkeypatch.setattr("otto.bootstrap.discovered_teardown_deadline", lambda: 60.0)
+    monkeypatch.setattr("otto.config.repo.discovered_teardown_deadline", lambda: 60.0)
     with typer.Context(TyperGroup(name="otto")) as ctx:
         ctx.meta["_otto_root_options"] = make_root_options(labs=["rig"])
         built = ensure_lab_context(ctx)

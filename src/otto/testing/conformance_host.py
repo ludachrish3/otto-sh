@@ -24,7 +24,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..context import OttoContext, reset_context, set_context
 from ..host.capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from ..host.construction import check_coverage
 from ..host.host import BaseHost, Host
@@ -79,8 +78,14 @@ def _dry_run() -> "Iterator[None]":
     A fresh context rather than a copy of whatever is active: the probe wants
     a dry-run policy and nothing else from the caller's environment, and the
     binding restores the previous context (including none) on the way out.
+    The composition root is imported first: it installs the initiator the
+    context composes its repos through, should a probe read them.
     """
+    from .. import bootstrap
+
+    del bootstrap
     from ..invocation import RunPolicy
+    from ..run_context import OttoContext, reset_context, set_context
 
     token = set_context(
         OttoContext(lab=Lab(name="otto-conformance"), policy=RunPolicy(dry_run=True))

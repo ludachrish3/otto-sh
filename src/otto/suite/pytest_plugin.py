@@ -149,7 +149,7 @@ class OttoFixturesPlugin:
         One object for the whole run — session-scoped so suite-wide fixtures
         may request it.
         """
-        from ..context import get_context
+        from ..run_context import get_context
 
         return get_context()
 
@@ -323,7 +323,7 @@ class OttoFixturesPlugin:
         (:meth:`~otto.context.OttoContext.verb_option_source`); with nothing
         bound, every body takes its defaults.
         """
-        from ..context import get_context
+        from ..run_context import get_context
 
         marker = request.node.get_closest_marker("ensure")
         if marker is None:

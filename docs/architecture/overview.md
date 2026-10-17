@@ -76,11 +76,10 @@ The package splits into four conceptual areas, and dependencies are meant to
 point downward — a lower area importing from a higher one is debt. The areas
 are a way to read the package; they are not the layers tach enforces, which
 are finer ({doc}`quality-gates` describes them). The declared dependency
-graph has no import cycle: every tach module carries a role layer, and an
-import may reach only its own layer or those below it. A few placements
-are interim (`tach.toml` marks each: the composition root, for one, sits
-below its own layer until the run's modules stop importing it), and tach's
-own cycle flag is not on yet ({doc}`quality-gates` says what it waits on). {doc}`modules` draws the declared dependency graph from `tach.toml`.
+graph has no import cycle, and tach refuses one: every file is in a tach
+module, every module carries a role layer, and an import may reach only its
+own layer or those below it. {doc}`modules` draws the declared dependency
+graph from `tach.toml`, and says which layer a new module goes in.
 
 **Foundation** — small, dependency-light modules everything else builds on:
 
@@ -117,8 +116,8 @@ own cycle flag is not on yet ({doc}`quality-gates` says what it waits on). {doc}
 
 | Module | Responsibility |
 | --- | --- |
-| {mod}`otto.bootstrap` | Two-phase composition root: discovery, then contained user-code registration; the repo accessors (`get_repos`, `get_env`, ...) read it |
-| {mod}`otto.context` | {class}`~otto.context.OttoContext`: the per-invocation runtime and host lifecycle scope |
+| {mod}`otto.bootstrap` | Two-phase composition root: discovery ({mod}`otto.config.repo`'s), then contained user-code registration; the repo accessors (`get_repos`, `get_env`, ...) read it |
+| {mod}`otto.context` | {class}`~otto.context.OttoContext`: the per-invocation runtime and host lifecycle scope; the public facade over `otto.run_context`, where otto's own code reads it |
 | `otto.fleet` | Internal: the active lab, its hosts and the fleet walks behind {mod}`otto.lab` |
 | `otto.cli` | The Typer app, the command registry, lazy dispatch, shell completion |
 

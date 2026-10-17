@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, Literal
 from .errors import ProjectSelectionError, RepoLoadError
 
 if TYPE_CHECKING:
-    from ..bootstrap import BootstrapError, BootstrapResult
     from ..config.repo import Repo
+    from ..config.scope import BootstrapError
+    from ..declared import BootstrapResult
 
 
 @dataclasses.dataclass(frozen=True)

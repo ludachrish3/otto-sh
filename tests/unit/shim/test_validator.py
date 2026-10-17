@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import otto.config.repo as config_repo
 from otto import _shim_complete as sc
 from otto import bootstrap
 from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
@@ -32,7 +33,7 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
     monkeypatch.setenv("OTTO_HOME", str(home))
     bootstrap.invalidate()
-    repos = bootstrap.discover().repos
+    repos = config_repo.discover().repos
     cc.write_cache(
         repos,
         [],
@@ -138,7 +139,7 @@ def test_an_edited_key_file_fails_the_stat_pass_and_the_digest(workspace):
     )
     with pytest.raises(sc.Handover, match="stale"):
         sc.validate_keys(cache, _data(cache), time.time())
-    assert cc.cache_rebuild_is_worthwhile(bootstrap.discover().repos) is True
+    assert cc.cache_rebuild_is_worthwhile(config_repo.discover().repos) is True
 
 
 def test_a_file_created_in_a_tests_directory_leaves_the_names_key_set_valid(workspace):

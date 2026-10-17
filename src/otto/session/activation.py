@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from .errors import InstructionInactiveError
 
 if TYPE_CHECKING:
-    from ..context import OttoContext
+    from ..run_context import OttoContext
 
 
 def check_instruction_active(name: str, owner: "str | None", ctx: "OttoContext") -> None:

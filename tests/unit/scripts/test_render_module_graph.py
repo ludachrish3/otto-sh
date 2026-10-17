@@ -110,13 +110,19 @@ def test_a_graph_with_nothing_left_out_names_no_example(tmp_path) -> None:
     assert "For example" not in page
 
 
-def test_an_acyclic_graph_says_the_flag_waits_on_every_file_being_in_a_module(tmp_path) -> None:
-    graph = _graph(tmp_path, '[[modules]]\npath = "a"\ndepends_on = ["b"]\n')
+def test_an_acyclic_graph_says_whether_tach_forbids_a_cycle(tmp_path) -> None:
+    body = '[[modules]]\npath = "a"\ndepends_on = ["b"]\n'
+    graph = _graph(tmp_path, body)
     page = rmg.render(graph)
     assert rmg.cycles(graph) == []
-    assert "forbid_circular_dependencies = true` waits only on every file being" in page
-    assert "in a tach module." in page
+    assert not graph.forbids_cycles
+    assert "does not set `forbid_circular_dependencies = true`, so only" in page
     assert "## Modules that import each other" not in page
+    forbidding = _graph(tmp_path, "forbid_circular_dependencies = true\n" + body)
+    assert forbidding.forbids_cycles
+    page = rmg.render(forbidding)
+    assert "sets `forbid_circular_dependencies = true`, so `tach check`" in page
+    assert "does not set" not in page
 
 
 def test_the_page_draws_both_graphs_and_tables_every_module(tmp_path) -> None:
@@ -224,6 +230,26 @@ def test_a_config_without_layers_has_none(tmp_path) -> None:
     assert graph.layers == []
     assert graph.layer_of == {}
     assert not graph.explicit_layer_dependencies
+    assert rmg.layer_guide(graph) == []
+    assert "## Where a new module goes" not in rmg.render(graph)
+
+
+def test_the_layer_guide_describes_exactly_the_declared_layers(tmp_path) -> None:
+    with pytest.raises(ValueError, match=r"LAYER_GUIDE describes .* but tach\.toml's layers"):
+        rmg.layer_guide(_graph(tmp_path, LAYERED))
+
+
+def test_the_real_page_says_where_a_new_module_goes() -> None:
+    graph = rmg.load_graph()
+    guide = rmg.layer_guide(graph)
+    rows = [line for line in guide if line.startswith("| `")]
+    assert [row.split(" | ")[0] for row in rows] == [f"| `{layer}`" for layer in graph.layers]
+    root = next(row for row in rows if row.startswith("| `root`"))
+    assert "`otto.bootstrap`" in root.split(" | ")[-1]
+    foundation = rows[-1].split(" | ")
+    assert foundation[2] == "itself only", "the lowest layer may import only itself"
+    assert rows[0].split(" | ")[2] == "itself and every layer below"
+    assert "## Where a new module goes" in rmg.render(graph)
 
 
 def test_module_of_names_the_module_a_file_defines() -> None:

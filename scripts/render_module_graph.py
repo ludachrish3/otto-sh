@@ -29,6 +29,64 @@ TACH_TOML = ROOT / "tach.toml"
 
 PAGE_PATH = ROOT / "docs" / "architecture" / "modules.md"
 
+# Where a new module goes: per layer, highest first, what belongs there and the slots it
+# holds or fills (spec 2026-10-11 placement-and-phases §2). The page derives the rest
+# (what each layer may import, which modules it holds) from tach.toml.
+LAYER_GUIDE: "dict[str, list[str]]" = {
+    "entry": [
+        (
+            "The CLI, the conformance harness, the shipped examples, the console shim, "
+            "and the public facades over lower layers (`otto`, `otto.context`, `otto.lab`, "
+            "`otto.session`)."
+        ),
+        "—",
+    ],
+    "root": [
+        (
+            "The composition root, `otto.bootstrap`, and the library entry points that can "
+            "compose the repos with no run in hand: the test suite, coverage, the repo-aware "
+            "logging install."
+        ),
+        "Importing `otto.bootstrap` fills `otto.declared`'s initiator.",
+    ],
+    "workflows": [
+        "What a run does: instructions, the project actions, `otto init`, the monitor service.",
+        "`otto.project.actions` fills the instruction catalog's first-party slot.",
+    ],
+    "run": [
+        "The live run: the run context, session's decisions, the fleet, docker.",
+        "`set_context` fills the active-run slot in `otto.invocation`.",
+    ],
+    "composition": [
+        "Settings, `Repo` and discovery, the completion cache, the project environments.",
+        "—",
+    ],
+    "sources": [
+        "Where labs, inventory, creds and reservations come from; the lab model and its loader.",
+        "—",
+    ],
+    "topology": [
+        "Links, checks, tunnels, and the monitor's lower files.",
+        "—",
+    ],
+    "specs": [
+        "The pydantic models of lab, settings and inventory data.",
+        "—",
+    ],
+    "host": [
+        "Connections, transfer, the host classes and the host specs.",
+        "—",
+    ],
+    "foundation": [
+        "Leaf definitions every layer reads, and the slots filled from above.",
+        (
+            "Holds the slots: the initiator and the composed repos (`otto.declared`), the "
+            "active run and its policy (`otto.invocation`), the first-party actions "
+            "(`otto.instruction_catalog`)."
+        ),
+    ],
+}
+
 
 @dataclass
 class ModuleGraph:
@@ -41,6 +99,8 @@ class ModuleGraph:
     """Each module that declares a ``layer``, mapped to it; a module with none is exempt."""
     explicit_layer_dependencies: bool = False
     """``layers_explicit_depends_on``: whether a downward import must be declared too."""
+    forbids_cycles: bool = False
+    """``forbid_circular_dependencies``: whether tach refuses an import cycle."""
 
     def is_upward(self, module: str, dep: str) -> bool:
         """Whether *module* depending on *dep* points up the layers.
@@ -116,6 +176,7 @@ def load_graph(path: Path = TACH_TOML) -> ModuleGraph:
         layers=layers,
         layer_of=layer_of,
         explicit_layer_dependencies=bool(doc.get("layers_explicit_depends_on", False)),
+        forbids_cycles=bool(doc.get("forbid_circular_dependencies", False)),
     )
 
 
@@ -329,11 +390,19 @@ def _short(module: str) -> str:
 
 
 def _cycle_section(graph: ModuleGraph, found: "list[list[str]]") -> "list[str]":
+    if not found and graph.forbids_cycles:
+        return [
+            "No module is in a cycle: the condensed graph above is the whole graph.",
+            "`tach.toml` sets `forbid_circular_dependencies = true`, so `tach check`",
+            "refuses an import that would close one, and",
+            "`tests/unit/test_import_cycle_ratchet.py` checks the same graph again.",
+            "",
+        ]
     if not found:
         return [
-            "No module is in a cycle: the condensed graph above is the whole graph,",
-            "and `forbid_circular_dependencies = true` waits only on every file being",
-            "in a tach module.",
+            "No module is in a cycle: the condensed graph above is the whole graph.",
+            "`tach.toml` does not set `forbid_circular_dependencies = true`, so only",
+            "`tests/unit/test_import_cycle_ratchet.py` keeps it so.",
             "",
         ]
     lines = []
@@ -389,6 +458,43 @@ def _omission_caption(graph: ModuleGraph) -> "list[str]":
     return lines
 
 
+def layer_guide(graph: ModuleGraph) -> "list[str]":
+    """Return the table that says where a new module goes, one row per layer, or none.
+
+    Raises
+    ------
+    ValueError
+        If ``LAYER_GUIDE`` does not describe exactly the layers ``tach.toml`` lists.
+    """
+    if not graph.layers:
+        return []
+    if list(LAYER_GUIDE) != graph.layers:
+        msg = (
+            f"LAYER_GUIDE describes {list(LAYER_GUIDE)}, but tach.toml's layers are "
+            f"{graph.layers}; describe each layer, highest first."
+        )
+        raise ValueError(msg)
+    lines = [
+        "## Where a new module goes",
+        "",
+        "Each module has a layer, and may import its own layer and the ones below it,",
+        "through the edges its `depends_on` lists. A new module goes in the lowest layer",
+        "whose modules it needs; a slot is how a lower layer reaches up without an",
+        "import: a higher module fills it, and the lower one reads it.",
+        "",
+        "| layer | what belongs | may import | slots | modules |",
+        "|---|---|---|---|---|",
+    ]
+    for index, layer in enumerate(graph.layers):
+        belongs, slots = LAYER_GUIDE[layer]
+        below = "itself only" if index == len(graph.layers) - 1 else "itself and every layer below"
+        members = sorted(m for m, home in graph.layer_of.items() if home == layer)
+        held = ", ".join(_short(m) for m in members) or "—"
+        lines.append(f"| `{layer}` | {belongs} | {below} | {slots} | {held} |")
+    lines.append("")
+    return lines
+
+
 def render(graph: "ModuleGraph | None" = None) -> str:
     """Compose the whole page, as Markdown."""
     graph = graph if graph is not None else load_graph()
@@ -423,6 +529,7 @@ def render(graph: "ModuleGraph | None" = None) -> str:
         "```",
         "",
         *_cycle_section(graph, found),
+        *layer_guide(graph),
         "## Every module",
         "",
         "| module | depends on | used by |",

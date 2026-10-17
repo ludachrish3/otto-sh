@@ -1,7 +1,7 @@
 """Ratchet for otto's import cycle: its members and the edges inside it can only go.
 
-``tach.toml``'s end state is ``forbid_circular_dependencies = true``, and one
-cycle of modules that can all reach each other keeps the flag off. The cycle
+``tach.toml`` sets ``forbid_circular_dependencies = true``: one cycle of
+modules that can all reach each other fails ``tach check``. The cycle
 used to be recorded in prose in ``tach.toml``'s header, and it grew from
 sixteen members to twenty-three without anyone deciding it should (#522,
 #590). This file is the record now. It reads the same declared graph that
@@ -22,8 +22,10 @@ the fix, so the fix is recorded and the edge cannot come back unnoticed.
 
 Cutting the edges was the work #590 tracked, and the cycle is gone:
 ``BASELINE`` is empty, so a module that joins any cycle fails the first
-check. ``docs/architecture/modules.md`` draws the graph. The flag is turned on
-once every file is in a module (spec 2026-10-11 placement-and-phases §5.2).
+check. ``docs/architecture/modules.md`` draws the graph. Every file is in a
+module, so tach forbids cycles too; this file stays as the second check of the
+same graph, one that names the members and edges of any cycle (spec 2026-10-11
+placement-and-phases, S5-3).
 """
 
 import pytest

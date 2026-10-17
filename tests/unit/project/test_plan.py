@@ -72,7 +72,7 @@ def _wire(monkeypatch, repo_names, ctx):
     ordered = [fake_repo(n) for n in repo_names]
     ctx.repos = ordered
     ctx.ordered_repos = ordered
-    monkeypatch.setattr("otto.context.get_context", lambda: ctx)
+    monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
     return ordered
 
 

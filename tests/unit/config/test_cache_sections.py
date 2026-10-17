@@ -14,6 +14,7 @@ import json
 
 import pytest
 
+import otto.config.repo as config_repo
 from otto import bootstrap
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.generated_repo import generate_repo
@@ -31,7 +32,7 @@ def repos(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     bootstrap.invalidate()
-    yield repo, bootstrap.discover().repos
+    yield repo, config_repo.discover().repos
     bootstrap.invalidate()
 
 

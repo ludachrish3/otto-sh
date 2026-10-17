@@ -329,7 +329,7 @@ def test_the_lab_name_in_the_title_is_not_read_as_markup(listing_world):
     lab = SimpleNamespace(name="lab[x]", hosts={})
     with (
         patch("otto.cli.invoke.ensure_inline_lab"),
-        patch("otto.context.get_context", return_value=SimpleNamespace(lab=lab)),
+        patch("otto.run_context.get_context", return_value=SimpleNamespace(lab=lab)),
     ):
         result = _invoke("--lab", "test_lab", "--list-products")
     assert result.exit_code == 0, result.output

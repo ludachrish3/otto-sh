@@ -716,9 +716,9 @@ def _run(ctx: typer.Context, names: "list[str]", verb_kwargs: "dict[str, Any]") 
     if ctx.resilient_parsing:
         return
 
-    from ..context import get_context
     from ..coverage.config import DestinationError
     from ..params import OptionsValidationError, verb_option_classes
+    from ..run_context import get_context
     from ..suite.run import RUN_OPTIONS_KEY
     from .invoke import dry_run_requested, usage_error_from
 

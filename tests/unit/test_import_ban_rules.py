@@ -20,15 +20,15 @@ import re
 import pytest
 import yaml
 
-from tests._fixtures._lazy_exports import lazy_package_names
+from tests._fixtures._lazy_exports import lazy_facade_names
 from tests._fixtures.paths import PROJECT_ROOT
 
 RULE = PROJECT_ROOT / ".ast-grep" / "rules" / "cli-command-no-module-scope-heavy-import.yml"
 
-# Every package whose __init__ carries a lazy table, discovered from the source
-# tree (tests/_fixtures/_lazy_exports.py), so a new lazy package is checked
+# Every package or module that carries a lazy table, discovered from the source
+# tree (tests/_fixtures/_lazy_exports.py), so a new lazy facade is checked
 # without anyone listing it here.
-LAZY_PACKAGES = lazy_package_names()
+LAZY_FACADES = lazy_facade_names()
 
 
 def _rule() -> dict:
@@ -124,15 +124,19 @@ def test_the_rule_reads_as_this_test_expects():
         r"^(\.{2,}|otto\.)labs$",
         r"^(\.{2,}|otto\.)host$",
         r"^(\.{2,}|otto\.)coverage$",
+        r"^(\.{2,}|otto\.)bootstrap$",
     ]
     assert _flagged("otto.lab", "get_lab")
     assert not _flagged("otto.lab", "EmptySelectionError")
     assert _flagged("otto.labs", "loader")
+    assert _flagged("otto.bootstrap", "get_env")  # discovery, in otto.config.repo
+    assert not _flagged("otto.bootstrap", "bootstrap")
     assert not _flagged("otto.labs", "LabRepositoryError")
-    assert {"otto", "otto.config", "otto.coverage", "otto.host", "otto.lab"} <= set(LAZY_PACKAGES)
+    assert {"otto", "otto.config", "otto.coverage", "otto.host", "otto.lab"} <= set(LAZY_FACADES)
+    assert "otto.bootstrap" in LAZY_FACADES  # a plain module with a lazy table
 
 
-@pytest.mark.parametrize("package", LAZY_PACKAGES)
+@pytest.mark.parametrize("package", LAZY_FACADES)
 def test_every_lazy_name_that_loads_a_denylisted_module_is_banned_too(package):
     denied = _denied_module_path()
     missing = sorted(

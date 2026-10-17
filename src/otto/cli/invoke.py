@@ -39,11 +39,11 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
     from typer.core import TyperGroup
 
-    from ..context import OttoContext
     from ..coverage.config import DestinationError
     from ..errors import FieldError
     from ..reservations.check import ReservationBackendError
     from ..result import Result
+    from ..run_context import OttoContext
     from ..session.errors import InstructionInactiveError, LabBuildError, ProjectSelectionError
     from ..session.projects import DemotedRepo
     from .registry import CommandSpec
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 
 def _ctx_param_name(func: Callable[..., Any]) -> str | None:
     """Return the name of any parameter annotated as OttoContext, or None."""
-    from ..context import OttoContext
+    from ..run_context import OttoContext
 
     hints = get_type_hints(func)
     for name, hint in hints.items():
@@ -65,7 +65,7 @@ def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
 
     Supplied at call time and hidden from the Typer-facing signature.
     """
-    from ..context import get_context
+    from ..run_context import get_context
 
     sig = inspect.signature(func)
     exposed = [p for n, p in sig.parameters.items() if n != ctx_name]
@@ -216,9 +216,9 @@ def _bind_run_leaf(
     and a library call cannot bind an instruction's arguments differently. A
     bad value becomes a usage error.
     """
-    from ..context import get_context
     from ..instruction_catalog import InstructionEntry
     from ..instructions import bind_handler_kwargs
+    from ..run_context import get_context
 
     entry = InstructionEntry(
         name=getattr(func, "__name__", repr(func)),
@@ -259,7 +259,7 @@ def _wrap_with_options(
     through :func:`_bind_and_build_own`. *repo* owns the own class, and is
     who a collision message names for it.
     """
-    from ..context import get_context
+    from ..run_context import get_context
 
     func_name = getattr(func, "__name__", repr(func))
     sig = inspect.signature(func)
@@ -845,7 +845,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     :func:`report_lab_context_error`; the soft ``HostGroup`` probe
     (:func:`try_ensure_lab`) swallows them.
     """
-    from ..context import fill_teardown_deadline, get_context
+    from ..run_context import fill_teardown_deadline, get_context
 
     meta = ctx.meta
     if meta.get("_otto_lab_ready"):
@@ -907,7 +907,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     # never outlives the invocation. Installed here, outside the command's
     # event loop: the leaf's coroutine runs later under run_command, in a copy
     # of this execution context.
-    from ..context import OttoContext, reset_context, set_context
+    from ..run_context import OttoContext, reset_context, set_context
 
     token = set_context(
         OttoContext(
@@ -1109,8 +1109,8 @@ def ensure_lab_session(ctx: typer.Context, spec: "CommandSpec") -> None:
 
     leaf_wants_dir = bool(getattr(ctx.command.callback, "__cli_output_dir__", True))
     if spec.output_dir and leaf_wants_dir:
-        from ..context import get_context
         from ..logger import management
+        from ..run_context import get_context
 
         # A single command (``test``) or a flattened single-command group
         # (``monitor``) IS the top-level command: its leaf name equals
@@ -1164,7 +1164,7 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
         return  # a statically-declared `run` child; nobody owns it
     owner = INSTRUCTIONS.repo(name)
 
-    from ..context import get_context
+    from ..run_context import get_context
     from ..session.activation import check_instruction_active
     from ..session.errors import InstructionInactiveError
 
@@ -1247,7 +1247,7 @@ def refuse_unsatisfied_dependencies() -> None:
     also what keeps ``otto env sync`` -- the verb the refusal names -- outside
     the gate that would otherwise refuse to let you run the fix.
     """
-    from ..context import get_context
+    from ..run_context import get_context
     from ..session.dependencies import check_dependencies
     from ..session.errors import DependencyRefusedError
 
@@ -1573,7 +1573,7 @@ def would_run_line(ctx: typer.Context) -> str:
 
 def _lab_line(references: "list[LabReference]") -> str:
     """Describe the lab the dry run validated against, and what resolved in it."""
-    from ..context import try_get_context
+    from ..run_context import try_get_context
 
     active = try_get_context()
     lab = getattr(active, "lab", None) if active is not None else None

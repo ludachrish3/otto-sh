@@ -9,19 +9,22 @@ refuses a module with no ``depends_on``, which tach would read as "may import
 anything". What tach cannot check, this file does:
 
 * the switch is on, and the layers are the spec's ten, highest first;
+* ``forbid_circular_dependencies`` is on: every file is in a module, so tach
+  refuses an import that closes a cycle (spec 2026-10-11 placement-and-phases
+  §5.1), and turning it off would leave only the ratchet's second check;
 * every module outside an import cycle has a layer. The declared graph has no
   cycle (``tests/unit/test_import_cycle_ratchet.py`` fails on one), so that is
-  every module; some placements are interim, and ``tach.toml`` marks each;
+  every module;
 * no module in an import cycle has a layer. With no cycle this holds trivially;
   it stays so that a module that rejoined a cycle could not keep a layer tach
   would tolerate while its peers in the cycle were unlayered;
-* no ``.py`` file under ``src/otto`` is outside every tach module except the ones
-  ``UNOWNED`` lists, and that list only shrinks: ``UNOWNED_WHEN_LANDED`` pins it
-  as it landed, and an entry added past it fails. tach sees no import made by a
-  file no module owns, so a new one would escape every rule.
+* every ``.py`` file under ``src/otto`` is in a tach module: tach sees no import
+  made by a file no module owns, so one would escape every rule;
+* a facade's module owns its facade file and nothing else (``FACADE_FILES``).
+  The root package is a module, so a new top-level file is owned by it, and a
+  new file in ``otto/lab/`` or ``otto/session/`` by that facade, unless it is
+  declared: without this check it would sit in the entry layer, unnoticed.
 """
-
-import collections
 
 import pytest
 
@@ -44,32 +47,14 @@ LAYERS = [
     "foundation",
 ]
 
-# Files no tach module owns yet. Each is declared by the landing that frees it
-# (spec 2026-10-11 placement-and-phases §5.1). Shrink-only.
-UNOWNED = [
-    "otto/__init__.py",
-    "otto/__main__.py",
-    "otto/_shim.py",
-    "otto/env/__init__.py",
-    "otto/env/backends.py",
-    "otto/env/manage.py",
-    "otto/env/preflight.py",
-    "otto/lab/__init__.py",
-]
-
-# UNOWNED as this test landed it. UNOWNED may lose entries but never gain one,
-# so a new file declares its tach module instead of joining the list.
-UNOWNED_WHEN_LANDED = [
-    "otto/__init__.py",
-    "otto/__main__.py",
-    "otto/_shim.py",
-    "otto/declared.py",
-    "otto/env/__init__.py",
-    "otto/env/backends.py",
-    "otto/env/manage.py",
-    "otto/env/preflight.py",
-    "otto/lab/__init__.py",
-]
+# Each facade module and the one file it owns (spec 2026-10-11 placement-and-phases
+# §3.11): any other file it owns is a file no module was declared for.
+FACADE_FILES = {
+    "otto": "otto/__init__.py",
+    "otto.context": "otto/context.py",
+    "otto.lab": "otto/lab/__init__.py",
+    "otto.session": "otto/session/__init__.py",
+}
 
 
 @pytest.fixture(scope="module")
@@ -77,15 +62,29 @@ def graph() -> rmg.ModuleGraph:
     return rmg.load_graph()
 
 
-def unowned_files(modules: "list[str]") -> "list[str]":
-    """Every ``.py`` file under ``src/otto`` that no module in *modules* owns."""
+def owners(modules: "list[str]", files: "list[str]") -> "dict[str, str | None]":
+    """Each file under ``src/`` in *files* -> the module in *modules* that owns it."""
+    return {rel: rmg.declared_owner(rmg.module_of(rel), modules) for rel in files}
+
+
+def _otto_files() -> "list[str]":
     src = PROJECT_ROOT / "src"
-    found = []
-    for file in sorted((src / "otto").rglob("*.py")):
-        rel = file.relative_to(src).as_posix()
-        if rmg.declared_owner(rmg.module_of(rel), modules) is None:
-            found.append(rel)
-    return found
+    return [file.relative_to(src).as_posix() for file in sorted((src / "otto").rglob("*.py"))]
+
+
+def ownership_problems(owned: "dict[str, str | None]", facades: "dict[str, str]") -> "list[str]":
+    """A file no module owns, and a file a facade's module owns besides its facade."""
+    problems = [
+        f"{rel} is in no tach module, so tach checks none of its imports"
+        for rel, owner in owned.items()
+        if owner is None
+    ]
+    problems += [
+        f"{rel} is owned by the facade module {owner}, which owns {facades[owner]} alone"
+        for rel, owner in owned.items()
+        if owner in facades and rel != facades[owner]
+    ]
+    return problems
 
 
 def test_a_downward_import_must_be_declared_too(graph) -> None:
@@ -93,6 +92,14 @@ def test_a_downward_import_must_be_declared_too(graph) -> None:
         "tach.toml must set layers_explicit_depends_on = true: without it tach passes "
         "any import into a lower layer undeclared, and --exact reports the declared "
         "ones as unused."
+    )
+
+
+def test_tach_refuses_an_import_cycle(graph) -> None:
+    assert graph.forbids_cycles, (
+        "tach.toml must set forbid_circular_dependencies = true: every file is in "
+        "a module, so tach can refuse an import that closes a cycle (spec "
+        "2026-10-11 placement-and-phases §5.1)."
     )
 
 
@@ -130,32 +137,23 @@ def test_a_layer_inside_the_cycle_is_named() -> None:
     assert layered_cycle_members(rmg.ModuleGraph(ring, ["top"], {"a": "top"})) == ["a"]
 
 
-def test_no_file_escapes_tach_beyond_the_unowned_list(graph) -> None:
-    found = unowned_files(graph.modules)
-    new = sorted(set(found) - set(UNOWNED))
-    assert not new, (
-        f"{new} are in no tach module, so tach checks none of their imports. "
-        "Declare a module for them in tach.toml."
-    )
-    owned = sorted(set(UNOWNED) - set(found))
-    assert not owned, f"{owned} are owned now — good. Delete them from UNOWNED in this commit."
-
-
-def unowned_additions(current: "list[str]", landed: "list[str]") -> "list[str]":
-    """The entries of *current* beyond *landed*, counting repeats."""
-    return sorted((collections.Counter(current) - collections.Counter(landed)).elements())
-
-
-def test_the_unowned_list_only_shrinks() -> None:
-    added = unowned_additions(UNOWNED, UNOWNED_WHEN_LANDED)
-    assert not added, (
-        f"{added} joined UNOWNED, which only shrinks: declare a tach module that owns "
-        "them in tach.toml instead (spec 2026-10-11 placement-and-phases §5.1)."
+def test_every_file_is_in_its_own_module(graph) -> None:
+    assert set(FACADE_FILES) <= set(graph.modules), "a facade module is not declared"
+    problems = ownership_problems(owners(graph.modules, _otto_files()), FACADE_FILES)
+    assert not problems, (
+        "Declare a tach module for each file in tach.toml (spec 2026-10-11 "
+        "placement-and-phases §5.1):\n  " + "\n  ".join(problems)
     )
 
 
-def test_an_unowned_entry_past_the_pin_is_named() -> None:
-    landed = ["otto/a.py", "otto/b.py"]
-    assert unowned_additions(["otto/a.py"], landed) == [], "an entry may leave"
-    assert unowned_additions([*landed, "otto/c.py"], landed) == ["otto/c.py"]
-    assert unowned_additions([*landed, "otto/a.py"], landed) == ["otto/a.py"]
+def test_an_escaping_file_and_a_facade_s_stray_file_are_named() -> None:
+    modules = ["otto", "otto.lab", "otto.fleet"]
+    files = ["otto/__init__.py", "otto/lab/__init__.py", "otto/fleet.py", "otto/new.py"]
+    facades = {"otto": "otto/__init__.py", "otto.lab": "otto/lab/__init__.py"}
+    assert ownership_problems(owners(modules, files), facades) == [
+        "otto/new.py is owned by the facade module otto, which owns otto/__init__.py alone"
+    ]
+    assert ownership_problems(owners(["otto.fleet"], ["otto/new.py"]), facades) == [
+        "otto/new.py is in no tach module, so tach checks none of its imports"
+    ]
+    assert ownership_problems(owners(modules, files[:3]), facades) == []

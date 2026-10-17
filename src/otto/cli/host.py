@@ -93,8 +93,8 @@ host_app = typer.Typer(
 
 
 def _resolve_host(host_id: str) -> "UnixHost":
-    from ..context import get_context
     from ..fleet import get_host
+    from ..run_context import get_context
 
     try:
         return get_host(host_id)
@@ -224,7 +224,7 @@ def resolve_cli_host(ctx: typer.Context) -> "RemoteHost":
         # work itself or leave ctx.obj unset.
         return ctx.obj
 
-    from ..context import _apply_option_overrides
+    from ..run_context import _apply_option_overrides
 
     request = ctx.meta["_otto_host_request"]
     host: "RemoteHost" = _resolve_host(request["host_id"])

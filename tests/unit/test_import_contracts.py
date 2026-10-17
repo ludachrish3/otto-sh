@@ -52,6 +52,7 @@ _NO_COMMAND_MODULE_LOADS = [
     "otto.labs.loader",
     "otto.config.repo",
     "otto.context",
+    "otto.run_context",
     "otto.coverage.merge",
     "otto.coverage.reporter",
     "otto.coverage.store",
@@ -96,8 +97,9 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     "import otto.config": ["otto.config.repo", "otto.config.version"],
     # The repo loader reads the settings types from the foundation module
     # otto.config.scope, so importing it (`from otto.config import Repo`) loads
-    # no settings model and no pydantic.
-    "import otto.config.repo": ["otto.models.settings", "pydantic"],
+    # no settings model and no pydantic. Discovery lives here, below the
+    # composition root, so reading it never loads the root.
+    "import otto.config.repo": ["otto.bootstrap", "otto.models.settings", "pydantic"],
     # Command modules take constants from otto.utils; only wait_for_async
     # needs asyncio, and it already runs on a loop.
     "import otto.utils": ["asyncio"],
@@ -183,7 +185,12 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     # The reservation gate reads the active run and the built-in-host rule inside the
     # functions that need them: importing it loads neither the context nor the host
     # layer (spec 2026-10-11 placement-and-phases §3.8).
-    "import otto.reservations.check": ["otto.config", "otto.context", "otto.host"],
+    "import otto.reservations.check": [
+        "otto.config",
+        "otto.context",
+        "otto.host",
+        "otto.run_context",
+    ],
     # Every lab-loading command builds the reservation gate, even under -R.
     "from otto.reservations import build_reservation_gate": [
         "otto.reservations.json_backend",
@@ -215,6 +222,7 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     # otto.bootstrap loads neither the settings parsers nor the host classes. It
     # does load otto.config.scope, the foundation module that owns the error
     # types it re-exports, and otto.declared, whose initiator slot it fills.
+    # Of discovery it re-exports only get_env, lazily, from otto.config.repo.
     "import otto.bootstrap": [
         "otto.config.repo",
         "otto.config.version",
@@ -245,6 +253,16 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     "from otto.lab import get_lab": ["otto.labs.loader"],
     "from otto.docker import compose_up": ["otto.labs.loader"],
     "from otto.lab import EmptySelectionError": ["otto.fleet", "otto.host"],
+    # The run context's facade is lazy, and only the two names that compose the
+    # run's repos with no run in hand load the composition root (spec 2026-10-11
+    # placement-and-phases §3.12). The run layer itself never loads the root: it
+    # composes through the initiator the root installs. The repo-aware logging
+    # install imports the root when called, not when resolved.
+    "import otto.context": ["otto.bootstrap", "otto.invocation", "otto.run_context"],
+    "from otto.context import get_context": ["otto.bootstrap"],
+    "from otto import get_context": ["otto.bootstrap"],
+    "import otto.run_context": ["otto.bootstrap"],
+    "from otto.session import install_logging": ["otto.bootstrap"],
 }
 
 # The positive control, for a row whose forbidden list alone could pass by
@@ -255,6 +273,9 @@ IMPORT_MUST_LOAD: dict[str, list[str]] = {
     "from otto.host import LocalHost": ["otto.host.local_host"],
     "from otto.lab import fleet_of_interest": ["otto.fleet"],
     "from otto.lab import Lab": ["otto.labs.loader"],
+    "from otto.bootstrap import get_env": ["otto.config.repo"],
+    "from otto.context import OttoContext": ["otto.bootstrap", "otto.run_context"],
+    "from otto import open_context": ["otto.bootstrap", "otto.run_context"],
     "import otto.instruction_catalog": ["otto.errors", "otto.registry"],
 }
 

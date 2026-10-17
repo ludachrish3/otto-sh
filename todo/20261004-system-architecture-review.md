@@ -235,7 +235,13 @@ plugin and loop compatibility have dedicated tests. Keep any unavoidable private
 API usage in one adapter and test both minimum supported and freshly resolved
 pytest/pytest-asyncio versions.
 
-### 4. P1 — The dependency gate permits a large shared change domain
+### 4. P1 — The dependency gate permits a large shared change domain ✅
+
+**Done.** #522 put exact-edge checking and the cycle ratchet in the gate, and #590's
+spec 5 took the cycle apart: every file is in a tach module, every module has a
+role layer, and `tach.toml` sets `forbid_circular_dependencies = true`
+(`docs/architecture/modules.md`). The measurements below are the record of why.
+Left in this review: items 1–3 and 5–10 are still open.
 
 Using the existing [`render_module_graph`](../scripts/render_module_graph.py)
 functions, the declared graph has **23 of 38 modules in one strongly connected

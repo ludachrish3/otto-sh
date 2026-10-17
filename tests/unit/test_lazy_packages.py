@@ -140,6 +140,18 @@ def _package_of(path: Path) -> str:
     return ".".join(path.parent.relative_to(SRC_OTTO.parent).parts)
 
 
+def _lazy_modules() -> list[Path]:
+    """Every plain module under src/otto holding a module-level ``_LAZY_*`` dict."""
+    plain = [p for p in sorted(SRC_OTTO.rglob("*.py")) if p.name != "__init__.py"]
+    return [p for p in plain if _lazy_table_nodes(ast.parse(p.read_text()))]
+
+
+def _facade_of(path: Path) -> str:
+    """The module *path* is: a package for its ``__init__``, else the plain module."""
+    parts = path.relative_to(SRC_OTTO.parent).with_suffix("").parts
+    return ".".join(parts).removesuffix(".__init__")
+
+
 def _type_checking_imports(path: Path) -> dict[str, list[str | None]]:
     """name -> [module, attribute] for each import under ``if TYPE_CHECKING:``.
 
@@ -213,6 +225,7 @@ def test_the_lazy_package_scan_finds_the_known_packages():
         "otto.testing",
         "otto.tunnel",
     } <= {_package_of(p) for p in _lazy_package_inits()}
+    assert {_facade_of(p) for p in _lazy_modules()} == {"otto.bootstrap", "otto.context"}
 
 
 def _binds_nothing(tree: ast.Module) -> bool:
@@ -284,7 +297,7 @@ def test_a_lazy_init_binds_no_public_name_eagerly_beyond_its_allowance(path):
     assert not extra, f"{package} binds these public names eagerly: {extra}"
 
 
-@pytest.mark.parametrize("path", _lazy_package_inits(), ids=_package_of)
+@pytest.mark.parametrize("path", _lazy_package_inits() + _lazy_modules(), ids=_facade_of)
 def test_type_checking_imports_and_the_lazy_table_agree(path):
     """The block type checkers and Sphinx read and the table the runtime reads name the same things.
 
@@ -294,7 +307,7 @@ def test_type_checking_imports_and_the_lazy_table_agree(path):
     """
     typed = _type_checking_imports(path)
     table = _lazy_tables(path)
-    exported = set(importlib.import_module(_package_of(path)).__all__)
+    exported = set(importlib.import_module(_facade_of(path)).__all__)
     assert set(table) <= set(typed), sorted(set(table) - set(typed))
     assert not (set(typed) - set(table)) & exported, sorted((set(typed) - set(table)) & exported)
     for name, (module, attr) in table.items():
@@ -346,7 +359,7 @@ def _eager_bindings(body: list[ast.stmt]) -> set[str]:
     return names
 
 
-@pytest.mark.parametrize("path", _lazy_package_inits(), ids=_package_of)
+@pytest.mark.parametrize("path", _lazy_package_inits() + _lazy_modules(), ids=_facade_of)
 def test_every_lazy_init_defines_getattr_and_dir(path):
     """The resolver, and the ``dir()`` that shows what it resolves.
 
@@ -506,15 +519,17 @@ def _on_the_package(package: str, name: str) -> str:
 
 def test_the_leak_guard_checks_every_package_with_a_lazy_table():
     """A guard whose package scan came back short would pass vacuously."""
-    from tests._fixtures._lazy_exports import lazy_package_names
+    from tests._fixtures._lazy_exports import lazy_facade_names
 
     declares = re.compile(r"^_LAZY_(ATTRS|EXPORTS)\b", re.MULTILINE)
     expected = {
-        _package_of(path) for path in _lazy_package_inits() if declares.search(path.read_text())
+        _facade_of(path)
+        for path in _lazy_package_inits() + _lazy_modules()
+        if declares.search(path.read_text())
     }
-    assert set(lazy_package_names()) == expected
-    assert {"otto.session", *PACKAGES} <= expected
-    assert {"otto", "otto.config", "otto.logger"} <= set(lazy_package_names())
+    assert set(lazy_facade_names()) == expected
+    assert {"otto.session", "otto.bootstrap", *PACKAGES} <= expected
+    assert {"otto", "otto.config", "otto.logger"} <= set(lazy_facade_names())
 
 
 def test_a_monkeypatch_on_the_lazy_package_is_caught_and_evicted():

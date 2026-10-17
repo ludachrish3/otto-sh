@@ -31,9 +31,9 @@ from ..errors import OttoError
 if TYPE_CHECKING:
     from ..config.collected_tests import Classification, FileRecord, RepoTable
     from ..config.repo import Repo
-    from ..context import OttoContext
     from ..coverage.reports import CleanReport
     from ..registry import RegistrationRefused
+    from ..run_context import OttoContext
     from .layout import ArtifactLayout
     from .plugin import SelectedTest, StabilityCollector
 
@@ -285,7 +285,7 @@ def resolve_output_dir(output_dir: Path | None) -> Path:
     """Explicit param → context output_dir → CWD (xdir-defaults-to-CWD philosophy)."""
     if output_dir is not None:
         return output_dir
-    from ..context import try_get_context
+    from ..run_context import try_get_context
 
     ctx = try_get_context()
     if ctx is not None and ctx.output_dir is not None:
@@ -351,7 +351,7 @@ def _session_context(log_dir: Path) -> "Iterator[OttoContext]":
     cases:
 
     - **No active context**: install a minimal lab-less one, whose policy
-      (``otto.context.prepared_policy``) carries *log_dir* as its
+      (``otto.run_context.prepared_policy``) carries *log_dir* as its
       ``output_dir``, inherits the current variant and takes its teardown
       deadline from ``OTTO_TEARDOWN_DEADLINE``, for the duration of
       the session, and always restore the prior state via the
@@ -368,11 +368,18 @@ def _session_context(log_dir: Path) -> "Iterator[OttoContext]":
       :func:`run_tests` binds ``test``) afterwards — the run's per-session
       state never outlives the run on a context the caller owns.
     """
-    from ..context import try_get_context
+    from ..run_context import try_get_context
 
     active = try_get_context()
     if active is None:
-        from ..context import (
+        # The composition root: importing it installs the initiator that composes
+        # the library context's repos on their first read (spec 2026-10-11
+        # placement-and-phases §3.12).
+        from .. import bootstrap
+
+        del bootstrap
+        from ..labs.loader import Lab
+        from ..run_context import (
             LIBRARY_LAB_NAME,
             OttoContext,
             fill_teardown_deadline,
@@ -380,7 +387,6 @@ def _session_context(log_dir: Path) -> "Iterator[OttoContext]":
             reset_context,
             set_context,
         )
-        from ..labs.loader import Lab
 
         policy = prepared_policy(output_dir=log_dir)
         fill_teardown_deadline(policy)

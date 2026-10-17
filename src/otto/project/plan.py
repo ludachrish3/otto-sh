@@ -21,11 +21,11 @@ from .options import InstallOptions, InstallToolsOptions, UninstallOptions
 from .orchestrator import _walk_order
 
 if TYPE_CHECKING:
-    from ..context import OttoContext
     from ..host.dev_tool import DevTool
     from ..host.host import Host
     from ..host.product import Product
     from ..instruction_catalog import ProjectInstructionBody
+    from ..run_context import OttoContext
 
 
 @dataclass

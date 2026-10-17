@@ -8,7 +8,7 @@ its "nothing to read" default. Two more, ``scope_for_repo`` and the declared
 entries, read the composed-repos catalog ``otto.bootstrap`` publishes into
 ``otto.declared`` (spec 2026-10-11 placement-and-phases §3.5): a root that
 stopped publishing leaves them the same quiet default. The sixth,
-``otto.bootstrap.discovered_teardown_deadline``, swallows a failed discovery
+``otto.config.repo.discovered_teardown_deadline``, swallows a failed discovery
 and answers ``None``, so the run keeps its 10-second default. Nothing here
 patches an accessor: each test writes a real SUT repo, points
 ``OTTO_SUT_DIRS`` at it and asserts the answer only a working read gives.
@@ -20,6 +20,7 @@ import logging
 
 import pytest
 
+import otto.config.repo as config_repo
 from otto import bootstrap as bs
 from tests._fixtures.fleet import _lab
 from tests._fixtures.sutrepo import make_sut_repo
@@ -68,7 +69,7 @@ def test_scope_for_repo_composes_through_the_initiator(declaring_repo):
 
 def test_the_teardown_deadline_reads_the_real_environment(declaring_repo, monkeypatch):
     monkeypatch.setenv("OTTO_TEARDOWN_DEADLINE", "7.5")
-    assert bs.discovered_teardown_deadline() == 7.5
+    assert config_repo.discovered_teardown_deadline() == 7.5
 
 
 def test_declared_entries_read_the_real_repos(declaring_repo):

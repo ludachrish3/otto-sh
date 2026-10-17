@@ -460,7 +460,7 @@ def _host_app(monkeypatch: pytest.MonkeyPatch, host: SpyHost) -> typer.Typer:
     # the same reason its `all_hosts` predecessor was: these tests install no
     # context, and the listing is not what they are about.
     empty_lab = SimpleNamespace(lab=SimpleNamespace(hosts={}))
-    monkeypatch.setattr("otto.context.get_context", lambda: empty_lab)
+    monkeypatch.setattr("otto.run_context.get_context", lambda: empty_lab)
 
     app = typer.Typer(name="host", cls=HostGroup)
 

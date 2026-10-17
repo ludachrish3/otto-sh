@@ -62,7 +62,7 @@ def _flag_holding_out(
     must never silently reach the runner itself, or a container nobody asked
     for. Three readers apply the rule and must agree host by host:
     :meth:`otto.context.OttoContext.all_hosts` yields only members, its
-    empty-selection prediction (``otto.context._flags_hiding_every_match``)
+    empty-selection prediction (``otto.run_context._flags_hiding_every_match``)
     names the flags that hid every match, and
     :func:`otto.fleet.fleet_of_interest` answers what the walk would
     yield. A second copy of the rule in any of them would drift the first

@@ -40,7 +40,8 @@ note: >
     - the top-level otto package's lazy names for the entries above (its
       context and fleet/lab names, and `options`, which is pydantic's
       dataclass) are banned on the same grounds;
-    - otto.docker (any submodule): cli.docker.
+    - otto.docker (any submodule): cli.docker;
+    - otto.bootstrap's lazy get_env, which loads otto.config.repo.
 
   Module scope means: not inside a function body and not in the consequence
   of `if TYPE_CHECKING:` (its `else:` branch, a `try:` block and a class body
@@ -155,6 +156,16 @@ rule:
           - kind: dotted_name
           - kind: aliased_import
           regex: '^(reporter|merge|store|tree|errors|CoverageReporter|CoverageStore|run_coverage_report|CoverageCleanError|CoverageDataMismatchError|CoverageInputError|CoverageNotInstrumentedError|CoverageToolVersionError|NoCoverageDataError|NoCoverageHostsError)(\s+as\s+\w+)?$'
+    - kind: import_from_statement
+      all:
+      - has:
+          field: module_name
+          regex: '^(\.{2,}|otto\.)bootstrap$'
+      - has:
+          any:
+          - kind: dotted_name
+          - kind: aliased_import
+          regex: '^(get_env)(\s+as\s+\w+)?$'
   - not:
       inside:
         kind: function_definition

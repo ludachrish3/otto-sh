@@ -80,8 +80,8 @@ effects with an explicit composition root:
   *dispatching* into broken code fails loud.
 
 `bootstrap()` is idempotent: the CLI entry point calls it before argv parsing,
-{func}`~otto.context.open_context` calls it lazily for library users, and
-repeated calls return the same result.
+{func}`~otto.context.open_context` reaches it only through `declared.compose()`
+and the initiator the root installed, and repeated calls return the same result.
 
 Lab loading is deliberately **not** part of bootstrap. `otto --help`,
 `--list-*` flags, and shell completion never open `lab.json`, and a missing

@@ -94,7 +94,7 @@ def _wire_lab(monkeypatch, repo_names, ctx):
     ordered = [fake_repo(name) for name in repo_names]
     ctx.repos = ordered
     ctx.ordered_repos = ordered
-    monkeypatch.setattr("otto.context.get_context", lambda: ctx)
+    monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
     return ordered
 
 

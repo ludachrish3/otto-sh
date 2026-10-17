@@ -1,4 +1,9 @@
-"""Repo settings loading, parsing, and test-collection helpers for SUT repositories."""
+"""Repo settings loading, parsing, and test-collection helpers for SUT repositories.
+
+Its last section is discovery, phase 1 of composition: the environment and every
+repo's settings parsed, cached until :func:`clear_discovery` (spec 2026-10-11
+placement-and-phases §3.9).
+"""
 
 import importlib
 import logging
@@ -13,10 +18,14 @@ from typing import (
     Any,
 )
 
-import tomli
-
-from .scope import TOML_SETTINGS_PATH, DockerSettings, MonitorSettings, ProjectScopeConfig
-from .version import Version
+from ..errors import is_containable
+from .scope import (
+    TOML_SETTINGS_PATH,
+    BootstrapError,
+    DockerSettings,
+    MonitorSettings,
+    ProjectScopeConfig,
+)
 
 if TYPE_CHECKING:
     from importlib.machinery import ModuleSpec
@@ -25,10 +34,12 @@ if TYPE_CHECKING:
     from rich.panel import Panel
     from rich.text import Text
 
+    import otto.config.version
+
     from ..declared import DeclaredEntry
     from ..labs.sources import PendingLabSource
     from ..models.dependencies import ParsedDependency
-    from ..models.settings import OsProfileSpec
+    from ..models.settings import OsProfileSpec, OttoEnvSettings
     from ..registry import RegistrationRefused
     from .dependencies import ResolvedDependency
 
@@ -127,7 +138,7 @@ class CompiledSettings:
     """
 
     name: str
-    version: Version
+    version: "otto.config.version.Version"
     lab_sources: list["PendingLabSource"]
     project_scope: ProjectScopeConfig | None
     libs: list[Path]
@@ -176,6 +187,8 @@ def compile_settings(data: dict[str, Any], sut_dir: Path) -> CompiledSettings:
     declared_dependencies = [
         parse_dependency_entry(e, required=True) for e in model.dependencies.required
     ] + [parse_dependency_entry(e, required=False) for e in model.dependencies.optional]
+    from .version import Version
+
     return CompiledSettings(
         name=model.name,
         version=Version(model.version),
@@ -222,6 +235,8 @@ def validate_settings(root: Path) -> list[str]:
     # Absolute, as ``Repo.__post_init__`` makes it, so anchored paths and the
     # file named in the problem line match what the loader sees.
     root = root.absolute()
+    import tomli
+
     path = root / TOML_SETTINGS_PATH
     try:
         data = tomli.loads(path.read_bytes().decode())
@@ -293,7 +308,7 @@ class Repo:
     name: str = field(init=False)
     """Product/repo name"""
 
-    version: Version = field(init=False)
+    version: "otto.config.version.Version" = field(init=False)
     """Product version"""
 
     lab_sources: list["PendingLabSource"] = field(default_factory=list, init=False)
@@ -544,6 +559,8 @@ class Repo:
 
     def parse_settings(self) -> None:
         """Parse + validate the repo's ``.otto/settings.toml`` via :func:`compile_settings`."""
+        import tomli
+
         settings_text = self.read_settings()
         self.settings = tomli.loads(settings_text)  # raw — coverage/reservation read it
 
@@ -633,3 +650,90 @@ def get_repos(
         If a repo's settings TOML file is not found.
     """
     return [Repo(sut_dir=repo) for repo in repos]
+
+
+# ── Discovery (phase 1 of composition) ─────────────────────────────────────────
+#
+# Phase 1 of composition, defined with the parsing it drives (see ``discover``).
+# The result is cached until ``clear_discovery()``, which
+# ``otto.bootstrap.invalidate()`` calls.
+
+
+@dataclass(frozen=True)
+class DiscoveryResult:
+    """Everything phase 1 produced: environment, repos, contained errors.
+
+    Separate from :class:`~otto.declared.BootstrapResult` rather than reused:
+    ``warnings`` comes from the dependency pass, which runs inside
+    :func:`otto.bootstrap.bootstrap` after discovery has returned, so a shared type
+    would carry a field that is structurally always empty on this path.
+    """
+
+    env: "OttoEnvSettings"
+    repos: list[Repo]
+    errors: list[BootstrapError] = field(default_factory=list)
+
+
+@dataclass
+class _Discovery:
+    """The discovery cache: the last discovery's result, until it is cleared."""
+
+    result: "DiscoveryResult | None" = None
+
+
+_discovery = _Discovery()
+"""Written only by :func:`discover` and :func:`clear_discovery`."""
+
+
+def discover() -> DiscoveryResult:
+    """Phase 1: env + repo discovery (settings parse only — no user code). Cached.
+
+    Per-repo config-data failures (unreadable or malformed ``settings.toml``)
+    get the same containment as phase-2 user-code failures: the repo is
+    skipped and a framed :class:`~otto.config.scope.BootstrapError` is
+    recorded, surfacing via ``bootstrap().errors`` (help degrades, real
+    dispatch fails loud). Env-level failures (bad ``OTTO_SUT_DIRS`` / OTTO_*
+    values) still raise — with no environment there is nothing to degrade to.
+
+    The errors ride the cached result itself: recomputing discovery (after
+    :func:`clear_discovery`) necessarily recomputes them, so a stale error
+    cannot outlive the discovery that produced it.
+    """
+    if _discovery.result is None:
+        from .env import load_otto_env
+
+        env = load_otto_env()
+        repos: list[Repo] = []
+        errors: list[BootstrapError] = []
+        for sut_dir in env.sut_dirs:
+            try:
+                repos.append(Repo(sut_dir=sut_dir))
+            except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY config-data failure becomes a framed error
+                if not is_containable(e):
+                    raise
+                errors.append(BootstrapError(sut_dir, str(TOML_SETTINGS_PATH), e))
+        _discovery.result = DiscoveryResult(env=env, repos=repos, errors=errors)
+    return _discovery.result
+
+
+def clear_discovery() -> None:
+    """Drop the cached discovery, so the next :func:`discover` reads everything again."""
+    _discovery.result = None
+
+
+def get_env() -> "OttoEnvSettings":
+    """Return the startup environment settings (runs discovery lazily, never composition)."""
+    return discover().env
+
+
+def discovered_teardown_deadline() -> "float | None":
+    """``OTTO_TEARDOWN_DEADLINE`` as discovery parsed it, or ``None`` when discovery fails.
+
+    Read once, when a run is prepared (the CLI root callback,
+    ``open_context``, library ``run_tests``), into the run's policy. With no
+    policy installed, every reader sees the policy's 10-second default.
+    """
+    try:
+        return get_env().teardown_deadline
+    except Exception:  # noqa: BLE001 — discovery unavailable (bare library use): the default stands
+        return None

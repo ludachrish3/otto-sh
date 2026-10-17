@@ -66,7 +66,7 @@ def _table_is_current(repo: Path, home: Path) -> bool:
 def _arm_bootstrap_sentinel(repo: Path) -> Path:
     """Make the repo's init module touch a sentinel file when bootstrap imports it.
 
-    Only ``otto.bootstrap.discover()``'s registration pass imports init
+    Only ``otto.config.repo.discover()``'s registration pass imports init
     modules; the completion names fast path's ``_cached_names_payload``
     reads the cached ``names`` section and never runs any repo code at all.
     So the sentinel reappearing is proof a FULL bootstrap ran, not merely

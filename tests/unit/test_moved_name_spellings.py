@@ -33,13 +33,21 @@ active-run slot (``_active``) left ``otto.context`` for ``otto.invocation`` (as
 ``otto.context``, and ``_flag_holding_out`` left it for ``otto.host.builtin_hosts``,
 which also owns ``is_builtin_host``: the fleet's wrapper of it is gone.
 
+The run context moved with that spec's §3.12: ``otto.context`` is the public
+facade, and every name it does not export (``LIBRARY_LAB_NAME``, ``T``,
+``prepared_policy``, ``fill_teardown_deadline``, ``_apply_option_overrides``
+and the module's other private helpers) lives in ``otto.run_context`` only.
+
 The composed state moved with that spec's §3.9. The root's result caches
 (``_result``, ``_in_progress``) left ``otto.bootstrap`` for the catalog's record
 in ``otto.declared``, whose own private readers (``_published``,
 ``_composed_repos``) became ``published_result`` and ``compose``; the run's
 repos (``current_repos``, ``current_ordered_repos``) left ``otto.config.fleet``
 for ``otto.declared``, and the rest of the fleet left it for ``otto.fleet``: the
-old module is gone.
+old module is gone. Discovery left the root for ``otto.config.repo``: its cache
+(``_discovered``, now that module's ``_discovery`` record), ``discover``,
+``DiscoveryResult`` and ``discovered_teardown_deadline``. The root still re-exports
+``get_env``, its public name, the same object, so that one is not an old spelling there.
 
 An old spelling fails loudly at most call sites, but not everywhere. Six
 readers import an accessor inside a broad ``except``, where a stale import
@@ -119,8 +127,23 @@ LAB = frozenset(
 ACTIVE_RUN = frozenset({"_active"})
 FLEET_HELPERS = frozenset({"_apply_option_overrides", "_flag_holding_out", "is_builtin_host"})
 COMPOSED_STATE = frozenset({"_result", "_in_progress"})
+DISCOVERY_STATE = frozenset(
+    {"_discovered", "discover", "DiscoveryResult", "discovered_teardown_deadline"}
+)
 CATALOG_READERS = frozenset({"_published", "_composed_repos"})
 RUN_REPOS = frozenset({"current_repos", "current_ordered_repos"})
+CONTEXT_INTERNALS = frozenset(
+    {
+        "LIBRARY_LAB_NAME",
+        "T",
+        "_ContextResolver",
+        "_OWNER_MISMATCH",
+        "_apply_option_overrides",
+        "_flags_hiding_every_match",
+        "fill_teardown_deadline",
+        "prepared_policy",
+    }
+)
 # Modules that are gone -> the moved names they held. Any import of one, and any string
 # naming one, is an old spelling.
 GONE: dict[str, frozenset[str]] = {
@@ -134,8 +157,8 @@ OLD_HOMES: dict[str, frozenset[str]] = {
     **GONE,
     "otto.config.repo": SETTINGS,
     "otto.config.env": SPLITTER,
-    "otto.context": ACTIVE_RUN,
-    "otto.bootstrap": COMPOSED_STATE,
+    "otto.context": ACTIVE_RUN | CONTEXT_INTERNALS,
+    "otto.bootstrap": COMPOSED_STATE | DISCOVERY_STATE,
     "otto.declared": CATALOG_READERS,
 }
 FACADE = "otto.lab"
@@ -300,9 +323,10 @@ def test_no_otto_code_or_test_names_a_moved_name_at_its_old_home():
         "otto.bootstrap is only their public re-export; otto.fleet / otto.labs.loader inside otto, "
         "otto.lab in tests and docs, for the lab and fleet names; otto.config.scope for the "
         "settings types and the settings file's location; otto.utils for the path-list "
-        "splitter; otto.invocation for the active-run slot; otto.context for the fleet's "
+        "splitter; otto.invocation for the active-run slot; otto.run_context for the fleet's "
         "override helper; otto.host.builtin_hosts for the membership rule and "
-        "is_builtin_host; otto.declared for the composed state and the run's repos). "
+        "is_builtin_host; otto.declared for the composed state and the run's repos; "
+        "otto.config.repo for discovery). "
         "A line marked (a facade) "
         "is re-pointed by scripts/facade_sweep.py --apply when it is a from-import "
         "(tests/unit/test_internal_imports_skip_facades.py):\n  " + "\n  ".join(offenders)
@@ -432,7 +456,6 @@ class TestTheScanSeesEverySpelling:
             "from otto import declared\n"
             "declared._published()\n"
             "declared._composed_repos()\n"
-            "bs._discovered\n"
             "bs.get_repos()\n"
             "declared._composition.result\n"
             "from otto.declared import current_repos, published_result\n"
@@ -483,10 +506,41 @@ class TestTheScanSeesEverySpelling:
             "from otto.config.fleet import is_builtin_host\n"
             'CODE = "from otto.config.fleet import _apply_option_overrides\\n"\n'
             'monkeypatch.setattr("otto.context._active", f)\n'
-            "from otto.context import _apply_option_overrides, get_context\n"
+            "from otto.run_context import _apply_option_overrides, get_context\n"
             "from otto.host.builtin_hosts import is_builtin_host\n"
             "from otto.invocation import _ACTIVE, require_run\n"
             'FINE = "otto.fleet.get_hosts_in_play"\n'
             "context.get_context()\n"
         )
         assert self.lines(source, "otto.config.scope") == [1, 2, 3, 4, 6, 7, 8, 9]
+
+    def test_discovery_at_the_root_it_left(self):
+        """Discovery lives in ``otto.config.repo``; the root re-exports its public get_env."""
+        source = (
+            "from otto import bootstrap as bs\n"
+            "bs._discovered\n"
+            "from otto.bootstrap import DiscoveryResult\n"
+            'monkeypatch.setattr("otto.bootstrap.discovered_teardown_deadline", f)\n'
+            "from ..bootstrap import discovered_teardown_deadline\n"
+            'monkeypatch.setattr(bs, "_discovered", None)\n'
+            "bs.discover()\n"
+            "bs.get_env()\n"
+            "from otto.config.repo import DiscoveryResult, discover\n"
+            'FINE = "otto.config.repo.discover"\n'
+        )
+        assert self.lines(source) == [2, 3, 4, 5, 6, 7]
+
+    def test_the_run_context_s_internals_at_the_facade(self):
+        """``otto.context`` is a facade: its private names live in ``otto.run_context``."""
+        source = (
+            "from otto.context import LIBRARY_LAB_NAME, OttoContext\n"
+            "from ..context import prepared_policy\n"
+            'monkeypatch.setattr("otto.context._apply_option_overrides", f)\n'
+            "from otto import context\n"
+            "context.fill_teardown_deadline(policy)\n"
+            "from otto.context import OttoContext, get_context\n"
+            "from otto.run_context import LIBRARY_LAB_NAME, prepared_policy\n"
+            'FINE = "otto.run_context.fill_teardown_deadline"\n'
+            "context.get_context()\n"
+        )
+        assert self.lines(source) == [1, 2, 3, 5]

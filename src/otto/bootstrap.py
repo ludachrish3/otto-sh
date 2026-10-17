@@ -19,8 +19,9 @@ applies to (:class:`ProjectScopeError`, spec §D2). Lab loading is
 deliberately NOT part of bootstrap — it happens lazily at first access.
 
 ``bootstrap()`` is idempotent: the CLI entrypoint calls it before argv
-parsing, ``open_context()`` calls it lazily, and repeated calls return the
-same :class:`BootstrapResult`.
+parsing, ``open_context()`` reaches it only through ``declared.compose()`` and
+the initiator the root installed, and repeated calls return the same
+:class:`BootstrapResult`.
 
 What it composes, a :class:`BootstrapResult`, is published to the
 composed-repos catalog in :mod:`otto.declared`, the one home of the composed
@@ -48,7 +49,12 @@ re-exported here, each the same object as its owner's:
 on first use, never at import, through the catalog's initiator, which looks
 :func:`bootstrap` up in this module when called, so a test's patch of
 ``otto.bootstrap.bootstrap`` reaches them; :func:`is_bootstrapped` never
-composes. :func:`get_env` reads :func:`discover`'s result.
+composes. Discovery, phase 1, is defined in :mod:`otto.config.repo` with its
+cache, and this module re-exports its public :func:`get_env` from there
+lazily, the same object as its owner's: importing the root loads no repo
+loader. Code that runs discovery calls ``otto.config.repo.discover``, and
+:func:`bootstrap` reads it off that module when called, so a test's patch of
+``otto.config.repo.discover`` reaches it.
 :func:`get_completion_names` is defined in :mod:`otto.registry`, which holds
 the CLI's completion-cache snapshot, and re-exported here: its readers
 import that module, not this one, so resolving a command for ``--help`` or a
@@ -56,7 +62,6 @@ TAB loads no composition root.
 """
 
 import importlib
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .config.scope import BootstrapError, BootstrapWarning, DependencyError, ProjectScopeError
@@ -73,8 +78,7 @@ from .errors import is_containable
 from .registry import clear_completion_names, get_completion_names, registering_repo
 
 if TYPE_CHECKING:
-    from .config.repo import Repo
-    from .models.settings import OttoEnvSettings
+    from .config.repo import Repo, get_env
 
 __all__ = [
     "BootstrapError",
@@ -92,22 +96,24 @@ __all__ = [
 ]
 
 
-@dataclass(frozen=True)
-class DiscoveryResult:
-    """Everything phase 1 produced: environment, repos, contained errors.
-
-    Separate from :class:`BootstrapResult` rather than reused: ``warnings``
-    comes from the dependency pass, which runs inside :func:`bootstrap` after
-    discovery has returned, so a shared type would carry a field that is
-    structurally always empty on this path.
-    """
-
-    env: "OttoEnvSettings"
-    repos: list["Repo"]
-    errors: list[BootstrapError] = field(default_factory=list)
+# name -> the module that defines it, imported on first access by __getattr__: the
+# discovery name this root re-exports, its public get_env. Lazy, so importing the root
+# loads no repo loader.
+_LAZY_ATTRS: dict[str, str] = {
+    "get_env": "otto.config.repo",
+}
 
 
-_discovered: "DiscoveryResult | None" = None
+def __getattr__(name: str) -> object:
+    """PEP 562 resolver for the discovery name re-exported from otto.config.repo."""
+    if name in _LAZY_ATTRS:
+        return getattr(importlib.import_module(_LAZY_ATTRS[name]), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Include the lazy re-export in dir(); the module dict does not hold it."""
+    return sorted(set(globals()) | set(_LAZY_ATTRS))
 
 
 _NO_LAB_PATTERNS = """\
@@ -249,40 +255,6 @@ def _contain_data_profile_errors(repos: "list[Repo]", errors: list[BootstrapErro
             errors.append(BootstrapError(repo.sut_dir, str(TOML_SETTINGS_PATH), e))
 
 
-def discover() -> DiscoveryResult:
-    """Phase 1: env + repo discovery (settings parse only — no user code). Cached.
-
-    Per-repo config-data failures (unreadable or malformed ``settings.toml``)
-    get the same containment as phase-2 user-code failures: the repo is
-    skipped and a framed :class:`BootstrapError` is recorded, surfacing via
-    ``bootstrap().errors`` (help degrades, real dispatch fails loud).
-    Env-level failures (bad ``OTTO_SUT_DIRS`` / OTTO_* values) still raise —
-    with no environment there is nothing to degrade to.
-
-    The errors ride the cached result itself: recomputing discovery (after
-    :func:`invalidate`) necessarily recomputes them, so a stale error cannot
-    outlive the discovery that produced it.
-    """
-    global _discovered  # noqa: PLW0603 — module-level singleton/cache
-    if _discovered is None:
-        from .config.env import load_otto_env
-        from .config.repo import Repo
-        from .config.scope import TOML_SETTINGS_PATH
-
-        env = load_otto_env()
-        repos: list[Repo] = []
-        errors: list[BootstrapError] = []
-        for sut_dir in env.sut_dirs:
-            try:
-                repos.append(Repo(sut_dir=sut_dir))
-            except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY config-data failure becomes a framed error
-                if not is_containable(e):
-                    raise
-                errors.append(BootstrapError(sut_dir, str(TOML_SETTINGS_PATH), e))
-        _discovered = DiscoveryResult(env=env, repos=repos, errors=errors)
-    return _discovered
-
-
 def bootstrap() -> BootstrapResult:
     """Run the composition root (idempotent): discovery, dependency pass, registration.
 
@@ -304,6 +276,9 @@ def bootstrap() -> BootstrapResult:
         # a stale copy — but it is necessarily partial: inits that have not
         # run yet cannot have failed yet.
         return published
+    # Read when called, from its defining module, so a patch of it there reaches here.
+    from .config.repo import discover
+
     discovered = discover()
     env, repos = discovered.env, discovered.repos
     errors: list[BootstrapError] = list(discovered.errors)
@@ -335,7 +310,11 @@ def bootstrap() -> BootstrapResult:
         complete=False,
     )
     try:
-        importlib.import_module("otto.project.actions").declare()
+        # The project layer sits below the root. Each function is read off its
+        # module when called, so a caller may substitute it.
+        from .project import actions, commands
+
+        actions.declare()
         for repo in resolution.ordered:
             repo.add_libs_to_pythonpath()
             with registering_repo(repo.name):
@@ -349,13 +328,7 @@ def bootstrap() -> BootstrapResult:
         # Every repo has spoken: check each project instruction's merged
         # options. Not contained -- a cross-repo options collision is a
         # declared conflict the user must resolve, not one repo's breakage.
-        #
-        # By NAME, like the declaration import above, and for the same reason:
-        # otto.bootstrap does not declare a dependency on otto.project (see
-        # tach.toml), which is what keeps the project layer's edge up into
-        # otto.cli from closing a loop through bootstrap as well. The attribute
-        # is read off the module at call time, so a caller may substitute it.
-        importlib.import_module("otto.project.commands").check_project_instruction_options()
+        commands.check_project_instruction_options()
         # Every loaded repo's host classes are registered now, so its
         # [os_profiles] tables can be checked: a table may name a class an init
         # module registers. A skipped repo's init never ran, so it is not judged.
@@ -386,24 +359,6 @@ def bootstrap() -> BootstrapResult:
     return result
 
 
-def get_env() -> "OttoEnvSettings":
-    """Return the startup environment settings (runs discovery lazily, never bootstrap)."""
-    return discover().env
-
-
-def discovered_teardown_deadline() -> "float | None":
-    """``OTTO_TEARDOWN_DEADLINE`` as discovery parsed it, or ``None`` when discovery fails.
-
-    Read once, when a run is prepared (the CLI root callback,
-    ``open_context``, library ``run_tests``), into the run's policy. With no
-    policy installed, every reader sees the policy's 10-second default.
-    """
-    try:
-        return get_env().teardown_deadline
-    except Exception:  # noqa: BLE001 — discovery unavailable (bare library use): the default stands
-        return None
-
-
 def invalidate() -> None:
     """Drop every cached bootstrap result so the next call recomputes.
 
@@ -415,8 +370,9 @@ def invalidate() -> None:
     composes again. The CLI's completion-cache snapshot
     (:func:`otto.registry.get_completion_names`) is cleared as well.
     """
-    global _discovered  # noqa: PLW0603 — module-level singleton/cache
-    _discovered = None
+    from .config.repo import clear_discovery
+
+    clear_discovery()
     clear_completion_names()
     # Both published results, the in-progress one too. `bootstrap()` replaces
     # that when it succeeds and withdraws it when it fails, so it is already

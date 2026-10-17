@@ -46,7 +46,7 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
 
     title = _TITLES[seam]
     if root_options(ctx).labs:
-        from ..context import get_context
+        from ..run_context import get_context
 
         ensure_inline_lab(ctx)
         lab = get_context().lab

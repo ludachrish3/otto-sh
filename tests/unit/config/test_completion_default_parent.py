@@ -62,7 +62,7 @@ def _s(hid, labs, cap=True, pri=0):
 
 @pytest.fixture
 def repos_two_labs(tmp_path, monkeypatch):
-    from otto.bootstrap import discover
+    from otto.config.repo import discover
 
     sut = make_sut_repo(
         tmp_path / "sut",

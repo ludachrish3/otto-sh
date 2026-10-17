@@ -1160,7 +1160,7 @@ def test_run_tests_leaves_active_context_output_dir_untouched(sut_repo, tmp_path
 
 def test_run_tests_installs_and_restores_minimal_context(tmp_path, monkeypatch):
     """The installed context is the LIBRARY_LAB_NAME sentinel lab, pointed at the output dir."""
-    from otto.context import LIBRARY_LAB_NAME, try_get_context
+    from otto.run_context import LIBRARY_LAB_NAME, try_get_context
 
     _use_repo(monkeypatch, _stub_repo(tmp_path))
     captured: dict = {}

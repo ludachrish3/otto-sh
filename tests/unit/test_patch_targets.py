@@ -48,7 +48,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from tests._fixtures._lazy_exports import lazy_export_map, lazy_package_names
+from tests._fixtures._lazy_exports import lazy_export_map, lazy_facade_names
 from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
 
 
@@ -62,7 +62,7 @@ def _dotted(node: ast.AST) -> str | None:
 
 def _package_aliases(tree: ast.AST) -> dict[str, str]:
     """``local expression -> otto package`` for the plain imports in one file."""
-    packages = set(lazy_package_names())
+    packages = set(lazy_facade_names())
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -169,7 +169,7 @@ class TestTheScannerSeesEveryForm:
         ):
             assert self.scan(call) == ["t.py:1 otto.lab.get_lab -> patch otto.fleet.get_lab"], call
 
-    def test_a_hop_through_another_lazy_package_names_the_true_home(self):
+    def test_a_hop_through_another_lazy_facade_names_the_true_home(self):
         assert self.scan('patch("otto.app")') == ["t.py:1 otto.app -> patch otto.cli.main.app"]
 
     def test_attribute_forms_through_an_import_alias(self):
@@ -235,10 +235,8 @@ class Exclusion(NamedTuple):
     expires: str
 
 
-EAGER_REEXPORT_EXCLUSIONS: list[Exclusion] = [
-    Exclusion("tests/unit/session/test_logs.py", "get_repos", "P9b"),
-]
-"""The one consumer still reading a re-export: ``session/logs.py``'s ``get_repos``."""
+EAGER_REEXPORT_EXCLUSIONS: list[Exclusion] = []
+"""None: every consumer reads each name from its owner, so every test patches it there."""
 
 
 class Offence(NamedTuple):
@@ -270,6 +268,8 @@ def eager_reexports(module: str) -> dict[str, str]:
     namespace = vars(importlib.import_module(module))
     found = {}
     for name in namespace["__all__"]:
+        if name not in namespace:
+            continue  # a lazy export: the scan of lazy facades covers its patches
         obj = namespace[name]
         if inspect.ismodule(obj):
             continue

@@ -145,7 +145,7 @@ SLOTS = [
     Slot(
         name="active run",
         home="otto/invocation.py",
-        installer="otto/context.py",
+        installer="otto/run_context.py",
         privileged=["install_run", "restore_run"],
         tables=["_ACTIVE"],
     ),
@@ -922,7 +922,7 @@ def test_the_raw_slot_ban_sees_every_route(tmp_path: Path) -> None:
         "by_name.py": "TARGET = 'otto.invocation:_ACTIVE'\n",
         "rebind.py": "import otto.invocation as inv\n\ninv._ACTIVE = None\n",
         # The installer gets no exemption: it goes through install_run like everyone.
-        "context.py": "from .invocation import _ACTIVE\n\n_ACTIVE.set(None)\n",
+        "run_context.py": "from .invocation import _ACTIVE\n\n_ACTIVE.set(None)\n",
     }
     clean = {
         "invocation.py": "from contextvars import ContextVar\n\n_ACTIVE = ContextVar('x')\n"

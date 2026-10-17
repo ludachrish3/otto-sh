@@ -67,10 +67,10 @@ def test_the_root_re_exports_the_catalogs_own_object(name):
     assert getattr(bootstrap, name) is getattr(declared, name)
 
 
-def test_the_root_keeps_its_discovery_and_no_result_of_its_own():
-    assert hasattr(bootstrap, "_discovered")
+def test_the_root_keeps_no_result_and_no_discovery_of_its_own():
     assert not hasattr(bootstrap, "_result")
     assert not hasattr(bootstrap, "_in_progress")
+    assert not hasattr(bootstrap, "_discovered")
 
 
 def test_an_init_module_reading_the_state_mid_composition_gets_the_result_being_built(

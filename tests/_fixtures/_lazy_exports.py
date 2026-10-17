@@ -22,7 +22,10 @@ the defining module too. The rule covers ``unittest.mock.patch`` as well:
 it does not leak, but inside its block it can shadow a defining-module
 monkeypatch, so the suite patches where a name is defined everywhere.
 
-Scope: every lazy package, whichever table it declares. ``_LAZY_ATTRS`` maps
+Scope: every lazy facade, whichever table it declares: each package whose
+``__init__`` declares one, and each plain module that does (``otto.bootstrap``
+re-exports discovery's ``get_env`` lazily from ``otto.config.repo``).
+``_LAZY_ATTRS`` maps
 a name to the module that defines it. ``_LAZY_EXPORTS`` (``otto``,
 ``otto.config``, ``otto.logger``) maps it to either a ``(module, attr)`` pair
 or, in ``otto.logger``, to the submodule that the name is. A package's own
@@ -35,11 +38,13 @@ contributor rules this guard and ``tests/unit/test_patch_targets.py`` enforce.
 
 import functools
 import importlib
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
 
 _TABLES = ("_LAZY_ATTRS", "_LAZY_EXPORTS")
+_DECLARES = re.compile(r"^_LAZY_(ATTRS|EXPORTS)\b", re.MULTILINE)
 
 
 class LeakedLazyExportError(RuntimeError):
@@ -47,8 +52,10 @@ class LeakedLazyExportError(RuntimeError):
 
 
 @functools.cache
-def lazy_package_names() -> list[str]:
-    """Every otto package whose ``__init__`` declares a lazy table, read once per process.
+def lazy_facade_names() -> list[str]:
+    """Every otto package or module that declares a lazy table, read once per process.
+
+    A package declares it in its ``__init__``; a plain module, at its own top level.
 
     Read from the source tree rather than from ``sys.modules``, so a package
     imported for the first time mid-session is still checked.
@@ -57,9 +64,9 @@ def lazy_package_names() -> list[str]:
 
     root = Path(otto.__file__).parent
     return [
-        ".".join(["otto", *init.parent.relative_to(root).parts])
-        for init in sorted(root.rglob("__init__.py"))
-        if any(table in init.read_text(encoding="utf-8") for table in _TABLES)
+        ".".join(["otto", *path.relative_to(root).with_suffix("").parts]).removesuffix(".__init__")
+        for path in sorted(root.rglob("*.py"))
+        if _DECLARES.search(path.read_text(encoding="utf-8"))
     ]
 
 
@@ -89,7 +96,7 @@ def _defining_module(package: ModuleType, name: str) -> str:
     assert target is not None, f"{package.__name__}.{name} is not lazy"
     module_name, attr = target
     seen = {module_name}
-    packages = set(lazy_package_names())
+    packages = set(lazy_facade_names())
     while module_name in packages:
         hop = _lazy_target(importlib.import_module(module_name), attr)
         if hop is None or hop[0] in seen:
@@ -108,7 +115,7 @@ def lazy_export_map() -> dict[str, str]:
     their tables; the defining modules are never imported.
     """
     exports = {}
-    for package in lazy_package_names():
+    for package in lazy_facade_names():
         module = importlib.import_module(package)
         for table in _TABLES:
             for name in getattr(module, table, None) or {}:
@@ -126,7 +133,7 @@ def leaked_lazy_exports() -> list[str]:
     ``sys.modules`` lookup and one set intersection per lazy package.
     """
     leaked = []
-    for package in lazy_package_names():
+    for package in lazy_facade_names():
         module = sys.modules.get(package)
         if module is None:
             continue

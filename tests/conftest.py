@@ -255,7 +255,6 @@ from dataclasses import dataclass
 import pytest
 import pytest_asyncio
 
-from otto.context import OttoContext, reset_context, set_context
 from otto.host.factory import create_host_from_dict
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
@@ -263,6 +262,7 @@ from otto.host.remote_host import make_host_id
 from otto.host.unix_host import UnixHost
 from otto.invocation import RegistrySnapshot
 from otto.labs.loader import Lab
+from otto.run_context import OttoContext, reset_context, set_context
 from otto.suite._retry import report_retries, retry_hookwrapper
 from tests._fixtures import _conftest_rebind
 from tests._fixtures._coverage_preinit import (
@@ -1275,22 +1275,18 @@ def _restore_otto_logger_state():
         root_logger.setLevel(saved_root_level)
 
 
-_BOOTSTRAP_CACHES = ["_discovered"]
-"""``otto.bootstrap``'s own module cache, snapshot and restored by name at its owner."""
-
-
 @pytest.fixture(autouse=True)
 def _restore_composition_state():
     """Snapshot-restore the composition state at each of its owners, importing neither.
 
-    Two owners hold it. ``otto.bootstrap`` memoizes discovery into a module
-    global (``_BOOTSTRAP_CACHES``); discovery errors ride the cached
-    ``_discovered`` :class:`~otto.bootstrap.DiscoveryResult` itself (the old
-    append-only ``_discovery_errors`` global is gone). ``otto.declared`` holds
-    the composed state: the complete and in-progress results the root
-    publishes and the initiator slot the root fills when it is imported, on
-    one record, ``_composition`` (spec 2026-10-11 placement-and-phases §3.5,
-    §3.9, §3.13). So one test that drives the
+    Two owners hold it. ``otto.config.repo`` caches discovery on one record,
+    ``_discovery``; discovery errors ride the cached
+    :class:`~otto.config.repo.DiscoveryResult` itself (the old append-only
+    ``_discovery_errors`` global is gone). ``otto.declared`` holds the
+    composed state: the complete and in-progress results the root publishes
+    and the initiator slot the root fills when it is imported, on one record,
+    ``_composition`` (spec 2026-10-11 placement-and-phases §3.5, §3.9,
+    §3.13). So one test that drives the
     CLI with ``OTTO_SUT_DIRS`` pointing at a scratch repo —
     ``test_init_prompts``'s epilogue tests do exactly that — records a framed
     "no .otto/settings.toml" error that outlives the ``monkeypatch.setenv``
@@ -1345,15 +1341,12 @@ def _restore_composition_state():
 
     bootstrap = sys.modules.get("otto.bootstrap")
     declared = sys.modules.get("otto.declared")
+    config_repo = sys.modules.get("otto.config.repo")
     # Read unconditionally on a loaded owner: a renamed cache or record fails
-    # here, at setup (AttributeError). The teardown's setattr alone would
+    # here, at setup (AttributeError). The teardown's assignment alone would
     # silently mint new attributes, so this read is the guard (fable's
     # final-review find).
-    saved_caches = (
-        None
-        if bootstrap is None
-        else {name: getattr(bootstrap, name) for name in _BOOTSTRAP_CACHES}
-    )
+    saved_discovery = None if config_repo is None else dataclasses.replace(config_repo._discovery)
     saved_composition = None if declared is None else dataclasses.replace(declared._composition)
     saved_initiate = None if bootstrap is None else bootstrap._initiate
     saved_names = otto_registry._COMPLETION_SNAPSHOT.names
@@ -1361,14 +1354,16 @@ def _restore_composition_state():
     otto_registry._COMPLETION_SNAPSHOT.names = saved_names
     bootstrap = sys.modules.get("otto.bootstrap")
     declared = sys.modules.get("otto.declared")
+    config_repo = sys.modules.get("otto.config.repo")
     left_initiate = None if bootstrap is None else bootstrap._initiate
-    if bootstrap is not None:
-        for name in _BOOTSTRAP_CACHES:
-            setattr(bootstrap, name, None if saved_caches is None else saved_caches[name])
-        # Put a replaced ``_initiate`` back before failing, so the leak fails
-        # only the test that left it, not every later test on the worker.
-        if saved_initiate is not None:
-            bootstrap._initiate = saved_initiate
+    if config_repo is not None:
+        config_repo._discovery = (
+            type(config_repo._discovery)() if saved_discovery is None else saved_discovery
+        )
+    # Put a replaced ``_initiate`` back before failing, so the leak fails only
+    # the test that left it, not every later test on the worker.
+    if bootstrap is not None and saved_initiate is not None:
+        bootstrap._initiate = saved_initiate
     if declared is not None:
         declared._composition = (
             type(declared._composition)() if saved_composition is None else saved_composition

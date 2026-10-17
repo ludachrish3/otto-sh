@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 from otto import bootstrap as bs
-from otto.context import (
+from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+from otto.invocation import RunPolicy
+from otto.run_context import (
     LIBRARY_LAB_NAME,
     OttoContext,
     get_context,
@@ -14,8 +16,6 @@ from otto.context import (
     set_context,
     try_get_context,
 )
-from otto.host.host import DEFAULT_COMMAND_TIMEOUT
-from otto.invocation import RunPolicy
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
 from tests._fixtures.fake_repo import fake_repo
@@ -94,8 +94,8 @@ def test_get_host_unknown_id_sentinel_lab_appends_open_context_breadcrumb():
     otto.open_context(lab=...)`` — and ONLY for that sentinel lab."""
     import pytest
 
-    from otto.context import LIBRARY_LAB_NAME
     from otto.labs.loader import Lab
+    from otto.run_context import LIBRARY_LAB_NAME
 
     assert LIBRARY_LAB_NAME == "<library>"
     ctx = OttoContext(lab=Lab(name=LIBRARY_LAB_NAME))
@@ -205,7 +205,7 @@ def test_for_repo_is_a_facade_over_the_same_context_not_a_copy(tmp_path):
     """``for_repo`` narrows walks and nothing else — same lab, live flags.
 
     A view that COPIED the context would pass every scoping test in
-    ``tests/unit/config/test_fleet_scoping.py`` and still be wrong: a flag set
+    ``tests/unit/fleet/test_fleet_scoping.py`` and still be wrong: a flag set
     on the context after the view was built (``output_dir``, which the CLI
     stamps per-run) would never reach the repo acting under it.
     """
@@ -585,6 +585,17 @@ def test_cov_detection_failure_is_false_with_one_warning(cov_detection, caplog):
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "coverage" in warnings[0].getMessage()
+
+
+def test_run_context_logs_on_the_public_otto_context_logger(cov_detection, caplog):
+    """The run context's records stay on ``otto.context``, the name users configure."""
+    import otto.run_context
+
+    assert otto.run_context.logger.name == "otto.context"
+    cov_detection["repos"] = [_CovRepo({"hosts": 5})]
+    with caplog.at_level(logging.WARNING, logger="otto.context"):
+        assert OttoContext(lab=_lab_with("test1")).cov is False
+    assert [r.name for r in caplog.records if r.levelno == logging.WARNING] == ["otto.context"]
 
 
 def test_cov_detection_with_unreachable_repos_is_false(monkeypatch):
@@ -1119,7 +1130,7 @@ async def test_an_unbuildable_backend_refuses_before_any_context(tmp_path, monke
     installed = []
     real_set_context = set_context
     monkeypatch.setattr(
-        "otto.context.set_context", lambda ctx: installed.append(ctx) or real_set_context(ctx)
+        "otto.run_context.set_context", lambda ctx: installed.append(ctx) or real_set_context(ctx)
     )
     before = variant()
     with pytest.raises(ReservationBackendError):
@@ -1142,7 +1153,7 @@ async def test_a_backend_failing_at_query_time_uninstalls_the_context(tmp_path, 
     installed = []
     real_set_context = set_context
     monkeypatch.setattr(
-        "otto.context.set_context", lambda ctx: installed.append(ctx) or real_set_context(ctx)
+        "otto.run_context.set_context", lambda ctx: installed.append(ctx) or real_set_context(ctx)
     )
     before = variant()
     with pytest.raises(ReservationBackendError):

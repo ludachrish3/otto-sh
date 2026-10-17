@@ -369,7 +369,7 @@ class TestUserland:
         """A ``dataclasses.replace`` copy gets its own resolver, bound to its own exec.
 
         This is the property ``_userland_cache``'s ``init=False`` buys, and it
-        is not hypothetical: ``otto.context._apply_option_overrides``
+        is not hypothetical: ``otto.run_context._apply_option_overrides``
         builds override copies exactly this way for every ``get_host(...)`` /
         ``all_hosts(...)`` call that passes an option table, and the copy opens
         its OWN connection. A copied-over resolver would send that copy's

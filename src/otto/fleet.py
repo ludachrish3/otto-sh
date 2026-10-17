@@ -86,7 +86,7 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
         include_containers: When ``True``, also yield
             :class:`~otto.host.docker_host.DockerContainerHost` entries. Defaults to ``False``.
         term, transfer: optional active-protocol override; see
-            ``otto.context._apply_option_overrides``.
+            ``otto.run_context._apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options, userland_options: Optional per-call overrides. When
             supplied, each yielded host is a fresh
@@ -116,7 +116,7 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
 
             matched = list(all_hosts(re.compile(r"test2.*")))
     """
-    from .context import get_context
+    from .run_context import get_context
 
     yield from get_context().all_hosts(
         pattern,
@@ -166,7 +166,7 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         include_local: Forwarded to :func:`all_hosts`. When ``False``
             (default), the built-in ``local`` runner host is excluded.
         term, transfer: optional active-protocol override; see
-            ``otto.context._apply_option_overrides``.
+            ``otto.run_context._apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options, userland_options: Optional per-call overrides
             forwarded to :func:`all_hosts`. See its docstring for
@@ -189,7 +189,7 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
                 pattern=re.compile(r"router.*"),
             )
     """
-    from .context import get_context
+    from .run_context import get_context
 
     return await get_context().do_for_all_hosts(
         method,
@@ -243,7 +243,7 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         include_containers: Forwarded to :func:`do_for_all_hosts`. When
             ``False`` (default), container hosts are excluded.
         term, transfer: optional active-protocol override; see
-            ``otto.context._apply_option_overrides``.
+            ``otto.run_context._apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options, userland_options: Optional per-call overrides
             forwarded to :func:`do_for_all_hosts`.
@@ -257,7 +257,7 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
 
             results = await run_on_all_hosts("uname -a")
     """
-    from .context import get_context
+    from .run_context import get_context
 
     return await get_context().run_on_all_hosts(
         cmds,
@@ -295,7 +295,7 @@ def get_host(
     Args:
         host_id: Unique host id (as produced by ``UnixHost.id``).
         term, transfer: optional active-protocol override; see
-            ``otto.context._apply_option_overrides``.
+            ``otto.run_context._apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options, userland_options: Optional per-call overrides.
             Each non-``None`` argument **replaces** the corresponding
@@ -308,7 +308,7 @@ def get_host(
             ``get_host('x') is get_host('x')`` still holds. Hop
             resolution is internal and is *not* affected by overrides.
     """
-    from .context import get_context
+    from .run_context import get_context
 
     return get_context().get_host(
         host_id,
@@ -326,7 +326,7 @@ def get_host(
 
 def get_lab() -> "Lab":
     """Return the active lab from the current OttoContext."""
-    from .context import get_context
+    from .run_context import get_context
 
     return get_context().lab
 
@@ -349,8 +349,8 @@ def get_hosts_in_play() -> set[str]:
     empty declared fleet reads as ZERO hosts in play, never as an abort, and
     the built-in ``local`` host is never in play.
     """
-    from .context import get_context
     from .reservations.check import _hosts_in_play
+    from .run_context import get_context
 
     return _hosts_in_play(get_context())
 
@@ -398,7 +398,7 @@ def fleet_of_interest(
     * **An unknown owner** is refused even when *repos* is empty. A context
       that could not reach its repos falls back to the whole lab; a caller
       that passed *repos* has reached them, so the whole lab would widen.
-    * **The library sentinel lab** (``otto.context.LIBRARY_LAB_NAME``) gets no
+    * **The library sentinel lab** (``otto.run_context.LIBRARY_LAB_NAME``) gets no
       special case. A context on it walks its whole lab; this function scopes
       the lab it is given.
 

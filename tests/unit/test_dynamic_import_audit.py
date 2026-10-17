@@ -12,12 +12,10 @@ each such string is a real dependency tach cannot see:
 * a literal ``"pkg.module:attr"`` loader given to ``register_cli_command``,
   imported when the command is dispatched.
 
-A string whose target lies outside its own tach module is a *string edge*. A
-file no tach module owns yet (``otto/__init__.py``, ``otto/lab``, ``otto/env``,
-...) counts, here, as owned by its top-level package, the module ``tach.toml``
-will declare for it; its edges are listed, but no layer or cycle rule can judge
-them until that module is declared. This file parses ``src/otto`` and imports no
-otto module. It fails when:
+A string whose target lies outside its own tach module is a *string edge*.
+Every file is in a tach module (``tests/unit/test_tach_layers.py``), so every
+edge is judged by the layer and cycle rules. This file parses ``src/otto`` and
+imports no otto module. It fails when:
 
 1. a string edge is missing from ``STRING_EDGES``, a listed one no longer
    exists, or one is listed under the wrong class;
@@ -68,7 +66,8 @@ REGISTRY_BUILTIN = "first-party registry built-in"
 
 # Classes of a computed site, each confirmed by reading the site.
 FACADE_RESOLVER = "facade resolver"
-"""A package ``__getattr__`` importing an entry of its own lazy table."""
+"""A facade's ``__getattr__`` (a package's or a plain module's) importing an entry of its
+own lazy table."""
 USER_SUPPLIED = "user-supplied"
 """A target read from a repo's settings or an init module's registration."""
 CLI_COMMAND_TABLE = "CLI command table"
@@ -85,6 +84,7 @@ LOADED_MODULE_LOOKUP = "loaded-module lookup"
 COMPUTED_SITES: list[tuple[str, str, str]] = [
     ("otto/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/_webassets/__init__.py", "__getattr__", FACADE_RESOLVER),
+    ("otto/bootstrap.py", "__getattr__", FACADE_RESOLVER),
     ("otto/bootstrap.py", "bootstrap", USER_SUPPLIED),
     ("otto/check/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/cli/__init__.py", "__getattr__", FACADE_RESOLVER),
@@ -93,6 +93,7 @@ COMPUTED_SITES: list[tuple[str, str, str]] = [
     ("otto/cli/registry.py", "resolve_spec_command", CLI_COMMAND_TABLE),
     ("otto/config/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/config/repo.py", "Repo.import_init_modules", USER_SUPPLIED),
+    ("otto/context.py", "__getattr__", FACADE_RESOLVER),
     ("otto/coverage/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/coverage/fetcher/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/coverage/merge/__init__.py", "__getattr__", FACADE_RESOLVER),
@@ -629,11 +630,9 @@ def computed_problems(found: Extraction, listed: "list[tuple[str, str, str]]") -
         klass = classes.pop(0)
         where = f"{site.path}:{site.line} in {site.scope}"
         if klass == FACADE_RESOLVER and not (
-            site.path.endswith("__init__.py")
-            and site.scope == "__getattr__"
-            and site.path in found.lazy_table_files
+            site.scope == "__getattr__" and site.path in found.lazy_table_files
         ):
-            problems.append(f"{where} is no package __getattr__ over a lazy table")
+            problems.append(f"{where} is no facade __getattr__ over a lazy table")
         if klass == REF_OVER_LITERAL_TABLE and not site.expanded:
             problems.append(
                 f"{where}: unverified computed target; not every row of a literal "
@@ -667,7 +666,7 @@ def test_computed_sites_must_be_listed_and_fit_their_class() -> None:
     not_a_table = computed_problems(found, [("otto/x.py", "f", REF_OVER_LITERAL_TABLE)])
     assert "unverified computed target" in not_a_table[0]
     not_a_resolver = computed_problems(found, [("otto/x.py", "f", FACADE_RESOLVER)])
-    assert "no package __getattr__" in not_a_resolver[0]
+    assert "no facade __getattr__" in not_a_resolver[0]
 
 
 def test_the_extractor_reads_every_string_shape(tmp_path: Path) -> None:
@@ -939,7 +938,7 @@ COMPOSITION_ROOT = "otto/bootstrap.py"
 # The landings of spec 2026-10-11 placement-and-phases §6, in order. Each
 # landing sets CURRENT_LANDING to its own name in its commit.
 LANDINGS = ["P1a", "P1b", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9a", "P9b"]
-CURRENT_LANDING = "P9a"
+CURRENT_LANDING = "P9b"
 
 # What the declared graph shows once each landing is in: the modules with a
 # layer (spec 2026-10-11 placement-and-phases §5.2, "modules layered") and the
@@ -950,7 +949,7 @@ CURRENT_LANDING = "P9a"
 # The last landing's row is exact. P3 and P4 share both counts (43 and 13), so
 # no count separates them; nothing grandfathered expires in P4, so a landing
 # left named P3 through P4 loses nothing, and P5's counts then demand the bump.
-# P9a and P9b share the cycle count (0) but not the layered one (62 and 77).
+# P9a and P9b share the cycle count (0) but not the layered one (62 and 74).
 # P7 layers otto.labs alone: the lab model stayed with its loader in otto.labs, so no
 # module was carved for it (spec §3.7 and §5.2 as amended by P7), and its row is 55.
 # P8 layers otto.reservations alone: the active run is a slot in otto.invocation, a module
@@ -958,6 +957,9 @@ CURRENT_LANDING = "P9a"
 # P8), and its row is 56.
 # P9a layers the five modules that leave the cycle and the fleet's own module, otto.fleet
 # (spec §3.9 and §5.2 as amended by P9a), and its row is 62.
+# P9b layers the last twelve: the root package, otto.lab, otto.env, otto._shim and
+# otto.__main__, the run context's home otto.run_context, and session's six files
+# (spec §3.9, §3.12 and §5.2 as amended by P9b), and its row is 74.
 LAYERED_AT = {
     "P1a": 19,
     "P1b": 35,
@@ -969,7 +971,7 @@ LAYERED_AT = {
     "P7": 55,
     "P8": 56,
     "P9a": 62,
-    "P9b": 77,
+    "P9b": 74,
 }
 CYCLE_AT = {
     "P1a": 22,
@@ -988,7 +990,7 @@ CYCLE_AT = {
 # Every string edge: (file under src/, target, class). A target is
 # "pkg.module:attr", or "pkg.module" for a module. Duplicates are separate sites.
 STRING_EDGES: list[tuple[str, str, str]] = [
-    # The root facade. otto/__init__.py is in no tach module until it is declared.
+    # The root facade, the module otto at entry.
     ("otto/__init__.py", "otto.params:options", FACADE_BINDING),
     ("otto/__init__.py", "otto.params:register_options", FACADE_BINDING),
     ("otto/__init__.py", "otto.cli:app", FACADE_BINDING),
@@ -1019,9 +1021,23 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/__init__.py", "otto.suite.run:run_tests", FACADE_BINDING),
     ("otto/__init__.py", "otto.suite.run:RunOptions", FACADE_BINDING),
     ("otto/__init__.py", "otto.utils:Status", FACADE_BINDING),
-    # The composition root's by-name imports of the project layer.
-    ("otto/bootstrap.py", "otto.project.actions", ROOT_BY_NAME),
-    ("otto/bootstrap.py", "otto.project.commands", ROOT_BY_NAME),
+    # The composition root's lazy re-export of discovery's public name, from its owner.
+    ("otto/bootstrap.py", "otto.config.repo:get_env", FACADE_BINDING),
+    # The run context's facade: the invocation leaf's four names and its home's ten.
+    ("otto/context.py", "otto.invocation:ContextBinding", FACADE_BINDING),
+    ("otto/context.py", "otto.invocation:HostResolver", FACADE_BINDING),
+    ("otto/context.py", "otto.invocation:RunPolicy", FACADE_BINDING),
+    ("otto/context.py", "otto.invocation:Variant", FACADE_BINDING),
+    ("otto/context.py", "otto.run_context:OttoContext", FACADE_BINDING),
+    ("otto/context.py", "otto.run_context:ProjectContextView", FACADE_BINDING),
+    ("otto/context.py", "otto.run_context:get_context", FACADE_BINDING),
+    ("otto/context.py", "otto.run_context:open_context", FACADE_BINDING),
+    ("otto/context.py", "otto.run_context:reset_context", FACADE_BINDING),
+    ("otto/context.py", "otto.run_context:reset_variant", FACADE_BINDING),
+    ("otto/context.py", "otto.run_context:set_context", FACADE_BINDING),
+    ("otto/context.py", "otto.run_context:set_variant", FACADE_BINDING),
+    ("otto/context.py", "otto.run_context:try_get_context", FACADE_BINDING),
+    ("otto/context.py", "otto.run_context:variant", FACADE_BINDING),
     # The otto.config facade's settings types, from the foundation scope module.
     ("otto/config/__init__.py", "otto.config.scope:DockerCompose", FACADE_BINDING),
     ("otto/config/__init__.py", "otto.config.scope:DockerImage", FACADE_BINDING),
@@ -1037,7 +1053,7 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ),
     ("otto/host/__init__.py", "otto.result:CommandResult", FACADE_BINDING),
     ("otto/host/__init__.py", "otto.result:Results", FACADE_BINDING),
-    # The otto.lab facade. otto/lab/__init__.py is in no tach module until it is declared.
+    # The otto.lab facade, at entry.
     ("otto/lab/__init__.py", "otto.labs.loader:Lab", FACADE_BINDING),
     ("otto/lab/__init__.py", "otto.labs.loader:load_lab", FACADE_BINDING),
     ("otto/lab/__init__.py", "otto.fleet:get_lab", FACADE_BINDING),
@@ -1085,15 +1101,34 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/monitor/__init__.py", "otto.monitor.parsers:DEFAULT_PARSERS", FACADE_BINDING),
     ("otto/monitor/__init__.py", "otto.monitor.parsers:MetricParser", FACADE_BINDING),
     ("otto/monitor/__init__.py", "otto.monitor.tls:resolve_monitor_tls", FACADE_BINDING),
+    # The otto.session facade, at entry, over its six files, each a module of its own.
+    (
+        "otto/session/__init__.py",
+        "otto.session.activation:check_instruction_active",
+        FACADE_BINDING,
+    ),
+    ("otto/session/__init__.py", "otto.session.dependencies:check_dependencies", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.errors:DependencyRefusedError", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.errors:InstructionInactiveError", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.errors:LabBuildError", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.errors:LoggingLevelsConflictError", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.errors:ProjectSelectionError", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.errors:RepoLoadError", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.lab:build_lab", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.lab:merge_host_preferences", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.logs:install_logging", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.logs:merge_logging_levels", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.projects:DemotedRepo", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.projects:ProjectSelection", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.projects:RepoCheck", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.projects:check_project_overlap", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.projects:check_repos", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.projects:select_projects", FACADE_BINDING),
 ]
 
 # Transitional exceptions: (file under src/, target, the landing that removes it).
 # Shrink-only (spec 2026-10-11 placement-and-phases §5.3, "Grandfathered entries").
-GRANDFATHERED: list[tuple[str, str, str]] = [
-    # The root's by-name imports of the project layer; they go when the root moves up.
-    ("otto/bootstrap.py", "otto.project.actions", "P9b"),
-    ("otto/bootstrap.py", "otto.project.commands", "P9b"),
-]
+GRANDFATHERED: list[tuple[str, str, str]] = []
 
 # GRANDFATHERED as the audit landed it, row for row: the spec's table. A row may
 # leave GRANDFATHERED or go earlier; one added, or one going later, fails.
@@ -1413,10 +1448,10 @@ def test_the_landing_anchor_allows_a_landing_in_progress_only() -> None:
     assert landing_problems(43, 13, "P4") == []
     assert "bump CURRENT_LANDING to P5" in landing_problems(48, 11, "P3")[0]
     assert landing_problems(70, 0, "P9a") == []
-    assert "bump CURRENT_LANDING to P9b" in landing_problems(77, 0, "P9a")[0]
-    assert landing_problems(77, 0, "P9b") == []
-    for counts in [[76, 0], [78, 0], [77, 1]]:
-        assert "the last landing, has exactly [77, 0]" in landing_problems(*counts, "P9b")[0]
+    assert "bump CURRENT_LANDING to P9b" in landing_problems(74, 0, "P9a")[0]
+    assert landing_problems(74, 0, "P9b") == []
+    for counts in [[73, 0], [75, 0], [74, 1]]:
+        assert "the last landing, has exactly [74, 0]" in landing_problems(*counts, "P9b")[0]
     assert "'P0' is not one of LANDINGS" in landing_problems(19, 22, "P0")[0]
 
 

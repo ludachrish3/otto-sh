@@ -12,7 +12,7 @@ from tests._fixtures.sutrepo import make_sut_repo
 @pytest.fixture
 def repos(tmp_path, monkeypatch):
     """One bootstrapped repo whose cache file lives under tmp_path."""
-    from otto.bootstrap import discover
+    from otto.config.repo import discover
 
     sut = make_sut_repo(tmp_path / "sut", name="sut")
     monkeypatch.setenv("OTTO_SUT_DIRS", str(sut))

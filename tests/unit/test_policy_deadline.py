@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+import otto.config.repo as config_repo
 from otto import bootstrap as bs
 from otto import lifecycle
 from otto.invocation import RunPolicy, install_policy, reset_binding
@@ -97,23 +98,23 @@ def test_preparation_reads_the_deadline_through_the_env_settings(monkeypatch):
     class _Env:
         teardown_deadline = 3.5
 
-    monkeypatch.setattr("otto.bootstrap.get_env", _Env)
-    assert bs.discovered_teardown_deadline() == 3.5
+    monkeypatch.setattr("otto.config.repo.get_env", _Env)
+    assert config_repo.discovered_teardown_deadline() == 3.5
 
 
 def test_preparation_reads_no_deadline_when_discovery_is_unavailable(monkeypatch):
     def _boom():
         raise FileNotFoundError("no OTTO_SUT_DIRS")
 
-    monkeypatch.setattr("otto.bootstrap.get_env", _boom)
-    assert bs.discovered_teardown_deadline() is None
+    monkeypatch.setattr("otto.config.repo.get_env", _boom)
+    assert config_repo.discovered_teardown_deadline() is None
 
 
 def test_discovery_fills_the_prepared_deadline(monkeypatch):
-    from otto.context import fill_teardown_deadline, prepared_policy
+    from otto.run_context import fill_teardown_deadline, prepared_policy
 
     monkeypatch.setenv("OTTO_TEARDOWN_DEADLINE", "7.5")
-    assert bs.discovered_teardown_deadline() == 7.5
+    assert config_repo.discovered_teardown_deadline() == 7.5
     policy = prepared_policy()
     assert policy.teardown_deadline == 10.0  # nothing read before the fill
     fill_teardown_deadline(policy)
@@ -121,12 +122,12 @@ def test_discovery_fills_the_prepared_deadline(monkeypatch):
 
 
 def test_failed_discovery_leaves_ten_seconds_even_under_an_ambient_policy(monkeypatch, tmp_path):
-    from otto.context import fill_teardown_deadline, prepared_policy
+    from otto.run_context import fill_teardown_deadline, prepared_policy
 
     monkeypatch.setenv("OTTO_SUT_DIRS", str(tmp_path / "missing"))
     ambient = install_policy(RunPolicy(teardown_deadline=3.0))  # an outer run's deadline
     try:
-        assert bs.discovered_teardown_deadline() is None
+        assert config_repo.discovered_teardown_deadline() is None
         policy = prepared_policy()
         fill_teardown_deadline(policy)
         assert policy.teardown_deadline == 10.0  # never the ambient 3.0
@@ -140,7 +141,7 @@ async def test_a_nested_open_context_with_failed_discovery_runs_under_ten_second
     from otto.invocation import current_policy
     from otto.labs.loader import Lab
 
-    monkeypatch.setattr("otto.bootstrap.discovered_teardown_deadline", lambda: None)
+    monkeypatch.setattr("otto.config.repo.discovered_teardown_deadline", lambda: None)
     bs._reset()
     install_composed(monkeypatch, fake_bootstrap_result([]))
     ambient = install_policy(RunPolicy(teardown_deadline=3.0))

@@ -300,7 +300,6 @@ def _print_this_workspace() -> None:
     home-wide listing above already covered the rest.
     """
     from .._shim_complete import inspect_shim, inspect_tests
-    from ..bootstrap import discover
     from ..config.completion_cache import (
         _cache_path,
         collect_child_state,
@@ -308,6 +307,7 @@ def _print_this_workspace() -> None:
         inspect_section,
     )
     from ..config.home import workspace_key
+    from ..config.repo import discover
 
     repos = discover().repos
     if not repos:

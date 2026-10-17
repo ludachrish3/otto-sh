@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from ..errors import FieldError, OttoError
 
 if TYPE_CHECKING:
-    from ..bootstrap import BootstrapError
+    from ..config.scope import BootstrapError
     from ..env.preflight import Unsatisfied
     from .projects import DemotedRepo
 

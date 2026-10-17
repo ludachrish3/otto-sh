@@ -836,7 +836,7 @@ class TestInvocationResets:
         def _interrupt() -> None:
             raise KeyboardInterrupt
 
-        monkeypatch.setattr("otto.bootstrap.discovered_teardown_deadline", _interrupt)
+        monkeypatch.setattr("otto.config.repo.discovered_teardown_deadline", _interrupt)
         outer = RunPolicy(dry_run=True)  # an embedding caller's dry run
         binding = install_policy(outer)
         try:

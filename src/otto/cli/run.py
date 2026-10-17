@@ -55,9 +55,9 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
         # Function-scope: the orchestrator is heavy and the CLI must stay light.
         from typer._click.globals import get_current_context
 
-        from ..context import get_context
         from ..params import OptionsValidationError
         from ..project import orchestrator
+        from ..run_context import get_context
         from .invoke import (
             _leaf_declares_preview,
             command_spec,

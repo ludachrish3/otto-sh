@@ -256,7 +256,7 @@ def test_a_host_of_another_os_type_built_inside_a_construction_resolves_its_own(
 
 
 def test_an_overrides_copy_keeps_the_data_profile_prompts():
-    from otto.context import _apply_option_overrides
+    from otto.run_context import _apply_option_overrides
 
     host = _built_under_data_unix()
     copy = _apply_option_overrides(host, term="console")

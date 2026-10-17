@@ -142,9 +142,13 @@ def _table_entries(node: ast.stmt) -> "list[tuple[str, ast.Dict]]":
 
 
 def lazy_bindings(src_root: Path) -> Facades:
-    """Read every facade's literal lazy tables under *src_root*/otto."""
+    """Read every facade's literal lazy tables under *src_root*/otto.
+
+    A facade is a package whose ``__init__`` declares a lazy table, or a plain
+    module that declares one at its top level (``otto.bootstrap``).
+    """
     facades: Facades = {}
-    for init in sorted((src_root / "otto").rglob("__init__.py")):
+    for init in sorted((src_root / "otto").rglob("*.py")):
         table: dict[str, list[str] | None] = {}
         where = init.relative_to(src_root).as_posix()
         for node in ast.parse(init.read_text(encoding="utf-8")).body:
@@ -189,7 +193,7 @@ class _Finder(ast.NodeVisitor):
         self.path = path
         self.facades = facades
         self.package = package_of(path)
-        self.own = facades.get(module_name(path)) if path.endswith("__init__.py") else None
+        self.own = facades.get(module_name(path))
         self.scope: list[str] = []
         self.type_checking = 0
         self.mirror: list[ast.ImportFrom] = []

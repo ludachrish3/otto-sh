@@ -63,7 +63,7 @@ FILES = {
 
 
 def _repos(tmp_path, monkeypatch, *, second=False):
-    from otto.bootstrap import discover
+    from otto.config.repo import discover
 
     sut = make_sut_repo(tmp_path / "one", name="one", extra=DOCKER, files=FILES)
     dirs = [sut]
@@ -108,7 +108,7 @@ def test_repo_names_are_sorted(tmp_path, monkeypatch):
 
 
 def test_a_repo_without_docker_contributes_nothing(tmp_path, monkeypatch):
-    from otto.bootstrap import discover
+    from otto.config.repo import discover
 
     sut = make_sut_repo(tmp_path / "plain", name="plain")
     monkeypatch.setenv("OTTO_SUT_DIRS", str(sut))

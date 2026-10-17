@@ -2216,7 +2216,7 @@ def collect_logins_by_host(repos: list["Repo"]) -> dict[str, list[dict[str, Any]
 def collect_project_names(repos: list["Repo"]) -> list[str]:
     """Return the discovered repo names, in discovery order — what ``-I``/``-E`` complete.
 
-    *repos* is every repo phase 1 discovered: :func:`otto.bootstrap.discover`'s
+    *repos* is every repo phase 1 discovered: :func:`otto.config.repo.discover`'s
     ``repos``, which a bootstrap result carries unchanged, never the init-ordered
     subset. ``otto.cli.main._project_completer`` reads the same discovered list,
     so the warm and cold answers cannot differ.

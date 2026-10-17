@@ -255,7 +255,7 @@ class TestRefusal:
         scopes: "dict[str, Any] | None" = None,
     ) -> Any:
         ctx = _context(include=include, exclude=exclude, scopes=scopes)
-        monkeypatch.setattr("otto.context.get_context", lambda: ctx)
+        monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
         return ctx
 
     def test_switched_off_owner_refuses_exit_1(
@@ -383,7 +383,7 @@ class TestRefusalRendering:
             exclude=(owner,) if excluded_by_switch else (),
             scopes={} if scope is None else {owner: scope},
         )
-        monkeypatch.setattr("otto.context.get_context", lambda: ctx)
+        monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
         with pytest.raises(typer.Exit) as excinfo:
             refuse_inactive_instruction(_dispatch_ctx("flash-b"))
         assert excinfo.value.exit_code == 1
@@ -519,7 +519,7 @@ class TestPreambleWiring:
     def _excluded_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_entry("flash-b", "repo2")
         monkeypatch.setattr(
-            "otto.context.get_context",
+            "otto.run_context.get_context",
             lambda: _context(exclude=("repo2",)),
         )
 
@@ -558,7 +558,7 @@ class TestPreambleWiring:
             return _context(exclude=("repo2",))
 
         monkeypatch.setattr(invoke, "ensure_lab_session", _session)
-        monkeypatch.setattr("otto.context.get_context", _get_context)
+        monkeypatch.setattr("otto.run_context.get_context", _get_context)
         spec = CommandSpec(name="run", loader=None, gate=False)
         with pytest.raises(typer.Exit) as excinfo:
             invoke.command_preamble(_PreambleCtx("flash-b", spec))  # ty: ignore[invalid-argument-type]

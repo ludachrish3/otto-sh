@@ -842,7 +842,9 @@ lazy package (`otto.app` → `otto.cli.app`) is defined one hop further
 (`otto.cli.main.app`). An EAGER re-export is a different binding too:
 `otto.bootstrap` binds `get_repos`, `get_ordered_repos` and `is_bootstrapped`,
 which `otto.declared` defines, so a test patches `otto.declared.get_repos`
-(`bootstrap` and `get_env` are the root's own). It also binds the error types
+(`bootstrap` is the root's own). Its lazy `get_env` is discovery's, defined
+in `otto.config.repo`, so a test patches `otto.config.repo.get_env`. It also
+binds the error types
 `otto.config.scope` defines, so a test that needs to replace
 `ProjectScopeError` patches `otto.config.scope.ProjectScopeError`.
 Every other module that raises or catches it imports it from there when
@@ -861,7 +863,8 @@ from a `_LAZY_ATTRS` package that a consumer binds at module level
 leaks nothing.
 
 **Source reads process-wide getters at call time.** The process-wide getters —
-`otto.bootstrap`'s `bootstrap` and `get_env`, `otto.declared`'s `get_repos`,
+`otto.bootstrap`'s `bootstrap`, `otto.config.repo`'s `discover`, `get_env` and
+`discovered_teardown_deadline`, `otto.declared`'s `get_repos`,
 `get_ordered_repos`, `is_bootstrapped`, `current_repos`, `current_ordered_repos`
 and `compose`, `otto.registry`'s `get_completion_names` (`otto.bootstrap`
 re-exports it and the first three of `otto.declared`'s), and the function entries of the

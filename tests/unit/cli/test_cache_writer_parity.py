@@ -81,7 +81,7 @@ try:
 except SystemExit:
     pass
 
-from otto.bootstrap import discover
+from otto.config.repo import discover
 from otto.config.cache_sections import section_by_name
 
 repos = discover().repos

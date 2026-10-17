@@ -299,7 +299,7 @@ def _discovered_repos() -> "list[Repo]":
     An environment is workspace-scoped: which labs today's command happens to
     load must not change what gets installed into it.
     """
-    from ..bootstrap import discover
+    from ..config.repo import discover
 
     return discover().repos
 

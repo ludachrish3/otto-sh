@@ -123,8 +123,9 @@ builds it. Its choices:
 - {mod}`otto.bootstrap` — the two-phase composition root: discovery (env +
   every repo's `settings.toml`) and contained registration (each repo's
   `libs` and `init` modules). Phase 1 is
-  {func}`~otto.bootstrap.discover`, and its
-  {class}`~otto.bootstrap.DiscoveryResult` carries three fields — `env`,
+  {func}`~otto.config.repo.discover`, which reads settings and so lives in
+  {mod}`otto.config.repo`, below the root, and runs no user code; its
+  {class}`~otto.config.repo.DiscoveryResult` carries three fields — `env`,
   `repos`, and the `errors` for repos whose settings would not parse — which
   phase 2 folds into the {class}`~otto.bootstrap.BootstrapResult` alongside
   its own. {func}`~otto.bootstrap.invalidate` drops every cached result and
@@ -135,9 +136,11 @@ builds it. Its choices:
   discovery that produced it. The four repo accessors —
   {func}`~otto.bootstrap.get_repos`, {func}`~otto.bootstrap.get_ordered_repos`,
   {func}`~otto.bootstrap.get_env` and {func}`~otto.bootstrap.is_bootstrapped` —
-  are imported from here, their public path; `get_env` is the root's own,
-  and the other three are defined in {mod}`otto.declared`, beside the
-  composed state they read, and re-exported here. {func}`~otto.bootstrap.get_repos` and
+  are imported from here, their public path; `get_env` is discovery's, defined
+  in {mod}`otto.config.repo` and re-exported here lazily, so importing the root
+  loads no repo loader, and the other three are defined in
+  {mod}`otto.declared`, beside the composed state they read, and re-exported
+  here. {func}`~otto.bootstrap.get_repos` and
   {func}`~otto.bootstrap.get_ordered_repos` bootstrap on first use and
   {func}`~otto.bootstrap.get_env` runs discovery only;
   {func}`~otto.bootstrap.is_bootstrapped` never forces either; none runs at
@@ -165,9 +168,14 @@ builds it. Its choices:
   initiator to compose; in a process
   that never imported the root there is no initiator, and it admits (answers
   `None`), as it does when composition fails. The CLI and every public entry
-  point that can compose import the root first, so they behave as before
-  ({func}`~otto.suite.prepare_run` and the coverage entry points load it on
-  the call that reads the run's repos)
+  point that can compose import the root first, so they behave as before:
+  {mod}`otto.context`'s resolver loads it before it returns
+  {class}`~otto.context.OttoContext` or {func}`~otto.context.open_context`
+  (the run context itself, `otto.run_context`, sits below the root and
+  composes through the initiator), while {func}`~otto.suite.run.run_tests`,
+  {func}`~otto.suite.prepare_run`, the coverage entry points,
+  {func}`~otto.session.install_logging` and the `otto.testing` host checks
+  load it on the call that reads the repos
 - `otto.init` — the `otto init` doctor and scaffolder over the areas
   (settings, schemas, lab, tests, instructions, kmodcov): detect / validate /
   scaffold, reusing bootstrap's own ingestion code; `otto.cli.init` only

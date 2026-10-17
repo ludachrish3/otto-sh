@@ -31,6 +31,7 @@ run under the leaf-invoke bridge the root dispatch installs. ``--help`` and
 import io
 import logging
 import re
+import sys
 from typing import Annotated
 
 import pytest
@@ -216,30 +217,36 @@ def test_repo_instruction_with_novel_name_is_unaffected():
 # ── Bootstrap wiring ─────────────────────────────────────────────────────────
 
 
-def test_bootstrap_imports_the_bodies_before_any_repo_init_and_checks_after(tmp_path, monkeypatch):
-    """Phase 2 imports otto's BODIES first and checks the merged OPTIONS last.
+def test_bootstrap_declares_the_bodies_before_any_repo_init_and_checks_after(
+    tmp_path, monkeypatch, purge_tmp_imports
+):
+    """Phase 2 declares otto's BODIES first and checks the merged OPTIONS last.
 
     The two halves are ordered against opposite ends of the repo loop and both
-    orderings are load-bearing. ``otto.project.actions`` is imported first, so
-    no registry check ever runs that import; the options check comes last,
-    because a repo's override is what ADDS flags to the merged command and a
-    check taken before the loop would check the union of nothing.
+    orderings are load-bearing. ``otto.project.actions.declare`` runs first, so
+    every repo's actions class is checked against otto's own; the options check
+    comes last, because a repo's override is what ADDS flags to the merged
+    command and a check taken before the loop would check the union of nothing.
 
-    Observed as the CALL, not as ``sys.modules`` afterwards: the module is
-    imported once per process, so an "is it imported" assertion passes on the
-    strength of any earlier test having imported it and would stay green with
-    the bootstrap line deleted.
+    Observed as the CALLS, each read off its module when the root calls it, so a
+    caller substituting either function is honoured: patching the module
+    attribute is what this test does. The init module records its own run in a
+    log the test owns, so the module must really run: ``purge_tmp_imports`` drops
+    it from ``sys.modules`` after the test, or a second pass in one process
+    (``--count=2 --repeat-scope=session``) would find it cached and never run it.
     """
-    import importlib
+    import types
 
     from otto import bootstrap as bs
+    from otto.project import actions
 
+    order_init = "import acme_order_log\nacme_order_log.seen.append('acme_init')\n"
     seen: list[str] = []
-    real_import = importlib.import_module
+    real_declare = actions.declare
 
-    def _spy(name, *args, **kwargs):
-        seen.append(name)
-        return real_import(name, *args, **kwargs)
+    def _declare_spy() -> None:
+        seen.append("<declare>")
+        real_declare()
 
     def _check_spy() -> None:
         seen.append("<check>")
@@ -247,11 +254,12 @@ def test_bootstrap_imports_the_bodies_before_any_repo_init_and_checks_after(tmp_
     repo = make_sut_repo(
         tmp_path / "acme",
         name="acme",
-        extra='libs = ["lib"]\ninit = ["acme_init"]\n',
-        files={"lib/acme_init.py": "X = 1\n"},
+        extra='libs = ["lib"]\ninit = ["acme_order_init"]\n',
+        files={"lib/acme_order_init.py": order_init},
     )
+    monkeypatch.setitem(sys.modules, "acme_order_log", types.SimpleNamespace(seen=seen))
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
-    monkeypatch.setattr(bs.importlib, "import_module", _spy)
+    monkeypatch.setattr("otto.project.actions.declare", _declare_spy)
     monkeypatch.setattr("otto.project.commands.check_project_instruction_options", _check_spy)
     bs._reset()
     try:
@@ -260,9 +268,7 @@ def test_bootstrap_imports_the_bodies_before_any_repo_init_and_checks_after(tmp_
         bs._reset()
 
     assert result.errors == []
-    assert ACTIONS_MODULE in seen
-    assert seen.index(ACTIONS_MODULE) < seen.index("acme_init")
-    assert seen.index("acme_init") < seen.index("<check>")
+    assert seen == ["<declare>", "acme_init", "<check>"]
 
 
 def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(

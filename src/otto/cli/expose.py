@@ -191,7 +191,7 @@ def cached_host_class_for_id(host_id: str) -> type | None:
     resilient parsing and offer every class's verbs. The map is
     ``host_classes_by_id`` from the ``names`` payload
     (:func:`otto.config.completion_cache.collect_host_classes_by_id`); on a
-    cold cache the collector runs over ``otto.bootstrap.discover().repos``
+    cold cache the collector runs over ``otto.config.repo.discover().repos``
     (settings and lab data only — NEVER ``get_repos()``, which would run
     bootstrap and with it user init code inside a TAB). ``None`` — unknown
     id, unregistered class, any failure — means the union menu, exactly as
@@ -216,10 +216,10 @@ def cached_host_class_for_id(host_id: str) -> type | None:
             mapping = _discovered_host_classes
         else:
             try:
-                from .. import bootstrap
                 from ..config.completion_cache import collect_host_classes_by_id
+                from ..config.repo import discover
 
-                mapping = collect_host_classes_by_id(bootstrap.discover().repos)
+                mapping = collect_host_classes_by_id(discover().repos)
             except Exception:  # noqa: BLE001 — completion never crashes the shell
                 return None
             _discovered_host_classes = mapping

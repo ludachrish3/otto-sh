@@ -69,7 +69,7 @@ def console_transfer_menu(host: str, menu: Sequence[str], pin: str | None) -> li
     menu with nothing but nc, is therefore a config error (``ValueError``)
     naming *host*. The one home for this rule: the lab model resolves a
     console host's transfer from it, and so does a ``--term console``
-    override (``otto.context._apply_option_overrides``).
+    override (``otto.run_context._apply_option_overrides``).
     """
     if pin == "nc":
         raise ValueError(

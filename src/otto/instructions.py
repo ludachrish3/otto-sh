@@ -20,7 +20,7 @@ from .instruction_catalog import INSTRUCTIONS, InstructionEntry, instruction, op
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
-    from .context import OttoContext
+    from .run_context import OttoContext
 
 __all__ = ["instruction", "run_instruction"]
 
@@ -62,8 +62,8 @@ def bind_handler_kwargs(
     """
     from typing import get_type_hints
 
-    from .context import OttoContext
     from .params import build_options, drop_unset_secrets, verb_option_classes
+    from .run_context import OttoContext
 
     handler = _handler_of(entry)
     own_cls = entry.options_cls
@@ -120,9 +120,9 @@ async def run_instruction(ctx: "OttoContext", name: str, opts: list[object] | No
             is inactive in *ctx* (excluded, out of the loaded labs' scope,
             or host-starved).
     """
-    from .context import reset_context, set_context, try_get_context
     from .params import flatten_option_instances
     from .project.actions import declare
+    from .run_context import reset_context, set_context, try_get_context
 
     # Never relies on otto.project.actions having been imported: a library
     # caller that never bootstrapped, or a table a test emptied, still gets

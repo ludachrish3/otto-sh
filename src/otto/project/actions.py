@@ -62,10 +62,10 @@ from .state import InstallState, combine_install_states
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
-    from ..context import OttoContext, ProjectContextView
     from ..host.dev_tool import DevTool
     from ..host.host import Host
     from ..host.product import Product
+    from ..run_context import OttoContext, ProjectContextView
 
 _OwnedT = TypeVar("_OwnedT", "Product", "DevTool")
 """Either owner-stamped host attachment; the two seams share this filter."""
@@ -317,7 +317,7 @@ class ProjectActions:
                 :data:`_UNSCOPED_CONTEXT` for why that is refused rather than
                 accepted-and-documented.
         """
-        from ..context import OttoContext  # function-scope: keeps this module import-light
+        from ..run_context import OttoContext  # function-scope: keeps this module import-light
 
         if isinstance(ctx, OttoContext):
             raise TypeError(_UNSCOPED_CONTEXT.format(repo=repo.name))

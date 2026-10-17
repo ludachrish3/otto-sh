@@ -10,7 +10,6 @@ of these pages.
 .. toctree::
    :maxdepth: 1
 
-   bootstrap
    check
    cli/index
    config

@@ -14,8 +14,8 @@ import pytest
 from otto import bootstrap as bs
 from otto.bootstrap import BootstrapError, DependencyError, ProjectScopeError
 from otto.config.scope import resolve_scopes, scopes_of
-from otto.context import LIBRARY_LAB_NAME, OttoContext, set_context
 from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
+from otto.run_context import LIBRARY_LAB_NAME, OttoContext, set_context
 from otto.session.errors import RepoLoadError
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fleet import _lab

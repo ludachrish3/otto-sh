@@ -276,7 +276,7 @@ def _refuse_contradictory_switches(
 def _project_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Completion source for -I/-E: the DISCOVERED repo names.
 
-    Phase 1 (:func:`otto.bootstrap.discover`), never ``get_repos()``. The
+    Phase 1 (:func:`otto.config.repo.discover`), never ``get_repos()``. The
     difference is the whole point: ``get_repos`` runs ``bootstrap()``, which is
     phase 2 — the dependency pass plus every sibling repo's init module, i.e.
     third-party user code. ``entry()`` deliberately keeps that off the
@@ -292,10 +292,10 @@ def _project_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # n
     """
     try:
         # Imported inside the function, not at module scope: the tests patch the
-        # `otto.bootstrap.discover` attribute, which a module-scope `from ...
+        # `otto.config.repo.discover` attribute, which a module-scope `from ...
         # import discover` would bind past. Keep it local — hoisting it silently
         # takes the tests' seam with it.
-        from ..bootstrap import discover
+        from ..config.repo import discover
 
         names = [repo.name for repo in discover().repos]
     except Exception:  # noqa: BLE001 — completion must never crash the shell
@@ -761,7 +761,7 @@ def main(  # noqa: PLR0913 — CLI command params
     global _root_log_level  # noqa: PLW0603 — one per-invocation value, read by entry()'s frame
     _root_log_level = log_level
 
-    from ..bootstrap import discovered_teardown_deadline
+    from ..config.repo import discovered_teardown_deadline
     from ..invocation import RunPolicy, install_policy, reset_binding
 
     policy = RunPolicy(dry_run=dry_run, variant="field" if field else "debug")
@@ -822,7 +822,7 @@ def main(  # noqa: PLR0913 — CLI command params
         if show_lab:
             from rich.pretty import pprint
 
-            from ..context import get_context
+            from ..run_context import get_context
 
             pprint(
                 get_context().lab,
@@ -1141,7 +1141,9 @@ def entry(cache_stale: bool = False) -> None:
         # `commands` list would traceback into the shell rather than fall
         # through to the slow path.
         with contextlib.suppress(Exception):
-            set_completion_names(_cached_names_payload(bs.discover().repos))
+            from ..config.repo import discover
+
+            set_completion_names(_cached_names_payload(discover().repos))
     elif not completion and sys.argv[1:] in ROOT_HELP_ARGV:
         # Root help: the same names, the same reader, contained the same way —
         # a broken cache must cost a full load, not a traceback in front of
@@ -1149,7 +1151,9 @@ def entry(cache_stale: bool = False) -> None:
         # tail (`sys.argv[1:] == []`) coincides with a root-help tail, but a
         # bash TAB is never the root help screen.
         with contextlib.suppress(Exception):
-            set_completion_names(_cached_names_payload(bs.discover().repos))
+            from ..config.repo import discover
+
+            set_completion_names(_cached_names_payload(discover().repos))
 
     if get_completion_names() is None:
         try:

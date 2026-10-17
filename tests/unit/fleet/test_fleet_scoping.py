@@ -728,7 +728,7 @@ def test_the_otto_host_available_listing_ignores_the_universe(tmp_path, scoped_c
 
 def test_library_context_has_no_scopes_and_walks_everything():
     """The FD-model library context never bootstraps — it keeps today's behavior."""
-    from otto.context import LIBRARY_LAB_NAME
+    from otto.run_context import LIBRARY_LAB_NAME
 
     lab = _lab(("h1", "a"), ("h2", "a"))
     lab.name = LIBRARY_LAB_NAME

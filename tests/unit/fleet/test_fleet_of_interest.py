@@ -28,9 +28,9 @@ import pytest
 
 from otto.bootstrap import ProjectScopeError
 from otto.config.scope import EmptySelectionError, scopes_of
-from otto.context import LIBRARY_LAB_NAME, OttoContext, set_context
 from otto.fleet import fleet_of_interest
 from otto.models.dependencies import normalize_name
+from otto.run_context import LIBRARY_LAB_NAME, OttoContext, set_context
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.fleet import _lab, _repo, add_builtin_local, install_scoped_context
 
@@ -149,7 +149,7 @@ def oracle(world):
     Module-scoped, so it runs OUTSIDE the root conftest's per-test bootstrap
     state restore: it must never reach the real composition root, whose cached
     discovery would outlive this module and poison later tests on the worker.
-    ``otto.bootstrap.discover`` refuses for the fixture's duration, so a future
+    ``otto.config.repo.discover`` refuses for the fixture's duration, so a future
     reach fails loudly here instead.
     """
 
@@ -158,7 +158,7 @@ def oracle(world):
 
     results = []
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("otto.bootstrap.discover", _refuse_discovery)
+        mp.setattr("otto.config.repo.discover", _refuse_discovery)
         # One INFO line per context ("fleet of interest: N of M lab hosts")
         # over thousands of cases is noise in every live-log run, and the line
         # is not under test here.
@@ -380,7 +380,7 @@ def test_the_query_reads_nothing_but_its_arguments(world, monkeypatch):
         raise AssertionError("fleet_of_interest read the composition root")
 
     monkeypatch.setattr("otto.bootstrap.bootstrap", _refuse)
-    monkeypatch.setattr("otto.bootstrap.discover", _refuse)
+    monkeypatch.setattr("otto.config.repo.discover", _refuse)
     monkeypatch.setattr("otto.labs.loader.load_lab", _refuse)
     # The hostile ambient world: an installed context on a decoy lab. A query
     # that read the active context instead of its `lab` argument answers ["d1"].

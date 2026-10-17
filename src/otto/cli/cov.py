@@ -281,7 +281,7 @@ def report(
     cov_dirs = [d / "cov" for d in output_dirs]
 
     if report_dir is None:
-        from ..context import get_context
+        from ..run_context import get_context
 
         base = get_context().output_dir
         if base is None:

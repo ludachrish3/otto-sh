@@ -247,12 +247,12 @@ def _discovered_repos() -> "list[Any]":
     """Return the active repos as discovery found them: settings and lab data, no init code.
 
     The observed-state readers need the repos only to reach the cache file, so
-    a TAB goes through ``otto.bootstrap.discover()`` — NEVER ``get_repos()``,
+    a TAB goes through ``otto.config.repo.discover()`` — NEVER ``get_repos()``,
     which runs bootstrap and with it the user's init code inside a TAB.
     """
-    from .. import bootstrap
+    from ..config.repo import discover
 
-    return bootstrap.discover().repos
+    return discover().repos
 
 
 def _selected_labs_for_tab(ctx: typer.Context) -> list[str]:

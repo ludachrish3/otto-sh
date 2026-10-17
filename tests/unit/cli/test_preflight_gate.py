@@ -87,7 +87,7 @@ def _wire(
         bootstrap=fake_bootstrap_result(repos),
     )
     seed_scope_verdicts(ctx, scopes or {})
-    monkeypatch.setattr("otto.context.get_context", lambda: ctx)
+    monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
 
 
 def test_the_absent_package_really_is_absent() -> None:

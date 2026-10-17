@@ -70,7 +70,7 @@ def preamble_gate(monkeypatch, no_logger_output_dir):
 
     # A real context: the preamble writes the run's directory to its policy.
     ctx = OttoContext(lab=Lab(name="preamble"))
-    monkeypatch.setattr("otto.context.get_context", lambda: ctx)
+    monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
 
 
 def test_gate_noop_when_no_reservation_in_meta(preamble_gate, capsys):

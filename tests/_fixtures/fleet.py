@@ -1,6 +1,6 @@
 """Real repos, real hosts, a real lab, and the one lazy seam that scopes them.
 
-Lifted out of ``tests/unit/config/test_fleet_scoping.py`` when a second module
+Lifted out of ``tests/unit/fleet/test_fleet_scoping.py`` when a second module
 (the reservation gate, which now computes its requirement over
 ``OttoContext.admissible_ids()``) needed the same construction. Real ``Repo``
 objects parsed from a real ``settings.toml`` and real hosts built by the

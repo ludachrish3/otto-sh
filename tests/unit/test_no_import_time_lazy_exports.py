@@ -15,10 +15,13 @@ a patch every other caller sees. This test parses ``src/otto`` and fails on
 both spellings at module level, for two sets of names:
 
 - each entry of the ``_LAZY_EXPORTS`` tables of ``otto``, ``otto.config`` and
-  ``otto.logger``, and of the ``_LAZY_ATTRS`` table of ``otto.lab``, that is a
-  function once the table chain is followed to its defining module;
+  ``otto.logger``, and of the ``_LAZY_ATTRS`` tables of ``otto.lab``,
+  ``otto.context`` and ``otto.bootstrap`` (which re-exports discovery's
+  ``get_env`` from ``otto.config.repo``), that is a function once the table
+  chain is followed to its defining module;
 - ``PROCESS_WIDE_GETTERS``: getters no lazy table exports, because their
-  defining module is their public home (``otto.bootstrap``'s own), or
+  defining module is their public home (``otto.bootstrap``'s own), or is
+  where otto reads them (discovery's, in ``otto.config.repo``), or
   because their public home re-exports them (``get_completion_names``, defined
   in ``otto.registry``, and the composed state's readers, defined in
   ``otto.declared``).
@@ -64,17 +67,19 @@ GUARDED_PACKAGES = ["otto", "otto.config", "otto.logger"]
 
 # Facades whose _LAZY_ATTRS table (name -> defining module) exports process-wide
 # getters; the getters themselves are guarded at their defining modules.
-GUARDED_ATTRS_PACKAGES = ["otto.lab"]
+GUARDED_ATTRS_PACKAGES = ["otto.lab", "otto.bootstrap", "otto.context"]
 
 # Getters that no lazy table exports, read at their defining module: patched
 # there, read at call time, never bound at import (spec 2026-10-06
 # repo-and-scope-inputs §9, the lazy-getter guard). otto.bootstrap is its
-# getters' public home. otto.invocation has no public path, but the host layer
+# getters' public home; otto.config.repo defines discovery, which the root
+# re-exports in part (its _LAZY_ATTRS table). otto.invocation has no public path, but the host layer
 # reads the run's policy and peer-host resolver there, and a module-level
 # binding of either would go stale across runs just the same (spec 2026-10-06
 # run-state contracts §3).
 PROCESS_WIDE_GETTERS: dict[str, frozenset[str]] = {
-    "otto.bootstrap": frozenset({"bootstrap", "get_env"}),
+    "otto.bootstrap": frozenset({"bootstrap"}),
+    "otto.config.repo": frozenset({"discover", "discovered_teardown_deadline", "get_env"}),
     "otto.declared": frozenset(
         {
             "compose",
@@ -345,7 +350,9 @@ def test_the_scan_knows_the_names_it_guards():
         "get_ordered_repos",
         "get_env",
         "is_bootstrapped",
-    } <= guarded["otto.bootstrap"]  # its own two, and its three re-exports
+    } <= guarded["otto.bootstrap"]  # its own one, its three re-exports, and get_env
+    assert "discover" not in guarded["otto.bootstrap"]  # read at its owner only
+    assert {"discover", "discovered_teardown_deadline", "get_env"} <= guarded["otto.config.repo"]
     assert {
         "compose",
         "current_ordered_repos",
@@ -362,6 +369,8 @@ def test_the_scan_knows_the_names_it_guards():
     assert "load_lab" in guarded["otto.labs.loader"]  # the defining module, followed
     assert "Lab" not in guarded["otto.labs.loader"]
     assert "get_context" in guarded["otto.context"]
+    assert {"get_context", "open_context"} <= guarded["otto.run_context"]  # followed
+    assert "OttoContext" not in guarded["otto.run_context"]  # a class
     assert "Repo" not in guarded.get("otto.config.repo", frozenset())
 
 

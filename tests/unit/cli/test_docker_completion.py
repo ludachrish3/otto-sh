@@ -61,7 +61,7 @@ def observed():
             "otto.config.completion_cache.read_docker_observed",
             side_effect=lambda _r, h: OBSERVED.get(h, ObservedDockerState([], [], [], [])),
         ),
-        patch("otto.bootstrap.discover", return_value=SimpleNamespace(repos=["repo"])),
+        patch("otto.config.repo.discover", return_value=SimpleNamespace(repos=["repo"])),
     ):
         yield
 
@@ -157,7 +157,7 @@ def test_the_completers_never_raise():
     with (
         patch("otto.registry.get_completion_names", side_effect=boom),
         patch("otto.declared.get_repos", side_effect=boom),
-        patch("otto.bootstrap.discover", side_effect=boom),
+        patch("otto.config.repo.discover", side_effect=boom),
         patch("otto.config.completion_cache.read_docker_observed", side_effect=boom),
     ):
         assert docker_cli._image_completer(_ctx(), "") == []

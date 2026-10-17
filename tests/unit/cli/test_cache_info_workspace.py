@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typer.testing import CliRunner
 
 import otto.config.completion_cache as cc
+import otto.config.repo as config_repo
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -71,7 +72,7 @@ def _workspace(tmp_path, monkeypatch, *, references: list[str], settings: str = 
 
 def _seed_cache() -> None:
     """Write the names entry the way the slow path does, from the real collectors."""
-    from otto.bootstrap import discover
+    from otto.config.repo import discover
 
     repos = discover().repos
     assert repos, "discovery found no repo under OTTO_SUT_DIRS"
@@ -191,12 +192,11 @@ def test_info_reports_the_shim_standing(tmp_path, monkeypatch):
     out = runner.invoke(cache_app, ["info"]).output
     assert "  shim: handing over — no cache file" in out  # no entry yet
     # entry() writes the entry on any real invocation; write one the way it does.
-    from otto import bootstrap as bs
     from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
     from otto.config import completion_cache as cc
     from otto.config.completion_tree import build_shim_payload
 
-    repos = bs.discover().repos
+    repos = config_repo.discover().repos
     cc.write_cache(
         repos, [], [], shim=build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
     )
@@ -225,7 +225,7 @@ def _tests_workspace(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
     bs.invalidate()
-    repos = bs.discover().repos
+    repos = config_repo.discover().repos
     cc.write_cache(
         repos, [], [], shim=build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
     )
@@ -322,8 +322,8 @@ def test_info_reports_the_collect_child(tmp_path, monkeypatch):
 
 
 def test_info_reports_what_the_docker_cache_still_vouches_for(tmp_path, monkeypatch):
-    from otto.bootstrap import discover
     from otto.cli.cache import cache_app
+    from otto.config.repo import discover
 
     _workspace(tmp_path, monkeypatch, references=["dut-1"])
     _seed_cache()
@@ -347,8 +347,8 @@ def test_info_says_nothing_observed_on_a_cold_docker_cache(tmp_path, monkeypatch
 
 def test_info_drops_an_expired_sub_entry_and_lists_hosts_sorted(tmp_path, monkeypatch):
     """Containers last 15 minutes and images a day: sixteen minutes on, only the images stand."""
-    from otto.bootstrap import discover
     from otto.cli.cache import cache_app
+    from otto.config.repo import discover
 
     _workspace(tmp_path, monkeypatch, references=["dut-1"])
     _seed_cache()

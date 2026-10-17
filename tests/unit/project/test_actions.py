@@ -149,7 +149,7 @@ class _FakeCtx:
         """Apply *method* per host EXACTLY as the production seam does.
 
         The call shape is ``method(host, ...)`` -- the function object it was
-        handed, applied to the host, with NO name lookup (``otto/context.py``'s
+        handed, applied to the host, with NO name lookup (``otto/run_context.py``'s
         ``method(h, *args, **kwargs)``). An earlier version looked the verb up
         by ``method.__name__`` on the double when it had one, which is dynamic
         dispatch where the real seam is static: it certified host-class

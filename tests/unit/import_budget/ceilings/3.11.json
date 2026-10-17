@@ -1184,8 +1184,8 @@
     },
     "run_bootstrapped": {
       "by_bucket": {
-        "fd": 97,
-        "other": 317,
+        "fd": 95,
+        "other": 308,
         "otto:*": 19,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -1195,7 +1195,7 @@
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-311.pyc": 1,
         "otto:cli": 33,
-        "otto:config": 33,
+        "otto:config": 29,
         "otto:declared": 2,
         "otto:declared.cpython-311.pyc": 1,
         "otto:errors": 2,
@@ -1218,11 +1218,10 @@
         "otto:utils.cpython-311.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-311.pyc": 1,
-        "site:*": 37,
+        "site:*": 34,
         "site:_virtualenv": 7,
         "site:annotated_doc": 13,
         "site:annotated_types": 6,
-        "site:df204bca18f2fa0f34a2__mypyc": 2,
         "site:dotenv": 21,
         "site:otto_sh": 5,
         "site:pydantic": 197,
@@ -1232,16 +1231,15 @@
         "site:shellingham": 13,
         "site:sphinxcontrib": 12,
         "site:sphinxcontrib_jsmath-1": 4,
-        "site:tomli": 12,
         "site:typer": 111,
         "site:typing_extensions": 3,
         "site:typing_inspection": 17,
-        "stdlib": 703
+        "stdlib": 700
       },
       "by_process": {
-        "python": 2056
+        "python": 2021
       },
-      "file_ops": 2056,
+      "file_ops": 2021,
       "workspace": 0
     },
     "schema": {

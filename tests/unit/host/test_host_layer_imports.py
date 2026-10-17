@@ -1,4 +1,6 @@
-"""After the registry move, no module under otto/host imports otto.context at runtime.
+"""After the registry move, no module under otto/host imports the run context at runtime.
+
+Neither ``otto.context``, the facade, nor ``otto.run_context``, its home.
 
 Spec 2 §3.5: a TYPE_CHECKING-only import is allowed; any runtime one is not.
 """
@@ -8,6 +10,8 @@ import ast
 from tests._fixtures.paths import PROJECT_ROOT
 
 HOST = PROJECT_ROOT / "src" / "otto" / "host"
+_CONTEXT = ("otto.context", "otto.run_context")
+"""The run context: its public facade and its home."""
 
 
 def _runtime_imports_of_context(path) -> list[str]:
@@ -35,15 +39,19 @@ def _context_imports(source: str, package: list[str], name: str) -> list[str]:
             found += [
                 a.name
                 for a in node.names
-                if a.name == "otto.context" or a.name.startswith("otto.context.")
+                if a.name in _CONTEXT or a.name.startswith("otto.context.")
             ]
         elif isinstance(node, ast.ImportFrom):
             base = package[: len(package) - node.level + 1] if node.level else []
             target = ".".join([*base, *(node.module.split(".") if node.module else [])])
-            if target == "otto.context" or target.startswith("otto.context."):
+            if target in _CONTEXT or target.startswith("otto.context."):
                 found.append(f"{target} ({name}:{node.lineno})")
-            elif target == "otto" and any(a.name == "context" for a in node.names):
-                found.append(f"otto.context ({name}:{node.lineno})")
+            elif target == "otto":
+                found += [
+                    f"otto.{a.name} ({name}:{node.lineno})"
+                    for a in node.names
+                    if f"otto.{a.name}" in _CONTEXT
+                ]
     return found
 
 
@@ -69,3 +77,18 @@ def test_no_host_module_imports_the_context_at_runtime():
         hit for path in sorted(HOST.rglob("*.py")) for hit in _runtime_imports_of_context(path)
     ]
     assert offenders == []
+
+
+def test_the_run_context_s_home_counts_in_every_spelling():
+    source = (
+        "from ..run_context import get_context\n"
+        "import otto.run_context\n"
+        "from .. import run_context\n"
+        "from .. import context\n"
+    )
+    assert _context_imports(source, ["otto", "host"], "probe.py") == [
+        "otto.run_context (probe.py:1)",
+        "otto.run_context",
+        "otto.run_context (probe.py:3)",
+        "otto.context (probe.py:4)",
+    ]

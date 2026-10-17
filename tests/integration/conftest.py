@@ -129,8 +129,9 @@ def sut_dirs_env_module():
     a flock or hand-build a ``UnixHost``/``Lab``, neither of which reads the env
     or bootstraps (a context reads its repos lazily), so they do not ask.
 
-    Brackets the composition state too, at both of its owners: the bootstrap
-    memo and the composed-repos catalog it publishes to ``otto.declared``, and
+    Brackets the composition state too, at both of its owners: the discovery
+    cache ``otto.config.repo`` holds and the composed-repos catalog the root
+    publishes to ``otto.declared``, and
     the CLI's completion-cache snapshot on ``otto.registry``. A
     module fixture primes them BEFORE the root conftest's per-test
     ``_restore_composition_state`` takes its snapshot, so without this restore
@@ -139,15 +140,16 @@ def sut_dirs_env_module():
     """
     import dataclasses
 
-    from otto import bootstrap, declared, registry
+    import otto.config.repo as config_repo
+    from otto import declared, registry
 
-    saved_discovered = bootstrap._discovered
+    saved_discovery = dataclasses.replace(config_repo._discovery)
     saved_composition = dataclasses.replace(declared._composition)
     saved_names = registry._COMPLETION_SNAPSHOT.names
     try:
         yield from _default_sut_dirs_env_impl()
     finally:
-        bootstrap._discovered = saved_discovered
+        config_repo._discovery = saved_discovery
         declared._composition = saved_composition
         registry._COMPLETION_SNAPSHOT.names = saved_names
 
