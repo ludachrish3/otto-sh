@@ -394,15 +394,14 @@ def _cycle_section(graph: ModuleGraph, found: "list[list[str]]") -> "list[str]":
         return [
             "No module is in a cycle: the condensed graph above is the whole graph.",
             "`tach.toml` sets `forbid_circular_dependencies = true`, so `tach check`",
-            "refuses an import that would close one, and",
-            "`tests/unit/test_import_cycle_ratchet.py` checks the same graph again.",
+            "refuses an import that would close one.",
             "",
         ]
     if not found:
         return [
             "No module is in a cycle: the condensed graph above is the whole graph.",
-            "`tach.toml` does not set `forbid_circular_dependencies = true`, so only",
-            "`tests/unit/test_import_cycle_ratchet.py` keeps it so.",
+            "`tach.toml` does not set `forbid_circular_dependencies = true`, so",
+            "`tach check` would not refuse an import that closed one.",
             "",
         ]
     lines = []
@@ -414,9 +413,7 @@ def _cycle_section(graph: ModuleGraph, found: "list[list[str]]") -> "list[str]":
     inside = sum(len(deps) for deps in cycle_edges(graph).values())
     lines += [
         f"{inside} of the {graph.edge_count()} dependencies run between two modules of",
-        "one cycle. `tests/unit/test_import_cycle_ratchet.py` (run by `make lint-arch`)",
-        "lists the modules in a cycle and the edges inside one, and neither list may",
-        "grow: a module that joins a cycle, or a new edge inside one, fails the gate.",
+        "one cycle.",
         "",
     ]
     pairs = mutual_pairs(graph)

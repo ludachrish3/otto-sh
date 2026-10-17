@@ -1591,18 +1591,16 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 # where a targeted test run would never select them. Plain `uv run`, not
 # `--group lint`: a group sync reshapes the venv the import-budget tests count.
 #
-# The cycle ratchet rides the same leg for the same reason. tach checks each
-# edge on its own and cannot see a loop; tests/unit/test_import_cycle_ratchet.py
-# pins which modules are in an import cycle and which edges run inside one,
-# shrink-only (#522), until forbid_circular_dependencies can be turned on.
-# The layer test and the import-string audit ride with it: tach cannot see a
-# module left unlayered, a file no module owns, or an import made by string.
+# tach itself refuses an import cycle (forbid_circular_dependencies = true).
+# The layer test and the import-string audit ride the same leg for the same
+# reason: tach cannot see a module left unlayered, a file no module owns, or
+# an import made by string.
 # So does the monitor boundary: tach cannot tell live.py from the other files
 # of the otto.monitor module, and only live.py may read the lab. Its claim to
 # count every import tach counts is about tach's behaviour, so
 # scripts/monitor_boundary_tach_canary.py re-checks it against the installed
 # tach beside the layer canary.
-lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts and layers) + the tach layer and monitor boundary canaries + the import-cycle ratchet + the layer and import-string audits + ast-grep (pattern rules) + the lazy-export import rules + check-breaking (public-API golden marking)
+lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts and layers) + the tach layer and monitor boundary canaries + the layer and import-string audits + ast-grep (pattern rules) + the lazy-export import rules + check-breaking (public-API golden marking)
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
 	@uv run --group lint tach check --exact
 	@$(SAY) "tach: the installed tach still enforces the layer switch"
@@ -1615,8 +1613,8 @@ lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependen
 	@uv run --group lint ast-grep test --skip-snapshot-tests
 	@$(SAY) "import rules: lazy exports patched where defined, read at call time, moved names spelled once, imported from their defining module"
 	@uv run pytest tests/unit/test_patch_targets.py tests/unit/test_no_import_time_lazy_exports.py tests/unit/test_moved_name_spellings.py tests/unit/test_internal_imports_skip_facades.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
-	@$(SAY) "import cycle, layers and import strings: shrink-only ratchet, layer coverage, string audit, monitor boundary"
-	@uv run pytest tests/unit/test_import_cycle_ratchet.py tests/unit/test_tach_layers.py tests/unit/test_dynamic_import_audit.py tests/unit/test_monitor_service_reads_no_lab.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
+	@$(SAY) "layers and import strings: layer coverage, string audit, monitor boundary"
+	@uv run pytest tests/unit/test_tach_layers.py tests/unit/test_dynamic_import_audit.py tests/unit/test_monitor_service_reads_no_lab.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
 
 # `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
 # `biome lint` + `biome format` together are STRICTLY WEAKER: neither reports

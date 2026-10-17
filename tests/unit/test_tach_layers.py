@@ -11,10 +11,9 @@ anything". What tach cannot check, this file does:
 * the switch is on, and the layers are the spec's ten, highest first;
 * ``forbid_circular_dependencies`` is on: every file is in a module, so tach
   refuses an import that closes a cycle (spec 2026-10-11 placement-and-phases
-  §5.1), and turning it off would leave only the ratchet's second check;
+  §5.1), and turning it off would let one through;
 * every module outside an import cycle has a layer. The declared graph has no
-  cycle (``tests/unit/test_import_cycle_ratchet.py`` fails on one), so that is
-  every module;
+  cycle (tach refuses one), so that is every module;
 * no module in an import cycle has a layer. With no cycle this holds trivially;
   it stays so that a module that rejoined a cycle could not keep a layer tach
   would tolerate while its peers in the cycle were unlayered;

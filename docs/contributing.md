@@ -901,7 +901,7 @@ package: `from otto.result import CommandResult`, not
 `from ..inventory import build_inventory`, nor `inventory.build_inventory`
 after `import otto.inventory as inventory`. tach maps an import to the module
 it names, so a facade import declares the facade as the dependency, and the
-layers and the cycle ratchet judge an edge that is not the real one.
+layers and the cycle check judge an edge that is not the real one.
 `tests/unit/test_internal_imports_skip_facades.py` fails on each offender and
 names the module to import from, following a binding through further facades
 as the first rule describes.

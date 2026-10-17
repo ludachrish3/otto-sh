@@ -6,7 +6,7 @@ package's ``__getattr__``, which imports ``otto.inventory.config``. That
 spelling is for users. Inside otto it hides the real dependency: tach maps an
 import to the module it names, so ``from otto.host import CommandResult`` reads
 as an edge to ``otto.host`` while the class lives in ``otto.result``, and the
-declared graph, the layers and the cycle ratchet would all judge the wrong
+declared graph, the layers and the cycle check would all judge the wrong
 edge. Spec 2026-10-04 public-api-manifest §9 set the rule, and spec 2026-10-11
 placement-and-phases §3.10 carried it out across ``src/otto``.
 

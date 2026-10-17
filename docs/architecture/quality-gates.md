@@ -57,11 +57,7 @@ on every docs build.
 
 `tach.toml` sets `forbid_circular_dependencies = true`, so `tach check`
 refuses an import cycle as well as an undeclared edge. The declared graph has
-none, and `tests/unit/test_import_cycle_ratchet.py` checks it again: it reads
-the same graph, and its `BASELINE` of cycle members and the edges inside
-their cycle is empty, so any module in a cycle fails the gate, and so does
-any edge inside one, each named. `make lint-arch` runs the ratchet, because
-a targeted test run would never select it.
+none.
 
 `tach.toml` also declares otto's role layers, from `foundation` at the
 bottom to `entry` at the top, and sets `layers_explicit_depends_on = true`.
@@ -70,7 +66,7 @@ edge its `depends_on` lists: without the switch, tach lets any import into a
 lower layer through undeclared. Every module spells its `depends_on`, `[]` for
 one that imports no other, because tach reads a missing list as "may import
 anything"; the module graph reader refuses an entry without one, so the docs
-build and the ratchet fail on it. Every module carries a layer:
+build fails on it. Every module carries a layer:
 `tests/unit/test_tach_layers.py` fails on a module outside an import cycle
 that has none, and with no cycle that is any module. The same test fails on a
 file no tach module owns (tach checks none of its imports), and on a file a

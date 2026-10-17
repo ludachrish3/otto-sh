@@ -116,7 +116,8 @@ def test_an_acyclic_graph_says_whether_tach_forbids_a_cycle(tmp_path) -> None:
     page = rmg.render(graph)
     assert rmg.cycles(graph) == []
     assert not graph.forbids_cycles
-    assert "does not set `forbid_circular_dependencies = true`, so only" in page
+    assert "does not set `forbid_circular_dependencies = true`, so" in page
+    assert "would not refuse an import that closed one" in page
     assert "## Modules that import each other" not in page
     forbidding = _graph(tmp_path, "forbid_circular_dependencies = true\n" + body)
     assert forbidding.forbids_cycles

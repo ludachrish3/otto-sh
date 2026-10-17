@@ -14,9 +14,7 @@
 #
 # forbid_circular_dependencies = true: the declared graph has no import cycle
 # (#590 took the old one apart), and every file is in a module, so tach fails
-# on any new one. tests/unit/test_import_cycle_ratchet.py (run by lint-arch)
-# keeps its empty BASELINE as a second check of the same graph.
-# docs/architecture/modules.md draws the graph.
+# on any new one. docs/architecture/modules.md draws the graph.
 #
 # Note tach counts function-scope (lazy) imports as edges, same as module
 # scope. Scope-sensitive rules (e.g. "models may import config lazily but
@@ -927,9 +925,8 @@ layer = "foundation"
 # below, this cannot invert layering or create a cycle: otto.errors is a
 # zero-import leaf. The error is defined HERE, not in otto.host.errors with its
 # two peers, precisely to avoid a result->host edge -- otto.host depends on
-# otto.result, so that direction is both a runtime circular import and one more
-# mutually-importing pair added to the import cycle the ratchet pins and this
-# file is trying to shrink.
+# otto.result, so that direction is both a runtime circular import and an
+# import cycle tach refuses.
 depends_on = ["otto.utils", "otto.errors"]
 
 [[modules]]

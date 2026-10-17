@@ -1737,7 +1737,6 @@ _LINT_ARCH_IMPORT_RULES = (
     "tests/unit/test_internal_imports_skip_facades.py",
 )
 _LINT_ARCH_LAYER_AUDITS = (
-    "tests/unit/test_import_cycle_ratchet.py",
     "tests/unit/test_tach_layers.py",
     "tests/unit/test_dynamic_import_audit.py",
     "tests/unit/test_monitor_service_reads_no_lab.py",

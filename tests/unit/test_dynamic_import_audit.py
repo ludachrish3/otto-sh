@@ -22,9 +22,9 @@ imports no otto module. It fails when:
 2. a string edge points up the layers ``tach.toml`` declares today and is not
    grandfathered;
 3. with the grandfathered entries left out, static and string edges together
-   form a cycle that is not one of the static cycles
-   ``tests/unit/test_import_cycle_ratchet.py`` pins, which is the check
-   ``forbid_circular_dependencies`` cannot make;
+   form a cycle that is not one of the static graph's own cycles, which is
+   the check ``forbid_circular_dependencies`` cannot make (tach sees no
+   string edge);
 4. a string edge that is not grandfathered runs between the same two tach
    modules as one that is: nothing is added on a grandfathered edge;
 5. a grandfathered entry is still here once the landing that removes it is the

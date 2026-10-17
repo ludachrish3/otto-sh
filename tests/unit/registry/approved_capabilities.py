@@ -1,6 +1,6 @@
 """Every registry capability otto declares, with its reason.
 
-SHRINK-ONLY, like the cycle ratchet's BASELINE: entries are only removed. An
+SHRINK-ONLY: entries are only removed. An
 addition is a visible diff that review must accept; whether a reason is a good
 reason is review's call too. test_approved_capabilities.py fails on any
 difference from the live declarations, and on a blank reason.

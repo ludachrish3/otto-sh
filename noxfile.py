@@ -779,7 +779,7 @@ def lint(session: nox.Session) -> None:
     this session has no opinion about; CI's lint-python job runs it as its
     own step, after this session, with the range computed from the
     workflow's push/pull_request event. Its parse-only pytest legs — the
-    import-cycle ratchet, the layer test, the import-string audit and the
+    layer test, the import-string audit and the
     lazy-export import rules — are not repeated here either: they are
     ordinary unit tests, so the `tests_hostless` session already runs them.
     """
