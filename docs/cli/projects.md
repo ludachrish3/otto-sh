@@ -172,6 +172,30 @@ Cannot run commands while a project fails to load (see warnings above).
 
 **A project you `-I` stays fatal when it is broken.**
 
+**So does a broken project that an active project requires.** If an active
+project declares a **required** `[dependencies]` entry on the broken project,
+directly or through a chain of required dependencies, its error is fatal even
+when the broken project is switched off with `-E` or outside the loaded labs.
+The active project's own `init` module has already run against whatever the
+broken project registered before it failed, so otto does not continue on that
+basis. `-E` says that you handle the project's *install* yourself (see
+[below](#dependencies-of-a-project-you-switched-off)). It does not excuse the
+project failing to load. An **optional** dependency does not make a broken
+project fatal. The refusal names the active projects that require the broken
+one:
+
+```console
+$ otto --lab radio -E radio-fw --show-lab
+warning: project root /work/radio-fw: failed to load radio_fw: ModuleNotFoundError("No module named 'does_not_exist_anywhere'")
+error: project 'radio-fw' failed to load and is inactive for this run (--exclude-projects radio-fw), but active project 'radio-app' requires it — switch 'radio-app' off too with --exclude-projects, or fix 'radio-fw'
+Cannot run commands while a project fails to load (see warnings above).
+```
+
+To run without the broken project, switch off the projects that require it as
+well, or fix it. A library caller finds the same facts on
+{class}`otto.session.ProjectLoadError`'s `required` list, one
+{class}`otto.session.RequiredProject` per broken project.
+
 ```{note}
 This gate demotes on the **lab axis only** — the explicit switches plus
 `lab_patterns` — because it runs before the lab is built. A project that would

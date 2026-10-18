@@ -255,3 +255,58 @@ class TestDemotion:
         with pytest.raises(typer.Exit) as excinfo:
             fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("repo2",)))
         assert excinfo.value.exit_code == 1
+
+
+def _requiring(name, *, needs):
+    """A healthy discovered project with a satisfied required dependency on *needs*."""
+    from otto.config.dependencies import ResolvedDependency
+    from otto.config.version import Version
+
+    dep = ResolvedDependency(
+        name=needs,
+        normalized=needs,
+        constraint="",
+        required=True,
+        status="satisfied",
+        provider_version=Version("1.0.0"),
+    )
+    return fake_repo(name, root=Path(f"/repos/{name}"), dependencies=[dep])
+
+
+def test_the_refusal_says_why_a_switched_off_project_still_counts(monkeypatch, capsys):
+    """#630: switching off fw does not excuse it while active app requires it."""
+    app, fw = _requiring("app", needs="fw"), _broken_repo("fw")
+    _install_result(
+        monkeypatch,
+        errors=[bs.BootstrapError(fw.root, "fw_init", ImportError("paramiko"))],
+        projects=[app, fw],
+    )
+    with pytest.raises(typer.Exit) as excinfo:
+        fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("fw",)))
+    assert excinfo.value.exit_code == 1
+    err_out = capsys.readouterr().err
+    assert (
+        "error: project 'fw' failed to load and is inactive for this run "
+        "(--exclude-projects fw), but active project 'app' requires it — "
+        "switch 'app' off too with --exclude-projects, or fix 'fw'\n"
+    ) in err_out
+    assert "continuing without it" not in err_out
+
+
+def test_the_refusal_names_every_requirer_of_an_out_of_scope_project(monkeypatch, capsys):
+    """#630: several active requirers are named, and the lab scope is the reason."""
+    app, cli = _requiring("app", needs="fw"), _requiring("cli", needs="fw")
+    fw = _broken_repo("fw", lab_patterns=["elsewhere"])
+    _install_result(
+        monkeypatch,
+        errors=[bs.BootstrapError(fw.root, "fw_init", ImportError("paramiko"))],
+        projects=[app, cli, fw],
+    )
+    with pytest.raises(typer.Exit) as excinfo:
+        fail_loud_on_bootstrap_errors(_fake_ctx(labs=["rig"]))
+    assert excinfo.value.exit_code == 1
+    assert (
+        "error: project 'fw' failed to load and is inactive for this run "
+        "(not applicable to lab(s) [rig]), but active projects 'app', 'cli' require it"
+        " — switch them off too with --exclude-projects, or fix 'fw'\n"
+    ) in capsys.readouterr().err

@@ -30,8 +30,10 @@ each over repo layouts built with ``make_sut_repo`` + ``Project`` and installed 
    the real CLI — ``otto.cli.main.entry()``, so the boundary frame that
    prints an unknown lab is in the loop — exits with today's code and prints
    the library's facts in flag spelling. The error's carried payload is
-   reached, not just its type: a ``ProjectLoadError`` names its fatal repos and
-   carries its demotions, which the CLI prints before its frame; a
+   reached, not just its type: a ``ProjectLoadError`` names its fatal projects and
+   carries its demotions and its required projects (an inactive broken
+   project an active one requires), which the CLI prints before its frame,
+   each in the library's sentence with the flags spelled in; a
    ``DependencyRefusedError`` names the repo and requirement the preflight
    reported. The cases that do not refuse are the counterpart: the library
    does not raise, its dependency warnings are the CLI's ``warning:`` lines,
@@ -91,6 +93,18 @@ case: the equality failed (the library's lab carried ``fw-debug.bin``, the
 CLI's ``fw-field.bin``). Dropping it AND the CLI's ``--field``: the equality
 stayed green, as predicted, and the witness failed
 (``fw=.../Acme/build/fw-debug.bin``).
+
+(viii) re-implementing the required-project sentence in ``invoke.py``'s
+``_echo_required`` with the plural dropped (always "active project ... requires
+it — switch it off too"): refusal parity failed both required cases, on
+``whom`` for ``required-excluded`` (``'it' != "'Needs_Broken'"``) and on
+``who`` and ``whom`` for ``required-out-of-scope`` (``"active project
+'Needs_Broken', 'Also_Needs' requires it", 'it'`` against ``"active projects
+... require it", 'them'``). Dropping ``_echo_required(e.required)`` failed both
+(``assert [] == [("'Broken_Repo'", ...)]``). A wording fault inside the shared
+``_required_sentence`` moves both sides together and stays green here, as
+predicted; the exact-sentence pins in ``test_load_error_classifier.py`` and
+``test_bootstrap_gate.py`` catch it.
 """
 
 import ast
@@ -471,6 +485,12 @@ _BROKEN = "Broken_Repo"
 _FATAL = "Fatal_Repo"
 """A second broken repo, active, so one run carries a fatal error AND a demotion."""
 
+_NEEDS = "Needs_Broken"
+"""An active project with a required dependency on :data:`_BROKEN`."""
+
+_ALSO_NEEDS = "Also_Needs"
+"""A second active requirer of :data:`_BROKEN`, so the refusal names several."""
+
 _SIBLING = "Sibling_Repo"
 """A healthy repo whose requirement goes unmet; mixed case, so ``-E`` must normalise."""
 
@@ -523,6 +543,32 @@ def _demoted_and_fatal(root: Path) -> World:
     return World(projects=[_healthy(root), demoted, fatal], errors=[demoted_error, fatal_error])
 
 
+def _requirer(root: Path, name: str) -> Project:
+    """A healthy project whose ``[dependencies]`` require :data:`_BROKEN`."""
+    return _repo(root, name, extra=f'[dependencies]\nrequired = ["{_BROKEN}"]\n')
+
+
+def _required_broken(
+    root: Path, requirers: "list[str]", *, lab_patterns: "list[str] | None" = None
+) -> World:
+    """A broken project that the active *requirers* require, resolved as bootstrap resolves it."""
+    from otto.config.dependencies import resolve_dependencies
+
+    project, error = _broken(root, _BROKEN, lab_patterns=lab_patterns)
+    needers = [_requirer(root, name) for name in requirers]
+    projects = [_healthy(root), *needers, project]
+    assert resolve_dependencies(projects).errors == []
+    return World(projects=projects, errors=[error])
+
+
+def _required_excluded(root: Path) -> World:
+    return _required_broken(root, [_NEEDS])
+
+
+def _required_out_of_scope(root: Path) -> World:
+    return _required_broken(root, [_NEEDS, _ALSO_NEEDS], lab_patterns=["elsewhere"])
+
+
 def _unparsable(root: Path) -> World:
     """A ``settings.toml`` that does not parse: no ``Project``, so no repo to attribute it to.
 
@@ -562,9 +608,11 @@ class Case:
     include: list[str] = dataclasses.field(default_factory=list)
     exclude: list[str] = dataclasses.field(default_factory=list)
     fatal: list[str] = dataclasses.field(default_factory=list)
-    """The repo directories a ``RepoLoadError`` must name, in order."""
+    """The repo directories a ``ProjectLoadError`` must name, in order."""
     demoted: list[str] = dataclasses.field(default_factory=list)
     """The repos the library demotes, in order."""
+    required: list[str] = dataclasses.field(default_factory=list)
+    """The inactive projects a ``ProjectLoadError`` says active ones require, in order."""
     unmet: "str | None" = None
     """The repo whose requirement the preflight finds unmet."""
 
@@ -607,6 +655,25 @@ def _cases() -> "list[Case]":
             1,
             fatal=[_FATAL],
             demoted=[_BROKEN],
+        ),
+        Case(
+            "required-excluded",
+            _required_excluded,
+            ["lab1"],
+            ProjectLoadError,
+            1,
+            exclude=[_BROKEN],
+            fatal=[_BROKEN],
+            required=[_BROKEN],
+        ),
+        Case(
+            "required-out-of-scope",
+            _required_out_of_scope,
+            ["lab1"],
+            ProjectLoadError,
+            1,
+            fatal=[_BROKEN],
+            required=[_BROKEN],
         ),
         Case("unparsable-settings", _unparsable, ["lab1"], ProjectLoadError, 1, fatal=["garbled"]),
         Case(
@@ -771,6 +838,45 @@ def _cli_demotions(stderr: str) -> "list[tuple[str, str]]":
     ]
 
 
+_REQUIRED = re.compile(
+    r"project (?P<project>'[^']*') failed to load and is inactive for this run "
+    r"\((?P<why>.*)\), but (?P<who>.*) — switch (?P<whom>.*) off too with "
+    r"(?P<switch>\S+), or fix (?P=project)"
+)
+"""The required-project sentence both sides share; the CLI's carries ``error: `` in front."""
+
+_SWITCH_FLAG = {"exclude_projects": "--exclude-projects"}
+"""The switch a required-project sentence names, as a field and as a flag."""
+
+
+def _library_required(required: "list[Any]") -> "list[tuple[str, ...]]":
+    """``(project, why, who, whom, switch)`` per ``RequiredProject``, in flag spelling."""
+    out = []
+    for r in required:
+        match = _REQUIRED.fullmatch(r.message)
+        assert match is not None, r.message
+        assert ast.literal_eval(match["project"]) == r.name
+        out.append(
+            (
+                match["project"],
+                _in_flag_spelling(match["why"]),
+                match["who"],
+                match["whom"],
+                _SWITCH_FLAG[match["switch"]],
+            )
+        )
+    return out
+
+
+def _cli_required(stderr: str) -> "list[tuple[str, ...]]":
+    """``(project, why, who, whom, switch)`` for each required-project ``error:`` line."""
+    return [
+        (match["project"], match["why"], match["who"], match["whom"], match["switch"])
+        for line in stderr.splitlines()
+        if line.startswith("error: ") and (match := _REQUIRED.fullmatch(line[len("error: ") :]))
+    ]
+
+
 _LOAD_FRAME = "Cannot run commands while a project fails to load (see warnings above)."
 
 
@@ -788,6 +894,7 @@ def _assert_cli_says(case: Case, verdict: Exception, run: CliRun) -> None:
         # The payload first: the fatal repos and the demotions the error carries.
         assert [Path(error.root).name for error in verdict.errors] == case.fatal
         assert [d.name for d in verdict.demoted] == case.demoted
+        assert [r.name for r in verdict.required] == case.required
         for error in verdict.errors:
             assert f"warning: {error}\n" in run.stderr
         assert _LOAD_FRAME in _flat(run.stdout)
@@ -797,6 +904,10 @@ def _assert_cli_says(case: Case, verdict: Exception, run: CliRun) -> None:
         for project, why in _library_demotions(verdict.demoted):
             assert _flat(run.output).index(f"project {project!r} failed to load, but is") < frame_at
             assert why in _flat(run.output)[:frame_at]
+        # Each required project is the CLI's error line, also BEFORE the frame.
+        assert _cli_required(run.stderr) == _library_required(verdict.required)
+        for r in verdict.required:
+            assert _flat(run.output).index(f"error: project {r.name!r} failed to load") < frame_at
     elif isinstance(verdict, DependencyRefusedError):
         [bad] = verdict.unsatisfied
         assert (bad.project, bad.requirement) == (case.unmet, _UNMET_REQUIREMENT)

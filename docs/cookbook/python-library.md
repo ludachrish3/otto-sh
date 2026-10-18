@@ -166,8 +166,8 @@ pass the `Lab` object. It is used as given — no sources, preferences or
 placeholders are added — and the checks still run against it.
 
 What does not refuse is logged as a warning on the `otto.context` logger: the
-load error of a project that is inactive for this run, and the dependency
-preflight's warnings. Because otto attaches only a `NullHandler` to the
+load error of a project that is inactive for this run and that no active
+project requires, and the dependency preflight's warnings. Because otto attaches only a `NullHandler` to the
 `'otto'` logger (see [Logging](#logging)), you see them once you configure logging yourself or call
 `otto.session.install_logging`. A refusal carries them too, so they are not lost
 when the block never runs: `ProjectLoadError.demoted` and
@@ -181,8 +181,9 @@ yourself (the `otto.session` functions are on {doc}`../api/session`):
 1. `bootstrap()` discovers the projects and imports their `init` modules.
 2. {func}`~otto.session.select_projects` validates `include_projects` /
    `exclude_projects`.
-3. {func}`~otto.session.check_projects` refuses if an active project failed to load, and
-   returns the load errors of inactive projects, which `open_context` logs.
+3. {func}`~otto.session.check_projects` refuses if an active project failed to
+   load, or a project an active project requires did, and returns the load
+   errors of the other inactive projects, which `open_context` logs.
 4. For the field variant, call `otto.context.set_variant("field")` before
    building any context, and keep the binding it returns. The lab build picks each product's
    {ref}`variant <product-variants>` entry, and providers read the variant

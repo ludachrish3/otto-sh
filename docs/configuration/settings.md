@@ -400,6 +400,12 @@ At startup, otto validates the declarations after discovering every project in
   that project loudly (its instructions and tests do not load; other projects are
   unaffected). Projects that require a failed project are skipped too, with the
   root cause named.
+- A required dependency whose `init` module fails to import (or whose
+  `[os_profiles]` table fails its check) does **not** skip its dependents:
+  their `init` modules still run. Instead, the failure is fatal for any run in
+  which a project that requires it, directly or transitively, is active, even
+  if the failed project itself is switched off or outside the loaded labs. See
+  {doc}`../cli/projects`.
 - An **optional** dependency that is absent is fine. Present but
   incompatible prints a startup warning (the feature stays disabled) and
   never blocks commands.

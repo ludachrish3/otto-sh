@@ -241,8 +241,9 @@ def _contain_data_profile_errors(projects: "list[Project]", errors: list[Bootstr
     project by ``root``, and the project stays in ``ordered_projects``: its init
     ran, so the provider-scope check still judges what it registered, and its
     dependents behave as they do when a dependency's init fails. Other projects
-    and commands proceed; a run the project is part of fails loudly, and one it
-    is not part of demotes the error to a warning.
+    and commands proceed; a run the project is part of, or that an active
+    project requiring it is part of, fails loudly, and any other run demotes
+    the error to a warning.
     """
     if not any(project.os_profiles for project in projects):
         # Nothing to check: the module that checks stays unimported.

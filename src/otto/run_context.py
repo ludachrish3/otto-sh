@@ -775,12 +775,13 @@ class OttoContext:
         A walk never widens because the projects could not be read:
 
         * a load error that :func:`otto.session.check_projects` would treat as
-          fatal (an unparseable ``settings.toml``, or any error of an active
-          project) raises :class:`otto.session.ProjectLoadError`, decided by the
-          same classifier, so a hand-built context that never ran
-          ``check_projects`` refuses where the CLI would have. A switched-off or
-          lab-inactive project's error only demotes it, and its declaration
-          still counts;
+          fatal (an unparseable ``settings.toml``, any error of an active
+          project, or the failure of a project an active project requires)
+          raises :class:`otto.session.ProjectLoadError`, decided by the same
+          classifier, so a hand-built context that never ran
+          ``check_projects`` refuses where the CLI would have. A switched-off
+          or lab-inactive project's error only demotes it, unless an active
+          project requires it, and its declaration still counts;
         * an environment failure (``OTTOPATH`` naming a directory that
           does not exist) propagates as raised.
 
@@ -818,7 +819,7 @@ class OttoContext:
             exclude=list(self.exclude_projects),
         )
         if verdicts.fatal:
-            raise ProjectLoadError(verdicts.fatal, verdicts.demoted)
+            raise ProjectLoadError(verdicts.fatal, verdicts.demoted, required=verdicts.required)
         scopes = resolve_scopes(
             result.projects,  # every parsed project: a dependency skip never hides a declaration
             self.lab.component_names,

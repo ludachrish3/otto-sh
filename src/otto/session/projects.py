@@ -21,13 +21,17 @@ class ProjectSelection:
 
 @dataclasses.dataclass(frozen=True)
 class DemotedProject:
-    """A load error that does not stop the run, because its project is inactive before the lab."""
+    """A load error that does not stop the run, because its project is inactive before the lab.
+
+    A project that an active project requires is never demoted, however it was
+    made inactive.
+    """
 
     error: "BootstrapError"
     name: str
     """The project's name as discovered."""
     normalized_name: str
-    """The project's normalised name, the spelling ``include_projects`` takes."""
+    """The project's normalised name, the spelling the project switches take."""
     reason: 'Literal["excluded", "out_of_scope"]'
     labs: list[str] = dataclasses.field(default_factory=list)
     """The lab selection an ``"out_of_scope"`` verdict was made against."""
@@ -35,15 +39,81 @@ class DemotedProject:
     @property
     def message(self) -> str:
         """The library's sentence for this demotion, in field names."""
-        why = (
-            f"exclude_projects {self.normalized_name}"
-            if self.reason == "excluded"
-            else f"not applicable to lab(s) [{', '.join(self.labs)}]"
-        )
+        why = _inactive_reason_text(self.reason, self.normalized_name, self.labs)
         return (
             f"project {self.name!r} failed to load, but is inactive for this run ({why})"
             " — continuing without it"
         )
+
+
+@dataclasses.dataclass(frozen=True)
+class RequiredProject:
+    """A load error that is fatal only because an active project requires its inactive project.
+
+    The project would have been demoted (:class:`DemotedProject`) on its own
+    activity, but an active project reaches it through required dependencies,
+    so its error stops the run. This record says why the switch or the lab
+    scope did not excuse it. Its :attr:`error` is also in the refusal's fatal
+    list.
+    """
+
+    error: "BootstrapError"
+    name: str
+    """The project's name as discovered."""
+    normalized_name: str
+    """The project's normalised name, the spelling the project switches take."""
+    reason: 'Literal["excluded", "out_of_scope"]'
+    """Why the project is inactive on its own: switched off, or outside the labs."""
+    required_by: list[str]
+    """The active projects that require it, directly or transitively, by discovered name."""
+    labs: list[str] = dataclasses.field(default_factory=list)
+    """The lab selection an ``"out_of_scope"`` verdict was made against."""
+
+    @property
+    def message(self) -> str:
+        """The library's sentence for this refusal, in field names."""
+        why = _inactive_reason_text(self.reason, self.normalized_name, self.labs)
+        return _required_sentence(self, why=why)
+
+
+def _inactive_reason_text(
+    reason: 'Literal["excluded", "out_of_scope"]',
+    normalized_name: str,
+    labs: list[str],
+    *,
+    switch: str = "exclude_projects",
+) -> str:
+    """Say why a project is inactive before the lab; the one home of that wording.
+
+    *switch* is the ``exclude_projects`` spelling in the caller's vocabulary:
+    the field name for the records' :attr:`~DemotedProject.message`, the flag
+    for the CLI's lines.
+    """
+    if reason == "excluded":
+        return f"{switch} {normalized_name}"
+    return f"not applicable to lab(s) [{', '.join(labs)}]"
+
+
+def _required_sentence(
+    entry: RequiredProject, *, why: str, switch: str = "exclude_projects"
+) -> str:
+    """Say why *entry* still refused the run; the one home of the wording.
+
+    *why* is the inactivity reason (:func:`_inactive_reason_text`) and *switch*
+    the ``exclude_projects`` spelling, both in the caller's vocabulary: field
+    names for :attr:`RequiredProject.message`, flags for the CLI's ``error:``
+    line.
+    """
+    names = entry.required_by
+    quoted = ", ".join(repr(name) for name in names)
+    if len(names) == 1:
+        who, whom = f"active project {quoted} requires it", quoted
+    else:
+        who, whom = f"active projects {quoted} require it", "them"
+    return (
+        f"project {entry.name!r} failed to load and is inactive for this run ({why}), "
+        f"but {who} — switch {whom} off too with {switch}, or fix {entry.name!r}"
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -58,9 +128,14 @@ class LoadErrorVerdicts:
     """Which bootstrap errors stop a run, and which only demote their project."""
 
     fatal: "list[BootstrapError]" = dataclasses.field(default_factory=list)
-    """An active project's error, one ``include`` forces, or one no discovered project owns."""
+    """An active project's error, one ``include`` forces, one of a project an active
+    project requires (transitively, through required dependencies), or one no
+    discovered project owns."""
     demoted: list[DemotedProject] = dataclasses.field(default_factory=list)
-    """Errors of projects inactive before the lab: switched off, or outside its labs."""
+    """Errors of projects inactive before the lab (switched off, or outside its labs)
+    that no active project requires."""
+    required: list[RequiredProject] = dataclasses.field(default_factory=list)
+    """The fatal errors that would have been demoted, but for an active project requiring them."""
 
 
 def classify_load_errors(
@@ -77,7 +152,15 @@ def classify_load_errors(
     ``str()``. An unowned error (a ``settings.toml`` that would not parse) is
     fatal: that project's declaration cannot be known. An owned error is demoted
     when its project is switched off or inactive before the lab, and fatal
-    otherwise, whatever its kind.
+    otherwise, whatever its kind. A project an active project REQUIRES,
+    directly or through a chain of required dependencies, counts as active
+    here even when it is switched off or outside the labs: the active
+    project's init module ran against whatever the broken one registered, so
+    its error is fatal. An optional dependency never makes a project active.
+    The required edges are the satisfied ones the dependency pass recorded in
+    each project's ``dependencies``. Each such error is also recorded in
+    :attr:`LoadErrorVerdicts.required`, naming the active projects that
+    require it.
 
     *include* and *exclude* may be spelled any way (PEP 503 normalised here,
     as :func:`otto.config.scope.active` does), and a name in both counts as
@@ -90,32 +173,81 @@ def classify_load_errors(
     from ..models.dependencies import normalize_name
 
     included, excluded = set(_normalised(list(include))), set(_normalised(list(exclude)))
+
+    def inactive_reason(project: "Project") -> 'Literal["excluded", "out_of_scope"] | None':
+        name = normalize_name(project.name)
+        if name in excluded:
+            return "excluded"
+        if name not in included and inactive_before_lab(project.project_scope, labs or None):
+            return "out_of_scope"
+        return None
+
     by_dir = {str(project.root): project for project in result.projects}
+    required = _required_by(
+        [project for project in result.projects if inactive_reason(project) is None],
+        result.projects,
+    )
     fatal: "list[BootstrapError]" = []
     demoted: list[DemotedProject] = []
+    overridden: list[RequiredProject] = []
     for err in result.errors:
         project = by_dir.get(str(err.root))
         if project is None:
             fatal.append(err)
             continue
         name = normalize_name(project.name)
-        reason: Literal["excluded", "out_of_scope"]
-        if name in excluded:
-            reason = "excluded"
-        elif name in included:
+        reason = inactive_reason(project)
+        if reason is None:
             fatal.append(err)
             continue
-        elif inactive_before_lab(project.project_scope, labs or None):
-            reason = "out_of_scope"
-        else:
+        if name in required:
             fatal.append(err)
+            overridden.append(
+                RequiredProject(
+                    error=err,
+                    name=project.name,
+                    normalized_name=name,
+                    reason=reason,
+                    required_by=required[name],
+                    labs=list(labs),
+                )
+            )
             continue
         demoted.append(
             DemotedProject(
                 error=err, name=project.name, normalized_name=name, reason=reason, labs=list(labs)
             )
         )
-    return LoadErrorVerdicts(fatal=fatal, demoted=demoted)
+    return LoadErrorVerdicts(fatal=fatal, demoted=demoted, required=overridden)
+
+
+def _required_by(active: "list[Project]", projects: "list[Project]") -> dict[str, list[str]]:
+    """Map each normalised name *active* reach through required dependencies to its requirers.
+
+    The walk is transitive, and the requirers are the *active* projects'
+    discovered names, in *active*'s order. It follows only the edges the
+    dependency pass found satisfied: an unsatisfied required dependency names
+    no project that could be reached, and its dependent already carries its
+    own error. A name is walked at most once per active project, so a required
+    cycle terminates.
+    """
+    from ..models.dependencies import normalize_name
+
+    by_name: dict[str, list[Project]] = {}
+    for project in projects:
+        by_name.setdefault(normalize_name(project.name), []).append(project)
+    requirers: dict[str, list[str]] = {}
+    for root in active:
+        reached: set[str] = set()
+        stack = [root]
+        while stack:
+            for dep in stack.pop().dependencies:
+                if dep.required and dep.status == "satisfied" and dep.normalized not in reached:
+                    reached.add(dep.normalized)
+                    stack.extend(by_name.get(dep.normalized, []))
+        for name in reached:
+            requirers.setdefault(name, []).append(root.name)
+    return requirers
 
 
 def _normalised(names: list[str]) -> list[str]:
@@ -209,8 +341,9 @@ def check_projects(
     """Run the bootstrap gate, decided before the lab exists.
 
     An error is fatal when its project is active, when ``include_projects`` names
-    it, or when no discovered project owns it (a ``settings.toml`` that failed to
-    parse). Inactivity is the pre-lab projection
+    it, when an active project requires it (directly or through a chain of
+    required dependencies), or when no discovered project owns it (a
+    ``settings.toml`` that failed to parse). Inactivity is the pre-lab projection
     (:func:`otto.config.scope.inactive_before_lab`): the explicit switches plus
     lab-name inference. A project that is inactive only because it is
     host-starved cannot be seen before the lab, so its errors stay fatal.
@@ -227,5 +360,5 @@ def check_projects(
         result, labs, include=selection.include, exclude=selection.exclude
     )
     if verdicts.fatal:
-        raise ProjectLoadError(verdicts.fatal, verdicts.demoted)
+        raise ProjectLoadError(verdicts.fatal, verdicts.demoted, required=verdicts.required)
     return ProjectCheck(demoted=verdicts.demoted)

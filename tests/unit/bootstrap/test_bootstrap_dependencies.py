@@ -157,3 +157,27 @@ def test_no_dependencies_table_registers_normally(tmp_path, monkeypatch, order_f
     assert _order(order_file) == ["solo"]
     (project,) = result.projects
     assert project.dependencies == []
+
+
+def test_a_broken_excluded_project_an_active_project_requires_refuses_the_run(
+    tmp_path, monkeypatch, order_file
+):
+    # #630: b is switched off and its init raises; a (active) requires b. The
+    # gate must refuse, not demote b's error and run a on a half-registered b.
+    from otto.session.errors import ProjectLoadError
+    from otto.session.projects import ProjectSelection, check_projects
+
+    a = _write_repo(tmp_path, "a", required=["b"])
+    b = _write_repo(tmp_path, "b")
+    (tmp_path / "b" / "b_init.py").write_text("raise RuntimeError('boom')\n")
+    monkeypatch.setenv("OTTOPATH", f"{a}{os.pathsep}{b}")
+    result = bs.bootstrap()
+    (err,) = result.errors
+    with pytest.raises(ProjectLoadError) as info:
+        check_projects(result, [], ProjectSelection(exclude=["b"]))
+    assert info.value.errors == [err]
+    assert info.value.demoted == []
+    # Excluding a as well leaves nothing active that needs b: demoted again.
+    assert [
+        d.name for d in check_projects(result, [], ProjectSelection(exclude=["a", "b"])).demoted
+    ] == ["b"]

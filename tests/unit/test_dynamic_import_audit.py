@@ -1121,6 +1121,7 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/session/__init__.py", "otto.session.projects:DemotedProject", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.projects:ProjectSelection", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.projects:ProjectCheck", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.projects:RequiredProject", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.projects:check_project_overlap", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.projects:check_projects", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.projects:select_projects", FACADE_BINDING),

@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from .projects import DemotedProject as DemotedProject
     from .projects import ProjectCheck as ProjectCheck
     from .projects import ProjectSelection as ProjectSelection
+    from .projects import RequiredProject as RequiredProject
     from .projects import check_project_overlap as check_project_overlap
     from .projects import check_projects as check_projects
     from .projects import select_projects as select_projects
@@ -47,6 +48,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "ProjectSelectionError": "otto.session.errors",
     "ProjectCheck": "otto.session.projects",
     "ProjectLoadError": "otto.session.errors",
+    "RequiredProject": "otto.session.projects",
     "build_lab": "otto.session.lab",
     "check_dependencies": "otto.session.dependencies",
     "check_instruction_active": "otto.session.activation",
@@ -83,6 +85,7 @@ __all__ = [
     "ProjectLoadError",
     "ProjectSelection",
     "ProjectSelectionError",
+    "RequiredProject",
     "build_lab",
     "check_dependencies",
     "check_instruction_active",

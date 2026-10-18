@@ -15,7 +15,7 @@ import inspect
 from collections.abc import Callable, Iterator
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol, cast, get_type_hints
 
 import typer
 from rich.markup import escape
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from ..result import Result
     from ..run_context import OttoContext
     from ..session.errors import InstructionInactiveError, LabBuildError, ProjectSelectionError
-    from ..session.projects import DemotedProject
+    from ..session.projects import DemotedProject, RequiredProject
     from .registry import CommandSpec
 
 
@@ -980,7 +980,7 @@ def validate_project_switches(ctx: typer.Context) -> None:
 
 
 def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
-    """Exit(1) when bootstrap contained an ACTIVE project's error — shared loud gate.
+    """Exit(1) on an ACTIVE project's load error, or one an active project requires — loud gate.
 
     The per-error ``warning:`` lines were already printed by ``entry()`` at
     startup; print ONLY the framed summary here (don't re-print each error
@@ -995,9 +995,12 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     (:func:`otto.config.scope.inactive_before_lab`) — because this gate is what
     protects lab construction from a half-registered world and so has to run
     before it; a project that is inactive only because it is host-starved
-    therefore keeps its errors fatal. Attribution is by ``root``: an error
-    belonging to no discovered project (a ``settings.toml`` that failed to PARSE,
-    so no :class:`~otto.config.project.Project` object exists) can never be judged
+    therefore keeps its errors fatal. So does a project an active project
+    requires, directly or through a chain of required dependencies, however it
+    was made inactive: one ``error:`` line names the requiring projects and the
+    fixes. Attribution is by ``root``: an error belonging to no discovered
+    project (a ``settings.toml`` that failed to PARSE, so no
+    :class:`~otto.config.project.Project` object exists) can never be judged
     inactive and stays fatal. Without *ctx* — library callers, tests — every
     error is fatal, unchanged.
 
@@ -1024,6 +1027,7 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
         check = check_projects(result, labs, selection)
     except ProjectLoadError as e:
         _echo_demotions(e.demoted)
+        _echo_required(e.required)
         from rich import print as rprint
 
         rprint("[red]Cannot run commands while a project fails to load (see warnings above).[/red]")
@@ -1053,16 +1057,38 @@ def _echo_demotions(demoted: "list[DemotedProject]") -> None:
     # as a style tag and delete it, leaving `lab(s) )`. `typer.echo`
     # renders the sentence as written.
     for d in demoted:
-        reason = (
-            f"--exclude-projects {d.normalized_name}"
-            if d.reason == "excluded"
-            else f"not applicable to lab(s) [{', '.join(d.labs)}]"
-        )
         typer.echo(
             f"warning: project {d.name!r} failed to load, but is inactive "
-            f"for this run ({reason}) — continuing without it",
+            f"for this run ({_inactive_flag_reason(d.reason, d.normalized_name, d.labs)})"
+            " — continuing without it",
             err=True,
         )
+
+
+def _echo_required(required: "list[RequiredProject]") -> None:
+    """Print why each inactive project an active project requires still refused the run.
+
+    One ``error:`` line per project, in flag spelling, printed beside the
+    demotion lines and for the same reasons (see :func:`_echo_demotions`).
+    The sentence is the library's (:attr:`otto.session.RequiredProject.message`),
+    built by the same helper with the flag spelled in.
+    """
+    from ..session.projects import _required_sentence
+
+    for r in required:
+        why = _inactive_flag_reason(r.reason, r.normalized_name, r.labs)
+        typer.echo(
+            f"error: {_required_sentence(r, why=why, switch='--exclude-projects')}", err=True
+        )
+
+
+def _inactive_flag_reason(
+    reason: Literal["excluded", "out_of_scope"], normalized_name: str, labs: list[str]
+) -> str:
+    """Say why a project is inactive before the lab, in flag spelling."""
+    from ..session.projects import _inactive_reason_text
+
+    return _inactive_reason_text(reason, normalized_name, labs, switch="--exclude-projects")
 
 
 def present_reservation_gate(ctx: typer.Context) -> None:

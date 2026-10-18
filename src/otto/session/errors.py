@@ -13,7 +13,7 @@ from ..errors import FieldError, OttoError
 if TYPE_CHECKING:
     from ..config.scope import BootstrapError
     from ..env.preflight import Unsatisfied
-    from .projects import DemotedProject
+    from .projects import DemotedProject, RequiredProject
 
 
 class ProjectSelectionError(FieldError, ValueError):
@@ -45,19 +45,29 @@ class ProjectLoadError(OttoError):
     """An active project failed to load, so the run cannot start.
 
     ``errors`` are the fatal bootstrap errors: an active project's, one forced by
-    ``include_projects``, or one with no project to attribute it to (an
-    unparsable ``settings.toml``). ``demoted`` are the errors that would not
-    have stopped the run on their own, so a renderer can still report them.
+    ``include_projects``, one of a project an active project requires, or one
+    with no project to attribute it to (an unparsable ``settings.toml``).
+    ``demoted`` are the errors that would not have stopped the run on their
+    own, so a renderer can still report them. ``required`` explains each fatal
+    error whose project is switched off or outside the labs but that an active
+    project requires: which active projects require it.
     """
 
     def __init__(
-        self, errors: "list[BootstrapError]", demoted: "list[DemotedProject] | None" = None
+        self,
+        errors: "list[BootstrapError]",
+        demoted: "list[DemotedProject] | None" = None,
+        *,
+        required: "list[RequiredProject] | None" = None,
     ) -> None:
-        """Frame every fatal error, one per line."""
-        lines = "\n".join(f"  {error}" for error in errors)
-        super().__init__(f"cannot run while a project fails to load:\n{lines}")
+        """Frame every fatal error, one per line, then why any inactive project still counts."""
+        lines = [f"  {error}" for error in errors]
+        lines += [f"  {entry.message}" for entry in required or []]
+        joined = "\n".join(lines)
+        super().__init__(f"cannot run while a project fails to load:\n{joined}")
         self.errors = list(errors)
         self.demoted = list(demoted or [])
+        self.required = list(required or [])
 
 
 class LabBuildError(FieldError):

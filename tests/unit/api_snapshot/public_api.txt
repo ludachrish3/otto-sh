@@ -5283,7 +5283,7 @@ member	otto.session:ProjectCheck.demoted	field
 abstract	otto.session:ProjectCheck	-
 name	otto.session:ProjectLoadError	class
 mro	otto.session:ProjectLoadError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
-call	otto.session:ProjectLoadError	sync	PK:errors:- PK:demoted:N
+call	otto.session:ProjectLoadError	sync	PK:errors:- PK:demoted:N KO:required:N
 abstract	otto.session:ProjectLoadError	-
 name	otto.session:ProjectSelection	class
 mro	otto.session:ProjectSelection	-
@@ -5297,6 +5297,19 @@ name	otto.session:ProjectSelectionError	class
 mro	otto.session:ProjectSelectionError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.session:ProjectSelectionError	sync	PK:message:- KO:field:- KO:kind:- KO:names:- KO:suggestion:N
 abstract	otto.session:ProjectSelectionError	-
+name	otto.session:RequiredProject	class
+mro	otto.session:RequiredProject	-
+call	otto.session:RequiredProject	sync	PK:error:- PK:name:- PK:normalized_name:- PK:reason:- PK:required_by:- PK:labs:O
+member	otto.session:RequiredProject.__eq__	method	sync	PK:other:-
+member	otto.session:RequiredProject.__hash__	method	sync	-
+member	otto.session:RequiredProject.error	field
+member	otto.session:RequiredProject.labs	field
+member	otto.session:RequiredProject.message	property:g--
+member	otto.session:RequiredProject.name	field
+member	otto.session:RequiredProject.normalized_name	field
+member	otto.session:RequiredProject.reason	field
+member	otto.session:RequiredProject.required_by	field
+abstract	otto.session:RequiredProject	-
 name	otto.session:build_lab	function
 call	otto.session:build_lab	sync	PK:projects:- PK:labs:-
 name	otto.session:check_dependencies	function

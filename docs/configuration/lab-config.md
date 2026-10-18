@@ -949,12 +949,13 @@ A project that registers no providers and declares no `[[products]]` or
   the whole-lab fallback for projects that declare nothing.
 - **A project that cannot load never widens a walk.**  A fleet walk resolves every
   parsed project's declaration, a project the dependency pass skipped included.  A
-  load error that would stop a run (an unparseable `settings.toml`, or an
-  active project's failure) refuses the walk with
-  {class}`otto.session.ProjectLoadError`, the same error
-  {func}`otto.open_context <otto.context.open_context>` raises.  A switched-off
-  or lab-inactive project's error only demotes it, and its declaration still
-  narrows the fleet.  See {doc}`../cli/run/defaults` for the walk semantics.
+  load error that would stop a run (an unparseable `settings.toml`, an
+  active project's failure, or the failure of a project an active project
+  requires) refuses the walk with {class}`otto.session.ProjectLoadError`, the
+  same error {func}`otto.open_context <otto.context.open_context>` raises.  A
+  switched-off or lab-inactive project's error only demotes it, unless an
+  active project requires it, and its declaration still narrows the fleet.
+  See {doc}`../cli/run/defaults` for the walk semantics.
 - **It can be computed without a run.**
   {func}`otto.lab.fleet_of_interest <otto.fleet.fleet_of_interest>` returns the
   ids a walk would take, from a loaded lab and its projects, without connecting or
