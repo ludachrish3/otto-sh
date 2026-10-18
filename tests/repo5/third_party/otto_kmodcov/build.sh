@@ -16,8 +16,8 @@
 # into vermagic; a headers package has it, a source tree after
 # `modules_prepare`).
 #
-# The worked consumer, tests/repo5/kmod/demo/, is a project's own product
-# and is built in place by that project's own script (tests/repo5/kmod/build.sh),
+# The worked consumer (otto's kernel-module coverage guide) is a project's own
+# product and is built in place by that project's own script (its kmod/build.sh),
 # which calls this one for the library first — a capture anchors every
 # measured file to a committed blob under the project root, so the consumer cannot
 # live out here and be built out-of-tree the way the library is.

@@ -63,7 +63,7 @@ A consumer becomes coverage-instrumented in three steps:
    after a successful `KMODCOV_INIT()` must call `KMODCOV_EXIT()` first: the
    registration holds the module's own sysfs directory, and a module that
    leaves it held cannot be freed — `insmod` or `rmmod` waits forever.
-   `tests/repo5/kmod/demo/demo_main.c` shows the shape.
+   The worked consumer below shows the shape.
 
 Once registered, a write to `/sys/module/<module>/kmodcov/dump` writes each
 instrumented object's `.gcda` file under the module's `cov_dir` parameter; a
@@ -72,11 +72,11 @@ sysfs, beside the `parameters/` directory the loader gives every module, so
 no `CONFIG_DEBUG_FS` is needed. The exit routine's own coverage is captured
 by the dump `KMODCOV_EXIT()` performs on unregister.
 
-A worked consumer following these three steps lives at
-[`tests/repo5/kmod/demo/`](../../../tests/repo5/kmod/demo/) — a bounded
-queue driven from a control file of its own, built in place by
-`tests/repo5/kmod/build.sh`
-against the library this directory's own `build.sh` builds out of tree. It
+A worked consumer following these three steps is the demo module in otto's
+kernel-module coverage guide (`docs/cli/cov/instrumenting/kernel-modules.md`
+in otto's source tree): a bounded queue driven from a control file of its
+own, built in place by its project's `kmod/build.sh` against the library
+this directory's own `build.sh` builds out of tree. It
 lives in the project rather than here because otto's coverage capture
 anchors every measured file to a committed git blob under the project root that
 declares the `[[products]]` entry.

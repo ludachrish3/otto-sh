@@ -78,7 +78,7 @@ extern const kmodcov_ctor_fn __kmodcov_ctors_end;
  * KMODCOV_EXIT() first, and the exit routine must always call it: the
  * registration holds the module's own sysfs directory, and a module that
  * leaves it held cannot be freed — insmod or rmmod waits forever.
- * tests/repo5/kmod/demo/demo_main.c shows the shape.
+ * README.md's worked consumer shows the shape.
  */
 #define KMODCOV_INIT()                                                           \
 	kmodcov_register(THIS_MODULE, &__kmodcov_ctors_begin + 1, &__kmodcov_ctors_end, cov_dir)
