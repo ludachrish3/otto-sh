@@ -71,6 +71,17 @@ loop closed?)`` for every close.
 
 
 def run_inner(pytester, plugins, **files):
-    """Write *files* into *pytester*'s directory and run one inner session under *plugins*."""
+    """Write *files* into *pytester*'s directory and run one inner session under *plugins*.
+
+    The inner session gets otto's library floor first, as ``otto test`` does
+    when it installs logging. Under ``log_cli_level=DEBUG`` alone, aiosqlite's
+    worker thread logs at DEBUG after an archive's ``close()`` has returned,
+    and that line can still be inside the inner live-log handler when inner
+    teardown closes its capture (#613). The root conftest hands the floored
+    loggers back after the test.
+    """
+    from otto.logger import management
+
+    management.apply_library_levels()
     pytester.makepyfile(**files)
     return pytester.runpytest_inprocess(*INNER_ARGS, plugins=plugins)

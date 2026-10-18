@@ -105,6 +105,29 @@ def test_a_test_that_forgets_to_stop_still_stops_and_stamps_the_end(
     assert end is not None
 
 
+def test_the_inner_session_keeps_otto_test_s_library_floor(pytester, otto_plugins):
+    """An inner session hears aiosqlite at otto test's floor, not at its own DEBUG (#613).
+
+    ``otto test`` installs logging with otto's library floor, so the archive's
+    aiosqlite worker never reaches a handler at DEBUG. The inner session runs
+    with ``log_cli_level=DEBUG``. Without the floor, the worker's last
+    "operation … completed" line (logged after ``close()`` has returned)
+    could still be inside the inner live-log handler when inner teardown
+    closes its capture: pytest's "cannot resume in state 'done'",
+    then "Event loop is closed" from the worker, collected at the next
+    test's setup. Mutation: drop the floor in ``run_inner``.
+    """
+    run_inner(
+        pytester,
+        otto_plugins,
+        test_floor=(
+            "import logging\n"
+            "def test_it():\n"
+            "    assert logging.getLogger('aiosqlite').getEffectiveLevel() >= logging.WARNING\n"
+        ),
+    ).assert_outcomes(passed=1)
+
+
 def test_event_results_and_events(pytester, otto_plugins):
     run_inner(
         pytester,
