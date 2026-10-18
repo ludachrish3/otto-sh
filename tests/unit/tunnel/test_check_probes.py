@@ -398,6 +398,75 @@ class TestHandshakeWithFakeSocat:
         with pytest.raises(ProcessLookupError):
             os.kill(int(pid_lines[0].removeprefix("pid=")), 0)
 
+    @_NO_BASH
+    def test_a_cut_off_survives_the_watchdog_being_preempted_after_its_kill(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The cut-off verdict does not depend on the watchdog outliving its own kill (#657).
+
+        Once the watchdog kills socat, the script's ``wait`` returns and it
+        kills the watchdog in turn. On a loaded host that kill can land
+        before the watchdog has run anything after its own ``kill``. A
+        ``sleep`` injected right there stands in for that preemption: the
+        script must still report the cut-off and call it ``handshake ok``.
+        Mutation: print the cut-off after the kill, or judge it by the
+        watchdog's exit status.
+        """
+        monkeypatch.setattr(check_probes, "SOCAT_CONNECT_S", 1)
+        monkeypatch.setattr(check_probes, "HANDSHAKE_DRAIN_S", 1)
+        log = tmp_path / "log.txt"
+        env = _stub_env(tmp_path, "silent", log)
+        script = handshake_script("127.0.0.1", 61001)
+        preempted = script.replace('kill "$p"', 'kill "$p" && sleep 1', 1)
+        assert preempted != script, "the watchdog's kill moved; re-aim the injection"
+        result = _run(preempted, env, timeout=10)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines() == [
+            "still sending after 2s: drain cut off",
+            "handshake ok",
+        ]
+
+    @_NO_BASH
+    def test_the_watchdog_still_kills_when_nobody_reads_the_output(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A cut-off whose line cannot be written still ends socat (#657 review).
+
+        When otto is aborted or the channel drops, the script's stdout has no
+        reader. The watchdog's line then meets a closed pipe, and a kill that
+        depended on writing it would leave a device that keeps talking with a
+        socat that never ends. Mutation: make the kill conditional on the
+        echo succeeding.
+        """
+        monkeypatch.setattr(check_probes, "SOCAT_CONNECT_S", 1)
+        monkeypatch.setattr(check_probes, "HANDSHAKE_DRAIN_S", 1)
+        log = tmp_path / "log.txt"
+        env = _stub_env(tmp_path, "silent", log)
+        sh = shutil.which("sh")
+        assert sh is not None, "sh not on PATH"
+        proc = subprocess.Popen(
+            [sh, "-c", handshake_script("127.0.0.1", 61001)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=env,
+        )
+        assert proc.stdout is not None
+        proc.stdout.close()  # nobody reads the output from here on
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        pid_lines = [line for line in log.read_text().splitlines() if line.startswith("pid=")]
+        assert pid_lines, "the fake socat never logged its pid"
+        pid = int(pid_lines[0].removeprefix("pid="))
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        os.kill(pid, 9)  # leave no fake socat behind before failing
+        pytest.fail("the watchdog never killed socat: its kill waited on writing the line")
+
 
 class TestParseTrips:
     def test_parse_trips_all_matched_with_clock(self) -> None:

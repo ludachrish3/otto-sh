@@ -311,15 +311,28 @@ def handshake_script(ip: str, port: int) -> str:
     text. The watchdog kills only on a genuine ``read`` timeout (status
     above 128). A shell that cannot build its pipe never kills, and socat
     is left to its own timers.
+
+    The cut-off is read from socat's own status: the watchdog is the only
+    thing that sends it ``SIGTERM``, so a socat that ``wait`` reports as
+    terminated (143) was cut off. The watchdog's own exit status cannot
+    say so. Once socat dies, the script's ``wait`` returns and it kills the
+    watchdog, and on a loaded host that kill can land before the watchdog
+    runs anything after its own ``kill``. For the same reason the watchdog
+    prints its cut-off line before it kills: the script is still waiting on
+    socat then, so the line cannot be lost. The kill does not depend on that
+    line being written: with nobody reading the output (otto aborted, the
+    channel gone), the watchdog ignores ``SIGPIPE`` and kills socat anyway.
     """
     cutoff = SOCAT_CONNECT_S + HANDSHAKE_DRAIN_S
     body = (
         f"socat -t {HANDSHAKE_DRAIN_S} - TCP4:{ip}:{port},connect-timeout={SOCAT_CONNECT_S} "
         "</dev/null 2>&1 >/dev/null & p=$!; "
-        f'{{ read -t {cutoff} <> <(:); [ $? -gt 128 ] && kill "$p" && '
-        f'echo "still sending after {cutoff}s: drain cut off"; }} 2>/dev/null & w=$!; '
-        'wait "$p" 2>/dev/null; rc=$?; kill "$w" 2>/dev/null; wait "$w" 2>/dev/null; cut=$?; '
-        "if [ $rc -eq 0 ] || [ $cut -eq 0 ]; then echo handshake ok; else echo handshake failed; fi"
+        f"{{ read -t {cutoff} <> <(:); [ $? -gt 128 ] && {{ trap '' PIPE; "
+        f'echo "still sending after {cutoff}s: drain cut off"; kill "$p"; }}; }} 2>/dev/null '
+        "& w=$!; "
+        'wait "$p" 2>/dev/null; rc=$?; kill "$w" 2>/dev/null; wait "$w" 2>/dev/null; '
+        "if [ $rc -eq 0 ] || [ $rc -eq 143 ]; then echo handshake ok; "
+        "else echo handshake failed; fi"
     )
     return bash_script(body)
 
