@@ -271,6 +271,16 @@ order exactly. A token issued after the snapshot cancels nothing once the snapsh
   - The nested-write guard still applies. A `Ref` whose module registers at import, first resolved
     inside a `validate`, is refused and leaves nothing cached. Its next `get` retries.
   - This is right, and must not be special-cased.
+
+**Amended by #634, 2026-10-18.** The "next `get` retries" premise fails for a caller that reads
+only inside a check. `register_os_profile` resolves its base host class inside its own
+`validate`, so every retry is again inside a check and is refused again. And a half-done import
+is not clean: Python drops the failed module from `sys.modules`, but the tables it built stay live
+while the traceback is held, and the next import builds a second one. A `Ref` first imported
+inside a check therefore resolves with the nested-write guard lifted for that resolution only:
+the import, and the attribute read that in a lazy package imports the defining submodule. The
+check's own code is guarded again when it returns, and the imported module's
+registrations are validated under the guard as usual, so a check they trigger still cannot write.
 - **`peek`, `raw_items`, listing, membership, `origin`, the collision check and snapshots** never
   import.
 
