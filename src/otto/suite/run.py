@@ -1739,7 +1739,7 @@ def run_tests(
             if opts.results and multi:
                 # A single explicit --results path would otherwise have every
                 # project's session overwrite the last one's junit output. Fan
-                # out from the same stem instead: PATH -> PATH_repo.
+                # out from the same stem instead: PATH -> PATH_<project>.
                 results_source = Path(opts.results)
                 results_path = results_source.with_stem(f"{results_source.stem}_{project.name}")
             else:

@@ -653,7 +653,7 @@ def test_existing_settings_pull_in_nothing_for_a_lab(tmp_path: Path) -> None:
     assert scaffold_prerequisites(tmp_path, ["lab"]) == []
 
 
-def test_the_repo_marker_notice_names_a_settings_prerequisite_only(tmp_path: Path) -> None:
+def test_the_project_marker_notice_names_a_settings_prerequisite_only(tmp_path: Path) -> None:
     pulled, asked = tmp_path / "pulled", tmp_path / "asked"
     pulled.mkdir()
     asked.mkdir()
@@ -779,3 +779,13 @@ def test_instructions_pulled_in_by_new_settings_say_why(tmp_path: Path) -> None:
 def test_instructions_pulled_in_by_tests_keep_the_prerequisite_wording(tmp_path: Path) -> None:
     report = _scaffold(tmp_path, "tests")
     assert any("instructions area is a prerequisite" in n for n in report.notices)
+
+
+def test_the_scaffolded_test_uses_the_fixture_the_scaffolded_conftest_defines() -> None:
+    """Red before the fix: both still said ``repo_marker``. A rename of one
+    without the other would scaffold a project whose own tests error."""
+    from otto.init.templates import CONFTEST_TEMPLATE, TEST_EXAMPLE_TEMPLATE
+
+    assert "def project_marker() -> str:" in CONFTEST_TEMPLATE
+    assert "project_marker: str" in TEST_EXAMPLE_TEMPLATE
+    assert "repo_marker" not in CONFTEST_TEMPLATE + TEST_EXAMPLE_TEMPLATE

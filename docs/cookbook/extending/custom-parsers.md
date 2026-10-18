@@ -70,7 +70,7 @@ place of the default `ss -s` one:
 import re
 
 from otto.monitor.parsers import DEFAULT_PARSERS, register_host_parsers
-from my_repo.parsers import NetstatSocketsParser  # your own ss-free implementation
+from my_project.parsers import NetstatSocketsParser  # your own ss-free implementation
 
 parsers = {k: v for k, v in DEFAULT_PARSERS.items() if k != "ss -s"}
 parsers[NetstatSocketsParser.command] = NetstatSocketsParser()
@@ -104,7 +104,7 @@ Register parsers that apply to every monitored host from an init module
 
 ```python
 from otto.monitor.parsers import register_parsers
-from my_repo.parsers import SocketParser
+from my_project.parsers import SocketParser
 
 register_parsers([SocketParser()])
 ```

@@ -15,7 +15,7 @@ To associate custom parsers with a specific host, call register_host_parsers()
 from an init module listed in .otto/settings.toml::
 
     from otto.monitor.parsers import DEFAULT_PARSERS, register_host_parsers
-    from my_repo.parsers import NvidiaGpuParser
+    from my_project.parsers import NvidiaGpuParser
 
     register_host_parsers(
         "gpu-01",
@@ -31,7 +31,7 @@ To add or override a parser for every monitored host instead of one host,
 call register_parsers() the same way::
 
     from otto.monitor.parsers import register_parsers
-    from my_repo.parsers import UptimeParser
+    from my_project.parsers import UptimeParser
 
     register_parsers([UptimeParser()])
 

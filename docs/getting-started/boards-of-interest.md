@@ -32,9 +32,9 @@ from otto.registry import registering_project
 
 _old_cwd = os.getcwd()
 os.chdir(GS_EXAMPLE)
-_init_repo = Project(root=GS_EXAMPLE)
-with registering_project(_init_repo.name):
-    _init_repo.import_init_modules()
+_init_project = Project(root=GS_EXAMPLE)
+with registering_project(_init_project.name):
+    _init_project.import_init_modules()
 ```
 
 ```{testcleanup}

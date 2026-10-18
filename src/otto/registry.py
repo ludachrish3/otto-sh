@@ -271,7 +271,7 @@ def refuse_during_test_load(kind: str, name: str, origin: str) -> None:
 # and nested use (a project importing another's init helper) unwinds correctly.
 
 _REGISTERING_PROJECT: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
-    "otto_registering_repo", default=None
+    "otto_registering_project", default=None
 )
 
 

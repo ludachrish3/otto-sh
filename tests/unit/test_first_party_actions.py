@@ -127,8 +127,8 @@ class _Parameter:
     annotated_str: bool
 
 
-def test_the_public_repo_marker_is_unchanged():
-    """The slot's owner reset is private: registering_repo keeps its base signature and contract.
+def test_the_public_project_marker_is_unchanged():
+    """The slot's owner reset is private: registering_project keeps its base signature and contract.
 
     Compared parameter by parameter (name, kind, default, type), so a change
     in how an annotation is spelled is not a signature change.

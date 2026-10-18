@@ -448,9 +448,9 @@ class TestExample:
         logger.info("tests starting: %s", text)
         return text
 
-    async def test_logs_message(self, banner: str, repo_marker: str) -> None:
+    async def test_logs_message(self, banner: str, project_marker: str) -> None:
         logger.info(banner)
-        assert repo_marker == "from-conftest"
+        assert project_marker == "from-conftest"
 
     async def test_expect_and_artifacts(self, ctx, expect, test_dir) -> None:
         """`expect` records a failure without stopping the test; `test_dir` is this
@@ -473,7 +473,7 @@ import pytest
 
 
 @pytest.fixture
-def repo_marker() -> str:
+def project_marker() -> str:
     """Trivial example fixture the scaffolded tests consume."""
     return "from-conftest"
 
@@ -562,7 +562,7 @@ class ProjectOptions:
 #         ] = "field"
 #
 #     @register_project_actions
-#     class RepoActions(ProjectActions):
+#     class MyProjectActions(ProjectActions):
 #         @instruction(options=_Install)
 #         async def install(self, opts: _Install):
 #             ...                       # your work, opts.variant in hand

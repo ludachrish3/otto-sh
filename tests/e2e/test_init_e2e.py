@@ -43,7 +43,7 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     assert "example-device" in r.stdout, r.stdout + r.stderr
 
     # Hostless tests exercised via the repo-root conftest.py fixture
-    # (repo_marker) — proves the scaffolded conftest is discovered, not just
+    # (project_marker) — proves the scaffolded conftest is discovered, not just
     # present on disk.
     r = run_otto(["test", "TestExample"], xdir=xdir, roots=project, lab="example_lab")
     assert r.returncode == 0, r.stdout + r.stderr

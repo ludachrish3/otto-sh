@@ -94,7 +94,7 @@ def test_otto_builtins_imported_first_by_a_test_are_otto_s():
     assert "otto.fake_builtins" not in sys.modules
 
 
-def test_the_repo_comes_from_the_registering_repo_marker():
+def test_the_project_comes_from_the_registering_project_marker():
     with reg.registering_project("a"):
         TABLE.register("inside", Rec(1))
     TABLE.register("outside", Rec(2))

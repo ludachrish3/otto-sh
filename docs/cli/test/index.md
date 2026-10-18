@@ -248,8 +248,8 @@ hand out mirror each test's pytest ID:
   several projects, each project runs its own pytest session and writes its own
   file, so none overwrites another: `junit_<project>.xml`, and an explicit
   `--results PATH` gets `_<project>` appended to its stem (`--results
-  custom.xml` becomes `custom_repoA.xml`, `custom_repoB.xml`, ...). A project
-  with no selected test leaves no file.
+  custom.xml` becomes `custom_alpha.xml`, `custom_beta.xml`, ... for projects
+  `alpha` and `beta`). A project with no selected test leaves no file.
 - **Directories are created when a test first asks for them,** like pytest's
   `tmp_path`. A test that never names `module_dir` or `test_dir` leaves
   nothing behind.
