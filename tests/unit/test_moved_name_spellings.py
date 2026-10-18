@@ -443,7 +443,7 @@ class TestTheScanSeesEverySpelling:
             'CODE = "from otto.config.repo import ARCHIVE_SUFFIXES\\n"\n'
             "from otto.config.project import Project, selectable_names\n"
             "from otto.config.scope import TOML_SETTINGS_PATH, DockerImage\n"
-            "from otto.utils import split_path_list\n"
+            "from otto.utils import ottopath_entries\n"
             'FINE = "otto.config.project.Project"\n'
             "r.Project\n"
         )

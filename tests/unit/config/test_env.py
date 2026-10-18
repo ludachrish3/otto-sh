@@ -84,7 +84,7 @@ def test_env_xdir_value() -> None:
     assert XDIR_ENV_VAR == "OTTO_XDIR"
 
 
-def test_the_loader_reads_sut_dirs_through_split_path_list(monkeypatch, tmp_path) -> None:
+def test_the_loader_reads_ottopath_through_its_entries(monkeypatch, tmp_path) -> None:
     """A separator-space list names a path with a leading space, which does not exist."""
     monkeypatch.chdir(tmp_path)
     one, two = tmp_path / "one", tmp_path / "two"

@@ -7,7 +7,6 @@ cannot hide behind mocked callers.
 """
 
 import os
-from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -16,8 +15,8 @@ from otto.utils import (
     _get_literal_values,
     complete_separated_list,
     is_literal,
+    ottopath_entries,
     split_on,
-    split_path_list,
 )
 
 # Sample Literal aliases used purely as fixtures for the utility functions
@@ -128,7 +127,7 @@ class TestCompleteSeparatedList:
         assert complete_separated_list(["x", "y"], "x+") == []
 
 
-# ── split_path_list ─────────────────────────────────────────────────────────
+# ── ottopath_entries: the split ─────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -137,16 +136,23 @@ class TestCompleteSeparatedList:
         ("", []),
         ("/a", ["/a"]),
         (f"/a{os.pathsep}/b", ["/a", "/b"]),
-        (f"/a{os.pathsep} /b {os.pathsep} /c", ["/a", " /b ", " /c"]),
         (f"{os.pathsep}/a{os.pathsep}{os.pathsep}/b{os.pathsep}", ["/a", "/b"]),
-        (f"  {os.pathsep}  ", ["  ", "  "]),
     ],
 )
-def test_split_path_list_splits_and_drops_only_empties(value: str, expected: list[str]) -> None:
-    assert split_path_list(value) == [Path(p) for p in expected]
+def test_ottopath_entries_splits_on_pathsep_and_drops_only_empties(
+    value: str, expected: list[str]
+) -> None:
+    """Splitting is pinned on the one OTTOPATH reader that remains."""
+    assert ottopath_entries(value) == expected
 
 
-@pytest.mark.parametrize("value", ["/a,/b", "/a, /b", ",/a,"])
-def test_split_path_list_keeps_a_comma_inside_its_entry(value: str) -> None:
+@pytest.mark.parametrize("value", ["/a,/b", "/a, /b", "/a,"])
+def test_ottopath_entries_keeps_a_comma_inside_its_entry(value: str) -> None:
     """Only ``os.pathsep`` separates: a comma is an ordinary path character."""
-    assert split_path_list(value) == [Path(value)]
+    assert ottopath_entries(value) == [value]
+
+
+def test_ottopath_entries_keeps_whitespace_as_part_of_an_entry(tmp_path, monkeypatch) -> None:
+    """``/a: b `` names ``" b "``, a relative entry, joined to the cwd as written."""
+    monkeypatch.chdir(tmp_path)
+    assert ottopath_entries(f"/a{os.pathsep} b ") == ["/a", f"{tmp_path}/ b "]

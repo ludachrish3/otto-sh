@@ -2,7 +2,7 @@
 
 Among others: the :class:`Status` enum, the CLI overlays (:class:`Arg`,
 :class:`Opt`, ``Exclude``) and :func:`cli_exposed`, path anchoring
-(:func:`anchor_path`), path-list splitting (:func:`split_path_list`) and
+(:func:`anchor_path`), path-list reading and
 ``OTTOPATH``'s kept spelling (:func:`ottopath_entries`), the
 ``cache_ttl`` grammar (:func:`parse_cache_ttl`), the monitor
 collection-interval floor (:data:`MIN_INTERVAL_SECONDS`), list-option
@@ -65,26 +65,10 @@ def anchor_path(value: Path, root: Path, *, quote: bool = True) -> Path:
 
 # Path-list env vars (e.g. OTTOPATH) separate entries with os.pathsep
 # (':' on POSIX, ';' on Windows), like PATH and PYTHONPATH. A comma is an
-# ordinary path character. The console-script shim and the completion cache
-# split the same variables with this pattern, so all three agree.
+# ordinary path character. ottopath_entries splits with this pattern; the
+# console-script shim and the completion cache split the same variables the
+# same way, so all three agree.
 _PATH_LIST_SEP = re.compile(re.escape(os.pathsep))
-
-
-def split_path_list(value: str) -> list[Path]:
-    """Split a path-list env value (``OTTOPATH``) into its paths.
-
-    Entries are separated by :data:`os.pathsep` only, and empty entries are
-    dropped. A comma is part of a path. Nothing else is touched: whitespace is
-    part of an entry (``/a: /b`` names ``" /b"`` on POSIX), exactly as the
-    completion-cache environment and the console-script shim split the same
-    variable. A reader that needs the roots themselves does not stop here: the
-    loader and ``otto init``'s "is this project root already on the list" check
-    read the value through :func:`ottopath_entries`, which splits the same way
-    and then expands ``~`` and joins a relative entry to the cwd, and the
-    completion cache and the shim build the same pieces in the same order. So
-    no two readers disagree about which directories the value names.
-    """
-    return [Path(entry) for entry in _PATH_LIST_SEP.split(value) if entry]
 
 
 def kept_path_spelling(entry: str) -> str:
